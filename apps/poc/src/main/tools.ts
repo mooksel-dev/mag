@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, type ArchApp, type LeafTaskType, type Project, type Task, type TaskType } from '@mag/core'
+import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, planQueue, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
 
@@ -15,6 +15,13 @@ export interface ToolActions {
   architect(projectId: string): void
 }
 
+const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
+
+function taskType(v: unknown): TaskType {
+  if (!TYPES.includes(v as TaskType)) throw new Error(`type must be one of ${TYPES.join(', ')}`)
+  return v as TaskType
+}
+
 export type ToolHandler = (ctx: ToolContext, name: string, args: Record<string, unknown>) => Promise<string>
 
 export function createTools(store: Store, actions: ToolActions): ToolHandler {
@@ -25,9 +32,14 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
     if (!ctx.taskId) throw new Error(`${name} needs a task`)
     const task = store.task(ctx.taskId)
     const project = store.project(task.projectId)
-    const brief = (id: string) => {
-      const t = store.data.tasks.find((x) => x.id === id)
-      return t ? { key: t.key, title: t.title, type: t.type, status: t.status } : { id }
+    const doc = (id: string) => store.data.docs[id] ?? '(empty)'
+    const parent = task.parentId ? store.data.tasks.find((t) => t.id === task.parentId) : undefined
+    /** A subtask of the current task that grooming may still change. */
+    const ownSubtask = (key: unknown) => {
+      if (PLAN_STATUSES.includes(task.status)) throw new Error(`${task.key} is already in the plan; its subtasks can no longer change`)
+      const sub = store.data.tasks.find((t) => t.parentId === task.id && t.key.toLowerCase() === String(key).toLowerCase())
+      if (!sub) throw new Error(`${key} is not a subtask of ${task.key}`)
+      return sub
     }
 
     switch (name) {
@@ -39,9 +51,8 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
             type: task.type,
             status: task.status,
             description: task.description,
-            parent: task.parentId ? brief(task.parentId) : null,
-            subtasks: store.data.tasks.filter((t) => t.parentId === task.id).map((t) => brief(t.id)),
-            dependsOn: task.dependsOn?.map(brief) ?? 'not set',
+            parent: parent ? { key: parent.key, title: parent.title, doc: doc(parent.id) } : null,
+            subtasks: subtasksOf(task.id, store.data.tasks).map((t) => ({ key: t.key, title: t.title, type: t.type, status: t.status, doc: doc(t.id) })),
             project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
             work: task.work,
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
@@ -51,7 +62,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         )
 
       case 'get_doc':
-        return store.data.docs[task.id] ?? '(empty)'
+        return doc(task.id)
 
       case 'update_doc':
         store.data.docs[task.id] = String(args.markdown ?? '')
@@ -65,20 +76,53 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       }
 
       case 'mark_groomed':
+        if (task.parentId) throw new Error('Subtasks are not groomed separately; groom the parent task')
         if (task.needsInput) throw new Error('needs_input is still set; clear it first')
         store.updateTask(task.id, { status: 'groomed' })
         return 'Task marked as groomed. The user will review it.'
 
       case 'create_subtask': {
+        if (task.parentId) throw new Error('Subtasks cannot have subtasks')
+        if (task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; subtasks are created while grooming`)
+        const md = String(args.doc ?? '')
+        if (!md.trim()) throw new Error('doc is required')
         const sub = store.createTask({
           projectId: project.id,
           parentId: task.id,
           title: String(args.title),
-          type: String(args.type) as LeafTaskType,
+          type: taskType(args.type),
           description: String(args.description ?? ''),
+          status: 'groomed',
         })
-        if (task.type !== 'story') store.updateTask(task.id, { type: 'story' })
+        store.data.docs[sub.id] = md
+        store.changed()
         return `Created ${sub.key}.`
+      }
+
+      case 'update_subtask': {
+        const sub = ownSubtask(args.key)
+        const patch: Partial<Task> = {}
+        if (typeof args.title === 'string') patch.title = args.title
+        if (args.type !== undefined) patch.type = taskType(args.type)
+        if (typeof args.description === 'string') patch.description = args.description
+        if (typeof args.doc === 'string') store.data.docs[sub.id] = args.doc
+        store.updateTask(sub.id, patch)
+        return `Updated ${sub.key}.`
+      }
+
+      case 'delete_subtask': {
+        const sub = ownSubtask(args.key)
+        store.deleteTask(sub.id)
+        return `Deleted ${sub.key}.`
+      }
+
+      case 'reorder_subtasks': {
+        const ordered = (Array.isArray(args.keys) ? args.keys : []).map(ownSubtask)
+        const subs = subtasksOf(task.id, store.data.tasks)
+        if (ordered.length !== subs.length || new Set(ordered).size !== ordered.length)
+          throw new Error(`Pass every subtask key exactly once: ${subs.map((t) => t.key).join(', ')}`)
+        ordered.forEach((t, rank) => store.updateTask(t.id, { rank }))
+        return `Order: ${ordered.map((t) => t.key).join(', ')}.`
       }
 
       case 'set_pr': {
@@ -125,20 +169,22 @@ function sharedTool(
     return t
   }
   const keyOf = (id: string) => tasks.find((t) => t.id === id)?.key ?? id
-  const keysToIds = (keys: unknown) => (keys == null ? null : (keys as string[]).map((k) => byKey(k).id))
+  const withSubtasks = (t: Task): Task[] => [t, ...subtasksOf(t.id, tasks).flatMap(withSubtasks)]
 
   switch (name) {
     case 'list_tasks':
       return JSON.stringify(
         {
           project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
-          tasks: tasks.map((t) => ({
+          tasks: [
+            ...planQueue(tasks),
+            ...tasks.filter((t) => !t.parentId && BACKLOG_STATUSES.includes(t.status)).sort((a, b) => a.createdAt - b.createdAt),
+          ].flatMap(withSubtasks).map((t) => ({
             key: t.key,
             title: t.title,
             type: t.type,
             status: t.status,
             parent: t.parentId ? keyOf(t.parentId) : undefined,
-            dependsOn: t.dependsOn?.map(keyOf) ?? 'not set',
             needsInput: t.needsInput ?? undefined,
             pr: t.work?.prUrl ?? undefined,
           })),
@@ -149,18 +195,16 @@ function sharedTool(
 
     case 'read_task': {
       const t = byKey(args.key)
-      return JSON.stringify({ ...t, parent: t.parentId && keyOf(t.parentId), dependsOn: t.dependsOn?.map(keyOf) ?? 'not set', doc: store.data.docs[t.id] ?? '(empty)' }, null, 2)
+      return JSON.stringify({ ...t, parent: t.parentId && keyOf(t.parentId), doc: store.data.docs[t.id] ?? '(empty)' }, null, 2)
     }
 
     case 'create_task': {
       const t = store.createTask({
         projectId: project.id,
         title: String(args.title),
-        type: String(args.type) as TaskType,
+        type: taskType(args.type),
         description: String(args.description ?? ''),
-        parentId: args.parentKey ? byKey(args.parentKey).id : null,
       })
-      if (args.dependsOn !== undefined) store.updateTask(t.id, { dependsOn: keysToIds(args.dependsOn) })
       return `Created ${t.key} in the backlog.`
     }
 
@@ -169,7 +213,6 @@ function sharedTool(
       const patch: Partial<Task> = {}
       if (typeof args.title === 'string') patch.title = args.title
       if (typeof args.description === 'string') patch.description = args.description
-      if (args.dependsOn !== undefined) patch.dependsOn = keysToIds(args.dependsOn)
       store.updateTask(t.id, patch)
       return `Updated ${t.key}.`
     }
@@ -183,6 +226,7 @@ function sharedTool(
 
     case 'start_grooming': {
       const t = byKey(args.key)
+      if (t.parentId) throw new Error(`${t.key} is a subtask; groom its parent ${keyOf(t.parentId)}`)
       if (!['backlog', 'groomed'].includes(t.status)) throw new Error(`${t.key} is ${t.status}; only backlog or groomed tasks can be groomed`)
       actions.groom(t.id)
       return `Groomer started on ${t.key}.`

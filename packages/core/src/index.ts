@@ -1,8 +1,7 @@
 // Domain model shared by every mag app (PoC, desktop, web, backend).
 // Keep it free of runtime dependencies.
 
-export type LeafTaskType = 'dev' | 'design' | 'spike' | 'research'
-export type TaskType = 'story' | LeafTaskType
+export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
 export type TaskStatus =
   | 'backlog'
@@ -23,8 +22,6 @@ export interface Project {
   /** Markdown template per task type that agents follow when writing the task doc. */
   templates: Partial<Record<TaskType, string>>
   nextTaskNo: number
-  /** How many developer agents may work in parallel. */
-  devPoolSize: number
   /** Branch that worktrees start from and PRs target. */
   baseBranch: string
   /** Enforce the core/{lib,clients,services} layering in grooming, development and checks. */
@@ -112,8 +109,8 @@ export interface Task {
   status: TaskStatus
   /** What the user wrote. The agent-owned document lives separately. */
   description: string
-  /** null = not decided yet, [] = explicitly no dependencies. */
-  dependsOn: string[] | null
+  /** Order: top-level tasks by position in the plan, subtasks by position within the parent. */
+  rank: number
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
   work: TaskWork | null
@@ -209,34 +206,63 @@ export type AgentEvent =
 export const PLAN_STATUSES: TaskStatus[] = ['planned', 'in_progress', 'in_review', 'done']
 export const BACKLOG_STATUSES: TaskStatus[] = ['backlog', 'grooming', 'groomed']
 
-/** A planned leaf task whose dependencies are all done can be picked by a developer. */
-export function isReady(task: Task, all: Task[]): boolean {
-  if (task.status !== 'planned' || task.type === 'story') return false
-  return (task.dependsOn ?? []).every((id) => all.find((t) => t.id === id)?.status === 'done')
+/** Subtasks of a task, in order. */
+export function subtasksOf(id: string, tasks: Task[]): Task[] {
+  return tasks.filter((t) => t.parentId === id).sort((a, b) => a.rank - b.rank)
 }
 
 /** Why a task cannot enter the plan yet; empty array = it can. */
 export function planBlockers(task: Task): string[] {
   const reasons: string[] = []
+  if (task.parentId) reasons.push('subtasks are planned with their task')
   if (task.status !== 'groomed') reasons.push('not groomed yet')
   if (task.needsInput) reasons.push('agent is waiting for input')
-  if (task.dependsOn === null) reasons.push('dependencies not set')
   return reasons
 }
 
+/** Top-level tasks in the plan, in queue order. */
+export function planQueue(tasks: Task[]): Task[] {
+  return tasks.filter((t) => !t.parentId && PLAN_STATUSES.includes(t.status)).sort((a, b) => a.rank - b.rank)
+}
+
+/** Work units in execution order: each plan task's subtasks, or the task itself when it has none. */
+function workUnits(tasks: Task[]): Task[] {
+  return planQueue(tasks).flatMap((t) => {
+    const subs = subtasksOf(t.id, tasks)
+    return subs.length ? subs : [t]
+  })
+}
+
+/** The next unit a developer should start, or null. Execution is linear: one unit at a time, in plan order. */
+export function nextWork(tasks: Task[]): Task | null {
+  const units = workUnits(tasks)
+  if (units.some((u) => u.status === 'in_progress' || u.status === 'in_review')) return null
+  const next = units.find((u) => u.status !== 'done')
+  return next && next.status === 'planned' && !next.needsInput ? next : null
+}
+
+/** Status of a task derived from its subtasks. */
+export function rollupStatus(subs: Task[]): TaskStatus {
+  if (subs.every((s) => s.status === 'done')) return 'done'
+  if (subs.some((s) => s.status === 'in_review')) return 'in_review'
+  if (subs.some((s) => s.status === 'in_progress' || s.status === 'done')) return 'in_progress'
+  return 'planned'
+}
+
+/** A plan task that no developer has touched yet, nor any of its subtasks. */
+function notStarted(task: Task, tasks: Task[]): boolean {
+  return task.status === 'planned' && !task.work && subtasksOf(task.id, tasks).every((s) => s.status === 'planned' && !s.work)
+}
+
+/** Whether a plan task can swap places with its neighbour: both must be not started, so nothing jumps above started work. */
+export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
+  const queue = planQueue(tasks)
+  const i = queue.findIndex((t) => t.id === task.id)
+  const other = i < 0 ? undefined : queue[dir === 'up' ? i - 1 : i + 1]
+  return !!other && notStarted(task, tasks) && notStarted(other, tasks)
+}
+
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {
-  story: `# Problem
-One or two sentences.
-
-# Open questions
-Only if any.
-
-# Decomposition
-Subtasks, each one PR or one deliverable. Create them with the create_subtask tool.
-
-# Architecture
-Mermaid diagram at the level where the change happens.
-`,
   dev: `# Problem
 One or two sentences.
 

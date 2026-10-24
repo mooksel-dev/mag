@@ -15,6 +15,7 @@ const api: MagApi = {
   updateTask: (id, patch) => ipcRenderer.invoke('task:update', id, patch),
   groom: (taskId) => ipcRenderer.invoke('task:groom', taskId),
   addToPlan: (taskId) => ipcRenderer.invoke('task:addToPlan', taskId),
+  move: (taskId, dir) => ipcRenderer.invoke('task:move', taskId, dir),
   develop: (taskId) => ipcRenderer.invoke('task:develop', taskId),
   checkPrs: () => ipcRenderer.invoke('pr:checkNow'),
   open: (target) => ipcRenderer.invoke('shell:open', target),

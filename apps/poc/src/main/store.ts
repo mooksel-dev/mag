@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { AgentSession, Canvas, Project, Task } from '@mag/core'
+import { BACKLOG_STATUSES, PLAN_STATUSES,type AgentSession, type Canvas, type Project, type Task } from '@mag/core'
 import type { NewTask } from '../preload/api'
 
 interface Data {
@@ -27,7 +27,9 @@ export class Store {
     for (const s of this.data.sessions) if (s.status === 'running') s.status = 'idle'
     // Defaults for data written by older PoC versions.
     for (const p of this.data.projects) {
-      p.devPoolSize ??= 1
+      delete (p as { devPoolSize?: number }).devPoolSize
+      p.templates ??= {}
+      delete (p.templates as Record<string, string>).story
       p.baseBranch ??= 'main'
       p.enforceArchitecture ??= false
       p.architecture ??= null
@@ -35,7 +37,19 @@ export class Store {
       p.agents ??= {}
       if (p.archRun?.status === 'running') p.archRun.status = 'error'
     }
-    for (const t of this.data.tasks) t.work ??= null
+    for (const t of this.data.tasks) {
+      t.work ??= null
+      delete (t as { dependsOn?: unknown }).dependsOn
+      if ((t.type as string) === 'story') t.type = 'dev'
+      t.rank ??= t.createdAt
+    }
+    // Subtasks are no longer groomed separately: not-started ones follow their parent.
+    for (const t of this.data.tasks) {
+      const parent = t.parentId ? this.data.tasks.find((x) => x.id === t.parentId) : undefined
+      if (!parent || !BACKLOG_STATUSES.includes(t.status)) continue
+      t.status = PLAN_STATUSES.includes(parent.status) ? 'planned' : 'groomed'
+      t.needsInput = null
+    }
     for (const s of this.data.sessions)
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
   }
@@ -88,7 +102,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, devPoolSize: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
@@ -102,16 +116,18 @@ export class Store {
   createTask(n: NewTask): Task {
     const p = this.project(n.projectId)
     const now = Date.now()
+    const parentId = n.parentId ?? null
+    const siblings = this.data.tasks.filter((x) => x.projectId === p.id && x.parentId === parentId)
     const t: Task = {
       id: id(),
       projectId: p.id,
       key: `T-${p.nextTaskNo++}`,
-      parentId: n.parentId ?? null,
+      parentId,
       title: n.title,
       type: n.type,
-      status: 'backlog',
+      status: n.status ?? 'backlog',
       description: n.description,
-      dependsOn: null,
+      rank: Math.max(0, ...siblings.map((x) => x.rank)) + 1,
       needsInput: null,
       work: null,
       createdAt: now,
@@ -124,6 +140,16 @@ export class Store {
 
   updateTask(tid: string, patch: Partial<Task>) {
     Object.assign(this.task(tid), patch, { id: tid, updatedAt: Date.now() })
+    this.changed()
+  }
+
+  /** Removes a task with its doc, canvases and sessions. */
+  deleteTask(tid: string) {
+    this.task(tid)
+    this.data.tasks = this.data.tasks.filter((t) => t.id !== tid)
+    this.data.sessions = this.data.sessions.filter((s) => s.taskId !== tid)
+    delete this.data.docs[tid]
+    for (const c of Object.values(this.data.canvases)) if (c.taskId === tid) delete this.data.canvases[c.id]
     this.changed()
   }
 

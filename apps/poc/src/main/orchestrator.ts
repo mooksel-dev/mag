@@ -22,15 +22,21 @@ Your output is the task document, not chat. Work like this:
 1. Call get_task, then read the relevant code in the project repos (read-only).
 2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
 3. If something only the user can decide is unclear, list it under "Open questions" in the doc
-   and call set_needs_input with a one-line summary. Then stop and wait.
+   and call set_needs_input with a one-line summary. Then stop and wait. Ask everything at once, at the task
+   level; subtasks never get questions of their own.
 4. When the user answers in chat, update the doc (remove answered questions, fold answers in).
 5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc.
-6. If the task is too big for one PR or one deliverable, decompose it with create_subtask.
+6. If the task is too big for one PR, split it with create_subtask: one subtask = one PR, each with a short doc
+   (what this part changes, how to check it). Subtasks run one by one in creation order; they are not groomed
+   separately. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
+   reorder_subtasks instead of creating duplicates (get_task lists them).
 7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed.
+Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
+not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
 
-const developerPrompt = (project: Project, task: Task) => `You are a developer agent in "mag".
-You work in your own git worktree on branch ${task.work?.branch}, based on ${project.baseBranch}.
+const developerPrompt = (project: Project, task: Task, parent?: Task) => `You are a developer agent in "mag".
+${parent ? `This is subtask ${task.key} of ${parent.key}; the parent's doc (get_task -> parent) is context, implement only this subtask.\n` : ''}You work in your own git worktree on branch ${task.work?.branch}, based on ${project.baseBranch}.
 1. Call get_task and get_doc. The doc is the agreed plan; follow it.
 2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
 3. Review your own diff (git diff ${project.baseBranch}...HEAD) like a strict reviewer and fix what you find.
@@ -60,10 +66,12 @@ Call get_architecture first, then set_architecture once with the full picture. B
 const chatPrompt = (project: Project) => `You are the user's partner for project "${project.name}" in "mag",
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
-How mag works: backlog task -> groomer agent writes the task doc and asks questions -> the user adds it to the plan
--> a developer agent implements it in a worktree and opens a PR -> the user merges.
-- You never change code. A change becomes a task: create_task with a concise brief (what and why), dependencies if
-  known, and start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
+How mag works: backlog task -> groomer agent writes the task doc, asks questions and may split it into subtasks
+(one PR each) -> the user adds the task to the plan -> developer agents implement it in a worktree and open a PR
+-> the user merges. The plan is an ordered queue run one task at a time: subtasks one by one, the next task after
+the previous one is merged.
+- You never change code. A change becomes a task: create_task with a concise brief (what and why), and
+  start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
   update_task / update_task_doc. Say in one line what you recorded.
 - For anything visual (UI mockups, flows, diagrams, comparisons) use show_canvas with one self-contained HTML page;
@@ -154,6 +162,7 @@ export class Orchestrator {
   /** Start (or restart) grooming in a new background session. */
   groom(taskId: string) {
     const task = this.store.task(taskId)
+    if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
     const session = this.newSession(taskId, 'groomer')
     this.store.updateTask(taskId, { status: 'grooming', needsInput: null })
     this.run(session, `Groom task ${task.key}. Start with get_task.`)
@@ -162,6 +171,7 @@ export class Orchestrator {
   /** Pick up a planned task: worktree + branch, then a developer session. */
   async develop(taskId: string) {
     const task = this.store.task(taskId)
+    if (this.store.data.tasks.some((t) => t.parentId === taskId)) throw new Error(`${task.key} has subtasks; they are developed one by one`)
     const project = this.store.project(task.projectId)
     const repo = project.repos[0]
     if (!repo) {
@@ -271,7 +281,7 @@ export class Orchestrator {
         cwd: task.work.worktree,
         addDirs: [...project.repos.filter((r) => r !== task.work!.repo), this.paths.attachmentsDir],
         appendSystemPrompt:
-          developerPrompt(project, task) +
+          developerPrompt(project, task, task.parentId ? this.store.data.tasks.find((t) => t.id === task.parentId) : undefined) +
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
             : ''),
