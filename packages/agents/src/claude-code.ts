@@ -1,25 +1,9 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import type { AgentEvent } from '@mag/core'
+import { findBin } from './bin.ts'
 import type { AgentAdapter, RunSpec } from './index'
-
-let cachedBin: string | null | undefined
-
-/** GUI-launched apps on macOS don't get the shell PATH, so ask a login shell. */
-function findBin(): string | null {
-  if (cachedBin !== undefined) return cachedBin
-  if (process.env.MAG_CLAUDE_BIN) return (cachedBin = process.env.MAG_CLAUDE_BIN)
-  const shell = process.env.SHELL || '/bin/zsh'
-  try {
-    const out = execFileSync(shell, ['-ilc', 'command -v claude'], { encoding: 'utf8', timeout: 5000 })
-    const line = out.trim().split('\n').pop()
-    cachedBin = line && line.startsWith('/') ? line : null
-  } catch {
-    cachedBin = null
-  }
-  return cachedBin
-}
 
 /** Translate one stream-json line from `claude -p` into normalized events. */
 export function parseClaudeLine(line: string): AgentEvent[] {
@@ -81,7 +65,7 @@ export const claudeCode: AgentAdapter = {
   displayName: 'Claude Code',
 
   async detect() {
-    return findBin()
+    return findBin('claude', 'MAG_CLAUDE_BIN')
   },
 
   async listModels() {
@@ -94,7 +78,7 @@ export const claudeCode: AgentAdapter = {
   },
 
   start(spec, onEvent) {
-    const bin = findBin() ?? 'claude'
+    const bin = findBin('claude', 'MAG_CLAUDE_BIN') ?? 'claude'
     if (!existsSync(spec.cwd)) {
       // spawn would report this as ENOENT for the binary, which is misleading.
       onEvent({ type: 'error', message: `Working directory does not exist: ${spec.cwd}` })

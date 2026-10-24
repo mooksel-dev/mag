@@ -74,7 +74,7 @@ How mag works: backlog task -> groomer agent writes the task doc and asks questi
 function summarize(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const o = input as Record<string, unknown>
-  const v = o.file_path ?? o.path ?? o.pattern ?? o.command ?? o.reason ?? o.title ?? o.url
+  const v = o.file_path ?? o.path ?? o.pattern ?? o.command ?? o.query ?? o.reason ?? o.title ?? o.url
   return v == null ? '' : String(v).slice(0, 120)
 }
 
