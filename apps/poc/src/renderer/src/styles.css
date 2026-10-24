@@ -119,6 +119,8 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .projectchat .chatbox { background: #fff; }
 .pchead { display: flex; gap: 6px; align-items: center; }
 .pchead select { flex: 1; min-width: 0; }
+.agentroles { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 6px 8px; align-items: center; }
+.agentrole { display: contents; }
 .dot.inline { display: inline-block; vertical-align: middle; margin-left: 4px; }
 .tabs { align-items: center; }
 

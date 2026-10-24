@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentKind } from '@mag/core'
+import type { AgentEvent, AgentKind, AgentModel } from '@mag/core'
 import { claudeCode } from './claude-code'
 
 export interface RunSpec {
@@ -6,6 +6,8 @@ export interface RunSpec {
   prompt: string
   /** Agent-native session id to continue. */
   resumeId?: string
+  /** Provider model id or alias; omitted = the provider's default. */
+  model?: string
   appendSystemPrompt?: string
   /** Path to an MCP config JSON file. */
   mcpConfigPath?: string
@@ -26,6 +28,8 @@ export interface AgentAdapter {
   displayName: string
   /** Absolute path or command name of the CLI, if found. */
   detect(): Promise<string | null>
+  /** Models the user can pick; the provider's default is implied and not listed. */
+  listModels(): Promise<AgentModel[]>
   start(spec: RunSpec, onEvent: (e: AgentEvent) => void): RunHandle
 }
 
@@ -33,4 +37,4 @@ export const adapters: Record<AgentKind, AgentAdapter> = {
   'claude-code': claudeCode,
 }
 
-export { claudeCode, parseClaudeLine } from './claude-code'
+export { buildArgs, claudeCode, parseClaudeLine } from './claude-code'

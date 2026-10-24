@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "node --test src/*.test.ts" },
   "dependencies": { "@mag/core": "workspace:*" },
   "devDependencies": { "@types/node": "^22.20.5", "typescript": "^5.9.3" }
 }

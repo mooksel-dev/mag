@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react'
 import {
   DEFAULT_TEMPLATES,
   PLAN_STATUSES,
+  SETTABLE_ROLES,
   planBlockers,
+  resolveChoice,
   type Project,
   type Task,
   type TaskType,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
+import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
 
@@ -194,6 +197,7 @@ function NewTask({ projectId }: { projectId: string }) {
 
 function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onBack: () => void; onOpen: (id: string) => void; onOpenKey: (key: string) => void }) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
+  const agents = useAgents()
   const [sessionId, setSessionId] = useState<string | null>(null)
   const session = sessions.find((s) => s.id === sessionId) ?? sessions[sessions.length - 1] ?? null
   const doc = state.docs[task.id]
@@ -267,6 +271,7 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
                 {sessions.map((s, i) => <option key={s.id} value={s.id}>#{i + 1} {s.role}</option>)}
               </select>
             )}
+            {session && <span className="pill violet">{agentName(agents, session.agent)} · {session.activeModel ?? 'default'}</span>}
           </div>
           {session ? <Chat session={session} onOpenTask={onOpenKey} /> : <p className="muted">No agent has worked on this task yet.</p>}
         </div>
@@ -308,6 +313,31 @@ function RepoStatus({ path }: { path: string }) {
   return <span className="muted small">{info.origin}</span>
 }
 
+const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect' }
+
+function AgentSettings({ project }: { project: Project }) {
+  const agents = useAgents()
+  return (
+    <div className="field">
+      Agents
+      <div className="agentroles">
+        {SETTABLE_ROLES.map((role) => (
+          <div key={role} className="agentrole">
+            <span>{ROLE_LABELS[role] ?? role}</span>
+            <ModelPicker
+              agents={agents}
+              label={ROLE_LABELS[role] ?? role}
+              choice={resolveChoice(project, role)}
+              onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, [role]: c } })}
+            />
+          </div>
+        ))}
+      </div>
+      <span className="muted small">Reviewer uses the Developer choice. Changes apply to the next agent turn; switching the provider starts a fresh agent session.</span>
+    </div>
+  )
+}
+
 function Settings({ project }: { project: Project }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   return (
@@ -337,6 +367,7 @@ function Settings({ project }: { project: Project }) {
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />
         Enforce core architecture (lib / clients / services) for agents
       </label>
+      <AgentSettings project={project} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (
