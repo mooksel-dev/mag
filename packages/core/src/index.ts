@@ -123,7 +123,7 @@ export interface Task {
 
 /** chat = project-level conversation, not tied to a task. */
 export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
-export type AgentKind = 'claude-code'
+export type AgentKind = 'claude-code' | 'codex'
 
 /** Which provider runs a role and on which model. */
 export interface ModelChoice {
