@@ -1,0 +1,51 @@
+// Contract between the renderer and the main process. Types only.
+import type { AgentSession, Attachment, Canvas, Project, Task, TaskType } from '@mag/core'
+
+export interface AppState {
+  projects: Project[]
+  tasks: Task[]
+  sessions: AgentSession[]
+  /** Agent-written markdown document per task id. */
+  docs: Record<string, string>
+  /** Canvas metadata; fetch the HTML with getCanvas. */
+  canvases: Omit<Canvas, 'html'>[]
+  claudeBin: string | null
+}
+
+export interface NewTask {
+  projectId: string
+  title: string
+  type: TaskType
+  description: string
+  parentId?: string | null
+}
+
+export interface MagApi {
+  getState(): Promise<AppState>
+  onState(cb: (s: AppState) => void): () => void
+  pickDir(): Promise<string | null>
+  createProject(name: string): Promise<Project>
+  updateProject(id: string, patch: Partial<Project>): Promise<void>
+  createTask(t: NewTask): Promise<Task>
+  updateTask(id: string, patch: Partial<Task>): Promise<void>
+  groom(taskId: string): Promise<void>
+  addToPlan(taskId: string): Promise<{ ok: boolean; reasons: string[] }>
+  /** Start or restart the developer agent on a planned/in-progress task. */
+  develop(taskId: string): Promise<void>
+  /** Check open PRs for merges and new comments right away. */
+  checkPrs(): Promise<void>
+  /** Open a URL in the browser or a path in Finder. */
+  open(target: string): Promise<void>
+  /** Start the architect agent; the result lands in project.architecture. */
+  runArchitect(projectId: string): Promise<void>
+  repoInfo(path: string): Promise<{ git: boolean; origin: string | null }>
+  send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
+  /** New project chat; returns its session id. */
+  newChat(projectId: string): Promise<string>
+  getCanvas(id: string): Promise<string | null>
+  /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */
+  saveAttachment(f: { name: string; bytes?: Uint8Array; path?: string }): Promise<Attachment>
+  /** Absolute path of a dropped File, if it has one. */
+  pathForFile(file: File): string
+  stop(sessionId: string): Promise<void>
+}
