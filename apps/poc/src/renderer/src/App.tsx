@@ -3,8 +3,11 @@ import {
   DEFAULT_TEMPLATES,
   PLAN_STATUSES,
   SETTABLE_ROLES,
+  canMoveInPlan,
   planBlockers,
+  planQueue,
   resolveChoice,
+  subtasksOf,
   type Project,
   type Task,
   type TaskType,
@@ -25,7 +28,7 @@ const loadFlag = (k: string, d: boolean) => {
 }
 
 const mag = window.mag
-const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research', 'story']
+const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 type Tab = 'needs' | 'backlog' | 'plan' | 'architecture' | 'settings'
 
 export function App() {
@@ -106,7 +109,7 @@ export function App() {
 }
 
 function needsYou(t: Task) {
-  return !!t.needsInput || t.status === 'groomed' || (t.status === 'in_review' && !!t.work?.prUrl)
+  return !!t.needsInput || (t.status === 'groomed' && !t.parentId) || (t.status === 'in_review' && !!t.work?.prUrl)
 }
 
 function needsLabel(t: Task): [string, string, string] {
@@ -127,13 +130,12 @@ function NewProject({ onCreate }: { onCreate: (p: Project) => void }) {
 function NeedsYou({ tasks, state, onOpen }: { tasks: Task[]; state: AppState; onOpen: (id: string) => void }) {
   const items = tasks.filter(needsYou)
   const running = state.sessions.filter((s) => s.status === 'running' && tasks.some((t) => t.id === s.taskId))
-  const devs = running.filter((s) => s.role === 'developer').length
-  const pool = state.projects.find((p) => p.id === tasks[0]?.projectId)?.devPoolSize ?? 1
+  const devTasks = running.filter((s) => s.role === 'developer').map((s) => tasks.find((t) => t.id === s.taskId)?.key)
   return (
     <section className="page">
       <h1>Needs you</h1>
       <p className="muted">
-        {items.length ? `${items.length} item(s) waiting on you` : 'Nothing is waiting on you.'} · developers {devs}/{pool} busy · {running.length} agent(s) working{' '}
+        {items.length ? `${items.length} item(s) waiting on you` : 'Nothing is waiting on you.'} · developer: {devTasks.length ? `busy (${devTasks.join(', ')})` : 'idle'} · {running.length} agent(s) working{' '}
         <button className="link" onClick={() => mag.checkPrs()}>check PRs now</button>
       </p>
       <div className="list">
@@ -165,44 +167,55 @@ function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeM
   )
 }
 
-const roots = (tasks: Task[], inPlan: boolean) =>
-  tasks.filter((t) => !t.parentId && PLAN_STATUSES.includes(t.status) === inPlan)
-
 function PlanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
   return (
     <section className="page">
       <h1>Plan</h1>
-      <TaskTree roots={roots(tasks, true)} all={tasks} onOpen={onOpen} empty="Nothing planned yet. Groom tasks from the backlog and add them here." />
+      <p className="muted">Runs top to bottom, one task at a time: subtasks one by one, the next task after the previous one is merged.</p>
+      <TaskTree roots={planQueue(tasks)} all={tasks} onOpen={onOpen} plan empty="Nothing planned yet. Groom tasks from the backlog and add them here." />
     </section>
   )
 }
 
 function BacklogView({ project, tasks, onOpen }: { project: Project; tasks: Task[]; onOpen: (id: string) => void }) {
+  const roots = tasks.filter((t) => !t.parentId && !PLAN_STATUSES.includes(t.status)).sort((a, b) => a.createdAt - b.createdAt)
   return (
     <section className="page">
       <h1>Backlog</h1>
       <NewTask projectId={project.id} />
-      <TaskTree roots={roots(tasks, false)} all={tasks} onOpen={onOpen} empty="Backlog is empty." />
+      <TaskTree roots={roots} all={tasks} onOpen={onOpen} empty="Backlog is empty." />
     </section>
   )
 }
 
-function TaskTree({ roots, all, onOpen, empty }: { roots: Task[]; all: Task[]; onOpen: (id: string) => void; empty: string }) {
+/** Top-level tasks with their subtasks nested; `plan` adds queue numbers and ▲▼. */
+function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Task[]; onOpen: (id: string) => void; empty: string; plan?: boolean }) {
   if (!roots.length) return <p className="muted">{empty}</p>
-  const row = (t: Task, depth: number): React.ReactNode => (
+  const row = (t: Task, depth: number, no: string): React.ReactNode => (
     <div key={t.id}>
-      <button className="row" style={{ paddingLeft: 12 + depth * 20 }} onClick={() => onOpen(t.id)}>
-        <span className="key">{t.key}</span>
-        <span className="title grow">{t.title}</span>
-        {t.needsInput && <span className="dot" title={t.needsInput} />}
-        <span className="type">{t.type}</span>
-        <span className={`status s-${t.status}`}>{t.status.replace('_', ' ')}</span>
-        <span className="deps">{t.dependsOn === null ? 'deps ?' : t.dependsOn.length ? `after ${t.dependsOn.map((d) => all.find((x) => x.id === d)?.key ?? '?').join(', ')}` : 'no deps'}</span>
-      </button>
-      {all.filter((c) => c.parentId === t.id).map((c) => row(c, depth + 1))}
+      <div className="rowwrap">
+        <button className="row" style={{ paddingLeft: 12 + depth * 20 }} onClick={() => onOpen(t.id)}>
+          {plan && <span className="no">{no}</span>}
+          <span className="key">{t.key}</span>
+          <span className="title grow">{t.title}</span>
+          {t.needsInput && <span className="dot" title={t.needsInput} />}
+          <span className="type">{t.type}</span>
+          <span className={`status s-${t.status}`}>{t.status.replace('_', ' ')}</span>
+        </button>
+        {plan && (
+          <span className="moves">
+            {depth === 0 && (['up', 'down'] as const).map((dir) => (
+              <button key={dir} className="icon" disabled={!canMoveInPlan(t, all, dir)} aria-label={`Move ${t.key} ${dir}`} onClick={() => mag.move(t.id, dir)}>
+                {dir === 'up' ? '▲' : '▼'}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+      {subtasksOf(t.id, all).map((c, i) => row(c, depth + 1, `${no}.${i + 1}`))}
     </div>
   )
-  return <div className="tree">{roots.map((t) => row(t, 0))}</div>
+  return <div className="tree">{roots.map((t, i) => row(t, 0, String(i + 1)))}</div>
 }
 
 function NewTask({ projectId }: { projectId: string }) {
@@ -232,10 +245,11 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
   const canvas = canvases.find((c) => c.id === canvasId)
   const blockers = planBlockers(task)
   const parent = tasks.find((t) => t.id === task.parentId)
-  const children = tasks.filter((t) => t.parentId === task.id)
+  const children = subtasksOf(task.id, tasks)
   const anyRunning = sessions.some((s) => s.status === 'running')
-  const canGroom = !anyRunning && !PLAN_STATUSES.includes(task.status)
-  const canDevelop = !anyRunning && (task.status === 'planned' || task.status === 'in_progress') && task.type !== 'story'
+  const inPlan = PLAN_STATUSES.includes(task.status)
+  const canGroom = !anyRunning && !task.parentId && !inPlan
+  const canDevelop = !anyRunning && !children.length && (task.status === 'planned' || task.status === 'in_progress')
 
   return (
     <section className="taskview">
@@ -248,24 +262,23 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
         <div className="grow" />
         {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
         {canDevelop && (
-          <button onClick={() => mag.develop(task.id)} title="Normally the developer pool picks ready tasks by itself">
+          <button onClick={() => mag.develop(task.id)} title="Normally the plan starts the next task by itself">
             {task.status === 'planned' ? 'Start developer now' : 'Restart developer'}
           </button>
         )}
-        {!PLAN_STATUSES.includes(task.status) && (
+        {!task.parentId && !inPlan && (
           <button className="primary" disabled={blockers.length > 0} title={blockers.join(', ')} onClick={() => mag.addToPlan(task.id)}>
             Add to plan
           </button>
         )}
       </div>
       {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
-      {!PLAN_STATUSES.includes(task.status) && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
+      {!task.parentId && !inPlan && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
 
       <div className="meta">
         {parent && <span>Part of <button className="link" onClick={() => onOpen(parent.id)}>{parent.key} {parent.title}</button></span>}
         {children.length > 0 && <span>Subtasks: {children.map((c) => <button key={c.id} className="link" onClick={() => onOpen(c.id)}>{c.key}</button>)}</span>}
       </div>
-      <Deps task={task} tasks={tasks} />
       {task.work && (
         <div className="meta">
           <span>Branch <code>{task.work.branch}</code></span>
@@ -303,28 +316,6 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
         </div>
       </div>
     </section>
-  )
-}
-
-function Deps({ task, tasks }: { task: Task; tasks: Task[] }) {
-  const others = tasks.filter((t) => t.id !== task.id && t.parentId === task.parentId)
-  const set = (dependsOn: string[] | null) => mag.updateTask(task.id, { dependsOn })
-  return (
-    <div className="deps-edit">
-      <span className="label">Depends on</span>
-      <label><input type="radio" checked={task.dependsOn === null} onChange={() => set(null)} /> not set</label>
-      <label><input type="radio" checked={task.dependsOn?.length === 0} onChange={() => set([])} /> nothing</label>
-      {others.map((o) => (
-        <label key={o.id}>
-          <input
-            type="checkbox"
-            checked={!!task.dependsOn?.includes(o.id)}
-            onChange={(e) => set(e.target.checked ? [...(task.dependsOn ?? []), o.id] : (task.dependsOn ?? []).filter((d) => d !== o.id))}
-          />{' '}
-          {o.key} {o.title}
-        </label>
-      ))}
-    </div>
   )
 }
 
@@ -386,7 +377,6 @@ function Settings({ project }: { project: Project }) {
         <span className="muted small">The first repository is the agent's working directory; the rest are added with --add-dir.</span>
       </div>
       <div className="row2">
-        <label className="field">Developer agents in parallel<input type="number" min={0} max={8} defaultValue={project.devPoolSize} onChange={(e) => update({ devPoolSize: Math.max(0, Number(e.target.value) || 0) })} /></label>
         <label className="field">Base branch<input defaultValue={project.baseBranch} onChange={(e) => update({ baseBranch: e.target.value.trim() || 'main' })} /></label>
       </div>
       <label className="check">

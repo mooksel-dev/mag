@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { planBlockers, type Attachment, type Project, type Task } from '@mag/core'
+import { canMoveInPlan, planBlockers, planQueue, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask } from '../preload/api'
 import { Store } from './store'
@@ -86,10 +86,26 @@ app.whenReady().then(async () => {
   ipcMain.handle('task:create', (_, t: NewTask) => store.createTask(t))
   ipcMain.handle('task:update', (_, id: string, patch: Partial<Task>) => store.updateTask(id, patch))
   ipcMain.handle('task:groom', (_, id: string) => orch.groom(id))
+  const projectTasks = (projectId: string) => store.data.tasks.filter((t) => t.projectId === projectId)
   ipcMain.handle('task:addToPlan', (_, id: string) => {
-    const reasons = planBlockers(store.task(id))
-    if (!reasons.length) store.updateTask(id, { status: 'planned' })
-    return { ok: !reasons.length, reasons }
+    const task = store.task(id)
+    const reasons = planBlockers(task)
+    if (reasons.length) return { ok: false, reasons }
+    const tasks = projectTasks(task.projectId)
+    const rank = Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
+    store.updateTask(id, { status: 'planned', rank })
+    for (const sub of subtasksOf(id, tasks)) store.updateTask(sub.id, { status: 'planned' })
+    return { ok: true, reasons }
+  })
+  ipcMain.handle('task:move', (_, id: string, dir: 'up' | 'down') => {
+    const task = store.task(id)
+    const tasks = projectTasks(task.projectId)
+    if (!canMoveInPlan(task, tasks, dir)) throw new Error(`${task.key} cannot move ${dir}`)
+    const queue = planQueue(tasks)
+    const other = queue[queue.indexOf(task) + (dir === 'up' ? -1 : 1)]
+    const [a, b] = [task.rank, other.rank]
+    store.updateTask(other.id, { rank: a })
+    store.updateTask(task.id, { rank: b })
   })
   ipcMain.handle('task:develop', (_, id: string) => orch.develop(id))
   ipcMain.handle('pr:checkNow', () => scheduler.pollNow())

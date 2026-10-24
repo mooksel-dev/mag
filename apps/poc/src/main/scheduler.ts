@@ -1,4 +1,4 @@
-import { isReady } from '@mag/core'
+import { nextWork, planQueue, rollupStatus, subtasksOf } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { prFeedback, prState, removeWorktree } from './git'
@@ -6,19 +6,20 @@ import { prFeedback, prState, removeWorktree } from './git'
 const PICK_EVERY_MS = 5_000
 const PR_POLL_EVERY_MS = 60_000
 
-/** Developer pool: picks ready tasks from the plan and watches open PRs. */
+/** Runs the plan of every project in order, one unit at a time, and watches open PRs. */
 export function startScheduler(store: Store, orch: Orchestrator) {
   const pick = () => {
     for (const project of store.data.projects) {
       const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
-      const busy = store.data.sessions.filter(
-        (s) => s.role === 'developer' && orch.isRunning(s.id) && tasks.some((t) => t.id === s.taskId),
-      ).length
-      let free = project.devPoolSize - busy
-      for (const task of tasks.filter((t) => isReady(t, tasks)).sort((a, b) => a.createdAt - b.createdAt)) {
-        if (free-- <= 0) break
-        void orch.develop(task.id)
+      // A task with subtasks is never developed itself; its status follows them.
+      for (const task of planQueue(tasks)) {
+        const subs = subtasksOf(task.id, tasks)
+        const status = subs.length ? rollupStatus(subs) : task.status
+        if (status !== task.status) store.updateTask(task.id, { status })
       }
+      const next = nextWork(tasks)
+      const busy = store.data.sessions.some((s) => s.taskId === next?.id && s.role === 'developer' && orch.isRunning(s.id))
+      if (next && !busy) void orch.develop(next.id)
     }
   }
 

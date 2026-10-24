@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Project, Task, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Project, Task, TaskStatus, TaskType } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -18,6 +18,8 @@ export interface NewTask {
   type: TaskType
   description: string
   parentId?: string | null
+  /** Defaults to backlog; subtasks start as groomed. */
+  status?: TaskStatus
 }
 
 export interface MagApi {
@@ -30,6 +32,8 @@ export interface MagApi {
   updateTask(id: string, patch: Partial<Task>): Promise<void>
   groom(taskId: string): Promise<void>
   addToPlan(taskId: string): Promise<{ ok: boolean; reasons: string[] }>
+  /** Swap a plan task with its neighbour in the queue. */
+  move(taskId: string, dir: 'up' | 'down'): Promise<void>
   /** Start or restart the developer agent on a planned/in-progress task. */
   develop(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */

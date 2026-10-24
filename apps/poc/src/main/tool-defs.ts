@@ -4,7 +4,7 @@ export const TOOL_DEFS = [
   {
     name: 'get_task',
     scope: 'task',
-    description: 'Get the current task: title, type, status, description, parent, subtasks, dependencies, project repos and the doc template for this task type.',
+    description: 'Get the current task: title, type, status, description, parent (with its doc, for a subtask), subtasks in order (with their docs), project repos and the doc template for this task type.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -42,15 +42,49 @@ export const TOOL_DEFS = [
   {
     name: 'create_subtask',
     scope: 'task',
-    description: 'Create a subtask of the current task (this makes the current task a story). Use for decomposition: one subtask = one PR or one deliverable.',
+    description:
+      'Groomer only: add a subtask to the current task, with its own short doc. One subtask = one PR. Subtasks run in creation order; they are not groomed separately.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
         type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
         description: { type: 'string' },
+        doc: { type: 'string', description: 'Markdown doc of the subtask: what this part changes and how to check it.' },
       },
-      required: ['title', 'type', 'description'],
+      required: ['title', 'type', 'description', 'doc'],
+    },
+  },
+  {
+    name: 'update_subtask',
+    scope: 'task',
+    description: 'Groomer only: change a subtask of the current task (title, type, brief or doc) while re-grooming.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string' },
+        title: { type: 'string' },
+        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
+        description: { type: 'string' },
+        doc: { type: 'string' },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'delete_subtask',
+    scope: 'task',
+    description: 'Groomer only: remove a subtask of the current task that is no longer needed.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+  },
+  {
+    name: 'reorder_subtasks',
+    scope: 'task',
+    description: 'Groomer only: set the execution order of the subtasks. Pass every subtask key of the current task, in the new order.',
+    inputSchema: {
+      type: 'object',
+      properties: { keys: { type: 'array', items: { type: 'string' } } },
+      required: ['keys'],
     },
   },
   {
@@ -119,7 +153,7 @@ export const TOOL_DEFS = [
   {
     name: 'list_tasks',
     scope: 'any',
-    description: 'All tasks of the project: key, title, type, status, parent, dependencies, needs_input.',
+    description: 'All tasks of the project: the plan in execution order, then the backlog; subtasks follow their task. Key, title, type, status, parent, needs_input.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -136,10 +170,8 @@ export const TOOL_DEFS = [
       type: 'object',
       properties: {
         title: { type: 'string' },
-        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research', 'story'] },
+        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
         description: { type: 'string' },
-        parentKey: { type: 'string', description: 'Key of the parent story, if any.' },
-        dependsOn: { type: 'array', items: { type: 'string' }, description: 'Keys of tasks it depends on. [] = none.' },
       },
       required: ['title', 'type', 'description'],
     },
@@ -147,14 +179,13 @@ export const TOOL_DEFS = [
   {
     name: 'update_task',
     scope: 'project',
-    description: 'Change a task title, brief or dependencies (keys; [] = none, null = not decided).',
+    description: 'Change a task title or brief.',
     inputSchema: {
       type: 'object',
       properties: {
         key: { type: 'string' },
         title: { type: 'string' },
         description: { type: 'string' },
-        dependsOn: { type: ['array', 'null'], items: { type: 'string' } },
       },
       required: ['key'],
     },
