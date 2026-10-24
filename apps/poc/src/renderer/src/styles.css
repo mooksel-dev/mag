@@ -129,6 +129,8 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .md pre { background: var(--subtle); padding: 10px; border-radius: 8px; overflow: auto; }
 .chatbox { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; }
 .items { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+/* Never shrink chat items: an item with overflow: hidden (canvas cards) would collapse to 0 px in a long thread. */
+.items > * { flex: none; }
 .msg { padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; max-width: 92%; }
 .msg.user { align-self: flex-end; background: var(--soft); }
 .msg.agent { background: var(--subtle); }
@@ -197,7 +199,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .attachment .x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 9px; font-size: 12px; line-height: 1; }
 
 /* canvases */
-.canvascard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.canvascard { flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .canvashead { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .canvashead .title { font-weight: 600; }
 .canvasframe { display: block; width: 100%; border: 0; background: #fff; } /* canvases are authored on light */
@@ -208,6 +210,12 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .canvaschips { margin-bottom: 8px; }
 .canvaschips button.on { border-color: var(--accent); color: var(--accent); }
 .doc .canvascard { margin-bottom: 10px; }
+.menu { position: relative; }
+.menulist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: 300px; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.menulist button { display: flex; gap: 8px; align-items: baseline; border: none; background: none; text-align: left; padding: 6px 8px; }
+.menulist button:hover { background: var(--hover); }
+.menulist .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menuscrim { position: fixed; inset: 0; z-index: 4; }
 
 /* theme switcher */
 .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-right: 8px; }
