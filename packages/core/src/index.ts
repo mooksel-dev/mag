@@ -33,6 +33,8 @@ export interface Project {
   architecture: ArchDiagram | null
   /** State of the last architect run. */
   archRun: ArchRun | null
+  /** Provider and model per agent role; missing roles use DEFAULT_CHOICE (see resolveChoice). */
+  agents: Partial<Record<AgentRole, ModelChoice>>
   createdAt: number
 }
 
@@ -120,8 +122,39 @@ export interface Task {
 }
 
 /** chat = project-level conversation, not tied to a task. */
-export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat'
+export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
 export type AgentKind = 'claude-code'
+
+/** Which provider runs a role and on which model. */
+export interface ModelChoice {
+  agent: AgentKind
+  /** null = the provider's default model (no flag passed). */
+  model: string | null
+}
+
+export interface AgentModel {
+  id: string
+  label: string
+}
+
+/** Catalogue entry for one provider. */
+export interface AgentInfo {
+  id: AgentKind
+  displayName: string
+  /** The provider's CLI was found on this machine. */
+  detected: boolean
+  models: AgentModel[]
+}
+
+/** Roles the user can configure; reviewer follows developer. */
+export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect']
+
+export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null }
+
+export function resolveChoice(project: Pick<Project, 'agents'>, role: AgentRole): ModelChoice {
+  const agents = project.agents ?? {}
+  return agents[role] ?? (role === 'reviewer' ? agents.developer : undefined) ?? DEFAULT_CHOICE
+}
 
 export interface Attachment {
   name: string
@@ -156,6 +189,8 @@ export interface AgentSession {
   agent: AgentKind
   /** The agent's own session id, used to resume. */
   nativeSessionId: string | null
+  /** Model the agent reported when its session started. */
+  activeModel?: string
   status: 'running' | 'idle' | 'error'
   items: ChatItem[]
   createdAt: number

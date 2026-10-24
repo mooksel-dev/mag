@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentSession, Attachment, Canvas, Project, Task, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Project, Task, TaskType } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -38,6 +38,8 @@ export interface MagApi {
   open(target: string): Promise<void>
   /** Start the architect agent; the result lands in project.architecture. */
   runArchitect(projectId: string): Promise<void>
+  /** Agent providers with detection state and their models. */
+  listAgents(): Promise<AgentInfo[]>
   repoInfo(path: string): Promise<{ git: boolean; origin: string | null }>
   send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
   /** New project chat; returns its session id. */

@@ -64,9 +64,10 @@ export function parseClaudeLine(line: string): AgentEvent[] {
   }
 }
 
-function buildArgs(spec: RunSpec): string[] {
+export function buildArgs(spec: RunSpec): string[] {
   const args = ['-p', spec.prompt, '--output-format', 'stream-json', '--verbose']
   if (spec.resumeId) args.push('--resume', spec.resumeId)
+  if (spec.model) args.push('--model', spec.model)
   if (spec.appendSystemPrompt) args.push('--append-system-prompt', spec.appendSystemPrompt)
   if (spec.mcpConfigPath) args.push('--mcp-config', spec.mcpConfigPath)
   if (spec.allowedTools?.length) args.push('--allowedTools', spec.allowedTools.join(','))
@@ -81,6 +82,15 @@ export const claudeCode: AgentAdapter = {
 
   async detect() {
     return findBin()
+  },
+
+  async listModels() {
+    // Aliases track the latest model of each tier, so the list needs no updates.
+    return [
+      { id: 'opus', label: 'Opus' },
+      { id: 'sonnet', label: 'Sonnet' },
+      { id: 'haiku', label: 'Haiku' },
+    ]
   },
 
   start(spec, onEvent) {

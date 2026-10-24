@@ -98,6 +98,7 @@ app.whenReady().then(async () => {
     return shell.openPath(url)
   })
   ipcMain.handle('arch:run', (_, projectId: string) => orch.architect(projectId))
+  ipcMain.handle('agents:list', () => orch.agents())
   ipcMain.handle('repo:info', (_, path: string) => repoInfo(path))
   ipcMain.handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
   ipcMain.handle('chat:new', (_, projectId: string) => orch.newChat(projectId))

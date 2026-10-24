@@ -19,6 +19,7 @@ const api: MagApi = {
   checkPrs: () => ipcRenderer.invoke('pr:checkNow'),
   open: (target) => ipcRenderer.invoke('shell:open', target),
   runArchitect: (projectId) => ipcRenderer.invoke('arch:run', projectId),
+  listAgents: () => ipcRenderer.invoke('agents:list'),
   repoInfo: (path) => ipcRenderer.invoke('repo:info', path),
   send: (sessionId, text, attachments) => ipcRenderer.invoke('session:send', sessionId, text, attachments),
   newChat: (projectId) => ipcRenderer.invoke('chat:new', projectId),

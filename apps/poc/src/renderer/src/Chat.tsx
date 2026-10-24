@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { AgentSession, Attachment, CanvasRef } from '@mag/core'
+import { resolveChoice, type AgentSession, type Attachment, type CanvasRef } from '@mag/core'
 import type { AppState } from '../../preload/api'
+import { ModelPicker, useAgents } from './Agents'
 
 const mag = window.mag
 
@@ -211,6 +212,8 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
   const chats = state.sessions.filter((s) => s.projectId === projectId && s.role === 'chat').sort((a, b) => b.createdAt - a.createdAt)
   const [chatId, setChatId] = useState<string | null>(null)
   const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
+  const project = state.projects.find((p) => p.id === projectId)
+  const agents = useAgents()
 
   const startNew = async (text?: string, att?: Attachment[]) => {
     const id = await mag.newChat(projectId)
@@ -228,6 +231,17 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
         <button onClick={() => startNew()} title="New thread">New</button>
         <button className="link" onClick={onClose} aria-label="Close chat">×</button>
       </div>
+      {project && (
+        <div className="pchead">
+          <ModelPicker
+            agents={agents}
+            label="Chat"
+            choice={resolveChoice(project, 'chat')}
+            onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })}
+          />
+          {chat?.activeModel && <span className="muted small" title="Model of this thread's last run">{chat.activeModel}</span>}
+        </div>
+      )}
       {chat && chat.items.length > 0 ? (
         <Chat session={chat} onOpenTask={onOpenTask} placeholder="Talk about the project…" />
       ) : (

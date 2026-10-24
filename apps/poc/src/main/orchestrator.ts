@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentEvent, AgentRole, AgentSession, Attachment, ChatItem, Project, Task } from '@mag/core'
+import { resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -91,6 +91,22 @@ export class Orchestrator {
     return this.runs.has(sessionId)
   }
 
+  /** Provider catalogue for the settings UI. */
+  async agents(): Promise<AgentInfo[]> {
+    return Promise.all(
+      (Object.keys(adapters) as AgentKind[]).map(async (id) => {
+        const a = adapters[id]
+        const [bin, models] = await Promise.all([a.detect(), a.listModels()])
+        return { id, displayName: a.displayName, detected: bin !== null, models }
+      }),
+    )
+  }
+
+  /** Read on every run, so a settings change applies to the next turn. */
+  private choice(projectId: string, role: AgentRole): ModelChoice {
+    return resolveChoice(this.store.project(projectId), role)
+  }
+
   /** Background run that (re)describes the project's architecture. */
   architect(projectId: string) {
     const project = this.store.project(projectId)
@@ -102,9 +118,11 @@ export class Orchestrator {
     const set = (patch: Partial<NonNullable<Project['archRun']>>) =>
       this.store.updateProject(projectId, { archRun: { ...this.store.project(projectId).archRun!, ...patch } })
     let failed = false
-    const handle = adapters['claude-code'].start(
+    const c = this.choice(projectId, 'architect')
+    const handle = adapters[c.agent].start(
       {
         cwd: project.repos[0],
+        model: c.model ?? undefined,
         addDirs: project.repos.slice(1),
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
         appendSystemPrompt: ARCHITECT_PROMPT,
@@ -130,7 +148,7 @@ export class Orchestrator {
   /** Empty project chat; the first send starts the agent. */
   newChat(projectId: string) {
     this.store.project(projectId)
-    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'New chat' }).id
+    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New chat' }).id
   }
 
   /** Start (or restart) grooming in a new background session. */
@@ -219,7 +237,7 @@ export class Orchestrator {
 
   private newSession(taskId: string, role: AgentRole) {
     const projectId = this.store.task(taskId).projectId
-    return this.store.createSession({ projectId, taskId, role, agent: 'claude-code', status: 'running' })
+    return this.store.createSession({ projectId, taskId, role, agent: this.choice(projectId, role).agent, status: 'running' })
   }
 
   private mcpConfig(name: string, env: Record<string, string>) {
@@ -278,6 +296,13 @@ export class Orchestrator {
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
 
+    const c = this.choice(session.projectId, session.role)
+    if (c.agent !== session.agent) {
+      // Native sessions can't move between providers; the next run starts fresh.
+      session.agent = c.agent
+      session.nativeSessionId = null
+    }
+
     session.status = 'running'
     this.store.changed()
 
@@ -291,6 +316,7 @@ export class Orchestrator {
       switch (e.type) {
         case 'session.started':
           session.nativeSessionId = e.nativeSessionId
+          if (e.model) session.activeModel = e.model
           return this.store.changed()
         case 'message':
           return push({ kind: 'assistant', text: e.text, at })
@@ -311,7 +337,7 @@ export class Orchestrator {
     }
 
     const handle = adapters[session.agent].start(
-      { ...this.spec(session), prompt, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
+      { ...this.spec(session), prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)
