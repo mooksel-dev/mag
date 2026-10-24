@@ -56,19 +56,54 @@ export function CanvasCard({ canvas, latest = true }: { canvas: CanvasRef; lates
         {latest && <button className="link" onClick={() => setFull(true)}>Expand</button>}
       </div>
       {latest ? <CanvasFrame canvas={canvas} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
-      {full && (
-        <div className="overlay" onClick={() => setFull(false)}>
-          <div className="overlaybox" onClick={(e) => e.stopPropagation()}>
-            <div className="canvashead">
-              <span className="title">{canvas.title}</span>
-              <span className="muted small">v{canvas.version}</span>
-              <div className="grow" />
-              <button onClick={() => setFull(false)}>Close</button>
-            </div>
-            <CanvasFrame canvas={canvas} height="100%" />
-          </div>
+      {full && <CanvasOverlay canvas={canvas} onClose={() => setFull(false)} />}
+    </div>
+  )
+}
+
+/** Full-screen view of one canvas. */
+export function CanvasOverlay({ canvas, onClose }: { canvas: CanvasRef; onClose: () => void }) {
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="overlaybox" onClick={(e) => e.stopPropagation()}>
+        <div className="canvashead">
+          <span className="title">{canvas.title}</span>
+          <span className="muted small">v{canvas.version}</span>
+          <div className="grow" />
+          <button onClick={onClose}>Close</button>
         </div>
+        <CanvasFrame canvas={canvas} height="100%" />
+      </div>
+    </div>
+  )
+}
+
+/** Project canvases that belong to no task; otherwise they are only reachable by scrolling a chat. */
+function CanvasMenu({ canvases }: { canvases: AppState['canvases'] }) {
+  const [open, setOpen] = useState(false)
+  const [shownId, setShownId] = useState<string | null>(null)
+  const shown = canvases.find((c) => c.id === shownId)
+  if (!canvases.length) return null
+  return (
+    <div className="menu">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" title="Project canvases">
+        ▣ Canvases ({canvases.length})
+      </button>
+      {open && (
+        <>
+          <div className="menuscrim" onClick={() => setOpen(false)} />
+          <div className="menulist" role="menu">
+            {canvases.map((c) => (
+              <button key={c.id} role="menuitem" onClick={() => { setShownId(c.id); setOpen(false) }}>
+                <span className="title" title={c.title}>{c.title}</span>
+                <span className="muted small">v{c.version}</span>
+                <span className="muted small">{new Date(c.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
+      {shown && <CanvasOverlay canvas={shown} onClose={() => setShownId(null)} />}
     </div>
   )
 }
@@ -213,6 +248,7 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
   const [chatId, setChatId] = useState<string | null>(null)
   const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
   const project = state.projects.find((p) => p.id === projectId)
+  const canvases = state.canvases.filter((c) => c.projectId === projectId && c.taskId === null).sort((a, b) => b.updatedAt - a.updatedAt)
   const agents = useAgents()
 
   const startNew = async (text?: string, att?: Attachment[]) => {
@@ -229,6 +265,7 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
           {chats.map((c) => <option key={c.id} value={c.id}>{c.status === 'running' ? '● ' : ''}{c.title ?? 'Chat'}</option>)}
         </select>
         <button onClick={() => startNew()} title="New thread">New</button>
+        <CanvasMenu canvases={canvases} />
         <button className="link" onClick={onClose} aria-label="Close chat">×</button>
       </div>
       {project && (
