@@ -10,6 +10,7 @@ import {
 import type { AppState } from '../../preload/api'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
+import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
   try {
@@ -22,7 +23,7 @@ const loadFlag = (k: string, d: boolean) => {
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research', 'story']
-type Tab = 'needs' | 'plan' | 'architecture' | 'settings'
+type Tab = 'needs' | 'backlog' | 'plan' | 'architecture' | 'settings'
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null)
@@ -30,6 +31,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>('needs')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
+  const [theme, setTheme] = useTheme()
   const toggleChat = (v: boolean) => {
     setChatOpen(v)
     try { localStorage.setItem('mag.chatOpen', v ? '1' : '0') } catch { /* ignore */ }
@@ -69,18 +71,22 @@ export function App() {
             <button className={tab === 'needs' && !task ? 'on' : ''} onClick={() => { setTab('needs'); setTaskId(null) }}>
               Needs you {needsCount > 0 && <span className="badge">{needsCount}</span>}
             </button>
+            <button className={tab === 'backlog' && !task ? 'on' : ''} onClick={() => { setTab('backlog'); setTaskId(null) }}>Backlog</button>
             <button className={tab === 'plan' && !task ? 'on' : ''} onClick={() => { setTab('plan'); setTaskId(null) }}>Plan</button>
             <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => { setTab('architecture'); setTaskId(null) }}>Architecture</button>
             <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => { setTab('settings'); setTaskId(null) }}>Settings</button>
             <div className="grow" />
+            <ThemeSwitch mode={theme} onChange={setTheme} />
             {!chatOpen && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
           {task ? (
             <TaskView task={task} tasks={tasks} state={state} onBack={() => setTaskId(null)} onOpen={setTaskId} onOpenKey={openKey} />
           ) : tab === 'needs' ? (
             <NeedsYou tasks={tasks} state={state} onOpen={setTaskId} />
+          ) : tab === 'backlog' ? (
+            <BacklogView project={project} tasks={tasks} onOpen={setTaskId} />
           ) : tab === 'plan' ? (
-            <PlanView project={project} tasks={tasks} onOpen={setTaskId} />
+            <PlanView tasks={tasks} onOpen={setTaskId} />
           ) : tab === 'architecture' ? (
             <Architecture key={project.id} project={project} />
           ) : (
@@ -144,16 +150,36 @@ function NeedsYou({ tasks, state, onOpen }: { tasks: Task[]; state: AppState; on
   )
 }
 
-function PlanView({ project, tasks, onOpen }: { project: Project; tasks: Task[]; onOpen: (id: string) => void }) {
-  const roots = (inPlan: boolean) =>
-    tasks.filter((t) => !t.parentId && PLAN_STATUSES.includes(t.status) === inPlan)
+const THEMES: [ThemeMode, string, string][] = [['light', '☀︎', 'Light'], ['dark', '☾', 'Dark'], ['system', 'Auto', 'Follow the system']]
+
+function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
+  return (
+    <div className="seg" role="group" aria-label="Theme">
+      {THEMES.map(([m, label, title]) => (
+        <button key={m} className={m === mode ? 'on' : ''} aria-pressed={m === mode} title={title} onClick={() => onChange(m)}>{label}</button>
+      ))}
+    </div>
+  )
+}
+
+const roots = (tasks: Task[], inPlan: boolean) =>
+  tasks.filter((t) => !t.parentId && PLAN_STATUSES.includes(t.status) === inPlan)
+
+function PlanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
   return (
     <section className="page">
       <h1>Plan</h1>
-      <TaskTree roots={roots(true)} all={tasks} onOpen={onOpen} empty="Nothing planned yet. Groom tasks from the backlog and add them here." />
-      <h2>Backlog</h2>
+      <TaskTree roots={roots(tasks, true)} all={tasks} onOpen={onOpen} empty="Nothing planned yet. Groom tasks from the backlog and add them here." />
+    </section>
+  )
+}
+
+function BacklogView({ project, tasks, onOpen }: { project: Project; tasks: Task[]; onOpen: (id: string) => void }) {
+  return (
+    <section className="page">
+      <h1>Backlog</h1>
       <NewTask projectId={project.id} />
-      <TaskTree roots={roots(false)} all={tasks} onOpen={onOpen} empty="Backlog is empty." />
+      <TaskTree roots={roots(tasks, false)} all={tasks} onOpen={onOpen} empty="Backlog is empty." />
     </section>
   )
 }
