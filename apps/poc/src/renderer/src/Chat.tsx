@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { AgentSession, Attachment, CanvasRef } from '@mag/core'
@@ -149,6 +149,15 @@ export function Composer({
   const [files, setFiles] = useState<Attachment[]>([])
   const [drag, setDrag] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
+  const ta = useRef<HTMLTextAreaElement>(null)
+
+  // Grow with the content; CSS caps it at 40vh and scrolls. Clearing the text after send shrinks it back.
+  useLayoutEffect(() => {
+    const el = ta.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px` // + borders (box-sizing: border-box)
+  }, [text])
 
   const add = async (list: FileList | File[]) => {
     for (const f of Array.from(list)) {
@@ -179,15 +188,16 @@ export function Composer({
         <button type="button" className="icon" title="Attach files" aria-label="Attach files" onClick={() => picker.current?.click()}>+</button>
         <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
         <textarea
+          ref={ta}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onPaste={(e) => {
             const imgs = Array.from(e.clipboardData.files)
             if (imgs.length) { e.preventDefault(); void add(imgs) }
           }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit() } }}
-          placeholder={busy ? 'Wait for the agent to finish…' : `${placeholder}  (⌘↵ to send, paste screenshots)`}
-          rows={3}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
+          placeholder={busy ? 'Wait for the agent to finish…' : `${placeholder}  (↵ to send, ⇧↵ for a new line, paste screenshots)`}
+          rows={1}
           aria-label="Message"
         />
         {busy && onStop ? <button type="button" onClick={onStop}>Stop</button> : <button type="submit" className="primary" disabled={busy}>Send</button>}
