@@ -1,37 +1,94 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, resolveChoice, type AgentSession, type Attachment, type CanvasRef } from '@mag/core'
+import { createPortal } from 'react-dom'
+import { TASK_KEY_RE, resolveChoice, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
+import { useAppliedTheme } from './useTheme'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
 const KEY_LINK = new RegExp(`(^|[^\\w/[-])(${TASK_KEY_RE.source})(?![\\w-]|\\.\\d)`, 'g')
 
-/** Markdown with task keys (T-12, T-12.3) as links. Agent output is sanitized: it may echo repo or web content. */
-export function Markdown({ text, onOpenTask, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; className?: string }) {
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
+let mermaidSeq = 0
+
+/** Replaces ```mermaid code blocks under `root` with SVG; a block that fails to parse stays as code. */
+async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancelled: () => boolean) {
+  const blocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code.language-mermaid'))
+  if (!blocks.length) return
+  const { default: mermaid } = await import('mermaid')
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: theme === 'dark' ? 'dark' : 'default' })
+  for (const code of blocks) {
+    const id = `mermaid-${++mermaidSeq}`
+    try {
+      const { svg } = await mermaid.render(id, code.textContent ?? '')
+      if (cancelled()) return
+      const box = document.createElement('div')
+      box.className = 'mermaid'
+      box.innerHTML = svg
+      code.parentElement?.replaceWith(box)
+    } catch {
+      document.getElementById(`d${id}`)?.remove() // mermaid leaves its error diagram in <body>
+    }
+  }
+}
+
+/**
+ * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams and [title](canvas:<id>) links as
+ * inline canvases. Agent output is sanitized: it may echo repo or web content.
+ */
+export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; canvases?: CanvasRef[]; className?: string }) {
+  const theme = useAppliedTheme()
+  const ref = useRef<HTMLDivElement>(null)
+  const [slots, setSlots] = useState<HTMLElement[]>([])
   const html = useMemo(() => {
-    // Link keys outside fenced and inline code only.
+    // Rewrite outside fenced and inline code only. Canvas links become slots: DOMPurify drops the canvas: scheme.
     const linked = text
       .split(/(```[\s\S]*?```|`[^`\n]*`)/)
-      .map((part, i) => (i % 2 ? part : part.replace(KEY_LINK, '$1[$2](#task:$2)')))
+      .map((part, i) =>
+        i % 2
+          ? part
+          : part
+              .replace(/\[([^\]\n]*)\]\(canvas:([\w-]+)\)/g, (_, title: string, id: string) => `<span class="canvasslot" data-canvas="${id}">${escapeHtml(title)}</span>`)
+              .replace(KEY_LINK, '$1[$2](#task:$2)'),
+      )
       .join('')
     return DOMPurify.sanitize(marked.parse(linked, { async: false }) as string)
   }, [text])
+  useLayoutEffect(() => {
+    const found = Array.from(ref.current?.querySelectorAll<HTMLElement>('[data-canvas]') ?? []).filter((el) => canvases?.some((c) => c.id === el.dataset.canvas))
+    for (const el of found) el.textContent = '' // the card shows the title; unknown ids keep it as plain text
+    setSlots(found)
+  }, [html, theme, canvases])
+  useEffect(() => {
+    let cancelled = false
+    if (ref.current) void renderMermaid(ref.current, theme, () => cancelled)
+    return () => { cancelled = true }
+  }, [html, theme])
   return (
-    <div
-      className={className}
-      dangerouslySetInnerHTML={{ __html: html }}
-      onClick={(e) => {
-        const a = (e.target as HTMLElement).closest('a')
-        if (!a) return
-        e.preventDefault()
-        const href = a.getAttribute('href') ?? ''
-        if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
-        else if (/^https:\/\//.test(href)) mag.open(href)
-      }}
-    />
+    <>
+      <div
+        ref={ref}
+        key={theme} // a theme change re-renders mermaid from the source, so start from fresh HTML
+        className={className}
+        dangerouslySetInnerHTML={{ __html: html }}
+        onClick={(e) => {
+          const a = (e.target as HTMLElement).closest('a')
+          if (!a) return
+          e.preventDefault()
+          const href = a.getAttribute('href') ?? ''
+          if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
+          else if (/^https:\/\//.test(href)) mag.open(href)
+        }}
+      />
+      {slots.map((el, i) => {
+        const canvas = canvases?.find((c) => c.id === el.dataset.canvas)
+        return canvas && createPortal(<CanvasCard key={canvas.version} canvas={canvas} />, el, i)
+      })}
+    </>
   )
 }
 
@@ -118,10 +175,20 @@ export function Chat({ session, onOpenTask, placeholder }: { session: AgentSessi
   const lastCanvasAt = new Map<string, number>()
   session.items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
 
+  // Runs of consecutive tool calls render as one collapsible row. n = index of the (first) item, used as key.
+  const rows: { n: number; item?: ChatItem; tools?: ToolItem[] }[] = []
+  session.items.forEach((item, n) => {
+    const last = rows[rows.length - 1]
+    if (item.kind !== 'tool') rows.push({ n, item })
+    else if (last?.tools) last.tools.push(item)
+    else rows.push({ n, tools: [item] })
+  })
+
   return (
     <div className="chatbox">
       <div className="items">
-        {session.items.map((i, n) => {
+        {rows.map(({ n, item: i, tools }) => {
+          if (!i) return <ToolGroup key={n} tools={tools!} />
           switch (i.kind) {
             case 'user':
               return (
@@ -134,8 +201,6 @@ export function Chat({ session, onOpenTask, placeholder }: { session: AgentSessi
               return <Markdown key={n} className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
             case 'canvas':
               return <CanvasCard key={n} canvas={i.canvas} latest={lastCanvasAt.get(i.canvas.id) === n} />
-            case 'tool':
-              return <div key={n} className="tool">{i.ok === false ? '✗' : i.ok ? '✓' : '…'} {i.name} <span className="muted">{i.summary}</span></div>
             case 'result':
               return <div key={n} className="muted small">turn done{i.costUsd != null ? ` · $${i.costUsd.toFixed(3)}` : ''}</div>
             case 'error':
@@ -151,6 +216,30 @@ export function Chat({ session, onOpenTask, placeholder }: { session: AgentSessi
         onSend={(text, att) => mag.send(session.id, text, att)}
         onStop={() => mag.stop(session.id)}
       />
+    </div>
+  )
+}
+
+type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+
+const toolMark = (ok: boolean | undefined) => (ok === false ? '✗' : ok ? '✓' : '…')
+
+/** "▸ 8 tools · update_doc, create_subtask ×3"; expands to one line per call. */
+function ToolGroup({ tools }: { tools: ToolItem[] }) {
+  const [open, setOpen] = useState(false)
+  const counts = new Map<string, number>()
+  for (const t of tools) counts.set(t.name, (counts.get(t.name) ?? 0) + 1)
+  const names = [...counts].map(([name, k]) => (k > 1 ? `${name} ×${k}` : name)).join(', ')
+  // Surface what still matters when collapsed: a failure, or a call that is still running.
+  const mark = tools.some((t) => t.ok === false) ? '✗ ' : tools.some((t) => t.ok === undefined) ? '… ' : ''
+  return (
+    <div className="toolgroup">
+      <button className="toolsrow" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? '▾' : '▸'} {mark}{tools.length} {tools.length === 1 ? 'tool' : 'tools'} · {names}
+      </button>
+      {open && tools.map((t, i) => (
+        <div key={i} className="tool">{toolMark(t.ok)} {t.name} <span className="muted">{t.summary}</span></div>
+      ))}
     </div>
   )
 }
@@ -244,8 +333,8 @@ export function Composer({
   )
 }
 
-/** Project-level conversation, available next to every tab. */
-export function ProjectChat({ projectId, state, onOpenTask, onClose }: { projectId: string; state: AppState; onOpenTask: (key: string) => void; onClose: () => void }) {
+/** Project-level conversation: a closable aside next to every tab, or `embedded` in the task screen's chat panel. */
+export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }: { projectId: string; state: AppState; onOpenTask: (key: string) => void; onClose?: () => void; embedded?: boolean }) {
   const chats = state.sessions.filter((s) => s.projectId === projectId && s.role === 'chat').sort((a, b) => b.createdAt - a.createdAt)
   const [chatId, setChatId] = useState<string | null>(null)
   const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
@@ -259,8 +348,9 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
     if (text !== undefined) await mag.send(id, text, att)
   }
 
+  const Box = embedded ? 'div' : 'aside'
   return (
-    <aside className="projectchat">
+    <Box className={embedded ? 'projectchat embedded' : 'projectchat'}>
       <div className="pchead">
         <select value={chat?.id ?? ''} onChange={(e) => setChatId(e.target.value)} aria-label="Chat thread" disabled={!chats.length}>
           {!chats.length && <option value="">No chats yet</option>}
@@ -268,7 +358,7 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
         </select>
         <button onClick={() => startNew()} title="New thread">New</button>
         <CanvasMenu canvases={canvases} />
-        <button className="link" onClick={onClose} aria-label="Close chat">×</button>
+        {onClose && <button className="link" onClick={onClose} aria-label="Close chat">×</button>}
       </div>
       {project && (
         <div className="pchead">
@@ -294,6 +384,6 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose }: { project
           <Composer busy={false} placeholder="Talk about the project…" onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))} />
         </div>
       )}
-    </aside>
+    </Box>
   )
 }

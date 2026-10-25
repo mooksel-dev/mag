@@ -118,10 +118,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'reorder_subtasks': {
         const ordered = (Array.isArray(args.keys) ? args.keys : []).map(ownSubtask)
-        const subs = subtasksOf(task.id, store.data.tasks)
-        if (ordered.length !== subs.length || new Set(ordered).size !== ordered.length)
-          throw new Error(`Pass every subtask key exactly once: ${subs.map((t) => t.key).join(', ')}`)
-        ordered.forEach((t, rank) => store.updateTask(t.id, { rank }))
+        store.reorderSubtasks(task.id, ordered.map((t) => t.id))
         return `Order: ${ordered.map((t) => t.key).join(', ')}.`
       }
 

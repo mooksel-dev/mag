@@ -188,6 +188,15 @@ export class Store {
     this.changed()
   }
 
+  /** Sets the subtask order of a parent: `ids` must name each of its subtasks exactly once. */
+  reorderSubtasks(parentId: string, ids: string[]) {
+    const subs = subtasksOf(parentId, this.data.tasks)
+    const known = new Set(subs.map((t) => t.id))
+    if (ids.length !== subs.length || new Set(ids).size !== ids.length || !ids.every((x) => known.has(x)))
+      throw new Error(`Pass every subtask exactly once: ${subs.map((t) => t.key).join(', ')}`)
+    ids.forEach((tid, rank) => this.updateTask(tid, { rank }))
+  }
+
   /** Removes a task with its doc, canvases and sessions. */
   deleteTask(tid: string) {
     this.task(tid)

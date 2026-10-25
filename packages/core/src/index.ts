@@ -280,6 +280,20 @@ export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): bo
   return !!other && notStarted(task, tasks) && notStarted(other, tasks)
 }
 
+/** A subtask a developer has picked up: running, in review or done. */
+export function subtaskStarted(sub: Task): boolean {
+  return !!sub.work || sub.status === 'in_progress' || sub.status === 'in_review' || sub.status === 'done'
+}
+
+/** Whether a subtask can swap places with its neighbour: neither may be started, so nothing jumps above started work. */
+export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
+  if (!sub.parentId) return false
+  const subs = subtasksOf(sub.parentId, tasks)
+  const i = subs.findIndex((t) => t.id === sub.id)
+  const other = i < 0 ? undefined : subs[dir === 'up' ? i - 1 : i + 1]
+  return !!other && !subtaskStarted(sub) && !subtaskStarted(other)
+}
+
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {
   dev: `# Problem
 One or two sentences.

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMoveInPlan, nextWork, planBlockers, planQueue, rollupStatus, type Task, type TaskStatus } from './index.ts'
+import { canMoveInPlan, canMoveSubtask, nextWork, planBlockers, planQueue, rollupStatus, type Task, type TaskStatus } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
   id,
@@ -95,4 +95,22 @@ test('canMoveInPlan: only between not-started tasks', () => {
   assert.equal(canMoveInPlan(t('a'), tasks, 'down'), false, 'a has started work')
   assert.equal(canMoveInPlan(t('done'), tasks, 'down'), false)
   assert.equal(canMoveInPlan(t('x'), tasks, 'up'), false, 'not in the plan')
+})
+
+test('canMoveSubtask: only between not-started siblings', () => {
+  const tasks = [
+    task('p', 'in_progress', 0),
+    sub('s1', 'p', 'done', 0),
+    sub('s2', 'p', 'planned', 1),
+    sub('s3', 'p', 'planned', 2),
+    sub('o', 'other', 'planned', 0),
+  ]
+  const t = (id: string) => tasks.find((x) => x.id === id)!
+  assert.equal(canMoveSubtask(t('s3'), tasks, 'up'), true)
+  assert.equal(canMoveSubtask(t('s2'), tasks, 'down'), true)
+  assert.equal(canMoveSubtask(t('s2'), tasks, 'up'), false, 's1 is done')
+  assert.equal(canMoveSubtask(t('s1'), tasks, 'down'), false, 'done')
+  assert.equal(canMoveSubtask(t('s3'), tasks, 'down'), false, 'last one')
+  assert.equal(canMoveSubtask(t('o'), tasks, 'up'), false, 'first of its parent')
+  assert.equal(canMoveSubtask(t('p'), tasks, 'down'), false, 'not a subtask')
 })

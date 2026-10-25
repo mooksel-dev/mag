@@ -38,3 +38,16 @@ export function useTheme(): [mode: ThemeMode, setMode: (m: ThemeMode) => void] {
   }
   return [mode, setMode]
 }
+
+const applied = (): 'light' | 'dark' => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
+
+/** The theme useTheme applied, for components that draw with their own colours (mermaid). */
+export function useAppliedTheme(): 'light' | 'dark' {
+  const [theme, setTheme] = useState(applied)
+  useEffect(() => {
+    const mo = new MutationObserver(() => setTheme(applied()))
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => mo.disconnect()
+  }, [])
+  return theme
+}

@@ -25,7 +25,9 @@ Your output is the task document, not chat. Work like this:
    and call set_needs_input with a one-line summary. Then stop and wait. Ask everything at once, at the task
    level; subtasks never get questions of their own.
 4. When the user answers in chat, update the doc (remove answered questions, fold answers in).
-5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc.
+5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc
+   as a link [title](canvas:<id>), using the id show_canvas returned; the app renders the canvas in place. Diagrams in
+   the doc itself can be \`\`\`mermaid blocks.
 6. If the task is too big for one PR, split it with create_subtask: one subtask = one PR, each with a short doc
    (what this part changes, how to check it). Subtasks run one by one in creation order; they are not groomed
    separately. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
