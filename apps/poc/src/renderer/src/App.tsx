@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   DEFAULT_TEMPLATES,
   PLAN_STATUSES,
   SETTABLE_ROLES,
   canMoveInPlan,
+  canMoveSubtask,
   planBlockers,
   planQueue,
   resolveChoice,
   subtasksOf,
+  type AgentSession,
   type Project,
   type Task,
   type TaskType,
@@ -58,22 +60,22 @@ export function App() {
 
   return (
     <div className="app">
-      <nav className="sidebar">
-        <div className="brand">mag <span>PoC</span></div>
-        <div className="label">Projects</div>
+      <nav className="rail" aria-label="Projects">
         {state.projects.map((p) => (
-          <button key={p.id} className={`nav ${p.id === project?.id ? 'on' : ''}`} onClick={() => { setProjectId(p.id); setTaskId(null) }}>
-            {p.name}
+          <button key={p.id} className={`railbtn ${p.id === project?.id ? 'on' : ''}`} title={p.name} aria-label={p.name} aria-current={p.id === project?.id} onClick={() => { setProjectId(p.id); setTaskId(null) }}>
+            {initials(p.name)}
           </button>
         ))}
-        <NewProject onCreate={(p) => { setProjectId(p.id); setTab('settings') }} />
-        {!state.claudeBin && <div className="warn">Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.</div>}
+        <NewProject onCreate={(p) => { setProjectId(p.id); setTaskId(null); setTab('settings') }} />
+        <div className="grow" />
+        {!state.claudeBin && <span className="railwarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠</span>}
       </nav>
 
       {project ? (
         <div className="workspace">
         <main className="main">
           <header className="tabs">
+            <span className="brand">mag <span>PoC</span></span>
             <button className={tab === 'needs' && !task ? 'on' : ''} onClick={() => { setTab('needs'); setTaskId(null) }}>
               Needs you {needsCount > 0 && <span className="badge">{needsCount}</span>}
             </button>
@@ -83,10 +85,10 @@ export function App() {
             <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => { setTab('settings'); setTaskId(null) }}>Settings</button>
             <div className="grow" />
             <ThemeSwitch mode={theme} onChange={setTheme} />
-            {!chatOpen && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
+            {!chatOpen && !task && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
           {task ? (
-            <TaskView task={task} tasks={tasks} state={state} onBack={() => setTaskId(null)} onOpen={setTaskId} onOpenKey={openKey} />
+            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={(t) => { setTab(t); setTaskId(null) }} onOpen={setTaskId} onOpenKey={openKey} />
           ) : tab === 'needs' ? (
             <NeedsYou tasks={tasks} state={state} onOpen={setTaskId} />
           ) : tab === 'backlog' ? (
@@ -99,7 +101,7 @@ export function App() {
             <Settings project={project} />
           )}
         </main>
-        {chatOpen && <ProjectChat key={project.id} projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />}
+        {chatOpen && !task && <ProjectChat key={project.id} projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />}
         </div>
       ) : (
         <main className="main empty">Create a project to start.</main>
@@ -118,12 +120,29 @@ function needsLabel(t: Task): [string, string, string] {
   return ['violet', 'Review grooming', 'Groomed, ready to add to the plan']
 }
 
+/** "My project" -> "MP", "mag" -> "MA". */
+function initials(name: string) {
+  const words = name.trim().split(/[\s_-]+/).filter(Boolean)
+  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? '?').slice(0, 2)).toUpperCase()
+}
+
 function NewProject({ onCreate }: { onCreate: (p: Project) => void }) {
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
+  const close = () => { setOpen(false); setName('') }
   return (
-    <form className="newproject" onSubmit={async (e) => { e.preventDefault(); if (!name.trim()) return; onCreate(await mag.createProject(name.trim())); setName('') }}>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="+ New project" aria-label="New project name" />
-    </form>
+    <div className="menu">
+      <button className="railbtn add" title="New project" aria-label="New project" aria-expanded={open} onClick={() => setOpen((o) => !o)}>+</button>
+      {open && (
+        <>
+          <div className="menuscrim" onClick={close} />
+          <form className="popover" onSubmit={async (e) => { e.preventDefault(); if (!name.trim()) return; onCreate(await mag.createProject(name.trim())); close() }}>
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && close()} placeholder="New project name" aria-label="New project name" />
+            <button type="submit" className="primary">Create</button>
+          </form>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -234,15 +253,27 @@ function NewTask({ projectId }: { projectId: string }) {
   )
 }
 
-function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onBack: () => void; onOpen: (id: string) => void; onOpenKey: (key: string) => void }) {
+type TaskTab = 'document' | 'subtasks' | 'canvases' | 'work'
+type ChatMode = 'task' | 'project'
+
+const ago = (ts: number) => {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000))
+  return m < 60 ? `${m}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 60 / 24)}d`
+}
+const prLabel = (url: string) => `PR #${url.match(/\/pull\/(\d+)/)?.[1] ?? '?'} ↗`
+const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
+
+function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onNav: (tab: Tab) => void; onOpen: (id: string) => void; onOpenKey: (key: string) => void }) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
-  const agents = useAgents()
   const [sessionId, setSessionId] = useState<string | null>(null)
   const session = sessions.find((s) => s.id === sessionId) ?? sessions[sessions.length - 1] ?? null
   const doc = state.docs[task.id]
-  const canvases = state.canvases.filter((c) => c.taskId === task.id)
-  const [canvasId, setCanvasId] = useState<string | null>(null)
-  const canvas = canvases.find((c) => c.id === canvasId)
+  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tab lists the task's own.
+  const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === task.projectId), [state.canvases, task.projectId])
+  const canvases = useMemo(
+    () => projectCanvases.filter((c) => c.taskId === task.id).sort((a, b) => b.updatedAt - a.updatedAt),
+    [projectCanvases, task.id],
+  )
   const blockers = planBlockers(task)
   const parent = tasks.find((t) => t.id === task.parentId)
   const children = subtasksOf(task.id, tasks)
@@ -250,36 +281,163 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
   const inPlan = PLAN_STATUSES.includes(task.status)
   const canGroom = !anyRunning && !task.parentId && !inPlan
   const canDevelop = !anyRunning && !children.length && (task.status === 'planned' || task.status === 'in_progress')
+  const [tab, setTab] = useState<TaskTab>('document')
+  const shownTab = tab === 'subtasks' && !children.length ? 'document' : tab
+  const [fullBrief, setFullBrief] = useState(false)
+  const [chatMode, setChatModeState] = useState<ChatMode>(() => (loadFlag('mag.taskChatProject', false) ? 'project' : 'task'))
+  const setChatMode = (m: ChatMode) => {
+    setChatModeState(m)
+    try { localStorage.setItem('mag.taskChatProject', m === 'project' ? '1' : '0') } catch { /* ignore */ }
+  }
+  const tabs: [TaskTab, string][] = [
+    ['document', 'Document'],
+    ...(children.length ? [['subtasks', `Subtasks · ${children.length}`] as [TaskTab, string]] : []),
+    ['canvases', `Canvases · ${canvases.length}`],
+    ['work', 'Work'],
+  ]
 
   return (
     <section className="taskview">
-      <div className="taskhead">
-        <button className="link" onClick={onBack}>← Back</button>
-        <span className="key">{task.key}</span>
-        <h1>{task.title}</h1>
-        <span className="type">{task.type}</span>
-        <span className={`status s-${task.status}`}>{task.status.replace('_', ' ')}</span>
-        <div className="grow" />
-        {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
-        {canDevelop && (
-          <button onClick={() => mag.develop(task.id)} title="Normally the plan starts the next task by itself">
-            {task.status === 'planned' ? 'Start developer now' : 'Restart developer'}
-          </button>
-        )}
-        {!task.parentId && !inPlan && (
-          <button className="primary" disabled={blockers.length > 0} title={blockers.join(', ')} onClick={() => mag.addToPlan(task.id)}>
-            Add to plan
-          </button>
-        )}
-      </div>
-      {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
-      {!task.parentId && !inPlan && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
+      <div className="taskmain">
+        <div className="taskhead">
+          <div className="taskrow">
+            {parent ? (
+              <button className="crumb" onClick={() => onOpen(parent.id)}>{parent.key} {parent.title} ›</button>
+            ) : (
+              <button className="crumb" onClick={() => onNav(inPlan ? 'plan' : 'backlog')}>{inPlan ? 'Plan' : 'Backlog'} ›</button>
+            )}
+            <span className="key">{task.key}</span>
+            <span className="type">{task.type}</span>
+            <span className={`status s-${task.status}`}>
+              {task.status.replace('_', ' ')}
+              {children.length > 0 && ` · ${children.filter((c) => c.status === 'done').length}/${children.length}`}
+            </span>
+            <div className="grow" />
+            {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
+            {canDevelop && (
+              <button onClick={() => mag.develop(task.id)} title="Normally the plan starts the next task by itself">
+                {task.status === 'planned' ? 'Start developer now' : 'Restart developer'}
+              </button>
+            )}
+            {!task.parentId && !inPlan && (
+              <button className="primary" disabled={blockers.length > 0} title={blockers.join(', ')} onClick={() => mag.addToPlan(task.id)}>
+                Add to plan
+              </button>
+            )}
+          </div>
+          <h1>{task.title}</h1>
+          {task.description && (
+            <div className={`brief ${fullBrief ? 'full' : ''}`}>
+              <span className="brieftext">{task.description}</span>
+              <button className="link" onClick={() => setFullBrief((f) => !f)}>{fullBrief ? 'Less' : 'Full brief'}</button>
+            </div>
+          )}
+          {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
+          {!task.parentId && !inPlan && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
+        </div>
 
-      <div className="meta">
-        {parent && <span>Part of <button className="link" onClick={() => onOpen(parent.id)}>{parent.key} {parent.title}</button></span>}
-        {children.length > 0 && <span>Subtasks: {children.map((c) => <button key={c.id} className="link" onClick={() => onOpen(c.id)}>{c.key}</button>)}</span>}
+        <div className="tasktabs" role="tablist">
+          {tabs.map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={shownTab === id} className={shownTab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}</button>
+          ))}
+        </div>
+
+        <div className="taskbody">
+          {shownTab === 'document' &&
+            (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
+          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} state={state} onOpen={onOpen} />}
+          {shownTab === 'canvases' &&
+            (canvases.length ? (
+              <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
+            ) : (
+              <p className="muted">No canvases yet. Agents draw mockups and diagrams here.</p>
+            ))}
+          {shownTab === 'work' && <WorkTab task={task} sessions={sessions} onShow={(id) => { setSessionId(id); setChatMode('task') }} />}
+        </div>
       </div>
-      {task.work && (
+
+      <div className="chatpanel">
+        <div className="chathead">
+          <div className="seg" role="group" aria-label="Chat">
+            <button className={chatMode === 'task' ? 'on' : ''} aria-pressed={chatMode === 'task'} onClick={() => setChatMode('task')}>Task agent</button>
+            <button className={chatMode === 'project' ? 'on' : ''} aria-pressed={chatMode === 'project'} onClick={() => setChatMode('project')}>Project</button>
+          </div>
+          {chatMode === 'task' && sessions.length > 1 && (
+            <select value={session?.id} onChange={(e) => setSessionId(e.target.value)} aria-label="Session">
+              {sessions.map((s, i) => <option key={s.id} value={s.id}>#{i + 1} {s.role}</option>)}
+            </select>
+          )}
+          {chatMode === 'task' && session && <span className="chatmodel">{session.role} · {session.activeModel ?? 'default'}</span>}
+        </div>
+        {chatMode === 'project' ? (
+          <ProjectChat key={task.projectId} projectId={task.projectId} state={state} onOpenTask={onOpenKey} embedded />
+        ) : session ? (
+          <Chat session={session} onOpenTask={onOpenKey} />
+        ) : (
+          <p className="muted pad">No agent has worked on this task yet.</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** Subtasks in run order with status, PR and ▲▼ to reorder the ones not started yet. */
+function SubtaskList({ parent, subs, tasks, state, onOpen }: { parent: Task; subs: Task[]; tasks: Task[]; state: AppState; onOpen: (id: string) => void }) {
+  const move = (i: number, dir: 'up' | 'down') => {
+    const ids = subs.map((t) => t.id)
+    const j = dir === 'up' ? i - 1 : i + 1
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    void mag.reorderSubtasks(parent.id, ids)
+  }
+  const subline = (t: Task, i: number): React.ReactNode => {
+    const run = state.sessions.find((s) => s.taskId === t.id && s.status === 'running')
+    if (run) {
+      const started = [...run.items].reverse().find((x) => x.kind === 'user')?.at ?? run.createdAt
+      return <><span className="dot live" />{run.role} working · {ago(started)}</>
+    }
+    if (t.status === 'done') return `merged · ${ago(t.updatedAt)} ago`
+    if (t.status === 'in_review') return 'waiting for review'
+    if (t.status === 'in_progress') return 'started, no agent running'
+    return i > 0 ? `next after ${subs[i - 1].key}` : 'first in line'
+  }
+  return (
+    <>
+      <div className="sublist">
+        {subs.map((t, i) => (
+          <div key={t.id} className="subrow" onClick={() => onOpen(t.id)}>
+            <span className="ord">
+              {(['up', 'down'] as const).map((dir) => (
+                <button key={dir} className="icon" disabled={!canMoveSubtask(t, tasks, dir)} aria-label={`Move ${t.key} ${dir}`} onClick={(e) => { e.stopPropagation(); move(i, dir) }}>
+                  {dir === 'up' ? '▲' : '▼'}
+                </button>
+              ))}
+            </span>
+            <span className="key">{t.key}</span>
+            <div className="subtitle">
+              <button className="link" onClick={(e) => { e.stopPropagation(); onOpen(t.id) }}>{t.title}</button>
+              <div className="muted small">{subline(t, i)}</div>
+            </div>
+            {t.work?.prUrl ? (
+              <button className="link small" onClick={(e) => { e.stopPropagation(); mag.open(t.work!.prUrl!) }}>{prLabel(t.work.prUrl)}</button>
+            ) : (
+              <span className="muted">—</span>
+            )}
+            <span className={`status s-${t.status}`}>{t.status.replace('_', ' ')}</span>
+            <span className="no">{i + 1}</span>
+          </div>
+        ))}
+      </div>
+      <p className="muted small">Subtasks run in this order.</p>
+    </>
+  )
+}
+
+/** Branch, worktree and PR of the task, and every agent session that worked on it. */
+function WorkTab({ task, sessions, onShow }: { task: Task; sessions: AgentSession[]; onShow: (sessionId: string) => void }) {
+  const agents = useAgents()
+  return (
+    <>
+      {task.work ? (
         <div className="meta">
           <span>Branch <code>{task.work.branch}</code></span>
           <button className="link" onClick={() => mag.open(task.work!.worktree)}>open worktree</button>
@@ -287,35 +445,26 @@ function TaskView({ task, tasks, state, onBack, onOpen, onOpenKey }: { task: Tas
           {task.work.prUrl && <button className="link" onClick={() => mag.checkPrs()}>check now</button>}
           {task.work.checkError && <span className="pill amber" title={task.work.checkError}>PR check failed: {task.work.checkError.slice(0, 80)}</span>}
         </div>
+      ) : (
+        <p className="muted">No developer has started on this task yet.</p>
       )}
-
-      <div className="split">
-        <div className="doc">
-          <div className="label">Task document {task.description && <span className="muted">· brief: {task.description}</span>}</div>
-          {canvases.length > 0 && (
-            <div className="chips canvaschips">
-              {canvases.map((c) => (
-                <button key={c.id} className={c.id === canvasId ? 'on' : ''} onClick={() => setCanvasId(c.id === canvasId ? null : c.id)}>▣ {c.title}</button>
-              ))}
-            </div>
-          )}
-          {canvas && <CanvasCard key={canvas.id + canvas.version} canvas={canvas} />}
-          {doc ? <Markdown className="md docmd" text={doc} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>}
+      <h2>Sessions</h2>
+      {sessions.length ? (
+        <div className="sessionlist">
+          {sessions.map((s, i) => (
+            <button key={s.id} className="sessionrow" onClick={() => onShow(s.id)} title="Show in the chat panel">
+              <span className="no">#{i + 1}</span>
+              <span>{s.role}</span>
+              <span className="muted grow">{agentName(agents, s.agent)} · {s.activeModel ?? 'default'}</span>
+              <span className={`status ${s.status === 'running' ? 's-in_progress' : ''}`}>{s.status}</span>
+              <span className="muted small">${sessionCost(s).toFixed(2)}</span>
+            </button>
+          ))}
         </div>
-        <div className="chat">
-          <div className="label">
-            Agent
-            {sessions.length > 1 && (
-              <select value={session?.id} onChange={(e) => setSessionId(e.target.value)} aria-label="Session">
-                {sessions.map((s, i) => <option key={s.id} value={s.id}>#{i + 1} {s.role}</option>)}
-              </select>
-            )}
-            {session && <span className="pill violet">{agentName(agents, session.agent)} · {session.activeModel ?? 'default'}</span>}
-          </div>
-          {session ? <Chat session={session} onOpenTask={onOpenKey} /> : <p className="muted">No agent has worked on this task yet.</p>}
-        </div>
-      </div>
-    </section>
+      ) : (
+        <p className="muted">No agent sessions yet.</p>
+      )}
+    </>
   )
 }
 
