@@ -34,6 +34,8 @@ export interface MagApi {
   addToPlan(taskId: string): Promise<{ ok: boolean; reasons: string[] }>
   /** Swap a plan task with its neighbour in the queue. */
   move(taskId: string, dir: 'up' | 'down'): Promise<void>
+  /** Set the order of a task's subtasks; `ids` lists each of them exactly once. */
+  reorderSubtasks(parentId: string, ids: string[]): Promise<void>
   /** Start or restart the developer agent on a planned/in-progress task. */
   develop(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */

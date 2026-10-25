@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { BACKLOG_STATUSES, PLAN_STATUSES,type AgentSession, type Canvas, type Project, type Task } from '@mag/core'
+import { BACKLOG_STATUSES, PLAN_STATUSES, subtasksOf, type AgentSession, type Canvas, type Project, type Task } from '@mag/core'
 import type { NewTask } from '../preload/api'
 
 interface Data {
@@ -141,6 +141,15 @@ export class Store {
   updateTask(tid: string, patch: Partial<Task>) {
     Object.assign(this.task(tid), patch, { id: tid, updatedAt: Date.now() })
     this.changed()
+  }
+
+  /** Sets the subtask order of a parent: `ids` must name each of its subtasks exactly once. */
+  reorderSubtasks(parentId: string, ids: string[]) {
+    const subs = subtasksOf(parentId, this.data.tasks)
+    const known = new Set(subs.map((t) => t.id))
+    if (ids.length !== subs.length || new Set(ids).size !== ids.length || !ids.every((x) => known.has(x)))
+      throw new Error(`Pass every subtask exactly once: ${subs.map((t) => t.key).join(', ')}`)
+    ids.forEach((tid, rank) => this.updateTask(tid, { rank }))
   }
 
   /** Removes a task with its doc, canvases and sessions. */

@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { canMoveInPlan, planBlockers, planQueue, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
+import { canMoveInPlan, planBlockers, planQueue, subtaskStarted, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask } from '../preload/api'
 import { Store } from './store'
@@ -106,6 +106,12 @@ app.whenReady().then(async () => {
     const [a, b] = [task.rank, other.rank]
     store.updateTask(other.id, { rank: a })
     store.updateTask(task.id, { rank: b })
+  })
+  ipcMain.handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => {
+    const subs = subtasksOf(parentId, store.data.tasks)
+    const moved = subs.find((t, i) => subtaskStarted(t) && ids[i] !== t.id)
+    if (moved) throw new Error(`${moved.key} has started; it keeps its place`)
+    store.reorderSubtasks(parentId, ids)
   })
   ipcMain.handle('task:develop', (_, id: string) => orch.develop(id))
   ipcMain.handle('pr:checkNow', () => scheduler.pollNow())
