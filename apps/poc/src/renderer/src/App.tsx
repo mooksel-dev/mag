@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  BACKLOG_STATUSES,
   DEFAULT_TEMPLATES,
   PLAN_STATUSES,
   SETTABLE_ROLES,
   canMoveInPlan,
   canMoveSubtask,
+  inbox,
   planBlockers,
   planQueue,
   resolveChoice,
@@ -12,12 +14,15 @@ import {
   type AgentSession,
   type Project,
   type Task,
+  type TaskStatus,
   type TaskType,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
+import { ago, prLabel } from './format'
+import { Home, StatusChip } from './Home'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -31,13 +36,15 @@ const loadFlag = (k: string, d: boolean) => {
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-type Tab = 'needs' | 'backlog' | 'plan' | 'architecture' | 'settings'
+type Tab = 'home' | 'backlog' | 'plan' | 'architecture' | 'settings'
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('needs')
+  const [tab, setTab] = useState<Tab>('home')
   const [taskId, setTaskId] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null)
+  const [focusNewTask, setFocusNewTask] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
   const [theme, setTheme] = useTheme()
   const toggleChat = (v: boolean) => {
@@ -54,7 +61,13 @@ export function App() {
   const project = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
   const tasks = project ? state.tasks.filter((t) => t.projectId === project.id) : []
   const task = tasks.find((t) => t.id === taskId) ?? null
-  const needsCount = tasks.filter(needsYou).length
+  const inboxCount = inbox(tasks, state.sessions).length
+  const roots = tasks.filter((t) => !t.parentId)
+  const backlogCount = roots.filter((t) => BACKLOG_STATUSES.includes(t.status)).length
+  const planCount = roots.length - backlogCount
+  /** Leaving a tab drops its status filter and the new-task focus. */
+  const go = (t: Tab) => { setTab(t); setTaskId(null); setStatusFilter(null); setFocusNewTask(false) }
+  const filterBy = (s: TaskStatus) => { go(BACKLOG_STATUSES.includes(s) ? 'backlog' : 'plan'); setStatusFilter(s) }
   const openKey = (key: string) => setTaskId(tasks.find((t) => t.key === key)?.id ?? null)
   const chatBusy = state.sessions.some((s) => s.projectId === project?.id && s.role === 'chat' && s.status === 'running')
 
@@ -62,11 +75,11 @@ export function App() {
     <div className="app">
       <nav className="rail" aria-label="Projects">
         {state.projects.map((p) => (
-          <button key={p.id} className={`railbtn ${p.id === project?.id ? 'on' : ''}`} title={p.name} aria-label={p.name} aria-current={p.id === project?.id} onClick={() => { setProjectId(p.id); setTaskId(null) }}>
+          <button key={p.id} className={`railbtn ${p.id === project?.id ? 'on' : ''}`} title={p.name} aria-label={p.name} aria-current={p.id === project?.id} onClick={() => { setProjectId(p.id); setTaskId(null); setStatusFilter(null) }}>
             {initials(p.name)}
           </button>
         ))}
-        <NewProject onCreate={(p) => { setProjectId(p.id); setTaskId(null); setTab('settings') }} />
+        <NewProject onCreate={(p) => { setProjectId(p.id); go('settings') }} />
         <div className="grow" />
         {!state.claudeBin && <span className="railwarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠</span>}
       </nav>
@@ -76,25 +89,25 @@ export function App() {
         <main className="main">
           <header className="tabs">
             <span className="brand">mag <span>PoC</span></span>
-            <button className={tab === 'needs' && !task ? 'on' : ''} onClick={() => { setTab('needs'); setTaskId(null) }}>
-              Needs you {needsCount > 0 && <span className="badge">{needsCount}</span>}
+            <button className={tab === 'home' && !task ? 'on' : ''} onClick={() => go('home')}>
+              Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
             </button>
-            <button className={tab === 'backlog' && !task ? 'on' : ''} onClick={() => { setTab('backlog'); setTaskId(null) }}>Backlog</button>
-            <button className={tab === 'plan' && !task ? 'on' : ''} onClick={() => { setTab('plan'); setTaskId(null) }}>Plan</button>
-            <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => { setTab('architecture'); setTaskId(null) }}>Architecture</button>
-            <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => { setTab('settings'); setTaskId(null) }}>Settings</button>
+            <button className={tab === 'backlog' && !task ? 'on' : ''} onClick={() => go('backlog')}>Backlog <span className="cnt">{backlogCount}</span></button>
+            <button className={tab === 'plan' && !task ? 'on' : ''} onClick={() => go('plan')}>Plan <span className="cnt">{planCount}</span></button>
+            <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => go('architecture')}>Architecture</button>
+            <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => go('settings')}>Settings</button>
             <div className="grow" />
             <ThemeSwitch mode={theme} onChange={setTheme} />
             {!chatOpen && !task && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
           {task ? (
-            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={(t) => { setTab(t); setTaskId(null) }} onOpen={setTaskId} onOpenKey={openKey} />
-          ) : tab === 'needs' ? (
-            <NeedsYou tasks={tasks} state={state} onOpen={setTaskId} />
+            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={go} onOpen={setTaskId} onOpenKey={openKey} />
+          ) : tab === 'home' ? (
+            <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onFilter={filterBy} onNewTask={() => { go('backlog'); setFocusNewTask(true) }} />
           ) : tab === 'backlog' ? (
-            <BacklogView project={project} tasks={tasks} onOpen={setTaskId} />
+            <BacklogView project={project} tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} focusNewTask={focusNewTask} />
           ) : tab === 'plan' ? (
-            <PlanView tasks={tasks} onOpen={setTaskId} />
+            <PlanView tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} />
           ) : tab === 'architecture' ? (
             <Architecture key={project.id} project={project} />
           ) : (
@@ -108,16 +121,6 @@ export function App() {
       )}
     </div>
   )
-}
-
-function needsYou(t: Task) {
-  return !!t.needsInput || (t.status === 'groomed' && !t.parentId) || (t.status === 'in_review' && !!t.work?.prUrl)
-}
-
-function needsLabel(t: Task): [string, string, string] {
-  if (t.needsInput) return ['amber', 'Input needed', t.needsInput]
-  if (t.status === 'in_review') return ['green', 'Ready to merge', 'PR is open. Merge it yourself; comments go back to the agent.']
-  return ['violet', 'Review grooming', 'Groomed, ready to add to the plan']
 }
 
 /** "My project" -> "MP", "mag" -> "MA". */
@@ -146,34 +149,6 @@ function NewProject({ onCreate }: { onCreate: (p: Project) => void }) {
   )
 }
 
-function NeedsYou({ tasks, state, onOpen }: { tasks: Task[]; state: AppState; onOpen: (id: string) => void }) {
-  const items = tasks.filter(needsYou)
-  const running = state.sessions.filter((s) => s.status === 'running' && tasks.some((t) => t.id === s.taskId))
-  const devTasks = running.filter((s) => s.role === 'developer').map((s) => tasks.find((t) => t.id === s.taskId)?.key)
-  return (
-    <section className="page">
-      <h1>Needs you</h1>
-      <p className="muted">
-        {items.length ? `${items.length} item(s) waiting on you` : 'Nothing is waiting on you.'} · developer: {devTasks.length ? `busy (${devTasks.join(', ')})` : 'idle'} · {running.length} agent(s) working{' '}
-        <button className="link" onClick={() => mag.checkPrs()}>check PRs now</button>
-      </p>
-      <div className="list">
-        {items.map((t) => {
-          const [color, label, text] = needsLabel(t)
-          return (
-            <button key={t.id} className="item" onClick={() => onOpen(t.id)}>
-              <span className={`pill ${color}`}>{label}</span>
-              <span className="key">{t.key}</span>
-              <span className="title">{t.title}</span>
-              <span className="muted grow">{text}</span>
-            </button>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
 const THEMES: [ThemeMode, string, string][] = [['light', '☀︎', 'Light'], ['dark', '☾', 'Dark'], ['system', 'Auto', 'Follow the system']]
 
 function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
@@ -186,23 +161,34 @@ function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeM
   )
 }
 
-function PlanView({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => void }) {
+interface StatusFilterProps {
+  /** Only top-level tasks in this status. */
+  statusFilter: TaskStatus | null
+  onClearFilter: () => void
+}
+
+function PlanView({ tasks, onOpen, statusFilter, onClearFilter }: { tasks: Task[]; onOpen: (id: string) => void } & StatusFilterProps) {
+  const roots = planQueue(tasks).filter((t) => !statusFilter || t.status === statusFilter)
   return (
     <section className="page">
       <h1>Plan</h1>
       <p className="muted">Runs top to bottom, one task at a time: subtasks one by one, the next task after the previous one is merged.</p>
-      <TaskTree roots={planQueue(tasks)} all={tasks} onOpen={onOpen} plan empty="Nothing planned yet. Groom tasks from the backlog and add them here." />
+      {statusFilter && <StatusChip status={statusFilter} onClear={onClearFilter} />}
+      <TaskTree roots={roots} all={tasks} onOpen={onOpen} plan empty={statusFilter ? 'No plan tasks in this status.' : 'Nothing planned yet. Groom tasks from the backlog and add them here.'} />
     </section>
   )
 }
 
-function BacklogView({ project, tasks, onOpen }: { project: Project; tasks: Task[]; onOpen: (id: string) => void }) {
-  const roots = tasks.filter((t) => !t.parentId && !PLAN_STATUSES.includes(t.status)).sort((a, b) => a.createdAt - b.createdAt)
+function BacklogView({ project, tasks, onOpen, statusFilter, onClearFilter, focusNewTask }: { project: Project; tasks: Task[]; onOpen: (id: string) => void; focusNewTask: boolean } & StatusFilterProps) {
+  const roots = tasks
+    .filter((t) => !t.parentId && !PLAN_STATUSES.includes(t.status) && (!statusFilter || t.status === statusFilter))
+    .sort((a, b) => a.createdAt - b.createdAt)
   return (
     <section className="page">
       <h1>Backlog</h1>
-      <NewTask projectId={project.id} />
-      <TaskTree roots={roots} all={tasks} onOpen={onOpen} empty="Backlog is empty." />
+      <NewTask projectId={project.id} autoFocus={focusNewTask} />
+      {statusFilter && <StatusChip status={statusFilter} onClear={onClearFilter} />}
+      <TaskTree roots={roots} all={tasks} onOpen={onOpen} empty={statusFilter ? 'No backlog tasks in this status.' : 'Backlog is empty.'} />
     </section>
   )
 }
@@ -236,13 +222,13 @@ function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Tas
   return <div className="tree">{roots.map((t) => row(t, 0))}</div>
 }
 
-function NewTask({ projectId }: { projectId: string }) {
+function NewTask({ projectId, autoFocus }: { projectId: string; autoFocus?: boolean }) {
   const [title, setTitle] = useState('')
   const [type, setType] = useState<TaskType>('dev')
   const [description, setDescription] = useState('')
   return (
     <form className="newtask" onSubmit={async (e) => { e.preventDefault(); if (!title.trim()) return; await mag.createTask({ projectId, title: title.trim(), type, description }); setTitle(''); setDescription('') }}>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
+      <input autoFocus={autoFocus} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
       <select value={type} onChange={(e) => setType(e.target.value as TaskType)} aria-label="Task type">
         {TYPES.map((t) => <option key={t}>{t}</option>)}
       </select>
@@ -255,11 +241,6 @@ function NewTask({ projectId }: { projectId: string }) {
 type TaskTab = 'document' | 'subtasks' | 'canvases' | 'work'
 type ChatMode = 'task' | 'project'
 
-const ago = (ts: number) => {
-  const m = Math.max(0, Math.round((Date.now() - ts) / 60000))
-  return m < 60 ? `${m}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 60 / 24)}d`
-}
-const prLabel = (url: string) => `PR #${url.match(/\/pull\/(\d+)/)?.[1] ?? '?'} ↗`
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
 
 function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onNav: (tab: Tab) => void; onOpen: (id: string) => void; onOpenKey: (key: string) => void }) {
