@@ -151,7 +151,10 @@ export class Orchestrator {
       },
     )
     handle.done.then(() => {
-      if (!failed) set({ status: 'done', note: undefined })
+      if (failed) return
+      set({ status: 'done', note: undefined })
+      const concerns = (this.store.project(projectId).architecture?.apps ?? []).flatMap((a) => a.nodes).filter((n) => n.concern).length
+      this.store.logEvent({ projectId, taskId: null, taskKey: null, kind: 'architecture', text: `Architecture refreshed · ${concerns} concerns` })
     })
   }
 
@@ -316,7 +319,9 @@ export class Orchestrator {
     }
 
     session.status = 'running'
+    session.runStartedAt = Date.now()
     this.store.changed()
+    this.logSessionEvent(session, 'agent_started', `${session.role} started`)
 
     const push = (item: ChatItem) => {
       session.items.push(item)
@@ -356,9 +361,17 @@ export class Orchestrator {
     handle.done.then(() => {
       this.runs.delete(session.id)
       if (session.status === 'running') session.status = 'idle'
+      if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
       this.afterRun(session)
       this.store.changed()
     })
+  }
+
+  /** Task sessions only: project chats stay out of the log. */
+  private logSessionEvent(session: AgentSession, kind: 'agent_started' | 'agent_failed', text: string) {
+    if (!session.taskId) return
+    const task = this.store.data.tasks.find((t) => t.id === session.taskId)
+    this.store.logEvent({ projectId: session.projectId, taskId: session.taskId, taskKey: task?.key ?? null, kind, text })
   }
 
   /** Make sure a finished run never leaves a task silently stuck. */

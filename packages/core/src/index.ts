@@ -193,7 +193,25 @@ export interface AgentSession {
   status: 'running' | 'idle' | 'error'
   items: ChatItem[]
   createdAt: number
+  /** When the current (or last) run started. */
+  runStartedAt?: number
 }
+
+export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture'
+
+/** One line of the project's activity log. */
+export interface ProjectEvent {
+  id: string
+  projectId: string
+  taskId: string | null
+  /** Copied in so the line still renders after the task is deleted. */
+  taskKey: string | null
+  kind: EventKind
+  text: string
+  at: number
+}
+
+export type NewEvent = Omit<ProjectEvent, 'id' | 'at'>
 
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
@@ -292,6 +310,84 @@ export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): bo
   const i = subs.findIndex((t) => t.id === sub.id)
   const other = i < 0 ? undefined : subs[dir === 'up' ? i - 1 : i + 1]
   return !!other && !subtaskStarted(sub) && !subtaskStarted(other)
+}
+
+export const STATUS_LABELS: Record<TaskStatus, string> = {
+  backlog: 'Backlog',
+  grooming: 'Grooming',
+  groomed: 'Groomed',
+  planned: 'Planned',
+  in_progress: 'In progress',
+  in_review: 'In review',
+  done: 'Done',
+}
+
+/** Events a task update produces: status, input request and PR check failure. */
+export function taskChangeEvents(prev: Task, next: Task): NewEvent[] {
+  const base = { projectId: next.projectId, taskId: next.id, taskKey: next.key }
+  const events: NewEvent[] = []
+  if (prev.status !== next.status) {
+    const pr = !!next.work?.prUrl
+    const text =
+      next.status === 'in_review' && pr ? 'PR opened' : next.status === 'done' && pr ? 'merged' : STATUS_LABELS[next.status]
+    events.push({ ...base, kind: 'status', text })
+  }
+  if (next.needsInput && next.needsInput !== prev.needsInput) events.push({ ...base, kind: 'needs_input', text: next.needsInput })
+  const checkError = next.work?.checkError
+  if (checkError && checkError !== prev.work?.checkError) events.push({ ...base, kind: 'check_failed', text: checkError })
+  return events
+}
+
+export type InboxKind = 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge' | 'groomed'
+
+export interface InboxItem {
+  task: Task
+  kind: InboxKind
+  text: string
+}
+
+const INBOX_ORDER: InboxKind[] = ['agent_failed', 'check_failed', 'question', 'ready_to_merge', 'groomed']
+
+function inboxItem(task: Task, sessions: AgentSession[]): InboxItem | null {
+  const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
+  if (last?.status === 'error') return { task, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
+  if (task.work?.checkError) return { task, kind: 'check_failed', text: task.work.checkError }
+  if (task.needsInput) return { task, kind: 'question', text: task.needsInput }
+  if (task.status === 'in_review' && task.work?.prUrl) return { task, kind: 'ready_to_merge', text: 'PR is ready to merge' }
+  if (!task.parentId && task.status === 'groomed') return { task, kind: 'groomed', text: 'Groomed, ready to add to the plan' }
+  return null
+}
+
+/** What waits on the user: at most one item per task, most urgent kind first. Sessions are in creation order. */
+export function inbox(tasks: Task[], sessions: AgentSession[]): InboxItem[] {
+  return tasks
+    .map((t) => inboxItem(t, sessions))
+    .filter((i): i is InboxItem => !!i)
+    .sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
+}
+
+export type PipelineStage = Exclude<TaskStatus, 'done'> | 'done7d'
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Top-level task counts per status; done only counts tasks finished in the last 7 days. */
+export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage, number> {
+  const counts: Record<PipelineStage, number> = { backlog: 0, grooming: 0, groomed: 0, planned: 0, in_progress: 0, in_review: 0, done7d: 0 }
+  for (const t of tasks) {
+    if (t.parentId) continue
+    if (t.status !== 'done') counts[t.status]++
+    else if (t.updatedAt >= now - WEEK_MS) counts.done7d++
+  }
+  return counts
+}
+
+/** The unit being worked on and the one after it, in nextWork order. */
+export function queueHead(tasks: Task[]): { current: Task | null; next: Task | null } {
+  const units = workUnits(tasks)
+  const i = units.findIndex((u) => u.status === 'in_progress' || u.status === 'in_review')
+  const current = i < 0 ? null : units[i]
+  const next = units.slice(i + 1).find((u) => u.status !== 'done') ?? null
+  return { current, next }
 }
 
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {

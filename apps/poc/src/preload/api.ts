@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Project, Task, TaskStatus, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Project, ProjectEvent, Task, TaskStatus, TaskType } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -9,6 +9,8 @@ export interface AppState {
   docs: Record<string, string>
   /** Canvas metadata; fetch the HTML with getCanvas. */
   canvases: Omit<Canvas, 'html'>[]
+  /** Project activity log, oldest first. */
+  events: ProjectEvent[]
   claudeBin: string | null
 }
 
