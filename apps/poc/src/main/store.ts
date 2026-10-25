@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, type AgentSession, type Canvas, type ChatItem, type Project, type Task } from '@mag/core'
+import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask } from '../preload/api'
 
 interface Data {
@@ -11,18 +11,24 @@ interface Data {
   docs: Record<string, string>
   /** Agent-drawn HTML; not sent to the renderer with the state (see canvasList). */
   canvases: Record<string, Canvas>
+  /** Project activity log, oldest first; kept after its task is deleted. */
+  events: ProjectEvent[]
 }
+
+/** Events kept per project. */
+const EVENTS_PER_PROJECT = 300
 
 const id = () => randomUUID().slice(0, 8)
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {} }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [] }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private file: string) {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
+    this.data.events ??= []
     // Runs don't survive a restart.
     for (const s of this.data.sessions) if (s.status === 'running') s.status = 'idle'
     // Defaults for data written by older PoC versions.
@@ -184,7 +190,21 @@ export class Store {
   }
 
   updateTask(tid: string, patch: Partial<Task>) {
-    Object.assign(this.task(tid), patch, { id: tid, updatedAt: Date.now() })
+    const t = this.task(tid)
+    const prev = { ...t }
+    Object.assign(t, patch, { id: tid, updatedAt: Date.now() })
+    for (const e of taskChangeEvents(prev, t)) this.logEvent(e)
+    this.changed()
+  }
+
+  /** Appends to the project's activity log, keeping the last EVENTS_PER_PROJECT. */
+  logEvent(e: NewEvent) {
+    this.data.events.push({ ...e, id: id(), at: Date.now() })
+    const mine = this.data.events.filter((x) => x.projectId === e.projectId)
+    if (mine.length > EVENTS_PER_PROJECT) {
+      const drop = new Set(mine.slice(0, mine.length - EVENTS_PER_PROJECT))
+      this.data.events = this.data.events.filter((x) => !drop.has(x))
+    }
     this.changed()
   }
 
@@ -197,7 +217,7 @@ export class Store {
     ids.forEach((tid, rank) => this.updateTask(tid, { rank }))
   }
 
-  /** Removes a task with its doc, canvases and sessions. */
+  /** Removes a task with its doc, canvases and sessions; its events stay in the log. */
   deleteTask(tid: string) {
     this.task(tid)
     this.data.tasks = this.data.tasks.filter((t) => t.id !== tid)
