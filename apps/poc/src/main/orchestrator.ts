@@ -78,7 +78,7 @@ the previous one is merged.
   update_task / update_task_doc. Say in one line what you recorded.
 - For anything visual (UI mockups, flows, diagrams, comparisons) use show_canvas with one self-contained HTML page;
   revise it by id instead of drawing a new one. Prefer showing over describing.
-- Refer to tasks by key (T-12); the app turns keys into links.
+- Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
 - Be concise: short answers, markdown only where it helps. The user hates filler.`
 
 function summarize(input: unknown): string {

@@ -207,14 +207,13 @@ function BacklogView({ project, tasks, onOpen }: { project: Project; tasks: Task
   )
 }
 
-/** Top-level tasks with their subtasks nested; `plan` adds queue numbers and ▲▼. */
+/** Top-level tasks with their subtasks nested; `plan` adds ▲▼. */
 function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Task[]; onOpen: (id: string) => void; empty: string; plan?: boolean }) {
   if (!roots.length) return <p className="muted">{empty}</p>
-  const row = (t: Task, depth: number, no: string): React.ReactNode => (
+  const row = (t: Task, depth: number): React.ReactNode => (
     <div key={t.id}>
       <div className="rowwrap">
         <button className="row" style={{ paddingLeft: 12 + depth * 20 }} onClick={() => onOpen(t.id)}>
-          {plan && <span className="no">{no}</span>}
           <span className="key">{t.key}</span>
           <span className="title grow">{t.title}</span>
           {t.needsInput && <span className="dot" title={t.needsInput} />}
@@ -231,10 +230,10 @@ function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Tas
           </span>
         )}
       </div>
-      {subtasksOf(t.id, all).map((c, i) => row(c, depth + 1, `${no}.${i + 1}`))}
+      {subtasksOf(t.id, all).map((c) => row(c, depth + 1))}
     </div>
   )
-  return <div className="tree">{roots.map((t, i) => row(t, 0, String(i + 1)))}</div>
+  return <div className="tree">{roots.map((t) => row(t, 0))}</div>
 }
 
 function NewTask({ projectId }: { projectId: string }) {

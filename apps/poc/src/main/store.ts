@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { BACKLOG_STATUSES, PLAN_STATUSES, subtasksOf, type AgentSession, type Canvas, type Project, type Task } from '@mag/core'
+import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, type AgentSession, type Canvas, type ChatItem, type Project, type Task } from '@mag/core'
 import type { NewTask } from '../preload/api'
 
 interface Data {
@@ -52,6 +52,49 @@ export class Store {
     }
     for (const s of this.data.sessions)
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
+    this.migrateSubtaskKeys()
+  }
+
+  /** Subtasks used to take keys from the project counter (T-7); give them parent-based keys (T-6.1) and rewrite mentions. */
+  private migrateSubtaskKeys() {
+    const maps = new Map<string, Record<string, string>>()
+    for (const parent of this.data.tasks) {
+      parent.nextSubNo ??= 1
+      for (const sub of subtasksOf(parent.id, this.data.tasks)) {
+        if (sub.key.includes('.')) continue
+        const key = subtaskKey(parent.key, parent.nextSubNo++)
+        if (!maps.has(sub.projectId)) maps.set(sub.projectId, {})
+        maps.get(sub.projectId)![sub.key] = key
+        // work.branch / work.worktree keep the old key: they name real branches and dirs.
+        sub.key = key
+      }
+    }
+    for (const [pid, map] of maps) {
+      const rw = (text: string) => rewriteKeys(text, map)
+      for (const p of this.data.projects) if (p.id === pid) p.notes = rw(p.notes)
+      for (const t of this.data.tasks) {
+        if (t.projectId !== pid) continue
+        t.title = rw(t.title)
+        t.description = rw(t.description)
+        if (this.data.docs[t.id] != null) this.data.docs[t.id] = rw(this.data.docs[t.id])
+      }
+      for (const s of this.data.sessions) {
+        if (s.projectId !== pid) continue
+        if (s.title) s.title = rw(s.title)
+        s.items = s.items.map((i): ChatItem => {
+          if (i.kind === 'user' || i.kind === 'assistant' || i.kind === 'error') return { ...i, text: rw(i.text) }
+          if (i.kind === 'tool') return { ...i, summary: rw(i.summary) }
+          if (i.kind === 'canvas') return { ...i, canvas: { ...i.canvas, title: rw(i.canvas.title) } }
+          return i
+        })
+      }
+      for (const c of Object.values(this.data.canvases)) {
+        if (c.projectId !== pid) continue
+        c.title = rw(c.title)
+        c.html = rw(c.html)
+      }
+    }
+    if (maps.size) this.changed()
   }
 
   onChange(fn: () => void) {
@@ -118,10 +161,11 @@ export class Store {
     const now = Date.now()
     const parentId = n.parentId ?? null
     const siblings = this.data.tasks.filter((x) => x.projectId === p.id && x.parentId === parentId)
+    const parent = parentId ? this.task(parentId) : null
     const t: Task = {
       id: id(),
       projectId: p.id,
-      key: `T-${p.nextTaskNo++}`,
+      key: parent ? subtaskKey(parent.key, parent.nextSubNo++) : `T-${p.nextTaskNo++}`,
       parentId,
       title: n.title,
       type: n.type,
@@ -130,6 +174,7 @@ export class Store {
       rank: Math.max(0, ...siblings.map((x) => x.rank)) + 1,
       needsInput: null,
       work: null,
+      nextSubNo: 1,
       createdAt: now,
       updatedAt: now,
     }
