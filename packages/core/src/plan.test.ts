@@ -14,6 +14,7 @@ const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task>
   rank,
   needsInput: null,
   work: null,
+  nextSubNo: 1,
   createdAt: 0,
   updatedAt: 0,
   ...patch,

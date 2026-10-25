@@ -159,7 +159,7 @@ export const TOOL_DEFS = [
   {
     name: 'read_task',
     scope: 'project',
-    description: 'One task with its document, by key (e.g. T-12).',
+    description: 'One task with its document, by key (e.g. T-12, subtask T-12.3).',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {

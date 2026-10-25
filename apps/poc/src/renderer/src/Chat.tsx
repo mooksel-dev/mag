@@ -1,19 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { resolveChoice, type AgentSession, type Attachment, type CanvasRef } from '@mag/core'
+import { TASK_KEY_RE, resolveChoice, type AgentSession, type Attachment, type CanvasRef } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
 
 const mag = window.mag
+// A trailing period is not part of the key: "see T-1." links T-1.
+const KEY_LINK = new RegExp(`(^|[^\\w/[-])(${TASK_KEY_RE.source})(?![\\w-]|\\.\\d)`, 'g')
 
-/** Markdown with task keys (T-12) as links. Agent output is sanitized: it may echo repo or web content. */
+/** Markdown with task keys (T-12, T-12.3) as links. Agent output is sanitized: it may echo repo or web content. */
 export function Markdown({ text, onOpenTask, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; className?: string }) {
   const html = useMemo(() => {
     // Link keys outside fenced and inline code only.
     const linked = text
       .split(/(```[\s\S]*?```|`[^`\n]*`)/)
-      .map((part, i) => (i % 2 ? part : part.replace(/(^|[^\w/[-])(T-\d+)\b/g, '$1[$2](#task:$2)')))
+      .map((part, i) => (i % 2 ? part : part.replace(KEY_LINK, '$1[$2](#task:$2)')))
       .join('')
     return DOMPurify.sanitize(marked.parse(linked, { async: false }) as string)
   }, [text])

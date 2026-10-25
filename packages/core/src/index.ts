@@ -101,7 +101,7 @@ export interface TaskWork {
 export interface Task {
   id: string
   projectId: string
-  /** Human key, e.g. T-12. */
+  /** Human key: T-12 for tasks, T-12.3 for subtasks. Assigned at creation, never changes. */
   key: string
   parentId: string | null
   title: string
@@ -114,6 +114,8 @@ export interface Task {
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
   work: TaskWork | null
+  /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
+  nextSubNo: number
   createdAt: number
   updatedAt: number
 }
@@ -205,6 +207,22 @@ export type AgentEvent =
 
 export const PLAN_STATUSES: TaskStatus[] = ['planned', 'in_progress', 'in_review', 'done']
 export const BACKLOG_STATUSES: TaskStatus[] = ['backlog', 'grooming', 'groomed']
+
+/** A task key: T-12, or T-12.3 for a subtask. No boundaries; wrap it for the context. */
+export const TASK_KEY_RE = /T-\d+(?:\.\d+)?/
+
+export function subtaskKey(parentKey: string, n: number): string {
+  return `${parentKey}.${n}`
+}
+
+/** Whole key mentions: not inside T-21, T-2.1, xT-2 or a path (worktrees/T-2); a trailing period ("see T-2.") is not part of the key. */
+const KEY_MENTION = new RegExp(`(?<![\\w./-])${TASK_KEY_RE.source}(?![\\w-]|\\.\\d)`, 'g')
+
+/** Replaces key mentions found in `map` (old key -> new key) in one pass. */
+export function rewriteKeys(text: string, map: Record<string, string>): string {
+  if (!Object.keys(map).length) return text
+  return text.replace(KEY_MENTION, (k) => (Object.hasOwn(map, k) ? map[k] : k))
+}
 
 /** Subtasks of a task, in order. */
 export function subtasksOf(id: string, tasks: Task[]): Task[] {
