@@ -31,6 +31,34 @@ test('parseClaudeLine lists slash commands and skills on init, without terminal-
   assert.deepEqual(e, { type: 'session.started', nativeSessionId: 's1', model: undefined, commands: ['review', 'compact', 'pdf'] })
 })
 
+test('buildArgs passes --permission-prompt-tool when set', () => {
+  const args = buildArgs({ cwd: '/tmp', prompt: 'hi', permissionPromptTool: 'mcp__mag__approve_tool' })
+  assert.deepEqual(args.slice(args.indexOf('--permission-prompt-tool'), args.indexOf('--permission-prompt-tool') + 2), ['--permission-prompt-tool', 'mcp__mag__approve_tool'])
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--permission-prompt-tool'))
+})
+
+test('parseClaudeLine lists MCP integrations on init, without mag', () => {
+  const [e] = parseClaudeLine(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 's1',
+      tools: ['Read', 'mcp__mag__get_task', 'mcp__claude_ai_Cloudflare__execute', 'mcp__claude_ai_Cloudflare__search', 'mcp__claude_ai_Gmail__send', 'mcp__local__x'],
+      mcp_servers: [
+        { name: 'mag', status: 'connected' },
+        { name: 'claude.ai Cloudflare Developer Platform', status: 'connected' },
+        { name: 'claude.ai Gmail', status: 'connected' },
+      ],
+    }),
+  )
+  assert.equal(e.type, 'session.started')
+  assert.deepEqual(e.type === 'session.started' && e.integrations, [
+    { id: 'claude_ai_Cloudflare', name: 'claude.ai Cloudflare Developer Platform' },
+    { id: 'claude_ai_Gmail', name: 'claude.ai Gmail' },
+    { id: 'local', name: 'local' },
+  ])
+})
+
 test('parseClaudeLine reports compaction', () => {
   const line = { type: 'system', subtype: 'compact_boundary', session_id: 's1', compact_metadata: { trigger: 'manual', pre_tokens: 20154, post_tokens: 6464 } }
   assert.deepEqual(parseClaudeLine(JSON.stringify(line)), [{ type: 'context.compacted', preTokens: 20154 }])

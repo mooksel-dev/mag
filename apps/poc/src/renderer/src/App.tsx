@@ -7,11 +7,15 @@ import {
   canMoveInPlan,
   canMoveSubtask,
   inbox,
+  integrationMode,
   planBlockers,
   planQueue,
   resolveChoice,
   subtasksOf,
+  type AgentRole,
   type AgentSession,
+  type Integration,
+  type IntegrationMode,
   type Project,
   type Task,
   type TaskStatus,
@@ -61,7 +65,7 @@ export function App() {
   const project = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
   const tasks = project ? state.tasks.filter((t) => t.projectId === project.id) : []
   const task = tasks.find((t) => t.id === taskId) ?? null
-  const inboxCount = inbox(tasks, state.sessions).length
+  const inboxCount = project ? inbox(project.id, tasks, state.sessions).length : 0
   const roots = tasks.filter((t) => !t.parentId)
   const backlogCount = roots.filter((t) => BACKLOG_STATUSES.includes(t.status)).length
   const planCount = roots.length - backlogCount
@@ -111,7 +115,7 @@ export function App() {
           ) : tab === 'architecture' ? (
             <Architecture key={project.id} project={project} />
           ) : (
-            <Settings project={project} />
+            <Settings project={project} integrations={state.integrations} />
           )}
         </main>
         {chatOpen && !task && <ProjectChat key={project.id} projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />}
@@ -484,7 +488,45 @@ function AgentSettings({ project }: { project: Project }) {
   )
 }
 
-function Settings({ project }: { project: Project }) {
+const MODES: [IntegrationMode, string][] = [['off', 'Off'], ['ask', 'Ask'], ['auto', 'Auto']]
+
+/** Off / Ask / Auto per integration and role. Codex has no integrations; the architect has no chat to ask in. */
+function IntegrationSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
+  const set = (role: AgentRole, id: string, mode: IntegrationMode) =>
+    mag.updateProject(project.id, { integrations: { ...project.integrations, [role]: { ...project.integrations[role], [id]: mode } } })
+  return (
+    <div className="field">
+      Integrations
+      {integrations.length ? (
+        <div className="integrations" style={{ gridTemplateColumns: `minmax(0, max-content) repeat(${SETTABLE_ROLES.length}, max-content)` }}>
+          <span />
+          {SETTABLE_ROLES.map((role) => <span key={role} className="muted small">{ROLE_LABELS[role] ?? role}</span>)}
+          {integrations.map((i) => (
+            <div key={i.id} style={{ display: 'contents' }}>
+              <span title={i.id}>{i.name}</span>
+              {SETTABLE_ROLES.map((role) =>
+                resolveChoice(project, role).agent !== 'claude-code' ? (
+                  <span key={role} className="muted small" title="Only Claude Code agents use integrations">n/a</span>
+                ) : (
+                  <select key={role} value={integrationMode(project, role, i.id)} aria-label={`${i.name} for ${ROLE_LABELS[role] ?? role}`} onChange={(e) => set(role, i.id, e.target.value as IntegrationMode)}>
+                    {MODES.map(([m, label]) => (
+                      <option key={m} value={m} disabled={m === 'ask' && role === 'architect'}>{label}</option>
+                    ))}
+                  </select>
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="muted small">Run any Claude Code agent to detect integrations.</span>
+      )}
+      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
+    </div>
+  )
+}
+
+function Settings({ project, integrations }: { project: Project; integrations: Integration[] }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   return (
     <section className="page">
@@ -513,6 +555,7 @@ function Settings({ project }: { project: Project }) {
         Enforce core architecture (lib / clients / services) for agents
       </label>
       <AgentSettings project={project} />
+      <IntegrationSettings project={project} integrations={integrations} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (

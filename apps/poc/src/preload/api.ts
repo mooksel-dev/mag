@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Project, ProjectEvent, Task, TaskStatus, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, Task, TaskStatus, TaskType } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -11,6 +11,8 @@ export interface AppState {
   canvases: Omit<Canvas, 'html'>[]
   /** Project activity log, oldest first. */
   events: ProjectEvent[]
+  /** MCP servers agents reported (claude.ai connectors and others); modes are per project in Project.integrations. */
+  integrations: Integration[]
   claudeBin: string | null
 }
 
@@ -58,4 +60,6 @@ export interface MagApi {
   /** Absolute path of a dropped File, if it has one. */
   pathForFile(file: File): string
   stop(sessionId: string): Promise<void>
+  /** Allow or deny a pending integration call (an approval chat item). */
+  decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
 }

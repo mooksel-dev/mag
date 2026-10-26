@@ -17,11 +17,13 @@ export function startApi(handle: ToolHandler): Promise<LocalApi> {
       return
     }
     let body = ''
+    const hangup = new AbortController()
+    res.on('close', () => !res.writableFinished && hangup.abort())
     req.on('data', (c) => (body += c))
     req.on('end', async () => {
       try {
         const { taskId, projectId, sessionId, name, args } = JSON.parse(body)
-        const ctx = { taskId: taskId || undefined, projectId: projectId || undefined, sessionId: sessionId || undefined }
+        const ctx = { taskId: taskId || undefined, projectId: projectId || undefined, sessionId: sessionId || undefined, signal: hangup.signal }
         const text = await handle(ctx, name, args ?? {})
         res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text }))
       } catch (e) {

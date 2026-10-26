@@ -32,6 +32,8 @@ export interface Project {
   archRun: ArchRun | null
   /** Provider and model per agent role; missing roles use DEFAULT_CHOICE (see resolveChoice). */
   agents: Partial<Record<AgentRole, ModelChoice>>
+  /** Mode per role and integration id; missing = off (see integrationMode). */
+  integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   createdAt: number
 }
 
@@ -155,6 +157,48 @@ export function resolveChoice(project: Pick<Project, 'agents'>, role: AgentRole)
   return agents[role] ?? (role === 'reviewer' ? agents.developer : undefined) ?? DEFAULT_CHOICE
 }
 
+/** off = hidden from the agent, ask = each call waits for the user, auto = allowed. */
+export type IntegrationMode = 'off' | 'ask' | 'auto'
+
+/** An MCP server the agent CLI brings along (e.g. a claude.ai connector). */
+export interface Integration {
+  /** Tool prefix as the CLI sees it: tools are mcp__<id>__<tool>. */
+  id: string
+  /** Server name the CLI reported, e.g. "claude.ai Cloudflare Developer Platform". */
+  name: string
+}
+
+/** mag's own MCP server; always allowed, never an integration. */
+export const MAG_MCP_ID = 'mag'
+
+export function integrationMode(project: Pick<Project, 'integrations'>, role: AgentRole, id: string): IntegrationMode {
+  const all = project.integrations ?? {}
+  return (all[role] ?? (role === 'reviewer' ? all.developer : undefined))?.[id] ?? 'off'
+}
+
+/** CLI permission rules for the known integrations: server-level `mcp__<id>` per mode. */
+export function integrationRules(
+  project: Pick<Project, 'integrations'>,
+  role: AgentRole,
+  known: Integration[],
+): { allowed: string[]; disallowed: string[]; ask: string[] } {
+  const rules = { allowed: [] as string[], disallowed: [] as string[], ask: [] as string[] }
+  for (const i of known) {
+    if (i.id === MAG_MCP_ID) continue
+    const mode = integrationMode(project, role, i.id)
+    rules[mode === 'auto' ? 'allowed' : mode === 'ask' ? 'ask' : 'disallowed'].push(`mcp__${i.id}`)
+  }
+  return rules
+}
+
+/** The integration a tool name (mcp__<id>__<tool>) belongs to, with the bare tool name. */
+export function integrationOf(toolName: string, known: Integration[]): { integration: Integration; tool: string } | null {
+  // Longest id first, so "a_b" wins over "a" for mcp__a_b__x.
+  const sorted = [...known].sort((a, b) => b.id.length - a.id.length)
+  const integration = sorted.find((i) => toolName.startsWith(`mcp__${i.id}__`))
+  return integration ? { integration, tool: toolName.slice(`mcp__${integration.id}__`.length) } : null
+}
+
 export interface Attachment {
   name: string
   /** Absolute path of the app's copy. */
@@ -178,6 +222,11 @@ export type ChatItem =
   | { kind: 'error'; text: string; at: number }
   /** Service line from mag itself, e.g. "context compacted". */
   | { kind: 'notice'; text: string; at: number }
+  /** An integration call in ask mode waiting for (or answered by) the user. id = the CLI's tool_use_id. */
+  | { kind: 'approval'; id: string; tool: string; server: string; input: unknown; status: ApprovalStatus; at: number }
+
+/** expired = the run ended before the user answered. */
+export type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'expired'
 
 export interface AgentSession {
   id: string
@@ -201,7 +250,7 @@ export interface AgentSession {
   runStartedAt?: number
 }
 
-export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture'
+export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval'
 
 /** One line of the project's activity log. */
 export interface ProjectEvent {
@@ -219,7 +268,7 @@ export type NewEvent = Omit<ProjectEvent, 'id' | 'at'>
 
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
-  | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[] }
+  | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }
   | { type: 'message'; text: string }
   | { type: 'tool.call'; id: string; name: string; input: unknown }
   | { type: 'tool.result'; id: string; ok: boolean }
@@ -361,32 +410,54 @@ export function taskChangeEvents(prev: Task, next: Task): NewEvent[] {
   return events
 }
 
-export type InboxKind = 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge' | 'groomed'
+export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge' | 'groomed'
 
 export interface InboxItem {
-  task: Task
+  /** null for an approval in a project chat. */
+  task: Task | null
   kind: InboxKind
   text: string
+  /** Session the item comes from: the approval's session, or the task's latest groomer/developer one. */
+  session?: AgentSession
+  /** Approval chat item id in `session`. */
+  approvalId?: string
 }
 
-const INBOX_ORDER: InboxKind[] = ['agent_failed', 'check_failed', 'question', 'ready_to_merge', 'groomed']
+const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'ready_to_merge', 'groomed']
 
 function inboxItem(task: Task, sessions: AgentSession[]): InboxItem | null {
   const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
-  if (last?.status === 'error') return { task, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
-  if (task.work?.checkError) return { task, kind: 'check_failed', text: task.work.checkError }
-  if (task.needsInput) return { task, kind: 'question', text: task.needsInput }
-  if (task.status === 'in_review' && task.work?.prUrl) return { task, kind: 'ready_to_merge', text: 'PR is ready to merge' }
-  if (!task.parentId && task.status === 'groomed') return { task, kind: 'groomed', text: 'Groomed, ready to add to the plan' }
+  const base = { task, session: last }
+  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
+  if (task.work?.checkError) return { ...base, kind: 'check_failed', text: task.work.checkError }
+  if (task.needsInput) return { ...base, kind: 'question', text: task.needsInput }
+  if (task.status === 'in_review' && task.work?.prUrl) return { ...base, kind: 'ready_to_merge', text: 'PR is ready to merge' }
+  if (!task.parentId && task.status === 'groomed') return { ...base, kind: 'groomed', text: 'Groomed, ready to add to the plan' }
   return null
 }
 
-/** What waits on the user: at most one item per task, most urgent kind first. Sessions are in creation order. */
-export function inbox(tasks: Task[], sessions: AgentSession[]): InboxItem[] {
-  return tasks
-    .map((t) => inboxItem(t, sessions))
-    .filter((i): i is InboxItem => !!i)
-    .sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
+/** One item per pending approval in the project's sessions, task sessions and chats alike. */
+function approvalItems(projectId: string, tasks: Task[], sessions: AgentSession[]): InboxItem[] {
+  return sessions
+    .filter((s) => s.projectId === projectId)
+    .flatMap((s) =>
+      s.items.flatMap((i): InboxItem[] =>
+        i.kind === 'approval' && i.status === 'pending'
+          ? [{ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${i.server} · ${i.tool}`, session: s, approvalId: i.id }]
+          : [],
+      ),
+    )
+}
+
+/**
+ * What waits on the user in a project, most urgent kind first: every pending approval, plus at most one item per
+ * task. `tasks` are the project's; sessions may span projects and are in creation order.
+ */
+export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]): InboxItem[] {
+  return [
+    ...approvalItems(projectId, tasks, sessions),
+    ...tasks.map((t) => inboxItem(t, sessions)).filter((i): i is InboxItem => !!i),
+  ].sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
 }
 
 export type PipelineStage = Exclude<TaskStatus, 'done'> | 'done7d'
