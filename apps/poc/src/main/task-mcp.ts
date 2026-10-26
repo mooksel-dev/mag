@@ -24,7 +24,17 @@ async function callTool(name: string, args: unknown) {
     : { content: [{ type: 'text', text: data.text ?? '' }] }
 }
 
-createInterface({ input: process.stdin }).on('line', async (line) => {
+function isPending(text: string) {
+  try {
+    return JSON.parse(text)?.pending === true
+  } catch {
+    return false
+  }
+}
+
+const input = createInterface({ input: process.stdin })
+
+input.on('line', async (line) => {
   if (!line.trim()) return
   let msg: { id?: number | string; method?: string; params?: any }
   try {
@@ -50,8 +60,13 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
         return send({ id, result: {} })
       case 'tools/list':
         return send({ id, result: { tools: TOOLS } })
-      case 'tools/call':
-        return send({ id, result: await callTool(params.name, params.arguments ?? {}) })
+      case 'tools/call': {
+        let result = await callTool(params.name, params.arguments ?? {})
+        // An approval long-polls: ask again until the user answers or the run is stopped.
+        while (params.name === 'approve_tool' && !result.isError && isPending(result.content[0].text))
+          result = await callTool(params.name, params.arguments ?? {})
+        return send({ id, result })
+      }
       default:
         return send({ id, error: { code: -32601, message: `Method not found: ${method}` } })
     }
@@ -59,3 +74,6 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
     send({ id, result: { content: [{ type: 'text', text: String((e as Error).message ?? e) }], isError: true } })
   }
 })
+
+// The CLI went away: stop, even mid-poll, so the app sees the hang-up and expires the approval.
+input.on('close', () => process.exit(0))

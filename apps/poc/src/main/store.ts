@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask } from '../preload/api'
 
 interface Data {
@@ -13,6 +13,8 @@ interface Data {
   canvases: Record<string, Canvas>
   /** Project activity log, oldest first; kept after its task is deleted. */
   events: ProjectEvent[]
+  /** MCP servers agents reported on start; global, since connectors belong to the account. */
+  integrations: Integration[]
 }
 
 /** Events kept per project. */
@@ -22,15 +24,19 @@ const id = () => randomUUID().slice(0, 8)
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [] }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [] }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private file: string) {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
     this.data.events ??= []
-    // Runs don't survive a restart.
-    for (const s of this.data.sessions) if (s.status === 'running') s.status = 'idle'
+    this.data.integrations ??= []
+    // Runs don't survive a restart, nor do their pending approvals.
+    for (const s of this.data.sessions) {
+      if (s.status === 'running') s.status = 'idle'
+      for (const i of s.items) if (i.kind === 'approval' && i.status === 'pending') i.status = 'expired'
+    }
     // Defaults for data written by older PoC versions.
     for (const p of this.data.projects) {
       delete (p as { devPoolSize?: number }).devPoolSize
@@ -41,6 +47,7 @@ export class Store {
       p.architecture ??= null
       p.archRun ??= null
       p.agents ??= {}
+      p.integrations ??= {}
       if (p.archRun?.status === 'running') p.archRun.status = 'error'
     }
     for (const t of this.data.tasks) {
@@ -151,10 +158,26 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
+  }
+
+  /**
+   * Adds or renames the integrations a run reported. Known ones are kept even when a run doesn't report them:
+   * an integration that is off may be missing from the run's tools.
+   */
+  saveIntegrations(found: Integration[]) {
+    let changed = false
+    for (const f of found) {
+      const known = this.data.integrations.find((i) => i.id === f.id)
+      if (!known) this.data.integrations.push({ ...f })
+      else if (known.name !== f.name && f.name !== f.id) known.name = f.name
+      else continue
+      changed = true
+    }
+    if (changed) this.changed()
   }
 
   updateProject(pid: string, patch: Partial<Project>) {

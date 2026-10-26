@@ -14,6 +14,8 @@ export interface RunSpec {
   mcpConfigPath?: string
   allowedTools?: string[]
   disallowedTools?: string[]
+  /** MCP tool the CLI asks for permission on tools that are neither allowed nor disallowed. Claude Code only. */
+  permissionPromptTool?: string
   addDirs?: string[]
   env?: Record<string, string>
 }

@@ -1,12 +1,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
+import { integrationRules, resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { AGENT_MARK, prepareWorktree, slug, type PrFeedback } from './git'
+import { APPROVE_TOOL } from './tool-defs'
 
 interface Paths {
   /** Built task-mcp.js next to the main bundle. */
@@ -85,6 +86,9 @@ the previous one is merged.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
 - Be concise: short answers, markdown only where it helps. The user hates filler.`
 
+/** An approval may wait for the user for days; the prompt tool call must not time out first. */
+const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
+
 function summarize(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const o = input as Record<string, unknown>
@@ -134,7 +138,7 @@ export class Orchestrator {
     let failed = false
     const c = this.choice(projectId, 'architect')
     const handle = adapters[c.agent].start(
-      {
+      this.withIntegrations(projectId, 'architect', c.agent, false, {
         cwd: project.repos[0],
         model: c.model ?? undefined,
         addDirs: project.repos.slice(1),
@@ -143,9 +147,10 @@ export class Orchestrator {
         mcpConfigPath,
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
-      },
+      }),
       (e) => {
-        if (e.type === 'tool.call') set({ note: `${e.name.replace(/^mcp__mag__/, '')} ${summarize(e.input)}`.trim() })
+        if (e.type === 'session.started' && e.integrations) this.store.saveIntegrations(e.integrations)
+        else if (e.type === 'tool.call') set({ note: `${e.name.replace(/^mcp__mag__/, '')} ${summarize(e.input)}`.trim() })
         else if (e.type === 'message') set({ note: e.text.slice(0, 160) })
         else if (e.type === 'turn.done') set({ costUsd: e.costUsd })
         else if (e.type === 'error') {
@@ -312,6 +317,22 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Claude Code runs: integrations the role has on auto are allowed, off ones disallowed, ask ones go through the
+   * approve_tool prompt. Without a chat to ask in (`canAsk` false) ask counts as off. Codex has no integrations.
+   */
+  private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(projectId: string, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {
+    if (agent !== 'claude-code') return spec
+    const rules = integrationRules(this.store.project(projectId), role, this.store.data.integrations)
+    const ask = canAsk ? rules.ask : []
+    return {
+      ...spec,
+      allowedTools: [...(spec.allowedTools ?? []), ...rules.allowed],
+      disallowedTools: [...(spec.disallowedTools ?? []), ...rules.disallowed, ...(canAsk ? [] : rules.ask)],
+      ...(ask.length && { permissionPromptTool: APPROVE_TOOL, env: { ...spec.env, MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS } }),
+    }
+  }
+
   private run(session: AgentSession, prompt: string) {
     const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
@@ -341,6 +362,7 @@ export class Orchestrator {
           session.nativeSessionId = e.nativeSessionId
           if (e.model) session.activeModel = e.model
           if (e.commands) session.commands = e.commands
+          if (e.integrations) this.store.saveIntegrations(e.integrations)
           return this.store.changed()
         case 'message':
           return push({ kind: 'assistant', text: e.text, at })
@@ -362,8 +384,9 @@ export class Orchestrator {
       }
     }
 
+    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
     const handle = adapters[session.agent].start(
-      { ...this.spec(session), prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
+      { ...spec, prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)

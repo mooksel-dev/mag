@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { TASK_KEY_RE, chatCommands, resolveChoice, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
+import { inputPreview } from './format'
 import { useAppliedTheme } from './useTheme'
 
 const mag = window.mag
@@ -207,6 +208,8 @@ export function Chat({ session, sessions, onOpenTask, placeholder }: { session: 
               return <div key={n} className="msg error">{i.text}</div>
             case 'notice':
               return <div key={n} className="notice muted small">{i.text}</div>
+            case 'approval':
+              return <ApprovalCard key={n} sessionId={session.id} item={i} />
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}
@@ -224,6 +227,27 @@ export function Chat({ session, sessions, onOpenTask, placeholder }: { session: 
 }
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
+
+const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }
+
+/** An ask-mode integration call: Allow / Deny while pending, then its outcome. */
+function ApprovalCard({ sessionId, item }: { sessionId: string; item: ApprovalItem }) {
+  return (
+    <div className="approval">
+      <div>Agent wants <b>{item.server}</b> · {item.tool}</div>
+      <div className="input muted">{inputPreview(item.input, 400)}</div>
+      {item.status === 'pending' ? (
+        <div className="actions">
+          <button onClick={() => mag.decideApproval(sessionId, item.id, false)}>Deny</button>
+          <button className="primary" onClick={() => mag.decideApproval(sessionId, item.id, true)}>Allow</button>
+        </div>
+      ) : (
+        <div className="muted small">{APPROVAL_STATUS[item.status]}</div>
+      )}
+    </div>
+  )
+}
 
 const toolMark = (ok: boolean | undefined) => (ok === false ? '✗' : ok ? '✓' : '…')
 

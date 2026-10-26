@@ -11,6 +11,7 @@ import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
+import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
 
@@ -51,7 +52,9 @@ app.whenReady().then(async () => {
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
   const actions: ToolActions = { groom: () => {}, architect: () => {} }
-  const api = await startApi(createTools(store, actions))
+  const tools = createTools(store, actions)
+  const approvals = new Approvals(store)
+  const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
   const orch = new Orchestrator(store, api, {
     mcpScript: join(__dirname, 'task-mcp.js'),
     runsDir: join(userData, 'runs'),
@@ -133,6 +136,7 @@ app.whenReady().then(async () => {
     return { name, path, mime: MIME[extname(name).toLowerCase()] ?? 'application/octet-stream' }
   })
   ipcMain.handle('session:stop', (_, sid: string) => orch.stop(sid))
+  ipcMain.handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
 
   createWindow()
   app.on('activate', () => {

@@ -234,7 +234,20 @@ export const TOOL_DEFS = [
       required: ['title', 'html'],
     },
   },
+  {
+    name: 'approve_tool',
+    scope: 'any',
+    description: 'Internal: mag uses this to ask the user before an integration call. Do not call it yourself.',
+    inputSchema: {
+      type: 'object',
+      properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } },
+      required: ['tool_name', 'input'],
+    },
+  },
 ] as const
+
+/** The --permission-prompt-tool, as Claude Code names it. */
+export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 
 export type ToolScope = 'task' | 'project' | 'any'
 export type ToolName = (typeof TOOL_DEFS)[number]['name']

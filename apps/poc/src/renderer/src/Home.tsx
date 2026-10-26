@@ -12,7 +12,7 @@ import {
   type TaskStatus,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ago, prName } from './format'
+import { ago, inputPreview, prName } from './format'
 
 const mag = window.mag
 
@@ -29,6 +29,7 @@ const STAGES: [PipelineStage, string][] = [
 const HIGHLIGHT: PipelineStage[] = ['groomed', 'in_review']
 
 const PILLS: Record<InboxKind, [string, string]> = {
+  approval: ['amber', 'Approval'],
   agent_failed: ['red', 'Agent failed'],
   check_failed: ['red', 'PR check failed'],
   question: ['amber', 'Question'],
@@ -60,7 +61,7 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
 }) {
   const now = useNow(15_000)
   const counts = pipelineCounts(tasks, now)
-  const items = inbox(tasks, state.sessions)
+  const items = inbox(project.id, tasks, state.sessions)
   const running = state.sessions.filter(
     (s) => s.status === 'running' && (tasks.some((t) => t.id === s.taskId) || (s.role === 'architect' && s.projectId === project.id)),
   )
@@ -90,7 +91,10 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
 
       <div className="card">
         <h2>Waiting on you <span className="muted">{items.length}</span></h2>
-        {items.length ? items.map((i) => <InboxRow key={i.task.id} item={i} state={state} onOpen={onOpen} />) : <p className="muted">Nothing is waiting on you.</p>}
+        {items.length ? items.map((i) =>
+          i.kind === 'approval' ? <ApprovalRow key={i.approvalId} item={i} onOpen={onOpen} />
+          : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} onOpen={onOpen} />,
+        ) : <p className="muted">Nothing is waiting on you.</p>}
       </div>
 
       <div className="side">
@@ -138,12 +142,34 @@ function RepoLine({ project }: { project: Project }) {
   return <div className="muted small">{[repo, project.baseBranch, origin].filter(Boolean).join(' · ')}</div>
 }
 
-function InboxRow({ item, state, onOpen }: { item: InboxItem; state: AppState; onOpen: (id: string) => void }) {
+const act = (fn: () => unknown) => (e: React.MouseEvent) => { e.stopPropagation(); void fn() }
+
+/** An ask-mode integration call from a task agent or a project chat. */
+function ApprovalRow({ item, onOpen }: { item: InboxItem; onOpen: (id: string) => void }) {
+  const { task, session, approvalId, text } = item
+  const approval = session?.items.find((i) => i.kind === 'approval' && i.id === approvalId)
+  if (!session || !approvalId || approval?.kind !== 'approval') return null
+  const [color, label] = PILLS.approval
+  return (
+    <div className="inboxrow" onClick={() => task && onOpen(task.id)}>
+      <span className={`pill ${color}`}>{label}</span>
+      {task ? <span className="key">{task.key}</span> : <span className="muted small">Chat</span>}
+      <div className="grow">
+        <div className="title">{task ? task.title : (session.title ?? 'Project chat')}</div>
+        <div className="muted small">{session.role} {text}</div>
+        <div className="input muted">{inputPreview(approval.input)}</div>
+      </div>
+      <button onClick={act(() => mag.decideApproval(session.id, approvalId, false))}>Deny</button>
+      <button className="primary" onClick={act(() => mag.decideApproval(session.id, approvalId, true))}>Allow</button>
+    </div>
+  )
+}
+
+function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; state: AppState; onOpen: (id: string) => void }) {
   const { task, kind, text } = item
   const [blockers, setBlockers] = useState<string[]>([])
   const [color, label] = PILLS[kind]
   const pr = task.work?.prUrl
-  const act = (fn: () => unknown) => (e: React.MouseEvent) => { e.stopPropagation(); void fn() }
   const restart = () => {
     const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
     return last?.role === 'groomer' ? mag.groom(task.id) : mag.develop(task.id)

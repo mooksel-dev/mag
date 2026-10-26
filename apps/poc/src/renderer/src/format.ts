@@ -7,3 +7,9 @@ export const ago = (ts: number, now = Date.now()) => {
 /** "PR #12" from a GitHub pull request URL. */
 export const prName = (url: string) => `PR #${url.match(/\/pull\/(\d+)/)?.[1] ?? '?'}`
 export const prLabel = (url: string) => `${prName(url)} ↗`
+
+/** One-line JSON of a tool input, cut at `max` characters. */
+export const inputPreview = (input: unknown, max = 160) => {
+  const s = JSON.stringify(input) ?? ''
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}

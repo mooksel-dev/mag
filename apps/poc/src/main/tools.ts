@@ -7,6 +7,8 @@ export interface ToolContext {
   projectId?: string
   /** Session whose chat shows canvases. */
   sessionId?: string
+  /** Aborted when the MCP server hangs up before the answer. */
+  signal?: AbortSignal
 }
 
 /** Things tools can kick off; wired to the orchestrator after it exists. */

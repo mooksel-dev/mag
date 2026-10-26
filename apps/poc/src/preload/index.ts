@@ -29,6 +29,7 @@ const api: MagApi = {
   saveAttachment: (f) => ipcRenderer.invoke('attach:save', f),
   pathForFile: (file) => webUtils.getPathForFile(file),
   stop: (sessionId) => ipcRenderer.invoke('session:stop', sessionId),
+  decideApproval: (sessionId, approvalId, allow) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow),
 }
 
 contextBridge.exposeInMainWorld('mag', api)
