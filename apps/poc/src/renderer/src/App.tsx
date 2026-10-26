@@ -352,7 +352,7 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
         {chatMode === 'project' ? (
           <ProjectChat key={task.projectId} projectId={task.projectId} state={state} onOpenTask={onOpenKey} embedded />
         ) : session ? (
-          <Chat session={session} onOpenTask={onOpenKey} />
+          <Chat session={session} sessions={state.sessions} onOpenTask={onOpenKey} />
         ) : (
           <p className="muted pad">No agent has worked on this task yet.</p>
         )}

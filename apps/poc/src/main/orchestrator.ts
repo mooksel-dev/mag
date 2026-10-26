@@ -141,7 +141,7 @@ export class Orchestrator {
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
         appendSystemPrompt: ARCHITECT_PROMPT,
         mcpConfigPath,
-        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'mcp__mag'],
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
       },
       (e) => {
@@ -227,7 +227,9 @@ export class Orchestrator {
     session.items.push({ kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
     if (session.role === 'chat' && !session.items.some((i, n) => i.kind === 'user' && n < session.items.length - 1))
       session.title = (text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
-    const prompt = attachments.length
+    // A Claude Code slash command goes to the CLI as is; the composer doesn't attach files to one.
+    const command = session.agent === 'claude-code' && text.startsWith('/')
+    const prompt = attachments.length && !command
       ? `${text}\n\nAttached files (open them with Read):\n${attachments.map((a) => `- ${a.path}`).join('\n')}`
       : text
     if (!session.taskId) {
@@ -280,7 +282,7 @@ export class Orchestrator {
         cwd: first,
         addDirs: [...rest, this.paths.attachmentsDir],
         appendSystemPrompt: chatPrompt(project) + (project.notes ? `\n\nProject notes:\n${project.notes}` : '') + arch,
-        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'WebSearch', 'WebFetch', 'mcp__mag'],
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
       }
     }
@@ -294,7 +296,7 @@ export class Orchestrator {
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
             : ''),
-        allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'mcp__mag'],
+        allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
       }
     }
     return {
@@ -305,7 +307,7 @@ export class Orchestrator {
         (project.enforceArchitecture
           ? `\n\n${ARCH_RULES}\nCall get_architecture for the recorded design and check_architecture for rule checks on the code. In the doc, design changes per layer: infra first if it changes, then clients and services with their interfaces (signatures + semantics), then the app layer.`
           : ''),
-      allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'mcp__mag'],
+      allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
       disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
     }
   }
@@ -338,6 +340,7 @@ export class Orchestrator {
         case 'session.started':
           session.nativeSessionId = e.nativeSessionId
           if (e.model) session.activeModel = e.model
+          if (e.commands) session.commands = e.commands
           return this.store.changed()
         case 'message':
           return push({ kind: 'assistant', text: e.text, at })
@@ -348,6 +351,8 @@ export class Orchestrator {
           if (item && item.kind === 'tool') item.ok = e.ok
           return this.store.changed()
         }
+        case 'context.compacted':
+          return push({ kind: 'notice', text: `Context compacted${e.preTokens ? ` (was ≈${Math.round(e.preTokens / 1000)}k tokens)` : ''}`, at })
         case 'turn.done':
           if (e.nativeSessionId) session.nativeSessionId = e.nativeSessionId
           return push({ kind: 'result', ok: e.ok, costUsd: e.costUsd, at })
