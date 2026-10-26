@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMoveInPlan, canMoveSubtask, nextWork, planBlockers, planQueue, rollupStatus, type Task, type TaskStatus } from './index.ts'
+import { canMoveInPlan, canMoveSubtask, nextPlanRank, nextWork, planBlockers, planQueue, rollupStatus, type Task, type TaskStatus } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
   id,
@@ -25,6 +25,13 @@ const sub = (id: string, parentId: string, status: TaskStatus, rank: number, pat
 test('planQueue: top-level plan tasks by rank', () => {
   const tasks = [task('b', 'planned', 2), task('a', 'done', 1), task('c', 'groomed', 0), sub('s', 'b', 'planned', 0)]
   assert.deepEqual(planQueue(tasks).map((t) => t.id), ['a', 'b'])
+})
+
+test('nextPlanRank: after the last plan task, ignoring backlog and subtasks', () => {
+  assert.equal(nextPlanRank([]), 1)
+  assert.equal(nextPlanRank([task('c', 'groomed', 9)]), 1)
+  const tasks = [task('a', 'done', 1), task('b', 'planned', 3), task('c', 'groomed', 9), sub('s', 'b', 'planned', 7)]
+  assert.equal(nextPlanRank(tasks), 4)
 })
 
 test('planBlockers', () => {

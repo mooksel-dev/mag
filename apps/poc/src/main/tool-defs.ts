@@ -165,13 +165,18 @@ export const TOOL_DEFS = [
   {
     name: 'create_task',
     scope: 'project',
-    description: 'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise.',
+    description:
+      'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise. ' +
+      'doc pre-fills the task document. plan: true puts the task at the end of the plan, ready for a developer; ' +
+      "only when the doc is complete (follow the project's doc template) and the user asked for it.",
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
         type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
         description: { type: 'string' },
+        doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
+        plan: { type: 'boolean', description: 'Skip grooming and append the task to the plan.' },
       },
       required: ['title', 'type', 'description'],
     },

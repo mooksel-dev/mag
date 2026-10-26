@@ -1,4 +1,4 @@
-import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, planQueue, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
+import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, nextPlanRank, planQueue, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
 
@@ -196,13 +196,21 @@ function sharedTool(
     }
 
     case 'create_task': {
+      const md = typeof args.doc === 'string' ? args.doc : ''
+      const plan = args.plan === true
+      if (plan && !md.trim()) throw new Error('plan: true needs the full doc')
       const t = store.createTask({
         projectId: project.id,
         title: String(args.title),
         type: taskType(args.type),
         description: String(args.description ?? ''),
+        status: plan ? 'planned' : undefined,
       })
-      return `Created ${t.key} in the backlog.`
+      // `tasks` was read before the new task existed, so it is the plan ahead of it.
+      if (md.trim()) store.data.docs[t.id] = md
+      if (plan) store.updateTask(t.id, { rank: nextPlanRank(tasks) })
+      else if (md.trim()) store.changed()
+      return plan ? `Created ${t.key} in the plan (position ${planQueue(tasks).length + 1}).` : `Created ${t.key} in the backlog.`
     }
 
     case 'update_task': {
