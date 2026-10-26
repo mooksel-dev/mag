@@ -66,7 +66,8 @@ Developer agents need `git` and an authenticated `gh` CLI. Worktrees live in use
 ### Project chat
 
 The **Chat** panel sits next to every tab: a free conversation about the project, one or more threads per project.
-The agent reads the code and the web but never edits code; decisions become tasks (`create_task`, `start_grooming`),
+The agent reads the code and the web but never edits code; decisions become tasks (`create_task`, `start_grooming`;
+a task already fully discussed can go straight to the end of the plan with `create_task` + `doc` + `plan: true`),
 notes (`update_notes`) or task-doc changes. Paste screenshots or drop files into any chat (task chats too); they are
 copied to userData/attachments and handed to the agent as paths. Agents draw mockups and diagrams with `show_canvas`:
 self-contained HTML rendered in a sandboxed iframe in the chat, kept with the project and the task.

@@ -261,6 +261,11 @@ export function planQueue(tasks: Task[]): Task[] {
   return tasks.filter((t) => !t.parentId && PLAN_STATUSES.includes(t.status)).sort((a, b) => a.rank - b.rank)
 }
 
+/** Rank that puts a task at the end of the plan. */
+export function nextPlanRank(tasks: Task[]): number {
+  return Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
+}
+
 /** Work units in execution order: each plan task's subtasks, or the task itself when it has none. */
 function workUnits(tasks: Task[]): Task[] {
   return planQueue(tasks).flatMap((t) => {

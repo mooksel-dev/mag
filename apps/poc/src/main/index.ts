@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { canMoveInPlan, planBlockers, planQueue, subtaskStarted, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
+import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, subtaskStarted, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask } from '../preload/api'
 import { Store } from './store'
@@ -92,8 +92,7 @@ app.whenReady().then(async () => {
     const reasons = planBlockers(task)
     if (reasons.length) return { ok: false, reasons }
     const tasks = projectTasks(task.projectId)
-    const rank = Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
-    store.updateTask(id, { status: 'planned', rank })
+    store.updateTask(id, { status: 'planned', rank: nextPlanRank(tasks) })
     for (const sub of subtasksOf(id, tasks)) store.updateTask(sub.id, { status: 'planned' })
     return { ok: true, reasons }
   })
