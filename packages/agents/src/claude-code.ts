@@ -5,6 +5,14 @@ import type { AgentEvent } from '@mag/core'
 import { findBin } from './bin.ts'
 import type { AgentAdapter, RunSpec } from './index'
 
+/** Commands from `system/init` that work in `-p`: slash commands and skills, minus terminal-only and internal ones. */
+function initCommands(j: any): string[] | undefined {
+  const all = [...(j.slash_commands ?? []), ...(j.skills ?? [])].filter((c): c is string => typeof c === 'string')
+  if (!all.length) return undefined
+  const terminal = new Set<string>(j.terminal_slash_commands ?? [])
+  return [...new Set(all)].filter((c) => !terminal.has(c) && !c.startsWith('_'))
+}
+
 /** Translate one stream-json line from `claude -p` into normalized events. */
 export function parseClaudeLine(line: string): AgentEvent[] {
   let j: any
@@ -15,8 +23,11 @@ export function parseClaudeLine(line: string): AgentEvent[] {
   }
   switch (j.type) {
     case 'system':
-      if (j.subtype === 'init' && j.session_id)
-        return [{ type: 'session.started', nativeSessionId: j.session_id, model: j.model }]
+      if (j.subtype === 'init' && j.session_id) {
+        const commands = initCommands(j)
+        return [{ type: 'session.started', nativeSessionId: j.session_id, model: j.model, ...(commands && { commands }) }]
+      }
+      if (j.subtype === 'compact_boundary') return [{ type: 'context.compacted', preTokens: j.compact_metadata?.pre_tokens }]
       return [{ type: 'raw', payload: j }]
     case 'assistant': {
       const out: AgentEvent[] = []

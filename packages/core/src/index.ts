@@ -176,6 +176,8 @@ export type ChatItem =
   | { kind: 'tool'; id: string; name: string; summary: string; ok?: boolean; at: number }
   | { kind: 'result'; ok: boolean; costUsd?: number; at: number }
   | { kind: 'error'; text: string; at: number }
+  /** Service line from mag itself, e.g. "context compacted". */
+  | { kind: 'notice'; text: string; at: number }
 
 export interface AgentSession {
   id: string
@@ -190,6 +192,8 @@ export interface AgentSession {
   nativeSessionId: string | null
   /** Model the agent reported when its session started. */
   activeModel?: string
+  /** Slash commands and skills the agent reported when its session last started, without the "/". */
+  commands?: string[]
   status: 'running' | 'idle' | 'error'
   items: ChatItem[]
   createdAt: number
@@ -215,13 +219,27 @@ export type NewEvent = Omit<ProjectEvent, 'id' | 'at'>
 
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
-  | { type: 'session.started'; nativeSessionId: string; model?: string }
+  | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[] }
   | { type: 'message'; text: string }
   | { type: 'tool.call'; id: string; name: string; input: unknown }
   | { type: 'tool.result'; id: string; ok: boolean }
   | { type: 'turn.done'; ok: boolean; costUsd?: number; nativeSessionId?: string }
+  | { type: 'context.compacted'; preTokens?: number }
   | { type: 'error'; message: string }
   | { type: 'raw'; payload: unknown }
+
+/**
+ * Slash commands offered in a chat's composer. A session that has not run yet borrows the list from the latest
+ * session of the same project and agent; with none, only /compact. Codex gets none: its text goes as is.
+ */
+export function chatCommands(session: Pick<AgentSession, 'projectId' | 'agent' | 'commands'>, sessions: AgentSession[]): string[] {
+  if (session.agent === 'codex') return []
+  if (session.commands?.length) return session.commands
+  const prev = sessions
+    .filter((s) => s.projectId === session.projectId && s.agent === session.agent && s.commands?.length)
+    .sort((a, b) => b.createdAt - a.createdAt)[0]
+  return prev?.commands ?? ['compact']
+}
 
 export const PLAN_STATUSES: TaskStatus[] = ['planned', 'in_progress', 'in_review', 'done']
 export const BACKLOG_STATUSES: TaskStatus[] = ['backlog', 'grooming', 'groomed']

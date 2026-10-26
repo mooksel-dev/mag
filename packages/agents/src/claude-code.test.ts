@@ -16,3 +16,22 @@ test('parseClaudeLine reports the model on init', () => {
   const [e] = parseClaudeLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1', model: 'claude-sonnet' }))
   assert.deepEqual(e, { type: 'session.started', nativeSessionId: 's1', model: 'claude-sonnet' })
 })
+
+test('parseClaudeLine lists slash commands and skills on init, without terminal-only and internal ones', () => {
+  const [e] = parseClaudeLine(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 's1',
+      slash_commands: ['review', 'compact', 'doctor', '__remote-workflow'],
+      terminal_slash_commands: ['doctor'],
+      skills: ['review', 'pdf'],
+    }),
+  )
+  assert.deepEqual(e, { type: 'session.started', nativeSessionId: 's1', model: undefined, commands: ['review', 'compact', 'pdf'] })
+})
+
+test('parseClaudeLine reports compaction', () => {
+  const line = { type: 'system', subtype: 'compact_boundary', session_id: 's1', compact_metadata: { trigger: 'manual', pre_tokens: 20154, post_tokens: 6464 } }
+  assert.deepEqual(parseClaudeLine(JSON.stringify(line)), [{ type: 'context.compacted', preTokens: 20154 }])
+})

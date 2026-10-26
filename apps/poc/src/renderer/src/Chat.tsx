@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { createPortal } from 'react-dom'
-import { TASK_KEY_RE, resolveChoice, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, chatCommands, resolveChoice, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
 import { useAppliedTheme } from './useTheme'
@@ -167,7 +167,7 @@ function CanvasMenu({ canvases }: { canvases: AppState['canvases'] }) {
   )
 }
 
-export function Chat({ session, onOpenTask, placeholder }: { session: AgentSession; onOpenTask?: (key: string) => void; placeholder?: string }) {
+export function Chat({ session, sessions, onOpenTask, placeholder }: { session: AgentSession; sessions: AgentSession[]; onOpenTask?: (key: string) => void; placeholder?: string }) {
   const busy = session.status === 'running'
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [session.items.length, busy])
@@ -205,6 +205,8 @@ export function Chat({ session, onOpenTask, placeholder }: { session: AgentSessi
               return <div key={n} className="muted small">turn done{i.costUsd != null ? ` · $${i.costUsd.toFixed(3)}` : ''}</div>
             case 'error':
               return <div key={n} className="msg error">{i.text}</div>
+            case 'notice':
+              return <div key={n} className="notice muted small">{i.text}</div>
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}
@@ -213,6 +215,7 @@ export function Chat({ session, onOpenTask, placeholder }: { session: AgentSessi
       <Composer
         busy={busy}
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
+        commands={chatCommands(session, sessions)}
         onSend={(text, att) => mag.send(session.id, text, att)}
         onStop={() => mag.stop(session.id)}
       />
@@ -264,19 +267,42 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
 export function Composer({
   busy,
   placeholder,
+  commands = [],
   onSend,
   onStop,
 }: {
   busy: boolean
   placeholder: string
+  /** Slash commands to offer after "/", without the slash; empty = text starting with "/" is plain text. */
+  commands?: string[]
   onSend: (text: string, attachments: Attachment[]) => Promise<void>
   onStop?: () => void
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
   const [drag, setDrag] = useState(false)
+  const [sel, setSel] = useState(0)
+  const [menuClosed, setMenuClosed] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
   const ta = useRef<HTMLTextAreaElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+
+  // "/" + a name being typed (no space yet) opens the menu, filtered by prefix.
+  const isCommand = commands.length > 0 && text.startsWith('/')
+  const typed = isCommand ? /^\/(\S*)$/.exec(text)?.[1] : undefined
+  const matches = typed === undefined ? [] : commands.filter((c) => c.startsWith(typed))
+  const menuOpen = matches.length > 0 && !menuClosed
+  const pick = (name: string) => {
+    setText(`/${name} `)
+    ta.current?.focus()
+  }
+  useEffect(() => {
+    setSel(0)
+    setMenuClosed(false)
+  }, [typed])
+  useEffect(() => {
+    menu.current?.children[sel]?.scrollIntoView({ block: 'nearest' })
+  }, [sel])
 
   // Grow with the content; CSS caps it at 40vh and scrolls. Clearing the text after send shrinks it back.
   useLayoutEffect(() => {
@@ -297,9 +323,35 @@ export function Composer({
   }
   const submit = async () => {
     if (busy || (!text.trim() && !files.length)) return
-    await onSend(text.trim(), files)
+    // Files never go with a command; they stay for the next message.
+    await onSend(text.trim(), isCommand ? [] : files)
     setText('')
-    setFiles([])
+    if (!isCommand) setFiles([])
+  }
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
+    if (menuOpen) {
+      const exact = typed !== undefined && commands.includes(typed)
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSel((i) => (i + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMenuClosed(true)
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !exact)) {
+        e.preventDefault()
+        pick(matches[Math.min(sel, matches.length - 1)])
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void submit()
+    }
   }
 
   return (
@@ -310,9 +362,26 @@ export function Composer({
       onDragLeave={() => setDrag(false)}
       onDrop={(e) => { e.preventDefault(); setDrag(false); void add(e.dataTransfer.files) }}
     >
+      {menuOpen && (
+        <div ref={menu} className="cmdmenu" role="listbox" aria-label="Commands">
+          {matches.map((c, i) => (
+            <button
+              key={c}
+              type="button"
+              role="option"
+              aria-selected={i === sel}
+              className={i === sel ? 'sel' : ''}
+              onMouseDown={(e) => e.preventDefault()} // keep focus in the textarea
+              onClick={() => pick(c)}
+            >
+              /{c}
+            </button>
+          ))}
+        </div>
+      )}
       {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
       <div className="composerrow">
-        <button type="button" className="icon" title="Attach files" aria-label="Attach files" onClick={() => picker.current?.click()}>+</button>
+        <button type="button" className="icon" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>+</button>
         <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
         <textarea
           ref={ta}
@@ -322,8 +391,8 @@ export function Composer({
             const imgs = Array.from(e.clipboardData.files)
             if (imgs.length) { e.preventDefault(); void add(imgs) }
           }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
-          placeholder={busy ? 'Wait for the agent to finish…' : `${placeholder}  (↵ to send, ⇧↵ for a new line, paste screenshots)`}
+          onKeyDown={onKeyDown}
+          placeholder={busy ? 'Wait for the agent to finish…' : `${placeholder}  (↵ to send, ⇧↵ for a new line, paste screenshots${commands.length ? ', / for commands' : ''})`}
           rows={1}
           aria-label="Message"
         />
@@ -372,7 +441,7 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
         </div>
       )}
       {chat && chat.items.length > 0 ? (
-        <Chat session={chat} onOpenTask={onOpenTask} placeholder="Talk about the project…" />
+        <Chat session={chat} sessions={state.sessions} onOpenTask={onOpenTask} placeholder="Talk about the project…" />
       ) : (
         <div className="chatbox">
           <div className="items">
@@ -381,7 +450,11 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
               and turns decisions into tasks and notes. It never edits code itself.
             </p>
           </div>
-          <Composer busy={false} placeholder="Talk about the project…" onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))} />
+          <Composer
+            busy={false}
+            placeholder="Talk about the project…"
+            commands={chatCommands(chat ?? { projectId, agent: project ? resolveChoice(project, 'chat').agent : 'claude-code' }, state.sessions)}
+            onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))} />
         </div>
       )}
     </Box>
