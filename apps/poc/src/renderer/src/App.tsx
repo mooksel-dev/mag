@@ -12,6 +12,7 @@ import {
   planQueue,
   resolveChoice,
   subtasksOf,
+  type AgentRole,
   type AgentSession,
   type Integration,
   type IntegrationMode,
@@ -494,8 +495,8 @@ const INTEGRATION_MODES: { mode: IntegrationMode; label: string }[] = [
 ]
 
 function IntegrationSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
-  const set = (role: string, id: string, mode: IntegrationMode) =>
-    mag.updateProject(project.id, { integrations: { ...project.integrations, [role]: { ...project.integrations[role as keyof Project['integrations']], [id]: mode } } })
+  const set = (role: AgentRole, id: string, mode: IntegrationMode) =>
+    mag.updateProject(project.id, { integrations: { ...project.integrations, [role]: { ...project.integrations[role], [id]: mode } } })
   return (
     <div className="field">
       Integrations
