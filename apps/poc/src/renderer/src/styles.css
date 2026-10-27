@@ -216,6 +216,12 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .pchead select { flex: 1; min-width: 0; }
 .agentroles { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 6px 8px; align-items: center; }
 .agentrole { display: contents; }
+.integrations { border-collapse: collapse; font-size: 13px; }
+.integrations th { font-weight: 500; color: var(--muted); text-align: left; padding: 4px 8px; }
+.integrations td { padding: 4px 8px; border-top: 1px solid var(--line); }
+.integrations .seg { display: inline-flex; margin-right: 0; }
+.integrations .seg button { border: none; border-radius: 0; padding: 3px 8px; font-size: 12px; color: var(--muted); }
+.integrations .seg button.on { background: var(--accent); color: var(--on-accent); }
 .dot.inline { display: inline-block; vertical-align: middle; margin-left: 4px; }
 .tabs { align-items: center; }
 

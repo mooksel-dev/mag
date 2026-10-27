@@ -7,11 +7,14 @@ import {
   canMoveInPlan,
   canMoveSubtask,
   inbox,
+  integrationMode,
   planBlockers,
   planQueue,
   resolveChoice,
   subtasksOf,
   type AgentSession,
+  type Integration,
+  type IntegrationMode,
   type Project,
   type Task,
   type TaskStatus,
@@ -111,7 +114,7 @@ export function App() {
           ) : tab === 'architecture' ? (
             <Architecture key={project.id} project={project} />
           ) : (
-            <Settings project={project} />
+            <Settings project={project} integrations={state.integrations} />
           )}
         </main>
         {chatOpen && !task && <ProjectChat key={project.id} projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />}
@@ -484,7 +487,58 @@ function AgentSettings({ project }: { project: Project }) {
   )
 }
 
-function Settings({ project }: { project: Project }) {
+/** Ask needs the approval flow (T-13.2); until then a role either has the tools or not. */
+const INTEGRATION_MODES: { mode: IntegrationMode; label: string }[] = [
+  { mode: 'off', label: 'Off' },
+  { mode: 'auto', label: 'Auto' },
+]
+
+function IntegrationSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
+  const set = (role: string, id: string, mode: IntegrationMode) =>
+    mag.updateProject(project.id, { integrations: { ...project.integrations, [role]: { ...project.integrations[role as keyof Project['integrations']], [id]: mode } } })
+  return (
+    <div className="field">
+      Integrations
+      {integrations.length ? (
+        <table className="integrations">
+          <thead>
+            <tr>
+              <th />
+              {SETTABLE_ROLES.map((role) => <th key={role}>{ROLE_LABELS[role] ?? role}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {integrations.map((i) => (
+              <tr key={i.id}>
+                <td title={i.id}>{i.name}</td>
+                {SETTABLE_ROLES.map((role) => {
+                  if (resolveChoice(project, role).agent !== 'claude-code') return <td key={role} className="muted small">n/a</td>
+                  const current = integrationMode(project, role, i.id)
+                  return (
+                    <td key={role}>
+                      <div className="seg" role="group" aria-label={`${i.name} for ${ROLE_LABELS[role] ?? role}`}>
+                        {INTEGRATION_MODES.map(({ mode, label }) => (
+                          <button key={mode} className={current === mode ? 'on' : ''} aria-pressed={current === mode} onClick={() => set(role, i.id, mode)}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <span className="muted small">Run any Claude Code agent to detect integrations.</span>
+      )}
+      <span className="muted small">MCP servers of your Claude Code account (claude.ai connectors, plugins). New ones start Off. Reviewer uses the Developer setting; Codex roles have none.</span>
+    </div>
+  )
+}
+
+function Settings({ project, integrations }: { project: Project; integrations: Integration[] }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   return (
     <section className="page">
@@ -513,6 +567,7 @@ function Settings({ project }: { project: Project }) {
         Enforce core architecture (lib / clients / services) for agents
       </label>
       <AgentSettings project={project} />
+      <IntegrationSettings project={project} integrations={integrations} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (

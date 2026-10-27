@@ -32,7 +32,49 @@ export interface Project {
   archRun: ArchRun | null
   /** Provider and model per agent role; missing roles use DEFAULT_CHOICE (see resolveChoice). */
   agents: Partial<Record<AgentRole, ModelChoice>>
+  /** Mode per integration id per role; missing = off (see integrationMode). */
+  integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   createdAt: number
+}
+
+/** What an agent role may do with an integration's tools. */
+export type IntegrationMode = 'off' | 'ask' | 'auto'
+
+/** An MCP server the agent CLI has (claude.ai connector, plugin, user config). */
+export interface Integration {
+  /** Tool prefix as Claude Code sees it: tools are mcp__<id>__*, e.g. claude_ai_Cloudflare. */
+  id: string
+  /** Server name from init, e.g. "claude.ai Cloudflare". */
+  name: string
+}
+
+/** mag's own MCP server; always on, never listed as an integration. */
+export const MAG_MCP_ID = 'mag'
+
+/** Claude Code's tool prefix id for a server name: anything outside [A-Za-z0-9_-] becomes _. */
+export function integrationId(serverName: string): string {
+  return serverName.replace(/[^A-Za-z0-9_-]/g, '_')
+}
+
+/** Mode of one integration for a role; reviewer follows developer, like resolveChoice. */
+export function integrationMode(project: Pick<Project, 'integrations'>, role: AgentRole, id: string): IntegrationMode {
+  const all = project.integrations ?? {}
+  return all[role]?.[id] ?? (role === 'reviewer' ? all.developer?.[id] : undefined) ?? 'off'
+}
+
+/** Server-level tool rules (mcp__<id>) for a run: auto -> allowed, off -> disallowed, ask -> ask. */
+export function integrationRules(
+  project: Pick<Project, 'integrations'>,
+  role: AgentRole,
+  known: Integration[],
+): { allowed: string[]; disallowed: string[]; ask: string[] } {
+  const rules = { allowed: [] as string[], disallowed: [] as string[], ask: [] as string[] }
+  for (const { id } of known) {
+    if (id === MAG_MCP_ID) continue
+    const mode = integrationMode(project, role, id)
+    rules[mode === 'auto' ? 'allowed' : mode === 'off' ? 'disallowed' : 'ask'].push(`mcp__${id}`)
+  }
+  return rules
 }
 
 export type ArchLayer = 'app' | 'service' | 'client' | 'lib'
@@ -219,7 +261,7 @@ export type NewEvent = Omit<ProjectEvent, 'id' | 'at'>
 
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
-  | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[] }
+  | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }
   | { type: 'message'; text: string }
   | { type: 'tool.call'; id: string; name: string; input: unknown }
   | { type: 'tool.result'; id: string; ok: boolean }

@@ -14,6 +14,8 @@ export interface RunSpec {
   mcpConfigPath?: string
   allowedTools?: string[]
   disallowedTools?: string[]
+  /** MCP tool that answers permission prompts (Claude Code only). */
+  permissionPromptTool?: string
   addDirs?: string[]
   env?: Record<string, string>
 }

@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
+import { integrationRules, resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -141,11 +141,14 @@ export class Orchestrator {
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
         appendSystemPrompt: ARCHITECT_PROMPT,
         mcpConfigPath,
-        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
+        ...this.withIntegrations(project, 'architect', c.agent, {
+          allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
+          disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
+        }),
       },
       (e) => {
-        if (e.type === 'tool.call') set({ note: `${e.name.replace(/^mcp__mag__/, '')} ${summarize(e.input)}`.trim() })
+        if (e.type === 'session.started') this.store.setIntegrations(e.integrations ?? [])
+        else if (e.type === 'tool.call') set({ note: `${e.name.replace(/^mcp__mag__/, '')} ${summarize(e.input)}`.trim() })
         else if (e.type === 'message') set({ note: e.text.slice(0, 160) })
         else if (e.type === 'turn.done') set({ costUsd: e.costUsd })
         else if (e.type === 'error') {
@@ -273,6 +276,16 @@ export class Orchestrator {
     return this.store.data.sessions.filter((s) => s.taskId === taskId && s.role === role).at(-1)
   }
 
+  /** Adds the project's integration rules for the role to a Claude Code run; Codex has no connectors. */
+  private withIntegrations(project: Project, role: AgentRole, agent: AgentKind, tools: Pick<RunSpec, 'allowedTools' | 'disallowedTools'>) {
+    if (agent !== 'claude-code') return tools
+    const rules = integrationRules(project, role, this.store.data.integrations)
+    return {
+      allowedTools: [...(tools.allowedTools ?? []), ...rules.allowed],
+      disallowedTools: [...(tools.disallowedTools ?? []), ...rules.disallowed],
+    }
+  }
+
   private spec(session: AgentSession): Omit<RunSpec, 'prompt'> {
     const project = this.store.project(session.projectId)
     const [first = homedir(), ...rest] = project.repos
@@ -341,6 +354,7 @@ export class Orchestrator {
           session.nativeSessionId = e.nativeSessionId
           if (e.model) session.activeModel = e.model
           if (e.commands) session.commands = e.commands
+          this.store.setIntegrations(e.integrations ?? [])
           return this.store.changed()
         case 'message':
           return push({ kind: 'assistant', text: e.text, at })
@@ -362,8 +376,9 @@ export class Orchestrator {
       }
     }
 
+    const spec = this.spec(session)
     const handle = adapters[session.agent].start(
-      { ...this.spec(session), prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
+      { ...spec, ...this.withIntegrations(this.store.project(session.projectId), session.role, session.agent, spec), prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)
