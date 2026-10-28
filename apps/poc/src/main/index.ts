@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { Menu, app, crashReporter, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent } from 'electron'
 import { basename, extname, join, normalize } from 'node:path'
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
-import type { AppState, NewTask, WindowTarget } from '../preload/api'
+import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
@@ -15,6 +15,8 @@ import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
 import { ICON, createWindows } from './windows'
+import { initLog, log, logTail, pruneLogs } from './log'
+import { Crashes } from './crash'
 
 // Apps launched from Finder get a minimal PATH; take the login shell's so git, gh and claude resolve.
 try {
@@ -22,6 +24,57 @@ try {
   if (shellPath.trim()) process.env.PATH = shellPath.trim().split('\n').pop()
 } catch {
   // keep the inherited PATH
+}
+
+// Logs and crash reports; the project chat reads them too.
+const logsDir = join(app.getPath('userData'), 'logs')
+initLog(logsDir, !app.isPackaged)
+const crashes = new Crashes(join(logsDir, 'crashes'), app.getVersion(), logTail)
+app.setPath('crashDumps', crashes.nativeDir)
+crashReporter.start({ uploadToServer: false })
+try {
+  pruneLogs(logsDir)
+} catch (e) {
+  log.warn('app', 'pruning old logs failed', e)
+}
+log.info('app', 'started', { version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron })
+
+const saveCrash = (crash: Parameters<Crashes['write']>[0]) => {
+  try {
+    crashes.write(crash)
+  } catch (e) {
+    log.error('crash', 'writing the crash report failed', e)
+  }
+}
+const crashed = (kind: 'uncaughtException' | 'unhandledRejection') => (e: unknown) => {
+  const err = e instanceof Error ? e : new Error(String(e))
+  log.error('crash', `${kind}: ${err.message}`, err)
+  saveCrash({ kind, message: err.message, stack: err.stack })
+}
+process.on('uncaughtException', crashed('uncaughtException'))
+process.on('unhandledRejection', crashed('unhandledRejection'))
+app.on('render-process-gone', (_, contents, d) => {
+  const message = `Renderer gone: ${d.reason} (exit code ${d.exitCode}) at ${contents.getURL()}`
+  log.error('crash', message)
+  saveCrash({ kind: 'render-process-gone', message })
+})
+app.on('child-process-gone', (_, d) => {
+  if (d.reason === 'clean-exit') return
+  const message = `${d.name ?? d.type} process gone: ${d.reason} (exit code ${d.exitCode})`
+  log.error('crash', message)
+  saveCrash({ kind: 'child-process-gone', message })
+})
+
+/** ipcMain.handle that logs a throwing handler's stack before the error goes back to the renderer. */
+function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent, ...args: A) => unknown) {
+  ipcMain.handle(channel, async (e, ...args) => {
+    try {
+      return await fn(e, ...(args as A))
+    } catch (err) {
+      log.error('ipc', `${channel} failed`, err)
+      throw err
+    }
+  })
 }
 
 // Serves attached files to the renderer: mag-file://att/<file name>
@@ -51,6 +104,7 @@ app.whenReady().then(async () => {
     runsDir: join(userData, 'runs'),
     worktreesDir: join(userData, 'worktrees'),
     attachmentsDir,
+    logsDir,
   })
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
@@ -65,23 +119,23 @@ app.whenReady().then(async () => {
 
   const snapshot = (): AppState => {
     const { canvases: _, ui: __, ...data } = store.data
-    return { ...data, canvases: store.canvasList(), claudeBin }
+    return { ...data, canvases: store.canvasList(), claudeBin, appVersion: app.getVersion() }
   }
   store.onChange(() => windows.broadcast(snapshot()))
   app.on('browser-window-focus', () => void scheduler.pollNow())
 
-  ipcMain.handle('state:get', () => snapshot())
-  ipcMain.handle('dialog:pickDir', async () => {
+  handle('state:get', () => snapshot())
+  handle('dialog:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
-  ipcMain.handle('project:create', (_, name: string) => store.createProject(name))
-  ipcMain.handle('project:update', (_, id: string, patch: Partial<Project>) => store.updateProject(id, patch))
-  ipcMain.handle('task:create', (_, t: NewTask) => store.createTask(t))
-  ipcMain.handle('task:update', (_, id: string, patch: Partial<Task>) => store.updateTask(id, patch))
-  ipcMain.handle('task:groom', (_, id: string) => orch.groom(id))
+  handle('project:create', (_, name: string) => store.createProject(name))
+  handle('project:update', (_, id: string, patch: Partial<Project>) => store.updateProject(id, patch))
+  handle('task:create', (_, t: NewTask) => store.createTask(t))
+  handle('task:update', (_, id: string, patch: Partial<Task>) => store.updateTask(id, patch))
+  handle('task:groom', (_, id: string) => orch.groom(id))
   const projectTasks = (projectId: string) => store.data.tasks.filter((t) => t.projectId === projectId)
-  ipcMain.handle('task:addToPlan', (_, id: string) => {
+  handle('task:addToPlan', (_, id: string) => {
     const task = store.task(id)
     const reasons = planBlockers(task)
     if (reasons.length) return { ok: false, reasons }
@@ -89,7 +143,7 @@ app.whenReady().then(async () => {
     store.updateTask(id, { status: 'planned', rank: nextPlanRank(tasks) })
     return { ok: true, reasons }
   })
-  ipcMain.handle('task:move', (_, id: string, dir: 'up' | 'down') => {
+  handle('task:move', (_, id: string, dir: 'up' | 'down') => {
     const task = store.task(id)
     const tasks = projectTasks(task.projectId)
     if (!canMoveInPlan(task, tasks, dir)) throw new Error(`${task.key} cannot move ${dir}`)
@@ -99,20 +153,20 @@ app.whenReady().then(async () => {
     store.updateTask(other.id, { rank: a })
     store.updateTask(task.id, { rank: b })
   })
-  ipcMain.handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => store.reorderSubtasks(parentId, ids))
-  ipcMain.handle('task:develop', (_, id: string) => orch.develop(id))
-  ipcMain.handle('pr:checkNow', () => scheduler.pollNow())
-  ipcMain.handle('shell:open', (_, url: string) => {
+  handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => store.reorderSubtasks(parentId, ids))
+  handle('task:develop', (_, id: string) => orch.develop(id))
+  handle('pr:checkNow', () => scheduler.pollNow())
+  handle('shell:open', (_, url: string) => {
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
     return shell.openPath(url)
   })
-  ipcMain.handle('arch:run', (_, projectId: string) => orch.architect(projectId))
-  ipcMain.handle('agents:list', () => orch.agents())
-  ipcMain.handle('repo:info', (_, path: string) => repoInfo(path))
-  ipcMain.handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
-  ipcMain.handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
-  ipcMain.handle('canvas:get', (_, id: string) => store.data.canvases[id]?.html ?? null)
-  ipcMain.handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
+  handle('arch:run', (_, projectId: string) => orch.architect(projectId))
+  handle('agents:list', () => orch.agents())
+  handle('repo:info', (_, path: string) => repoInfo(path))
+  handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
+  handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
+  handle('canvas:get', (_, id: string) => store.data.canvases[id]?.html ?? null)
+  handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
     const name = basename(f.name || (f.path ? basename(f.path) : 'file')).replace(/[^\w.-]+/g, '_') || 'file'
     const path = join(attachmentsDir, `${randomUUID().slice(0, 8)}-${name}`)
     if (f.bytes) writeFileSync(path, f.bytes)
@@ -120,10 +174,28 @@ app.whenReady().then(async () => {
     else throw new Error('Nothing to attach')
     return { name, path, mime: MIME[extname(name).toLowerCase()] ?? 'application/octet-stream' }
   })
-  ipcMain.handle('session:stop', (_, sid: string) => orch.stop(sid))
-  ipcMain.handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
-  ipcMain.handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
-  ipcMain.handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))
+  handle('session:stop', (_, sid: string) => orch.stop(sid))
+  handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
+  handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
+  handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))
+  handle('log:crash', (_, c: RendererCrash) => {
+    log.error('crash', `renderer error on ${c.screen ?? 'unknown screen'}: ${c.message}`)
+    saveCrash({ kind: 'renderer', message: c.message, stack: c.stack, componentStack: c.componentStack, screen: c.screen })
+  })
+  handle('crash:last', () => crashes.last())
+  handle('crash:dismiss', () => crashes.dismiss())
+  const openLogs = () => shell.openPath(logsDir)
+  handle('logs:open', () => openLogs())
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+      { role: 'fileMenu' },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+      { role: 'help', submenu: [{ label: 'Open logs folder', click: () => void openLogs() }] },
+    ]),
+  )
 
   windows.createMainWindow()
   // The dock icon brings the main window back, even while pop-outs are open.

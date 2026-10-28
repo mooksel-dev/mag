@@ -3,6 +3,7 @@ import { nextWork, prRollup, repoWorkName, type PrState, type RepoWork } from '@
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { prFeedback, prState, removeWorktree, type PrFeedback } from './git'
+import { log } from './log'
 
 const PICK_EVERY_MS = 5_000
 const PR_POLL_EVERY_MS = 60_000
@@ -16,7 +17,10 @@ export function startScheduler(store: Store, orch: Orchestrator) {
       const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
       const next = nextWork(tasks)
       const busy = store.data.sessions.some((s) => s.taskId === next?.id && s.role === 'developer' && orch.isRunning(s.id))
-      if (next && !busy) void orch.develop(next.id)
+      if (next && !busy) {
+        log.info('scheduler', `developing ${next.key}`, { project: project.name })
+        orch.develop(next.id).catch((e) => log.error('scheduler', `develop ${next.key} failed`, e))
+      }
     }
   }
 
@@ -54,6 +58,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
         // The task is already in review, so only merges and closes can change its status here.
         const status = prRollup(next, [])
         if (status === 'done') {
+          log.info('scheduler', `${task.key} done: every PR merged`)
           store.updateTask(task.id, { status: 'done', needsInput: null, work: next })
           for (const r of repos) await removeWorktree(r.repo, r.worktree)
           // Only removes the task dir once it is empty.
@@ -68,6 +73,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
         }
         if (status === 'in_progress') {
           const closed = repos.filter((r) => r.prState === 'closed').map((r) => repoWorkName(work, r))
+          log.info('scheduler', `${task.key} back in progress: PR closed for ${closed.join(', ')}`)
           store.updateTask(task.id, { status: 'in_progress', needsInput: `PR for ${closed.join(', ')} was closed without merging`, work: next })
           continue
         }
@@ -77,6 +83,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
         }
         // Save PR states first: the resumed run reads them. Feedback counts as seen only once the developer has it.
         store.updateTask(task.id, { work: next })
+        log.info('scheduler', `${task.key}: ${feedback.length} new PR comment(s)`)
         if (orch.feedback(task.id, feedback)) store.updateTask(task.id, { work: { ...next, feedbackSeenAt: Math.max(...feedback.map((f) => f.at)) } })
       }
     } finally {
@@ -93,6 +100,6 @@ export function startScheduler(store: Store, orch: Orchestrator) {
 
 function checkError(key: string, e: unknown) {
   const msg = (e as Error).message ?? String(e)
-  console.warn(`[mag] PR check failed for ${key}:`, msg)
+  log.warn('scheduler', `PR check failed for ${key}: ${msg}`)
   return msg.split('\n')[0]
 }

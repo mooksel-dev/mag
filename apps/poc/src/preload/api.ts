@@ -14,7 +14,29 @@ export interface AppState {
   /** MCP servers agents reported (claude.ai connectors and others); modes are per project in Project.integrations. */
   integrations: Integration[]
   claudeBin: string | null
+  appVersion: string
 }
+
+/** What failed: a main-process hook, a child process, a React render (`renderer`) or a native crash found on start. */
+export type CrashKind = 'uncaughtException' | 'unhandledRejection' | 'render-process-gone' | 'child-process-gone' | 'renderer' | 'native'
+
+/** One file in `logs/crashes/`. */
+export interface CrashReport {
+  kind: CrashKind
+  message: string
+  stack?: string
+  /** React component stack of a render error. */
+  componentStack?: string
+  /** Screen the renderer was showing. */
+  screen?: string
+  time: number
+  appVersion: string
+  /** Last main-process log lines (JSON) before the crash. */
+  log: string[]
+}
+
+/** A renderer error the main process saves as a crash report. */
+export type RendererCrash = Pick<CrashReport, 'message' | 'stack' | 'componentStack' | 'screen'>
 
 export interface NewTask {
   projectId: string
@@ -77,4 +99,10 @@ export interface MagApi {
   openTask(taskId: string): Promise<void>
   /** Main window: a pop-out asked to show a task. */
   onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
+  /** Save a renderer error as a crash report in the logs folder. */
+  reportCrash(crash: RendererCrash): Promise<void>
+  /** The newest crash from before this start that the user has not dismissed. */
+  lastCrash(): Promise<CrashReport | null>
+  dismissCrash(): Promise<void>
+  openLogs(): Promise<void>
 }

@@ -48,6 +48,10 @@ const api: MagApi = {
       if (openTaskCb === cb) openTaskCb = null
     }
   },
+  reportCrash: (crash) => ipcRenderer.invoke('log:crash', crash),
+  lastCrash: () => ipcRenderer.invoke('crash:last'),
+  dismissCrash: () => ipcRenderer.invoke('crash:dismiss'),
+  openLogs: () => ipcRenderer.invoke('logs:open'),
 }
 
 contextBridge.exposeInMainWorld('mag', api)

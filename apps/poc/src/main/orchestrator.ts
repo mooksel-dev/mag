@@ -8,6 +8,7 @@ import type { Store } from './store'
 import type { LocalApi } from './api'
 import { AGENT_MARK, changedRepos, prepareWorktree, slug, type PrFeedback } from './git'
 import { APPROVE_TOOL } from './tool-defs'
+import { log } from './log'
 
 interface Paths {
   /** Built task-mcp.js next to the main bundle. */
@@ -16,6 +17,8 @@ interface Paths {
   worktreesDir: string
   /** Files the user attached to messages. */
   attachmentsDir: string
+  /** mag's own logs and crash reports; the project chat may read them. */
+  logsDir: string
 }
 
 const GROOMER_PROMPT = `You are grooming a task in "mag", a task-centric workspace.
@@ -73,7 +76,7 @@ How to work:
 5. Keep ids stable if get_architecture shows a previous version and the module still exists.
 Call get_architecture first, then set_architecture once with the full picture. Be concise everywhere.`
 
-const chatPrompt = (project: Project) => `You are the user's partner for project "${project.name}" in "mag",
+const chatPrompt = (project: Project, logsDir: string) => `You are the user's partner for project "${project.name}" in "mag",
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
 How mag works: backlog task -> groomer agent writes the task doc, asks questions and may split it into subtasks
@@ -91,7 +94,9 @@ run one task at a time: the next task starts after every PR of the previous one 
 - For anything visual (UI mockups, flows, diagrams, comparisons) use show_canvas with one self-contained HTML page;
   revise it by id instead of drawing a new one. Prefer showing over describing.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
-- Be concise: short answers, markdown only where it helps. The user hates filler.`
+- Be concise: short answers, markdown only where it helps. The user hates filler.
+- mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
+  crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.`
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
@@ -140,6 +145,7 @@ export class Orchestrator {
     const mcpConfigPath = this.mcpConfig(`arch-${projectId}`, { MAG_PROJECT_ID: projectId })
     const run = { status: 'running' as const, startedAt: Date.now(), note: 'Reading the code…' }
     this.store.updateProject(projectId, { archRun: run })
+    log.info('agent', 'architect run started', { project: project.name, agent: this.choice(projectId, 'architect').agent })
     const set = (patch: Partial<NonNullable<Project['archRun']>>) =>
       this.store.updateProject(projectId, { archRun: { ...this.store.project(projectId).archRun!, ...patch } })
     let failed = false
@@ -162,11 +168,13 @@ export class Orchestrator {
         else if (e.type === 'turn.done') set({ costUsd: e.costUsd })
         else if (e.type === 'error') {
           failed = true
+          log.warn('agent', `architect run error: ${e.message.slice(0, 300)}`, { project: project.name })
           set({ status: 'error', note: e.message.slice(0, 300) })
         }
       },
     )
     handle.done.then(() => {
+      log.info('agent', `architect run ended: ${failed ? 'error' : 'done'}`, { project: project.name })
       if (failed) return
       set({ status: 'done', note: undefined })
       const concerns = (this.store.project(projectId).architecture?.apps ?? []).flatMap((a) => a.nodes).filter((n) => n.concern).length
@@ -229,6 +237,7 @@ export class Orchestrator {
       try {
         await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
       } catch (e) {
+        log.error('agent', `worktree for ${task.key} in ${r.repo} failed`, e)
         session.items.push({ kind: 'error', text: `Worktree for ${r.repo} failed: ${(e as Error).message}`, at: Date.now() })
         session.status = 'error'
         this.store.updateTask(task.id, { needsInput: 'Could not create the worktree' })
@@ -303,8 +312,8 @@ export class Orchestrator {
     if (session.role === 'chat' || !session.taskId) {
       return {
         cwd: first,
-        addDirs: [...rest, this.paths.attachmentsDir],
-        appendSystemPrompt: chatPrompt(project) + (project.notes ? `\n\nProject notes:\n${project.notes}` : '') + arch,
+        addDirs: [...rest, this.paths.attachmentsDir, this.paths.logsDir],
+        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + (project.notes ? `\n\nProject notes:\n${project.notes}` : '') + arch,
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
       }
@@ -365,10 +374,13 @@ export class Orchestrator {
       session.nativeSessionId = null
     }
 
+    const startedAt = Date.now()
     session.status = 'running'
-    session.runStartedAt = Date.now()
+    session.runStartedAt = startedAt
     this.store.changed()
     this.logSessionEvent(session, 'agent_started', `${session.role} started`)
+    const who = { session: session.id, role: session.role, task: session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId)?.key : undefined, agent: session.agent, model: c.model }
+    log.info('agent', `${session.role} run started`, who)
 
     const push = (item: ChatItem) => {
       session.items.push(item)
@@ -400,6 +412,7 @@ export class Orchestrator {
           return push({ kind: 'result', ok: e.ok, costUsd: e.costUsd, at })
         case 'error':
           session.status = 'error'
+          log.warn('agent', `${session.role} run error: ${e.message.slice(0, 300)}`, { session: session.id })
           return push({ kind: 'error', text: e.message, at })
       }
     }
@@ -413,6 +426,7 @@ export class Orchestrator {
     handle.done.then(() => {
       this.runs.delete(session.id)
       if (session.status === 'running') session.status = 'idle'
+      log.info('agent', `${session.role} run ended: ${session.status}`, { ...who, seconds: Math.round((Date.now() - startedAt) / 1000) })
       if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
       void this.afterRun(session)
       this.nameChat(session)

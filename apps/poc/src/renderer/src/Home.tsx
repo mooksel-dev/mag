@@ -12,8 +12,8 @@ import {
   type Task,
   type TaskStatus,
 } from '@mag/core'
-import type { AppState } from '../../preload/api'
-import { ago, inputPreview, prLabel, prName } from './format'
+import type { AppState, CrashReport } from '../../preload/api'
+import { ago, crashMarkdown, inputPreview, prLabel, prName } from './format'
 
 const mag = window.mag
 
@@ -69,6 +69,11 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
   const { current, next } = queueHead(tasks)
   const events = state.events.filter((e) => e.projectId === project.id).slice(-RECENT).reverse()
   const keyOf = (taskId: string | null) => tasks.find((t) => t.id === taskId)?.key
+  const [crash, setCrash] = useState<CrashReport | null>(null)
+  useEffect(() => {
+    mag.lastCrash().then(setCrash, () => {})
+  }, [])
+  const waiting = items.length + (crash ? 1 : 0)
 
   return (
     <section className="page home">
@@ -91,8 +96,9 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
       </div>
 
       <div className="card">
-        <h2>Waiting on you <span className="muted">{items.length}</span></h2>
-        {items.length ? items.map((i) =>
+        <h2>Waiting on you <span className="muted">{waiting}</span></h2>
+        {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
+        {waiting ? items.map((i) =>
           i.kind === 'approval' ? <ApprovalRow key={i.approvalId} item={i} onOpen={onOpen} />
           : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} onOpen={onOpen} />,
         ) : <p className="muted">Nothing is waiting on you.</p>}
@@ -141,6 +147,23 @@ function RepoLine({ project }: { project: Project }) {
   }, [repo])
   if (!repo) return <div className="muted small">No repository yet. Add one in Settings.</div>
   return <div className="muted small">{[repo, project.baseBranch, origin].filter(Boolean).join(' · ')}</div>
+}
+
+/** mag crashed in an earlier run: the report is in the logs folder. */
+function CrashRow({ crash, onDismiss }: { crash: CrashReport; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => navigator.clipboard.writeText(crashMarkdown(crash)).then(() => setCopied(true))
+  return (
+    <div className="inboxrow" onClick={() => mag.openLogs()}>
+      <span className="pill red">Crash</span>
+      <div className="grow">
+        <div className="title">mag crashed at {new Date(crash.time).toLocaleString()}</div>
+        <div className="muted small">{crash.kind}{crash.screen ? ` on ${crash.screen}` : ''}: {crash.message.split('\n')[0]}</div>
+      </div>
+      <button onClick={act(onDismiss)}>Dismiss</button>
+      <button className="primary" onClick={act(copy)}>{copied ? 'Copied' : 'Copy report'}</button>
+    </div>
+  )
 }
 
 const act = (fn: () => unknown) => (e: React.MouseEvent) => { e.stopPropagation(); void fn() }

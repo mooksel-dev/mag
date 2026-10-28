@@ -1,3 +1,5 @@
+import type { CrashReport } from '../../preload/api'
+
 /** Time since `ts`, short: 5m, 3h, 2d. */
 export const ago = (ts: number, now = Date.now()) => {
   const m = Math.max(0, Math.round((now - ts) / 60000))
@@ -23,4 +25,17 @@ export const threadTime = (ts: number, now = Date.now()) => {
   if (day(ts) === day(now)) return `${Math.floor(m / 60)}h`
   if (day(ts) === day(now - 86400000)) return 'yesterday'
   return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** Markdown crash report to paste into an issue or a chat. */
+export function crashMarkdown(c: Partial<CrashReport> & { message: string }) {
+  const fence = (title: string, body?: string, lang = '') => (body?.trim() ? [`**${title}**\n\`\`\`${lang}\n${body.trim()}\n\`\`\``] : [])
+  return [
+    `### mag crash${c.screen ? ` on ${c.screen}` : ''}`,
+    [`- App version: ${c.appVersion ?? '?'}`, c.kind && `- Kind: ${c.kind}`, c.time && `- Time: ${new Date(c.time).toISOString()}`].filter(Boolean).join('\n'),
+    `**Error:** ${c.message}`,
+    ...fence('Stack', c.stack),
+    ...fence('Component stack', c.componentStack),
+    ...fence('Last log lines', c.log?.join('\n'), 'jsonl'),
+  ].join('\n\n')
 }
