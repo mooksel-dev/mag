@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  STATUS_LABELS,
+  agentState,
   inbox,
   pipelineCounts,
   queueHead,
@@ -10,24 +10,20 @@ import {
   type PipelineStage,
   type Project,
   type Task,
-  type TaskStatus,
 } from '@mag/core'
 import type { AppState, CrashReport } from '../../preload/api'
 import { ago, crashMarkdown, inputPreview, prLabel, prName } from './format'
+import { AgentDot, useNow } from './Tasks'
 
 const mag = window.mag
 
 const STAGES: [PipelineStage, string][] = [
   ['backlog', 'Backlog'],
   ['grooming', 'Grooming'],
-  ['groomed', 'Groomed'],
-  ['planned', 'Planned'],
+  ['todo', 'Todo'],
   ['in_progress', 'In progress'],
-  ['in_review', 'In review'],
   ['done7d', 'Done · 7d'],
 ]
-/** Tiles that mean the user can act; highlighted when not zero. */
-const HIGHLIGHT: PipelineStage[] = ['groomed', 'in_review']
 
 const PILLS: Record<InboxKind, [string, string]> = {
   approval: ['amber', 'Approval'],
@@ -35,29 +31,18 @@ const PILLS: Record<InboxKind, [string, string]> = {
   check_failed: ['red', 'PR check failed'],
   question: ['amber', 'Question'],
   ready_to_merge: ['green', 'Ready to merge'],
-  groomed: ['violet', 'Groomed'],
 }
 
 const RECENT = 15
 
-/** Re-renders every `ms` so durations keep growing. */
-function useNow(ms: number) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), ms)
-    return () => clearInterval(id)
-  }, [ms])
-  return now
-}
-
-export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNewTask }: {
+export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewTask }: {
   project: Project
   tasks: Task[]
   state: AppState
   onOpen: (id: string) => void
   onOpenKey: (key: string) => void
-  /** Open Backlog or Plan filtered to this status. */
-  onFilter: (status: TaskStatus) => void
+  /** Open the Tasks view that shows this stage. */
+  onStage: (stage: PipelineStage) => void
   onNewTask: () => void
 }) {
   const now = useNow(15_000)
@@ -88,7 +73,7 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
 
       <div className="tiles">
         {STAGES.map(([stage, label]) => (
-          <button key={stage} className={`tile ${HIGHLIGHT.includes(stage) && counts[stage] > 0 ? 'hl' : ''}`} onClick={() => onFilter(stage === 'done7d' ? 'done' : stage)}>
+          <button key={stage} className="tile" onClick={() => onStage(stage)}>
             <small>{label}</small>
             <div>{counts[stage]}</div>
           </button>
@@ -100,7 +85,7 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
         {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
         {waiting ? items.map((i) =>
           i.kind === 'approval' ? <ApprovalRow key={i.approvalId} item={i} onOpen={onOpen} />
-          : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} onOpen={onOpen} />,
+          : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} now={now} onOpen={onOpen} />,
         ) : <p className="muted">Nothing is waiting on you.</p>}
       </div>
 
@@ -109,17 +94,15 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onFilter, onNew
           <h2>Now</h2>
           {running.length ? running.map((s) => (
             <div key={s.id} className="q">
-              <span className="dot live" />
               {s.taskId ? <button className="link key" onClick={() => onOpen(s.taskId!)}>{keyOf(s.taskId)}</button> : null}
-              <span>{s.role}</span>
               <span className="grow" />
-              <span className="muted">{ago(s.runStartedAt ?? s.createdAt, now)}</span>
+              <AgentDot state={{ kind: 'working', role: s.role, since: s.runStartedAt ?? s.createdAt }} now={now} />
             </div>
           )) : <div className="muted small">No agents working.</div>}
           <div className="muted small qnext">
             {next ? (
               <>Next in queue: <button className="link key" onClick={() => onOpen(next.id)}>{next.key}</button>{current && ` (after ${current.key} is merged)`}</>
-            ) : current ? `Working on ${current.key}; nothing after it in the plan.` : 'The plan is empty.'}
+            ) : current ? `Working on ${current.key}; nothing after it in Todo.` : 'Todo is empty.'}
           </div>
           <button className="link small" onClick={() => mag.checkPrs()}>check PRs now</button>
         </div>
@@ -189,9 +172,8 @@ function ApprovalRow({ item, onOpen }: { item: InboxItem; onOpen: (id: string) =
   )
 }
 
-function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; state: AppState; onOpen: (id: string) => void }) {
+function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task }; state: AppState; now: number; onOpen: (id: string) => void }) {
   const { task, kind, text } = item
-  const [blockers, setBlockers] = useState<string[]>([])
   const [color, label] = PILLS[kind]
   const prs = taskPrs(task)
   // The PR whose check failed, else the first one still open.
@@ -200,10 +182,6 @@ function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; s
   const restart = () => {
     const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
     return last?.role === 'groomer' ? mag.groom(task.id) : mag.develop(task.id)
-  }
-  const addToPlan = async () => {
-    const r = await mag.addToPlan(task.id)
-    setBlockers(r.ok ? [] : r.reasons)
   }
   const sub =
     kind === 'check_failed' && pr ? `${prName(pr)} · ${text}`
@@ -217,24 +195,13 @@ function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; s
       <div className="grow">
         <div className="title">{task.title}</div>
         <div className="muted small">{sub}</div>
-        {blockers.length > 0 && <div className="small blockers">Can't add to plan: {blockers.join(' · ')}</div>}
       </div>
+      <AgentDot state={agentState(task, state.sessions)} now={now} />
       {kind === 'agent_failed' && <><button onClick={act(() => onOpen(task.id))}>Open</button><button className="primary" onClick={act(restart)}>Restart</button></>}
       {kind === 'check_failed' && <>{pr && <button onClick={act(() => mag.open(pr))}>Open PR ↗</button>}<button className="primary" onClick={act(() => mag.checkPrs())}>Check again</button></>}
       {kind === 'question' && <button className="primary" onClick={act(() => onOpen(task.id))}>Answer</button>}
       {kind === 'ready_to_merge' &&
         open.map((url) => <button key={url} className="primary" onClick={act(() => mag.open(url))}>{open.length > 1 ? prLabel(url) : 'Open PR ↗'}</button>)}
-      {kind === 'groomed' && <><button onClick={act(() => onOpen(task.id))}>Review</button><button className="primary" onClick={act(addToPlan)}>Add to plan</button></>}
-    </div>
-  )
-}
-
-/** "Status: In review ✕" above a filtered Backlog or Plan list. */
-export function StatusChip({ status, onClear }: { status: TaskStatus; onClear: () => void }) {
-  return (
-    <div className="statuschip">
-      Status: {STATUS_LABELS[status]}
-      <button className="icon" aria-label="Clear status filter" onClick={onClear}>✕</button>
     </div>
   )
 }
