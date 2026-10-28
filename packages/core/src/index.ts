@@ -36,7 +36,20 @@ export interface Project {
   agents: Partial<Record<AgentRole, ModelChoice>>
   /** Mode per role and integration id; missing = off (see integrationMode). */
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
+  /** Hex color from PROJECT_COLORS; missing or null = picked from the id (see projectColor). */
+  color?: string | null
   createdAt: number
+}
+
+/** Project colors, readable on light and dark backgrounds. */
+export const PROJECT_COLORS: string[] = ['#e5484d', '#f76b15', '#d6a000', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#7d7d86']
+
+/** The project's color: its own, or a stable one from PROJECT_COLORS by a hash of its id. */
+export function projectColor(p: Pick<Project, 'id' | 'color'>): string {
+  if (p.color) return p.color
+  let h = 0
+  for (const c of p.id) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  return PROJECT_COLORS[h % PROJECT_COLORS.length]
 }
 
 export type ArchLayer = 'app' | 'service' | 'client' | 'lib'
@@ -545,6 +558,21 @@ export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]
     ...approvalItems(projectId, tasks, sessions),
     ...tasks.map((t) => inboxItem(t, sessions)).filter((i): i is InboxItem => !!i),
   ].sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
+}
+
+export type ProjectState = 'waiting' | 'in_review' | 'idle'
+
+/** Waiting if something in the project's inbox waits on the user, else in review if a task is, else idle. */
+export function projectState(projectId: string, tasks: Task[], sessions: AgentSession[]): ProjectState {
+  const mine = tasks.filter((t) => t.projectId === projectId)
+  if (inbox(projectId, mine, sessions).length) return 'waiting'
+  if (mine.some((t) => !t.parentId && t.status === 'in_review')) return 'in_review'
+  return 'idle'
+}
+
+/** Inbox items across all projects: the dock badge. */
+export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], sessions: AgentSession[]): number {
+  return projects.reduce((n, p) => n + inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).length, 0)
 }
 
 export type PipelineStage = Exclude<TaskStatus, 'done' | 'todo'> | 'done7d'

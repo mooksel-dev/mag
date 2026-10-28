@@ -3,6 +3,7 @@ import {
   BACKLOG_STATUSES,
   DEFAULT_TEMPLATES,
   PLAN_STATUSES,
+  PROJECT_COLORS,
   SETTABLE_ROLES,
   canMoveInPlan,
   canMoveSubtask,
@@ -10,6 +11,7 @@ import {
   integrationMode,
   planBlockers,
   planQueue,
+  projectColor,
   repoWorkName,
   resolveChoice,
   subtaskProgress,
@@ -586,6 +588,19 @@ function Settings({ project, integrations }: { project: Project; integrations: I
     <section className="page">
       <h1>Settings</h1>
       <label className="field">Name<input defaultValue={project.name} onChange={(e) => update({ name: e.target.value })} /></label>
+      <div className="field">
+        Color
+        <div className="swatches" role="radiogroup" aria-label="Project color">
+          <button role="radio" aria-checked={!project.color} className={`swatch auto ${!project.color ? 'on' : ''}`} title="Auto: picked from the project id" onClick={() => update({ color: null })}>
+            <span style={{ background: projectColor({ id: project.id }) }} />Auto
+          </button>
+          {PROJECT_COLORS.map((c) => (
+            <button key={c} role="radio" aria-checked={project.color === c} aria-label={c} className={`swatch ${project.color === c ? 'on' : ''}`} onClick={() => update({ color: c })}>
+              <span style={{ background: c }} />
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="field">
         Repositories
         {project.repos.map((r) => (
