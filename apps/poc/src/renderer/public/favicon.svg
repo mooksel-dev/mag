@@ -1,8 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" width="1024" height="1024">
-  <rect width="44" height="44" rx="10" fill="#15171c"/>
-  <g transform="translate(5.06 5.06) scale(.77)" fill="none" stroke="#6b7cff" stroke-width="4" stroke-linecap="round">
-    <path d="M38 8H22a14 14 0 0 0 0 28h16"/>
-    <path d="M38 14H22a8 8 0 0 0 0 16h16" opacity=".6"/>
-    <path d="M38 20H22a2 2 0 0 0 0 4h16" opacity=".3"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7b8bff"/>
+      <stop offset="1" stop-color="#4a5ae0"/>
+    </linearGradient>
+  </defs>
+  <rect width="44" height="44" rx="10" fill="url(#bg)"/>
+  <g transform="translate(22 22) scale(.7) translate(-22.5 -22)">
+    <g fill="none" stroke-width="4" stroke-linecap="round">
+      <path d="M36 9H22a13 13 0 0 0 0 26h14" stroke="#ffffff"/>
+      <path d="M36 16H22a6 6 0 0 0 0 12h14" stroke="rgba(255,255,255,.72)"/>
+    </g>
+    <circle cx="25" cy="22" r="2.5" fill="rgba(255,255,255,.5)"/>
   </g>
 </svg>
