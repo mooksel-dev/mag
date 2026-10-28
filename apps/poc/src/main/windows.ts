@@ -6,6 +6,9 @@ import { onSomeDisplay } from './bounds'
 
 const POPOUT_SIZE = { width: 1100, height: 800 }
 
+/** Window icon (Windows, Linux) and dock icon (macOS). The app is not packaged, so it is read from the source tree next to `out/`. */
+export const ICON = join(__dirname, '../../resources/icon.png')
+
 const targetId = (t: WindowTarget) => (t.kind === 'architecture' ? t.projectId : t.kind === 'canvas' ? t.canvasId : t.taskId)
 
 /** The main window and the pop-out windows that show one artifact each (architecture, canvas, task doc). */
@@ -21,7 +24,7 @@ export function createWindows(store: Store) {
   const webPreferences = { preload: join(__dirname, '../preload/index.js') }
 
   function createMainWindow() {
-    const win = new BrowserWindow({ width: 1400, height: 900, title: 'mag PoC', webPreferences })
+    const win = new BrowserWindow({ width: 1400, height: 900, title: 'mag PoC', icon: ICON, webPreferences })
     main = win
     load(win)
     win.on('closed', () => {
@@ -42,7 +45,7 @@ export function createWindows(store: Store) {
     }
     const saved = store.windowBounds(target.kind)
     const bounds = saved && onSomeDisplay(saved, screen.getAllDisplays().map((d) => d.workArea)) ? saved : POPOUT_SIZE
-    const win = new BrowserWindow({ ...bounds, title: 'mag', webPreferences })
+    const win = new BrowserWindow({ ...bounds, title: 'mag', icon: ICON, webPreferences })
     popouts.set(key, win)
     load(win, `popout?${new URLSearchParams({ kind: target.kind, id })}`)
     win.on('close', () => store.saveWindowBounds(target.kind, win.getNormalBounds()))

@@ -14,7 +14,7 @@ import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
-import { createWindows } from './windows'
+import { ICON, createWindows } from './windows'
 
 // Apps launched from Finder get a minimal PATH; take the login shell's so git, gh and claude resolve.
 try {
@@ -34,6 +34,7 @@ const MIME: Record<string, string> = {
 }
 
 app.whenReady().then(async () => {
+  app.dock?.setIcon(ICON)
   const userData = app.getPath('userData')
   const store = new Store(join(userData, 'db.json'))
   const windows = createWindows(store)

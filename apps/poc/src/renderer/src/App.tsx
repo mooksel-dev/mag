@@ -27,6 +27,7 @@ import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
 import { ago, prLabel } from './format'
 import { Home, StatusChip } from './Home'
+import { Logo } from './Logo'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -102,7 +103,7 @@ export function App() {
         <div className="workspace">
         <main className="main">
           <header className="tabs">
-            <span className="brand">mag <span>PoC</span></span>
+            <span className="brand"><Logo size={22} />mag <span>PoC</span></span>
             <button className={tab === 'home' && !task ? 'on' : ''} onClick={() => go('home')}>
               Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
             </button>
