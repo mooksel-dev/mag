@@ -55,3 +55,20 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   const again = new Store(file)
   assert.deepEqual(again.data.tasks, store.data.tasks)
 })
+
+test('project windows and recent projects persist', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  writeFileSync(file, JSON.stringify({ projects: [], tasks: [], sessions: [], ui: { windows: {} } }))
+  const store = new Store(file)
+  assert.deepEqual(store.projectWindows(), [], 'older files get an empty list')
+  assert.deepEqual(store.recent(), [])
+  const b = { x: 0, y: 0, width: 900, height: 700 }
+  store.setProjectWindows([{ projectId: 'a', bounds: b }])
+  store.touchRecent('a')
+  store.touchRecent('b')
+  store.touchRecent('a')
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.projectWindows(), [{ projectId: 'a', bounds: b }])
+  assert.deepEqual(again.recent(), ['a', 'b'])
+})

@@ -26,7 +26,7 @@ import {
   type TaskStatus,
   type TaskType,
 } from '@mag/core'
-import type { AppState } from '../../preload/api'
+import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
@@ -34,6 +34,7 @@ import { ago, prLabel } from './format'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Home, StatusChip } from './Home'
 import { Logo } from './Logo'
+import { ProjectPicker, ProjectSquare } from './Picker'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -50,10 +51,11 @@ const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 type Tab = 'home' | 'backlog' | 'plan' | 'architecture' | 'settings'
 const TAB_NAMES: Record<Tab, string> = { home: 'Home', backlog: 'Backlog', plan: 'Plan', architecture: 'Architecture', settings: 'Settings' }
 
-export function App() {
+/** One project's window; the project is fixed for the window's lifetime. */
+export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('home')
+  const [picker, setPicker] = useState<PickerMode | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null)
   const [focusNewTask, setFocusNewTask] = useState(false)
@@ -65,27 +67,32 @@ export function App() {
   }
 
   useEffect(() => {
-    mag.getState().then(setState)
+    mag.getState().then((s) => {
+      setState(s)
+      // A new project has nothing to show until it has repositories.
+      if (s.projects.find((p) => p.id === projectId)?.repos.length === 0) setTab('settings')
+    })
     return mag.onState(setState)
-  }, [])
+  }, [projectId])
 
-  // A pop-out asked to show a task (a task key clicked in a doc window).
-  useEffect(
-    () =>
-      mag.onOpenTask((pid, tid) => {
-        setProjectId(pid)
-        setTaskId(tid)
-      }),
-    [],
-  )
+  // A pop-out or a notification asked to show a task; main sends it to this project's window only.
+  useEffect(() => mag.onOpenTask((_, tid) => setTaskId(tid)), [])
+  // ⌘O, File → Open Project… / New Project…, the dock menu.
+  useEffect(() => mag.onOpenPicker(setPicker), [])
+
+  const project = state?.projects.find((p) => p.id === projectId) ?? null
+  useEffect(() => {
+    document.title = project?.name ?? 'mag'
+  }, [project?.name])
 
   if (!state) return null
-  const project = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
-  const tasks = project ? state.tasks.filter((t) => t.projectId === project.id) : []
+  if (!project) return <div className="app"><main className="main empty">This project no longer exists.</main></div>
+  const tasks = state.tasks.filter((t) => t.projectId === project.id)
+  const color = projectColor(project)
   // Subtasks are steps of their task's plan, not pages: a subtask (e.g. a clicked T-12.3) shows its task.
   const picked = tasks.find((t) => t.id === taskId)
   const task = (picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null
-  const inboxCount = project ? inbox(project.id, tasks, state.sessions).length : 0
+  const inboxCount = inbox(project.id, tasks, state.sessions).length
   const roots = tasks.filter((t) => !t.parentId)
   const backlogCount = roots.filter((t) => BACKLOG_STATUSES.includes(t.status)).length
   const planCount = roots.length - backlogCount
@@ -94,26 +101,26 @@ export function App() {
   const filterBy = (s: TaskStatus) => { go(BACKLOG_STATUSES.includes(s) ? 'backlog' : 'plan'); setStatusFilter(s) }
   const openKey = (key: string) => setTaskId(tasks.find((t) => t.key === key)?.id ?? null)
   const screen = task ? `Task ${task.key}` : TAB_NAMES[tab]
-  const chatBusy = state.sessions.some((s) => s.projectId === project?.id && s.role === 'chat' && s.status === 'running')
+  const chatBusy = state.sessions.some((s) => s.projectId === project.id && s.role === 'chat' && s.status === 'running')
 
   return (
-    <div className="app">
-      <nav className="rail" aria-label="Projects">
-        {state.projects.map((p) => (
-          <button key={p.id} className={`railbtn ${p.id === project?.id ? 'on' : ''}`} title={p.name} aria-label={p.name} aria-current={p.id === project?.id} onClick={() => { setProjectId(p.id); setTaskId(null); setStatusFilter(null) }}>
-            {initials(p.name)}
+    <div className="app" style={{ '--pc': color } as React.CSSProperties}>
+      <div className="titlebar">
+        <div className="projmenu">
+          <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => setPicker(picker ? null : 'open')}>
+            <ProjectSquare project={project} />
+            <span className="pname">{project.name}</span>
+            <span className="caret" aria-hidden>▾</span>
           </button>
-        ))}
-        <NewProject onCreate={(p) => { setProjectId(p.id); go('settings') }} />
+          {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => setPicker(null)} />}
+        </div>
+        <span className="brand"><Logo size={16} />mag <span>PoC</span></span>
         <div className="grow" />
-        {!state.claudeBin && <span className="railwarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠</span>}
-      </nav>
-
-      {project ? (
+        {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠ Claude CLI not found</span>}
+      </div>
         <div className="workspace">
         <main className="main">
           <header className="tabs">
-            <span className="brand"><Logo size={22} />mag <span>PoC</span></span>
             <button className={tab === 'home' && !task ? 'on' : ''} onClick={() => go('home')}>
               Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
             </button>
@@ -147,35 +154,6 @@ export function App() {
           </ErrorBoundary>
         )}
         </div>
-      ) : (
-        <main className="main empty">Create a project to start.</main>
-      )}
-    </div>
-  )
-}
-
-/** "My project" -> "MP", "mag" -> "MA". */
-function initials(name: string) {
-  const words = name.trim().split(/[\s_-]+/).filter(Boolean)
-  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? '?').slice(0, 2)).toUpperCase()
-}
-
-function NewProject({ onCreate }: { onCreate: (p: Project) => void }) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const close = () => { setOpen(false); setName('') }
-  return (
-    <div className="menu">
-      <button className="railbtn add" title="New project" aria-label="New project" aria-expanded={open} onClick={() => setOpen((o) => !o)}>+</button>
-      {open && (
-        <>
-          <div className="menuscrim" onClick={close} />
-          <form className="popover" onSubmit={async (e) => { e.preventDefault(); if (!name.trim()) return; onCreate(await mag.createProject(name.trim())); close() }}>
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && close()} placeholder="New project name" aria-label="New project name" />
-            <button type="submit" className="primary">Create</button>
-          </form>
-        </>
-      )}
     </div>
   )
 }

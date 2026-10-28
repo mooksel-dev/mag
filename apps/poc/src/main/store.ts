@@ -17,8 +17,26 @@ interface Data {
   /** MCP servers agents reported on start; global, since connectors belong to the account. */
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
-  ui: { windows: Partial<Record<WindowKind, Bounds>> }
+  ui: UiState
 }
+
+/** A project window that was open, to reopen on start. */
+export interface ProjectWindow {
+  projectId: string
+  bounds: Bounds
+}
+
+interface UiState {
+  /** Last bounds per pop-out kind. */
+  windows: Partial<Record<WindowKind, Bounds>>
+  /** Project windows open on quit (or now), in opening order. */
+  projectWindows: ProjectWindow[]
+  /** Project ids, most recently opened first. */
+  recent: string[]
+}
+
+/** Recent projects kept. */
+const RECENT_MAX = 10
 
 /** Task work before T-22: one worktree per task. */
 interface LegacyWork {
@@ -37,7 +55,7 @@ const id = () => randomUUID().slice(0, 8)
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {} } }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
@@ -45,8 +63,10 @@ export class Store {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
     this.data.events ??= []
     this.data.integrations ??= []
-    this.data.ui ??= { windows: {} }
+    this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
     this.data.ui.windows ??= {}
+    this.data.ui.projectWindows ??= []
+    this.data.ui.recent ??= []
     // Runs don't survive a restart, nor do their pending approvals.
     for (const s of this.data.sessions) {
       if (s.status === 'running') s.status = 'idle'
@@ -196,6 +216,30 @@ export class Store {
   saveWindowBounds(kind: WindowKind, bounds: Bounds) {
     this.data.ui.windows[kind] = bounds
     this.save()
+  }
+
+  /** Project windows to reopen on start. */
+  projectWindows(): ProjectWindow[] {
+    return this.data.ui.projectWindows
+  }
+
+  /** Remembers the open project windows; not app state, so listeners are not told. */
+  setProjectWindows(list: ProjectWindow[]) {
+    this.data.ui.projectWindows = list
+    this.save()
+  }
+
+  /** Project ids, most recently opened first. */
+  recent(): string[] {
+    return this.data.ui.recent
+  }
+
+  /** Moves the project to the front of the recent list; listeners are told, so menus can rebuild. */
+  touchRecent(pid: string) {
+    const list = [pid, ...this.data.ui.recent.filter((x) => x !== pid)].slice(0, RECENT_MAX)
+    if (list.join() === this.data.ui.recent.join()) return
+    this.data.ui.recent = list
+    this.changed()
   }
 
   project(pid: string) {
