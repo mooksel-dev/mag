@@ -113,11 +113,20 @@ export function CanvasCard({ canvas, latest = true }: { canvas: CanvasRef; lates
         <span className="title">{canvas.title}</span>
         <span className="muted small">v{canvas.version}</span>
         <div className="grow" />
+        {latest && <OpenCanvasWindow canvas={canvas} />}
         {latest && <button className="link" onClick={() => setFull(true)}>Expand</button>}
       </div>
       {latest ? <CanvasFrame canvas={canvas} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
       {full && <CanvasOverlay canvas={canvas} onClose={() => setFull(false)} />}
     </div>
+  )
+}
+
+function OpenCanvasWindow({ canvas }: { canvas: CanvasRef }) {
+  return (
+    <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>
+      ⧉ Open in window
+    </button>
   )
 }
 
@@ -130,6 +139,7 @@ export function CanvasOverlay({ canvas, onClose }: { canvas: CanvasRef; onClose:
           <span className="title">{canvas.title}</span>
           <span className="muted small">v{canvas.version}</span>
           <div className="grow" />
+          <OpenCanvasWindow canvas={canvas} />
           <button onClick={onClose}>Close</button>
         </div>
         <CanvasFrame canvas={canvas} height="100%" />

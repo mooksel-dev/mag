@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron'
+import { app, dialog, ipcMain, net, protocol, shell } from 'electron'
 import { basename, extname, join, normalize } from 'node:path'
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, subtaskStarted, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
-import type { AppState, NewTask } from '../preload/api'
+import type { AppState, NewTask, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
@@ -14,8 +14,7 @@ import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
-
-let win: BrowserWindow | null = null
+import { createWindows } from './windows'
 
 // Apps launched from Finder get a minimal PATH; take the login shell's so git, gh and claude resolve.
 try {
@@ -34,21 +33,12 @@ const MIME: Record<string, string> = {
   '.html': 'text/html', '.csv': 'text/csv',
 }
 
-function createWindow() {
-  win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    title: 'mag PoC',
-    webPreferences: { preload: join(__dirname, '../preload/index.js') },
-  })
-  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else win.loadFile(join(__dirname, '../renderer/index.html'))
-  win.on('closed', () => (win = null))
-}
-
 app.whenReady().then(async () => {
   const userData = app.getPath('userData')
   const store = new Store(join(userData, 'db.json'))
+  const windows = createWindows(store)
+  // Pop-outs save their bounds as they close on quit, after the save timer could fire.
+  app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
   const actions: ToolActions = { groom: () => {}, architect: () => {} }
@@ -73,10 +63,10 @@ app.whenReady().then(async () => {
   const claudeBin = await claudeCode.detect()
 
   const snapshot = (): AppState => {
-    const { canvases: _, ...data } = store.data
+    const { canvases: _, ui: __, ...data } = store.data
     return { ...data, canvases: store.canvasList(), claudeBin }
   }
-  store.onChange(() => win?.webContents.send('state', snapshot()))
+  store.onChange(() => windows.broadcast(snapshot()))
   app.on('browser-window-focus', () => void scheduler.pollNow())
 
   ipcMain.handle('state:get', () => snapshot())
@@ -137,10 +127,13 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('session:stop', (_, sid: string) => orch.stop(sid))
   ipcMain.handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
+  ipcMain.handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
+  ipcMain.handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))
 
-  createWindow()
+  windows.createMainWindow()
+  // The dock icon brings the main window back, even while pop-outs are open.
   app.on('activate', () => {
-    if (!BrowserWindow.getAllWindows().length) createWindow()
+    if (!windows.hasMainWindow()) windows.createMainWindow()
   })
 })
 

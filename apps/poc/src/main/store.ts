@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
-import type { NewTask } from '../preload/api'
+import type { NewTask, WindowKind } from '../preload/api'
+import type { Bounds } from './bounds'
 
 interface Data {
   projects: Project[]
@@ -15,6 +16,8 @@ interface Data {
   events: ProjectEvent[]
   /** MCP servers agents reported on start; global, since connectors belong to the account. */
   integrations: Integration[]
+  /** Window layout; not app state, so not sent to the renderer. */
+  ui: { windows: Partial<Record<WindowKind, Bounds>> }
 }
 
 /** Events kept per project. */
@@ -24,7 +27,7 @@ const id = () => randomUUID().slice(0, 8)
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [] }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {} } }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
@@ -32,6 +35,8 @@ export class Store {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
     this.data.events ??= []
     this.data.integrations ??= []
+    this.data.ui ??= { windows: {} }
+    this.data.ui.windows ??= {}
     // Runs don't survive a restart, nor do their pending approvals.
     for (const s of this.data.sessions) {
       if (s.status === 'running') s.status = 'idle'
@@ -116,11 +121,32 @@ export class Store {
 
   changed() {
     for (const fn of this.listeners) fn()
+    this.save()
+  }
+
+  private save() {
     if (this.saveTimer) clearTimeout(this.saveTimer)
-    this.saveTimer = setTimeout(() => {
-      mkdirSync(dirname(this.file), { recursive: true })
-      writeFileSync(this.file, JSON.stringify(this.data, null, 2))
-    }, 200)
+    this.saveTimer = setTimeout(() => this.flush(), 200)
+  }
+
+  /** Writes a pending save now, e.g. on quit, when the timer would not fire. */
+  flush() {
+    if (!this.saveTimer) return
+    clearTimeout(this.saveTimer)
+    this.saveTimer = null
+    mkdirSync(dirname(this.file), { recursive: true })
+    writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+  }
+
+  /** Last bounds of a pop-out window of this kind. */
+  windowBounds(kind: WindowKind): Bounds | undefined {
+    return this.data.ui.windows[kind]
+  }
+
+  /** Remembers pop-out bounds; listeners are not told, since this is not app state. */
+  saveWindowBounds(kind: WindowKind, bounds: Bounds) {
+    this.data.ui.windows[kind] = bounds
+    this.save()
   }
 
   project(pid: string) {

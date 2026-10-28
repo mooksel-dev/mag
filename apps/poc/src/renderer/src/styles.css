@@ -323,6 +323,17 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .overlay { position: fixed; inset: 0; background: var(--scrim); display: flex; padding: 32px; z-index: 10; }
 .overlaybox { flex: 1; background: var(--surface); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .overlaybox .canvasframe { flex: 1; }
+
+/* pop-out windows */
+.popout { height: 100vh; display: flex; flex-direction: column; }
+.popout > .page { flex: 1; min-height: 0; }
+.popcanvas { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
+.popcanvas .canvasframe { flex: 1; }
+.popdoc .taskrow { margin-bottom: 18px; }
+.popdoc .taskrow .title { font-weight: 600; font-size: 15px; }
+.popdoc .docmd { max-width: 900px; }
+.archhead .popbtn { margin-left: auto; }
+.tasktabs .popbtn { margin-left: auto; align-self: center; border: none; padding: 0 4px; color: var(--accent); }
 .menu { position: relative; }
 .menulist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: 300px; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
 .menulist button { display: flex; gap: 8px; align-items: baseline; border: none; background: none; text-align: left; padding: 6px 8px; }
