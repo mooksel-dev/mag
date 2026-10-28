@@ -11,6 +11,8 @@ export type TaskStatus =
   | 'in_progress'
   | 'in_review'
   | 'done'
+  /** Subtasks only: a plan step not ticked yet. Subtasks are either todo or done. */
+  | 'todo'
 
 export interface Project {
   id: string
@@ -88,16 +90,79 @@ export function layerRule(from: ArchLayer, to: ArchLayer): { severity: 'error' |
   return null
 }
 
-/** Execution state of a task once a developer agent picks it up. */
-export interface TaskWork {
+export type PrState = 'open' | 'merged' | 'closed'
+
+/** One project repository in a task's workspace: its worktree, branch and PR. */
+export interface RepoWork {
+  /** The project repository (main checkout). */
   repo: string
   branch: string
   worktree: string
   prUrl: string | null
-  /** PR feedback newer than this triggers a follow-up run. */
-  feedbackSeenAt: number
+  /** null until the PR has been recorded or checked. */
+  prState: PrState | null
   /** Last PR check problem, shown on the task; null when the last check worked. */
   checkError?: string | null
+}
+
+/** Execution state of a task once a developer agent picks it up. */
+export interface TaskWork {
+  /** One worktree per project repository, side by side in `dir`. */
+  repos: RepoWork[]
+  /** Task directory: the developer's cwd. */
+  dir: string
+  /** PR feedback newer than this triggers a follow-up run. */
+  feedbackSeenAt: number
+}
+
+/** Last path segment. */
+const baseName = (path: string) => path.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || path
+
+/** Worktree folder name per repository: its base name, made unique within the task ("app", "app-2"). */
+export function repoDirNames(repos: string[]): string[] {
+  const used = new Set<string>()
+  return repos.map((r) => {
+    const base = baseName(r)
+    let name = base
+    for (let n = 2; used.has(name); n++) name = `${base}-${n}`
+    used.add(name)
+    return name
+  })
+}
+
+/** Short name of a repo in a task: its worktree folder, or the repository's own name for a pre-T-22 single worktree. */
+export function repoWorkName(work: TaskWork, r: RepoWork): string {
+  return baseName(r.worktree === work.dir ? r.repo : r.worktree)
+}
+
+/** The repo work a developer means by `ref`: its short name (see repoWorkName), the repository path or the worktree path. */
+export function findRepoWork(work: TaskWork, ref: string): RepoWork | undefined {
+  const r = ref.trim().replace(/[/\\]+$/, '')
+  return work.repos.find((w) => w.repo === r || w.worktree === r || repoWorkName(work, w) === r)
+}
+
+/** Repos of a task that have a PR recorded. */
+export function taskPrs(task: Pick<Task, 'work'>): RepoWork[] {
+  return task.work?.repos.filter((r) => r.prUrl) ?? []
+}
+
+/** The first PR check problem of a task, if any. */
+export function workCheckError(work: TaskWork | null): string | null {
+  return work?.repos.find((r) => r.checkError)?.checkError ?? null
+}
+
+/**
+ * Status a task's PRs give it, or null when they don't decide it. `changed` = repos (by RepoWork.repo) with commits
+ * of their own. Every PR merged → done; a PR closed without merge → in_progress; every changed repo with a live PR →
+ * in_review.
+ */
+export function prRollup(work: TaskWork, changed: string[]): 'done' | 'in_review' | 'in_progress' | null {
+  const prs = work.repos.filter((r) => r.prUrl)
+  if (!prs.length) return null
+  if (prs.some((r) => r.prState === 'closed')) return 'in_progress'
+  if (prs.every((r) => r.prState === 'merged')) return 'done'
+  const live = new Set(prs.map((r) => r.repo))
+  return changed.every((c) => live.has(c)) ? 'in_review' : null
 }
 
 export interface Task {
@@ -109,12 +174,13 @@ export interface Task {
   title: string
   type: TaskType
   status: TaskStatus
-  /** What the user wrote. The agent-owned document lives separately. */
+  /** What the user wrote. The agent-owned document lives separately. Subtasks: the optional one-line note. */
   description: string
   /** Order: top-level tasks by position in the plan, subtasks by position within the parent. */
   rank: number
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
+  /** Top-level tasks only; subtasks are plan steps without work of their own. */
   work: TaskWork | null
   /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
   nextSubNo: number
@@ -366,33 +432,21 @@ export function nextPlanRank(tasks: Task[]): number {
   return Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
 }
 
-/** Work units in execution order: each plan task's subtasks, or the task itself when it has none. */
-function workUnits(tasks: Task[]): Task[] {
-  return planQueue(tasks).flatMap((t) => {
-    const subs = subtasksOf(t.id, tasks)
-    return subs.length ? subs : [t]
-  })
-}
-
-/** The next unit a developer should start, or null. Execution is linear: one unit at a time, in plan order. */
+/**
+ * The next task a developer should start, or null. Execution is linear: one task at a time, in plan order; the
+ * next starts only after every PR of the previous one is merged.
+ */
 export function nextWork(tasks: Task[]): Task | null {
-  const units = workUnits(tasks)
-  if (units.some((u) => u.status === 'in_progress' || u.status === 'in_review')) return null
-  const next = units.find((u) => u.status !== 'done')
+  const queue = planQueue(tasks)
+  if (queue.some((t) => t.status === 'in_progress' || t.status === 'in_review')) return null
+  const next = queue.find((t) => t.status !== 'done')
   return next && next.status === 'planned' && !next.needsInput ? next : null
 }
 
-/** Status of a task derived from its subtasks. */
-export function rollupStatus(subs: Task[]): TaskStatus {
-  if (subs.every((s) => s.status === 'done')) return 'done'
-  if (subs.some((s) => s.status === 'in_review')) return 'in_review'
-  if (subs.some((s) => s.status === 'in_progress' || s.status === 'done')) return 'in_progress'
-  return 'planned'
-}
-
-/** A plan task that no developer has touched yet, nor any of its subtasks. */
-function notStarted(task: Task, tasks: Task[]): boolean {
-  return task.status === 'planned' && !task.work && subtasksOf(task.id, tasks).every((s) => s.status === 'planned' && !s.work)
+/** Ticked and total subtasks of a task: the progress of its plan. */
+export function subtaskProgress(id: string, tasks: Task[]): { done: number; total: number } {
+  const subs = subtasksOf(id, tasks)
+  return { done: subs.filter((s) => s.status === 'done').length, total: subs.length }
 }
 
 /** Whether a plan task can swap places with its neighbour: both must be not started, so nothing jumps above started work. */
@@ -400,21 +454,16 @@ export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): bo
   const queue = planQueue(tasks)
   const i = queue.findIndex((t) => t.id === task.id)
   const other = i < 0 ? undefined : queue[dir === 'up' ? i - 1 : i + 1]
-  return !!other && notStarted(task, tasks) && notStarted(other, tasks)
+  const notStarted = (t: Task) => t.status === 'planned' && !t.work
+  return !!other && notStarted(task) && notStarted(other)
 }
 
-/** A subtask a developer has picked up: running, in review or done. */
-export function subtaskStarted(sub: Task): boolean {
-  return !!sub.work || sub.status === 'in_progress' || sub.status === 'in_review' || sub.status === 'done'
-}
-
-/** Whether a subtask can swap places with its neighbour: neither may be started, so nothing jumps above started work. */
+/** Whether a subtask can swap places with its neighbour. The checklist is a plan, not a queue: any step can move. */
 export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
   if (!sub.parentId) return false
   const subs = subtasksOf(sub.parentId, tasks)
   const i = subs.findIndex((t) => t.id === sub.id)
-  const other = i < 0 ? undefined : subs[dir === 'up' ? i - 1 : i + 1]
-  return !!other && !subtaskStarted(sub) && !subtaskStarted(other)
+  return i >= 0 && !!subs[dir === 'up' ? i - 1 : i + 1]
 }
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -425,21 +474,23 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   in_progress: 'In progress',
   in_review: 'In review',
   done: 'Done',
+  todo: 'To do',
 }
 
 /** Events a task update produces: status, input request and PR check failure. */
 export function taskChangeEvents(prev: Task, next: Task): NewEvent[] {
   const base = { projectId: next.projectId, taskId: next.id, taskKey: next.key }
   const events: NewEvent[] = []
-  if (prev.status !== next.status) {
-    const pr = !!next.work?.prUrl
+  // A ticked subtask is plan progress, not activity.
+  if (prev.status !== next.status && !next.parentId) {
+    const pr = taskPrs(next).length > 0
     const text =
       next.status === 'in_review' && pr ? 'PR opened' : next.status === 'done' && pr ? 'merged' : STATUS_LABELS[next.status]
     events.push({ ...base, kind: 'status', text })
   }
   if (next.needsInput && next.needsInput !== prev.needsInput) events.push({ ...base, kind: 'needs_input', text: next.needsInput })
-  const checkError = next.work?.checkError
-  if (checkError && checkError !== prev.work?.checkError) events.push({ ...base, kind: 'check_failed', text: checkError })
+  const checkError = workCheckError(next.work)
+  if (checkError && checkError !== workCheckError(prev.work)) events.push({ ...base, kind: 'check_failed', text: checkError })
   return events
 }
 
@@ -462,9 +513,12 @@ function inboxItem(task: Task, sessions: AgentSession[]): InboxItem | null {
   const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
   const base = { task, session: last }
   if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
-  if (task.work?.checkError) return { ...base, kind: 'check_failed', text: task.work.checkError }
+  const checkError = workCheckError(task.work)
+  if (checkError) return { ...base, kind: 'check_failed', text: checkError }
   if (task.needsInput) return { ...base, kind: 'question', text: task.needsInput }
-  if (task.status === 'in_review' && task.work?.prUrl) return { ...base, kind: 'ready_to_merge', text: 'PR is ready to merge' }
+  const prs = taskPrs(task).filter((r) => r.prState !== 'merged')
+  if (task.status === 'in_review' && prs.length)
+    return { ...base, kind: 'ready_to_merge', text: prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge' }
   if (!task.parentId && task.status === 'groomed') return { ...base, kind: 'groomed', text: 'Groomed, ready to add to the plan' }
   return null
 }
@@ -493,7 +547,7 @@ export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]
   ].sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
 }
 
-export type PipelineStage = Exclude<TaskStatus, 'done'> | 'done7d'
+export type PipelineStage = Exclude<TaskStatus, 'done' | 'todo'> | 'done7d'
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -501,19 +555,19 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage, number> {
   const counts: Record<PipelineStage, number> = { backlog: 0, grooming: 0, groomed: 0, planned: 0, in_progress: 0, in_review: 0, done7d: 0 }
   for (const t of tasks) {
-    if (t.parentId) continue
+    if (t.parentId || t.status === 'todo') continue
     if (t.status !== 'done') counts[t.status]++
     else if (t.updatedAt >= now - WEEK_MS) counts.done7d++
   }
   return counts
 }
 
-/** The unit being worked on and the one after it, in nextWork order. */
+/** The task being worked on and the one after it, in nextWork order. */
 export function queueHead(tasks: Task[]): { current: Task | null; next: Task | null } {
-  const units = workUnits(tasks)
-  const i = units.findIndex((u) => u.status === 'in_progress' || u.status === 'in_review')
-  const current = i < 0 ? null : units[i]
-  const next = units.slice(i + 1).find((u) => u.status !== 'done') ?? null
+  const queue = planQueue(tasks)
+  const i = queue.findIndex((t) => t.status === 'in_progress' || t.status === 'in_review')
+  const current = i < 0 ? null : queue[i]
+  const next = queue.slice(i + 1).find((t) => t.status !== 'done') ?? null
   return { current, next }
 }
 

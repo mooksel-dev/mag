@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, subtaskStarted, subtasksOf, type Attachment, type Project, type Task } from '@mag/core'
+import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, type Attachment, type Project, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -87,7 +87,6 @@ app.whenReady().then(async () => {
     if (reasons.length) return { ok: false, reasons }
     const tasks = projectTasks(task.projectId)
     store.updateTask(id, { status: 'planned', rank: nextPlanRank(tasks) })
-    for (const sub of subtasksOf(id, tasks)) store.updateTask(sub.id, { status: 'planned' })
     return { ok: true, reasons }
   })
   ipcMain.handle('task:move', (_, id: string, dir: 'up' | 'down') => {
@@ -100,12 +99,7 @@ app.whenReady().then(async () => {
     store.updateTask(other.id, { rank: a })
     store.updateTask(task.id, { rank: b })
   })
-  ipcMain.handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => {
-    const subs = subtasksOf(parentId, store.data.tasks)
-    const moved = subs.find((t, i) => subtaskStarted(t) && ids[i] !== t.id)
-    if (moved) throw new Error(`${moved.key} has started; it keeps its place`)
-    store.reorderSubtasks(parentId, ids)
-  })
+  ipcMain.handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => store.reorderSubtasks(parentId, ids))
   ipcMain.handle('task:develop', (_, id: string) => orch.develop(id))
   ipcMain.handle('pr:checkNow', () => scheduler.pollNow())
   ipcMain.handle('shell:open', (_, url: string) => {

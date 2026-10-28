@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { inbox, pipelineCounts, queueHead, taskChangeEvents, type AgentSession, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { inbox, pipelineCounts, queueHead, taskChangeEvents, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -20,7 +20,13 @@ const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {
   ...patch,
 })
 const sub = (id: string, parentId: string, status: TaskStatus, rank: number) => task(id, status, rank, { parentId })
-const work = (patch: Partial<TaskWork> = {}): TaskWork => ({ repo: 'r', branch: 'b', worktree: 'w', prUrl: null, feedbackSeenAt: 0, ...patch })
+const repo = (patch: Partial<RepoWork> = {}): RepoWork => ({ repo: 'r', branch: 'b', worktree: 'd/r', prUrl: null, prState: null, ...patch })
+/** Work in one repo, or in several when more are given. */
+const work = (patch: Partial<RepoWork> = {}, ...more: Partial<RepoWork>[]): TaskWork => ({
+  repos: [repo(patch), ...more.map((m, i) => repo({ repo: `r${i + 2}`, worktree: `d/r${i + 2}`, ...m }))],
+  dir: 'd',
+  feedbackSeenAt: 0,
+})
 const session = (taskId: string, role: AgentSession['role'], status: AgentSession['status']): AgentSession => ({
   id: `${taskId}-${role}`,
   projectId: 'p',
@@ -44,7 +50,15 @@ test('taskChangeEvents: PR opened and merged', () => {
   const pr = work({ prUrl: 'https://x/pr/1' })
   assert.deepEqual(texts(task('t', 'in_progress', 0, { work: pr }), task('t', 'in_review', 0, { work: pr })), ['status:PR opened'])
   assert.deepEqual(texts(task('t', 'in_review', 0, { work: pr }), task('t', 'done', 0, { work: pr })), ['status:merged'])
-  assert.deepEqual(texts(task('t', 'in_progress'), task('t', 'in_review')), ['status:In review'], 'rollup without a PR')
+  assert.deepEqual(texts(task('t', 'in_progress'), task('t', 'in_review')), ['status:In review'], 'no PR recorded')
+})
+
+test('taskChangeEvents: a ticked subtask is not activity', () => {
+  assert.deepEqual(texts(sub('s', 't', 'todo', 0), sub('s', 't', 'done', 0)), [])
+})
+
+test('taskChangeEvents: a check error in any repo', () => {
+  assert.deepEqual(texts(task('t', 'in_review', 0, { work: work({}, {}) }), task('t', 'in_review', 0, { work: work({}, { checkError: 'r2 down' }) })), ['check_failed:r2 down'])
 })
 
 test('taskChangeEvents: needsInput set and changed, not cleared', () => {
@@ -72,7 +86,7 @@ test('inbox: one item per task, by priority', () => {
     task('check', 'in_review', 0, { needsInput: 'q', work: work({ prUrl: 'u', checkError: 'gh down' }) }),
     task('failed', 'in_progress', 0, { needsInput: 'Developer agent failed; check the chat', work: work() }),
     task('quiet', 'planned'),
-    sub('subgroomed', 'groomed', 'groomed', 0),
+    sub('subtodo', 'groomed', 'todo', 0),
   ]
   const sessions = [session('failed', 'developer', 'error'), session('question', 'groomer', 'idle')]
   assert.deepEqual(
@@ -85,6 +99,13 @@ test('inbox: one item per task, by priority', () => {
       ['groomed', 'groomed', 'Groomed, ready to add to the plan'],
     ],
   )
+})
+
+test('inbox: ready to merge counts the PRs still open', () => {
+  const two = task('t', 'in_review', 0, { work: work({ prUrl: 'u1', prState: 'open' }, { prUrl: 'u2', prState: 'open' }) })
+  assert.equal(inbox('p', [two], [])[0]?.text, '2 PRs are ready to merge')
+  const one = task('t', 'in_review', 0, { work: work({ prUrl: 'u1', prState: 'merged' }, { prUrl: 'u2', prState: 'open' }) })
+  assert.equal(inbox('p', [one], [])[0]?.text, 'PR is ready to merge')
 })
 
 test('inbox: agent_failed only from the latest groomer/developer session', () => {
@@ -122,7 +143,7 @@ test('pipelineCounts: top-level only, done in the last 7 days', () => {
     task('d', 'groomed'),
     task('e', 'planned'),
     task('f', 'in_progress'),
-    sub('fs', 'f', 'in_review', 0),
+    sub('fs', 'f', 'todo', 0),
     task('g', 'in_review'),
     task('h', 'done', 0, { updatedAt: now - 2 * day }),
     task('i', 'done', 0, { updatedAt: now - 8 * day }),
@@ -137,20 +158,13 @@ test('queueHead: no current unit', () => {
   assert.deepEqual(ids(queueHead([])), { current: null, next: null })
 })
 
-test('queueHead: current subtask and the next one', () => {
-  const tasks = [
-    task('t1', 'in_progress', 0),
-    sub('s1', 't1', 'done', 0),
-    sub('s2', 't1', 'in_review', 1),
-    sub('s3', 't1', 'planned', 2),
-    task('t2', 'planned', 1),
-  ]
-  assert.deepEqual(ids(queueHead(tasks)), { current: 's2', next: 's3' })
+test('queueHead: subtasks are not units', () => {
+  const tasks = [task('t1', 'in_progress', 0), sub('s1', 't1', 'done', 0), sub('s2', 't1', 'todo', 1), task('t2', 'planned', 1), sub('t2s', 't2', 'todo', 0)]
+  assert.deepEqual(ids(queueHead(tasks)), { current: 't1', next: 't2' })
 })
 
 test('queueHead: current task and the next task', () => {
-  const tasks = [task('t1', 'in_review', 0), task('t2', 'planned', 1), sub('t2s', 't2', 'planned', 0)]
-  assert.deepEqual(ids(queueHead(tasks)), { current: 't1', next: 't2s' })
+  assert.deepEqual(ids(queueHead([task('t1', 'in_review', 0), task('t2', 'planned', 1)])), { current: 't1', next: 't2' })
   assert.deepEqual(ids(queueHead([task('t1', 'in_progress', 0)])), { current: 't1', next: null })
 })
 

@@ -22,7 +22,7 @@ export interface NewTask {
   type: TaskType
   description: string
   parentId?: string | null
-  /** Defaults to backlog; subtasks start as groomed. */
+  /** Defaults to backlog; subtasks are todo or done. */
   status?: TaskStatus
 }
 

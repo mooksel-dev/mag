@@ -152,15 +152,23 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .taskbody { flex: 1; min-height: 0; overflow: auto; padding: 18px 28px; }
 .taskbody > * { max-width: 900px; }
 .sublist { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.subrow { display: grid; grid-template-columns: 26px 64px minmax(0, 1fr) auto auto 28px; gap: 12px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--row-line); background: var(--surface); cursor: pointer; }
+.subrow { display: grid; grid-template-columns: 26px 18px 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--row-line); background: var(--surface); }
 .subrow:first-child { border-top: 0; }
 .subrow:hover { background: var(--hover); }
 .subrow .ord { display: flex; flex-direction: column; gap: 2px; }
 .subrow .ord button.icon { width: 22px; height: 16px; font-size: 9px; border: none; background: none; color: var(--muted); }
 .subrow .ord button.icon:not(:disabled):hover { color: var(--accent); }
+.subrow input[type='checkbox'] { margin: 0; }
 .subtitle { min-width: 0; }
-.subtitle button.link { padding: 0; color: var(--text); font-weight: 500; text-align: left; }
-.subrow .no { min-width: 0; text-align: right; }
+.subname { font-weight: 500; }
+.subrow.done .subname { color: var(--muted); text-decoration: line-through; }
+.subedit { grid-column: 4 / -1; display: flex; gap: 8px; min-width: 0; }
+.subedit input { flex: 1; min-width: 0; }
+.repolist { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 18px; }
+.reporow { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--row-line); padding: 9px 12px; }
+.reporow:first-child { border-top: 0; }
+.reponame { font-weight: 500; }
+.reporow code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot.live { display: inline-block; width: 7px; height: 7px; margin-right: 5px; background: var(--green-fg); animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .canvaslist { display: flex; flex-direction: column; gap: 12px; }

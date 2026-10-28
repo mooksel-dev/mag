@@ -1,6 +1,8 @@
-import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, nextPlanRank, planQueue, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
+import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, findRepoWork, nextPlanRank, planQueue, prRollup, repoWorkName, subtaskProgress, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
+import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
+import { changedRepos } from './git'
 
 export interface ToolContext {
   taskId?: string
@@ -35,14 +37,17 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
     const task = store.task(ctx.taskId)
     const project = store.project(task.projectId)
     const doc = (id: string) => store.data.docs[id] ?? '(empty)'
-    const parent = task.parentId ? store.data.tasks.find((t) => t.id === task.parentId) : undefined
-    /** A subtask of the current task that grooming may still change. */
-    const ownSubtask = (key: unknown) => {
-      if (PLAN_STATUSES.includes(task.status)) throw new Error(`${task.key} is already in the plan; its subtasks can no longer change`)
+    const subtask = (key: unknown) => {
       const sub = store.data.tasks.find((t) => t.parentId === task.id && t.key.toLowerCase() === String(key).toLowerCase())
       if (!sub) throw new Error(`${key} is not a subtask of ${task.key}`)
       return sub
     }
+    /** A subtask of the current task that grooming may still change. */
+    const ownSubtask = (key: unknown) => {
+      if (PLAN_STATUSES.includes(task.status)) throw new Error(`${task.key} is already in the plan; its subtasks can no longer change`)
+      return subtask(key)
+    }
+    const note = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '')
 
     switch (name) {
       case 'get_task':
@@ -53,10 +58,12 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
             type: task.type,
             status: task.status,
             description: task.description,
-            parent: parent ? { key: parent.key, title: parent.title, doc: doc(parent.id) } : null,
-            subtasks: subtasksOf(task.id, store.data.tasks).map((t) => ({ key: t.key, title: t.title, type: t.type, status: t.status, doc: doc(t.id) })),
+            subtasks: subtasksOf(task.id, store.data.tasks).map((t) => ({ key: t.key, title: t.title, note: t.description || undefined, status: t.status })),
             project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
-            work: task.work,
+            work: task.work && {
+              dir: task.work.dir,
+              repos: task.work.repos.map((r) => ({ name: repoWorkName(task.work!, r), repo: r.repo, worktree: r.worktree, branch: r.branch, prUrl: r.prUrl, prState: r.prState })),
+            },
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
           },
           null,
@@ -86,30 +93,26 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       case 'create_subtask': {
         if (task.parentId) throw new Error('Subtasks cannot have subtasks')
         if (task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; subtasks are created while grooming`)
-        const md = String(args.doc ?? '')
-        if (!md.trim()) throw new Error('doc is required')
-        const sub = store.createTask({
-          projectId: project.id,
-          parentId: task.id,
-          title: String(args.title),
-          type: taskType(args.type),
-          description: String(args.description ?? ''),
-          status: 'groomed',
-        })
-        store.data.docs[sub.id] = md
-        store.changed()
+        const title = String(args.title ?? '').trim()
+        if (!title) throw new Error('title is required')
+        const sub = store.createTask({ projectId: project.id, parentId: task.id, title, type: task.type, description: note(args.note), status: 'todo' })
         return `Created ${sub.key}.`
       }
 
       case 'update_subtask': {
         const sub = ownSubtask(args.key)
         const patch: Partial<Task> = {}
-        if (typeof args.title === 'string') patch.title = args.title
-        if (args.type !== undefined) patch.type = taskType(args.type)
-        if (typeof args.description === 'string') patch.description = args.description
-        if (typeof args.doc === 'string') store.data.docs[sub.id] = args.doc
+        if (typeof args.title === 'string' && args.title.trim()) patch.title = args.title.trim()
+        if (typeof args.note === 'string') patch.description = note(args.note)
         store.updateTask(sub.id, patch)
         return `Updated ${sub.key}.`
+      }
+
+      case 'check_subtask': {
+        const sub = subtask(args.key)
+        store.updateTask(sub.id, { status: args.done === false ? 'todo' : 'done' })
+        const { done, total } = subtaskProgress(task.id, store.data.tasks)
+        return `${sub.key} ${args.done === false ? 'unticked' : 'ticked'}; ${done}/${total} done.`
       }
 
       case 'delete_subtask': {
@@ -125,11 +128,29 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       }
 
       case 'set_pr': {
-        if (!task.work) throw new Error('This task has no work in progress')
+        const work = task.work
+        if (!work) throw new Error('This task has no work in progress')
         const url = String(args.url ?? '')
         if (!/^https:\/\/github\.com\/.+\/pull\/\d+/.test(url)) throw new Error('Expected a GitHub pull request URL')
-        store.updateTask(task.id, { status: 'in_review', work: { ...task.work, prUrl: url, feedbackSeenAt: Date.now() } })
-        return 'PR recorded. The user reviews and merges it; you will be resumed if they leave comments.'
+        const names = work.repos.map((r) => repoWorkName(work, r)).join(', ')
+        const ref = typeof args.repo === 'string' && args.repo.trim() ? args.repo : work.repos.length === 1 ? work.repos[0].repo : null
+        if (!ref) throw new Error(`Pass repo: one of ${names}`)
+        const target = findRepoWork(work, ref)
+        if (!target) throw new Error(`${ref} is not a repo of this task; one of ${names}`)
+        const first = !work.repos.some((r) => r.prUrl)
+        const next = {
+          ...work,
+          repos: work.repos.map((r) => (r === target ? { ...r, prUrl: url, prState: 'open' as const, checkError: null } : r)),
+          // Comments made before the first PR are not feedback; later ones on any PR are.
+          feedbackSeenAt: first ? Date.now() : work.feedbackSeenAt,
+        }
+        const changed = await changedRepos(next, project.baseBranch)
+        const review = prRollup(next, changed) === 'in_review'
+        store.updateTask(task.id, { work: next, ...(review && { status: 'in_review' }) })
+        const missing = next.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed')).map((r) => repoWorkName(next, r))
+        return review
+          ? 'PR recorded. The task is in review: the user merges; you will be resumed if they leave comments.'
+          : `PR recorded for ${repoWorkName(next, target)}. Still without a PR: ${missing.join(', ') || 'none'}; open one per changed repo.`
       }
 
       default:
@@ -185,7 +206,7 @@ function sharedTool(
             status: t.status,
             parent: t.parentId ? keyOf(t.parentId) : undefined,
             needsInput: t.needsInput ?? undefined,
-            pr: t.work?.prUrl ?? undefined,
+            prs: t.work?.repos.flatMap((r) => (r.prUrl ? [r.prUrl] : [])),
           })),
         },
         null,
@@ -254,10 +275,13 @@ function sharedTool(
       return setArchitecture(store, project.id, args)
 
     case 'check_architecture': {
-      const task = ctx.taskId ? store.task(ctx.taskId) : null
-      const dir = task?.work?.worktree ?? project.repos[0]
-      if (!dir) throw new Error('Project has no repository')
-      return formatReport(analyze(dir))
+      const work = ctx.taskId ? store.task(ctx.taskId).work : null
+      // Worktrees are removed once merged; only the ones still there have code to check.
+      const repos = work?.repos.filter((r) => existsSync(r.worktree)) ?? []
+      if (work && repos.length === 1) return formatReport(analyze(repos[0].worktree))
+      if (work && repos.length) return repos.map((r) => `## ${repoWorkName(work, r)}\n${formatReport(analyze(r.worktree))}`).join('\n\n')
+      if (!project.repos[0]) throw new Error('Project has no repository')
+      return formatReport(analyze(project.repos[0]))
     }
 
     case 'show_canvas': {

@@ -10,8 +10,11 @@ import {
   integrationMode,
   planBlockers,
   planQueue,
+  repoWorkName,
   resolveChoice,
+  subtaskProgress,
   subtasksOf,
+  taskPrs,
   type AgentRole,
   type AgentSession,
   type Integration,
@@ -75,7 +78,9 @@ export function App() {
   if (!state) return null
   const project = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
   const tasks = project ? state.tasks.filter((t) => t.projectId === project.id) : []
-  const task = tasks.find((t) => t.id === taskId) ?? null
+  // Subtasks are steps of their task's plan, not pages: a subtask (e.g. a clicked T-12.3) shows its task.
+  const picked = tasks.find((t) => t.id === taskId)
+  const task = (picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null
   const inboxCount = project ? inbox(project.id, tasks, state.sessions).length : 0
   const roots = tasks.filter((t) => !t.parentId)
   const backlogCount = roots.filter((t) => BACKLOG_STATUSES.includes(t.status)).length
@@ -116,7 +121,7 @@ export function App() {
             {!chatOpen && !task && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
           {task ? (
-            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={go} onOpen={setTaskId} onOpenKey={openKey} />
+            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={go} onOpenKey={openKey} />
           ) : tab === 'home' ? (
             <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onFilter={filterBy} onNewTask={() => { go('backlog'); setFocusNewTask(true) }} />
           ) : tab === 'backlog' ? (
@@ -187,7 +192,7 @@ function PlanView({ tasks, onOpen, statusFilter, onClearFilter }: { tasks: Task[
   return (
     <section className="page">
       <h1>Plan</h1>
-      <p className="muted">Runs top to bottom, one task at a time: subtasks one by one, the next task after the previous one is merged.</p>
+      <p className="muted">Runs top to bottom, one task at a time: the next task starts after every PR of the previous one is merged.</p>
       {statusFilter && <StatusChip status={statusFilter} onClear={onClearFilter} />}
       <TaskTree roots={roots} all={tasks} onOpen={onOpen} plan empty={statusFilter ? 'No plan tasks in this status.' : 'Nothing planned yet. Groom tasks from the backlog and add them here.'} />
     </section>
@@ -208,22 +213,24 @@ function BacklogView({ project, tasks, onOpen, statusFilter, onClearFilter, focu
   )
 }
 
-/** Top-level tasks with their subtasks nested; `plan` adds ▲▼. */
+/** Top-level tasks with their subtask progress (3/5); `plan` adds ▲▼. */
 function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Task[]; onOpen: (id: string) => void; empty: string; plan?: boolean }) {
   if (!roots.length) return <p className="muted">{empty}</p>
-  const row = (t: Task, depth: number): React.ReactNode => (
-    <div key={t.id}>
-      <div className="rowwrap">
-        <button className="row" style={{ paddingLeft: 12 + depth * 20 }} onClick={() => onOpen(t.id)}>
+  const row = (t: Task): React.ReactNode => {
+    const progress = subtaskProgress(t.id, all)
+    return (
+      <div key={t.id} className="rowwrap">
+        <button className="row" onClick={() => onOpen(t.id)}>
           <span className="key">{t.key}</span>
           <span className="title grow">{t.title}</span>
           {t.needsInput && <span className="dot" title={t.needsInput} />}
+          {progress.total > 0 && <span className="muted small" title="Subtasks done">{progress.done}/{progress.total}</span>}
           <span className="type">{t.type}</span>
           <span className={`status s-${t.status}`}>{t.status.replace('_', ' ')}</span>
         </button>
         {plan && (
           <span className="moves">
-            {depth === 0 && (['up', 'down'] as const).map((dir) => (
+            {(['up', 'down'] as const).map((dir) => (
               <button key={dir} className="icon" disabled={!canMoveInPlan(t, all, dir)} aria-label={`Move ${t.key} ${dir}`} onClick={() => mag.move(t.id, dir)}>
                 {dir === 'up' ? '▲' : '▼'}
               </button>
@@ -231,10 +238,9 @@ function TaskTree({ roots, all, onOpen, empty, plan }: { roots: Task[]; all: Tas
           </span>
         )}
       </div>
-      {subtasksOf(t.id, all).map((c) => row(c, depth + 1))}
-    </div>
-  )
-  return <div className="tree">{roots.map((t) => row(t, 0))}</div>
+    )
+  }
+  return <div className="tree">{roots.map(row)}</div>
 }
 
 function NewTask({ projectId, autoFocus }: { projectId: string; autoFocus?: boolean }) {
@@ -258,7 +264,7 @@ type ChatMode = 'task' | 'project'
 
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
 
-function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onNav: (tab: Tab) => void; onOpen: (id: string) => void; onOpenKey: (key: string) => void }) {
+function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onNav: (tab: Tab) => void; onOpenKey: (key: string) => void }) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const session = sessions.find((s) => s.id === sessionId) ?? sessions[sessions.length - 1] ?? null
@@ -270,12 +276,12 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
     [projectCanvases, task.id],
   )
   const blockers = planBlockers(task)
-  const parent = tasks.find((t) => t.id === task.parentId)
   const children = subtasksOf(task.id, tasks)
+  const progress = subtaskProgress(task.id, tasks)
   const anyRunning = sessions.some((s) => s.status === 'running')
   const inPlan = PLAN_STATUSES.includes(task.status)
-  const canGroom = !anyRunning && !task.parentId && !inPlan
-  const canDevelop = !anyRunning && !children.length && (task.status === 'planned' || task.status === 'in_progress')
+  const canGroom = !anyRunning && !inPlan
+  const canDevelop = !anyRunning && (task.status === 'planned' || task.status === 'in_progress')
   const [tab, setTab] = useState<TaskTab>('document')
   const shownTab = tab === 'subtasks' && !children.length ? 'document' : tab
   const [fullBrief, setFullBrief] = useState(false)
@@ -286,7 +292,7 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
   }
   const tabs: [TaskTab, string][] = [
     ['document', 'Document'],
-    ...(children.length ? [['subtasks', `Subtasks · ${children.length}`] as [TaskTab, string]] : []),
+    ...(children.length ? [['subtasks', `Subtasks · ${progress.done}/${progress.total}`] as [TaskTab, string]] : []),
     ['canvases', `Canvases · ${canvases.length}`],
     ['work', 'Work'],
   ]
@@ -296,16 +302,12 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
       <div className="taskmain">
         <div className="taskhead">
           <div className="taskrow">
-            {parent ? (
-              <button className="crumb" onClick={() => onOpen(parent.id)}>{parent.key} {parent.title} ›</button>
-            ) : (
-              <button className="crumb" onClick={() => onNav(inPlan ? 'plan' : 'backlog')}>{inPlan ? 'Plan' : 'Backlog'} ›</button>
-            )}
+            <button className="crumb" onClick={() => onNav(inPlan ? 'plan' : 'backlog')}>{inPlan ? 'Plan' : 'Backlog'} ›</button>
             <span className="key">{task.key}</span>
             <span className="type">{task.type}</span>
             <span className={`status s-${task.status}`}>
               {task.status.replace('_', ' ')}
-              {children.length > 0 && ` · ${children.filter((c) => c.status === 'done').length}/${children.length}`}
+              {progress.total > 0 && ` · ${progress.done}/${progress.total}`}
             </span>
             <div className="grow" />
             {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
@@ -314,7 +316,7 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
                 {task.status === 'planned' ? 'Start developer now' : 'Restart developer'}
               </button>
             )}
-            {!task.parentId && !inPlan && (
+            {!inPlan && (
               <button className="primary" disabled={blockers.length > 0} title={blockers.join(', ')} onClick={() => mag.addToPlan(task.id)}>
                 Add to plan
               </button>
@@ -328,7 +330,7 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
             </div>
           )}
           {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
-          {!task.parentId && !inPlan && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
+          {!inPlan && blockers.length > 0 && <div className="muted small">Before planning: {blockers.join(' · ')}</div>}
         </div>
 
         <div className="tasktabs" role="tablist">
@@ -345,7 +347,7 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
         <div className="taskbody">
           {shownTab === 'document' &&
             (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
-          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} state={state} onOpen={onOpen} />}
+          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} />}
           {shownTab === 'canvases' &&
             (canvases.length ? (
               <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
@@ -381,70 +383,97 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
   )
 }
 
-/** Subtasks in run order with status, PR and ▲▼ to reorder the ones not started yet. */
-function SubtaskList({ parent, subs, tasks, state, onOpen }: { parent: Task; subs: Task[]; tasks: Task[]; state: AppState; onOpen: (id: string) => void }) {
+/** The task's plan as a checklist: the developer ticks steps off as it goes; the user can tick, edit and reorder too. */
+function SubtaskList({ parent, subs, tasks }: { parent: Task; subs: Task[]; tasks: Task[] }) {
   const move = (i: number, dir: 'up' | 'down') => {
     const ids = subs.map((t) => t.id)
     const j = dir === 'up' ? i - 1 : i + 1
     ;[ids[i], ids[j]] = [ids[j], ids[i]]
     void mag.reorderSubtasks(parent.id, ids)
   }
-  const subline = (t: Task, i: number): React.ReactNode => {
-    const run = state.sessions.find((s) => s.taskId === t.id && s.status === 'running')
-    if (run) {
-      const started = [...run.items].reverse().find((x) => x.kind === 'user')?.at ?? run.createdAt
-      return <><span className="dot live" />{run.role} working · {ago(started)}</>
-    }
-    if (t.status === 'done') return `merged · ${ago(t.updatedAt)} ago`
-    if (t.status === 'in_review') return 'waiting for review'
-    if (t.status === 'in_progress') return 'started, no agent running'
-    return i > 0 ? `next after ${subs[i - 1].key}` : 'first in line'
-  }
+  const { done, total } = subtaskProgress(parent.id, tasks)
   return (
     <>
       <div className="sublist">
         {subs.map((t, i) => (
-          <div key={t.id} className="subrow" onClick={() => onOpen(t.id)}>
-            <span className="ord">
-              {(['up', 'down'] as const).map((dir) => (
-                <button key={dir} className="icon" disabled={!canMoveSubtask(t, tasks, dir)} aria-label={`Move ${t.key} ${dir}`} onClick={(e) => { e.stopPropagation(); move(i, dir) }}>
-                  {dir === 'up' ? '▲' : '▼'}
-                </button>
-              ))}
-            </span>
-            <span className="key">{t.key}</span>
-            <div className="subtitle">
-              <button className="link" onClick={(e) => { e.stopPropagation(); onOpen(t.id) }}>{t.title}</button>
-              <div className="muted small">{subline(t, i)}</div>
-            </div>
-            {t.work?.prUrl ? (
-              <button className="link small" onClick={(e) => { e.stopPropagation(); mag.open(t.work!.prUrl!) }}>{prLabel(t.work.prUrl)}</button>
-            ) : (
-              <span className="muted">—</span>
-            )}
-            <span className={`status s-${t.status}`}>{t.status.replace('_', ' ')}</span>
-            <span className="no">{i + 1}</span>
-          </div>
+          <SubtaskRow key={t.id} sub={t} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
         ))}
       </div>
-      <p className="muted small">Subtasks run in this order.</p>
+      <p className="muted small">{done}/{total} done. A plan, not a queue: one developer works through it in one session.</p>
     </>
   )
 }
 
-/** Branch, worktree and PR of the task, and every agent session that worked on it. */
+function SubtaskRow({ sub, canMove, onMove }: { sub: Task; canMove: (dir: 'up' | 'down') => boolean; onMove: (dir: 'up' | 'down') => void }) {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(sub.title)
+  const [note, setNote] = useState(sub.description)
+  const done = sub.status === 'done'
+  const edit = () => {
+    setTitle(sub.title)
+    setNote(sub.description)
+    setEditing(true)
+  }
+  const save = () => {
+    if (title.trim()) void mag.updateTask(sub.id, { title: title.trim(), description: note.replace(/\s+/g, ' ').trim() })
+    setEditing(false)
+  }
+  return (
+    <div className={`subrow ${done ? 'done' : ''}`}>
+      <span className="ord">
+        {(['up', 'down'] as const).map((dir) => (
+          <button key={dir} className="icon" disabled={!canMove(dir)} aria-label={`Move ${sub.key} ${dir}`} onClick={() => onMove(dir)}>
+            {dir === 'up' ? '▲' : '▼'}
+          </button>
+        ))}
+      </span>
+      <input type="checkbox" checked={done} aria-label={`${sub.key} done`} onChange={(e) => mag.updateTask(sub.id, { status: e.target.checked ? 'done' : 'todo' })} />
+      <span className="key">{sub.key}</span>
+      {editing ? (
+        <form className="subedit" onSubmit={(e) => { e.preventDefault(); save() }} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Subtask title" />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional, one line)" aria-label="Subtask note" />
+          <button type="submit" className="primary">Save</button>
+          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+        </form>
+      ) : (
+        <>
+          <div className="subtitle" onDoubleClick={edit}>
+            <div className="subname">{sub.title}</div>
+            {sub.description && <div className="muted small">{sub.description}</div>}
+          </div>
+          <button className="link small" onClick={edit}>Edit</button>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Task dir, and per repo its branch, worktree and PR; then every agent session that worked on the task. */
 function WorkTab({ task, sessions, onShow }: { task: Task; sessions: AgentSession[]; onShow: (sessionId: string) => void }) {
   const agents = useAgents()
+  const work = task.work
   return (
     <>
-      {task.work ? (
-        <div className="meta">
-          <span>Branch <code>{task.work.branch}</code></span>
-          <button className="link" onClick={() => mag.open(task.work!.worktree)}>open worktree</button>
-          {task.work.prUrl && <button className="link" onClick={() => mag.open(task.work!.prUrl!)}>open PR ↗</button>}
-          {task.work.prUrl && <button className="link" onClick={() => mag.checkPrs()}>check now</button>}
-          {task.work.checkError && <span className="pill amber" title={task.work.checkError}>PR check failed: {task.work.checkError.slice(0, 80)}</span>}
-        </div>
+      {work ? (
+        <>
+          <div className="meta">
+            <button className="link" onClick={() => mag.open(work.dir)}>open task folder</button>
+            {taskPrs(task).length > 0 && <button className="link" onClick={() => mag.checkPrs()}>check PRs now</button>}
+          </div>
+          <div className="repolist">
+            {work.repos.map((r) => (
+              <div key={r.repo} className="reporow">
+                <span className="reponame">{repoWorkName(work, r)}</span>
+                <code className="grow">{r.branch}</code>
+                <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
+                {r.prUrl ? <button className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl)}</button> : <span className="muted">no PR</span>}
+                {r.prState && <span className={`status ${r.prState === 'merged' ? 's-done' : r.prState === 'open' ? 's-in_review' : ''}`}>{r.prState}</span>}
+                {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
+              </div>
+            ))}
+          </div>
+        </>
       ) : (
         <p className="muted">No developer has started on this task yet.</p>
       )}

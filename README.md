@@ -37,17 +37,19 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 1. Create a project, attach repositories (Settings).
 2. Add tasks to the backlog (Plan tab).
 3. **Groom** a task: Claude Code runs in the background in the first repo (read-only tools),
-   writes the task document and either asks for input or marks the task groomed. A task too big for one PR is split
-   into subtasks, each with its own short doc; they are not groomed separately.
+   writes the task document and either asks for input or marks the task groomed. A task with several steps gets
+   subtasks: a short checklist of the plan (title + optional note, todo/done), with no doc, agent or PR of their own.
 4. **Needs you** lists tasks waiting on you. Open one, answer in the chat; the agent updates the doc.
-5. **Add to plan** puts a groomed task (with its subtasks) at the end of the plan; reorder not-started tasks with ▲▼.
+5. **Add to plan** puts a groomed task at the end of the plan; reorder not-started tasks with ▲▼.
    Only top-level tasks enter the plan, and only when groomed with nothing pending.
-6. The plan runs top to bottom, **one unit at a time**: the first unfinished task, or its first unfinished subtask.
-   The next one starts only after the previous PR is merged. A task with subtasks takes its status from them.
-   For each unit a developer agent creates a git worktree + branch `mag/<key>-<title>` from the base branch, implements, tests, self-reviews,
-   pushes and opens a PR with `gh`, then records it with `set_pr`. The task moves to review.
-7. Every minute the app checks open PRs: merged → task done and worktree removed;
-   new comments → the developer is resumed with them. You merge; agents never do.
+6. The plan runs top to bottom, **one task at a time**; the next one starts only after every PR of the previous one is merged.
+   One developer session owns a task from start to merge. Its cwd is the task dir (`worktrees/<projectId>/<key>/`), with a
+   git worktree per project repository (`<task dir>/<repo-name>/`, branch `mag/<key>-<title>` from the base branch).
+   It implements, tests, self-reviews, ticks the subtasks with `check_subtask`, pushes and opens one PR per changed repo
+   with `gh`, recording each with `set_pr`. Once every repo with commits has a PR, the task moves to review.
+7. Every minute the app checks the PRs of tasks in review: all merged → task done and worktrees removed; one closed
+   without merge → back to in progress with a note; new comments on any of them → the same developer session is resumed
+   with them. You merge; agents never do.
 
 ### Architecture
 
@@ -79,13 +81,14 @@ Each run gets a stdio MCP server (`src/main/task-mcp.ts`, server name `mag`). Ta
 
 | Tool | Purpose |
 | --- | --- |
-| `get_task` | Task, parent (with doc), subtasks in order (with docs), project repos, doc template |
+| `get_task` | Task, subtask checklist, project repos, work (task dir; per repo worktree, branch, PR), doc template |
 | `get_doc` / `update_doc` | Read / replace the task document |
 | `set_needs_input` | One-line reason shown in Needs you, or `null` |
 | `mark_groomed` | No open questions left, plan ready |
-| `create_subtask` | Groomer: add a subtask with its doc; runs in creation order |
-| `update_subtask` / `delete_subtask` / `reorder_subtasks` | Groomer: change the subtasks when re-grooming |
-| `set_pr` | Developer records its PR; task moves to review |
+| `create_subtask` | Groomer: add a checklist step (title, optional note) |
+| `update_subtask` / `delete_subtask` / `reorder_subtasks` | Groomer: change the checklist when re-grooming |
+| `check_subtask` | Developer ticks (or unticks) a step |
+| `set_pr` | Developer records the PR of one repo; the task moves to review once every changed repo has one |
 | `check_architecture` | Programmatic rule check (imports between layers) of the working copy |
 | `get_architecture` | The project's architecture diagram |
 | `list_tasks` | All tasks of the project |

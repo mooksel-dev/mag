@@ -4,7 +4,7 @@ export const TOOL_DEFS = [
   {
     name: 'get_task',
     scope: 'task',
-    description: 'Get the current task: title, type, status, description, parent (with its doc, for a subtask), subtasks in order (with their docs), project repos and the doc template for this task type.',
+    description: 'Get the current task: title, type, status, description, subtasks (the plan as a checklist, in order), project repos, the work (task dir and per repo: worktree, branch, PR) and the doc template for this task type.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -43,30 +43,26 @@ export const TOOL_DEFS = [
     name: 'create_subtask',
     scope: 'task',
     description:
-      'Groomer only: add a subtask to the current task, with its own short doc. One subtask = one PR. Subtasks run in creation order; they are not groomed separately.',
+      'Groomer only: add a step to the plan checklist of the current task: a short title and an optional one-line note. Subtasks have no doc, agent or PR of their own; the developer of the task ticks them off. Kept in creation order.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
-        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
-        description: { type: 'string' },
-        doc: { type: 'string', description: 'Markdown doc of the subtask: what this part changes and how to check it.' },
+        note: { type: 'string', description: 'Optional one line; the task doc carries the details.' },
       },
-      required: ['title', 'type', 'description', 'doc'],
+      required: ['title'],
     },
   },
   {
     name: 'update_subtask',
     scope: 'task',
-    description: 'Groomer only: change a subtask of the current task (title, type, brief or doc) while re-grooming.',
+    description: 'Groomer only: change the title or note of a subtask of the current task while re-grooming.',
     inputSchema: {
       type: 'object',
       properties: {
         key: { type: 'string' },
         title: { type: 'string' },
-        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
-        description: { type: 'string' },
-        doc: { type: 'string' },
+        note: { type: 'string' },
       },
       required: ['key'],
     },
@@ -80,7 +76,7 @@ export const TOOL_DEFS = [
   {
     name: 'reorder_subtasks',
     scope: 'task',
-    description: 'Groomer only: set the execution order of the subtasks. Pass every subtask key of the current task, in the new order.',
+    description: 'Groomer only: set the order of the subtasks. Pass every subtask key of the current task, in the new order.',
     inputSchema: {
       type: 'object',
       properties: { keys: { type: 'array', items: { type: 'string' } } },
@@ -88,12 +84,26 @@ export const TOOL_DEFS = [
     },
   },
   {
-    name: 'set_pr',
+    name: 'check_subtask',
     scope: 'task',
-    description: 'Developer only: record the pull request you opened for this task. Moves the task to review.',
+    description: 'Developer only: tick a subtask of the current task as done (done: false unticks it).',
     inputSchema: {
       type: 'object',
-      properties: { url: { type: 'string' } },
+      properties: { key: { type: 'string' }, done: { type: 'boolean' } },
+      required: ['key', 'done'],
+    },
+  },
+  {
+    name: 'set_pr',
+    scope: 'task',
+    description:
+      'Developer only: record the pull request you opened for one repository of this task. One PR per changed repo; the task moves to review once every repo with commits has one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Optional when the task has one repo.' },
+      },
       required: ['url'],
     },
   },
@@ -153,7 +163,7 @@ export const TOOL_DEFS = [
   {
     name: 'list_tasks',
     scope: 'any',
-    description: 'All tasks of the project: the plan in execution order, then the backlog; subtasks follow their task. Key, title, type, status, parent, needs_input.',
+    description: 'All tasks of the project: the plan in execution order, then the backlog; subtasks (checklist steps, todo/done) follow their task. Key, title, type, status, parent, needs_input, PRs.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
