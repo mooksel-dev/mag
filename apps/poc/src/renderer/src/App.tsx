@@ -61,6 +61,16 @@ export function App() {
     return mag.onState(setState)
   }, [])
 
+  // A pop-out asked to show a task (a task key clicked in a doc window).
+  useEffect(
+    () =>
+      mag.onOpenTask((pid, tid) => {
+        setProjectId(pid)
+        setTaskId(tid)
+      }),
+    [],
+  )
+
   if (!state) return null
   const project = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
   const tasks = project ? state.tasks.filter((t) => t.projectId === project.id) : []
@@ -324,6 +334,11 @@ function TaskView({ task, tasks, state, onNav, onOpen, onOpenKey }: { task: Task
           {tabs.map(([id, label]) => (
             <button key={id} role="tab" aria-selected={shownTab === id} className={shownTab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}</button>
           ))}
+          {shownTab === 'document' && doc && (
+            <button className="link popbtn" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'doc', taskId: task.id })}>
+              ⧉ Open in window
+            </button>
+          )}
         </div>
 
         <div className="taskbody">

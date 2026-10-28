@@ -26,6 +26,15 @@ export interface NewTask {
   status?: TaskStatus
 }
 
+/** A kind of pop-out window; each kind remembers its own size and position. */
+export type WindowKind = 'architecture' | 'canvas' | 'doc'
+
+/** What a pop-out window shows. */
+export type WindowTarget =
+  | { kind: 'architecture'; projectId: string }
+  | { kind: 'canvas'; canvasId: string }
+  | { kind: 'doc'; taskId: string }
+
 export interface MagApi {
   getState(): Promise<AppState>
   onState(cb: (s: AppState) => void): () => void
@@ -62,4 +71,10 @@ export interface MagApi {
   stop(sessionId: string): Promise<void>
   /** Allow or deny a pending integration call (an approval chat item). */
   decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
+  /** Open an artifact in its own window, or focus that window if it is already open. */
+  openWindow(target: WindowTarget): Promise<void>
+  /** Focus the main window (opening it if closed) and show this task there. */
+  openTask(taskId: string): Promise<void>
+  /** Main window: a pop-out asked to show a task. */
+  onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
 }

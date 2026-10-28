@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AppState, MagApi } from './api'
 
+// Listen from the start: a main window opened for a task gets the event before the page subscribes.
+let pendingTask: [projectId: string, taskId: string] | null = null
+let openTaskCb: ((projectId: string, taskId: string) => void) | null = null
+ipcRenderer.on('open-task', (_, projectId: string, taskId: string) => {
+  if (openTaskCb) openTaskCb(projectId, taskId)
+  else pendingTask = [projectId, taskId]
+})
+
 const api: MagApi = {
   getState: () => ipcRenderer.invoke('state:get'),
   onState: (cb) => {
@@ -30,6 +38,16 @@ const api: MagApi = {
   pathForFile: (file) => webUtils.getPathForFile(file),
   stop: (sessionId) => ipcRenderer.invoke('session:stop', sessionId),
   decideApproval: (sessionId, approvalId, allow) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow),
+  openWindow: (target) => ipcRenderer.invoke('window:open', target),
+  openTask: (taskId) => ipcRenderer.invoke('window:openTask', taskId),
+  onOpenTask: (cb) => {
+    openTaskCb = cb
+    if (pendingTask) cb(...pendingTask)
+    pendingTask = null
+    return () => {
+      if (openTaskCb === cb) openTaskCb = null
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('mag', api)

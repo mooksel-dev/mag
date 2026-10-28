@@ -22,7 +22,8 @@ function flagged(app: ArchApp, n: ArchNode) {
   })
 }
 
-export function Architecture({ project }: { project: Project }) {
+/** `inWindow`: shown in its own pop-out window, so there is no button to open one. */
+export function Architecture({ project, inWindow = false }: { project: Project; inWindow?: boolean }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<string | null>(null)
   const arch = project.architecture
@@ -58,6 +59,11 @@ export function Architecture({ project }: { project: Project }) {
             {run.status === 'running' ? '● ' : '✗ '}
             {run.note ?? ''}
           </span>
+        )}
+        {!inWindow && (
+          <button className="link popbtn" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'architecture', projectId: project.id })}>
+            ⧉ Open in window
+          </button>
         )}
       </div>
       {!project.repos.length && <p className="muted">Attach a repository in Settings.</p>}
