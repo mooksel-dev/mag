@@ -16,6 +16,7 @@ import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
+import { startAttention } from './attention'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 
@@ -190,6 +191,7 @@ app.whenReady().then(async () => {
   const openLogs = () => shell.openPath(logsDir)
   handle('logs:open', () => openLogs())
   startAppMenu(store, windows, openLogs)
+  startAttention(store, windows)
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.
