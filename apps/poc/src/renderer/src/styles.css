@@ -403,7 +403,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .titlebar { flex: none; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 12px; -webkit-app-region: drag; user-select: none;
   background: color-mix(in srgb, var(--pc) 16%, var(--bg)); border-top: 3px solid var(--pc); border-bottom: 1px solid var(--line); }
 .mac .titlebar { padding-left: 84px; }
-.titlebar button, .titlebar .clawarn { -webkit-app-region: no-drag; }
+.titlebar button, .titlebar .clawarn, .titlebar .menuscrim { -webkit-app-region: no-drag; }
 .titlebar .brand { font-size: 13px; margin: 0; color: var(--muted); }
 .projmenu { position: relative; }
 .projbtn { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: none; background: none; font-weight: 600; }
