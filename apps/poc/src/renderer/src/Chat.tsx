@@ -1,18 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { createPortal } from 'react-dom'
 import { TASK_KEY_RE, chatCommands, resolveChoice, turnMeta, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
 import { useAppliedTheme } from './useTheme'
+import { mdSegments } from './markdown'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
 const KEY_LINK = new RegExp(`(^|[^\\w/[-])(${TASK_KEY_RE.source})(?![\\w-]|\\.\\d)`, 'g')
-
-const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 let mermaidSeq = 0
 
@@ -44,52 +42,39 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
 export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; canvases?: CanvasRef[]; className?: string }) {
   const theme = useAppliedTheme()
   const ref = useRef<HTMLDivElement>(null)
-  const [slots, setSlots] = useState<HTMLElement[]>([])
-  const html = useMemo(() => {
-    // Rewrite outside fenced and inline code only. Canvas links become slots: DOMPurify drops the canvas: scheme.
-    const linked = text
-      .split(/(```[\s\S]*?```|`[^`\n]*`)/)
-      .map((part, i) =>
-        i % 2
-          ? part
-          : part
-              .replace(/\[([^\]\n]*)\]\(canvas:([\w-]+)\)/g, (_, title: string, id: string) => `<span class="canvasslot" data-canvas="${id}">${escapeHtml(title)}</span>`)
-              .replace(KEY_LINK, '$1[$2](#task:$2)'),
-      )
-      .join('')
-    return DOMPurify.sanitize(marked.parse(linked, { async: false }) as string)
-  }, [text])
-  useLayoutEffect(() => {
-    const found = Array.from(ref.current?.querySelectorAll<HTMLElement>('[data-canvas]') ?? []).filter((el) => canvases?.some((c) => c.id === el.dataset.canvas))
-    for (const el of found) el.textContent = '' // the card shows the title; unknown ids keep it as plain text
-    setSlots(found)
-  }, [html, theme, canvases])
+  // Canvases are React siblings of the HTML chunks, never portals into them: React must own every node it removes.
+  const segments = useMemo(
+    () =>
+      mdSegments(text, (s) => s.replace(KEY_LINK, '$1[$2](#task:$2)')).map((seg) =>
+        seg.kind === 'md' ? { ...seg, html: DOMPurify.sanitize(marked.parse(seg.text, { async: false }) as string) } : seg,
+      ),
+    [text],
+  )
   useEffect(() => {
     let cancelled = false
     if (ref.current) void renderMermaid(ref.current, theme, () => cancelled)
     return () => { cancelled = true }
-  }, [html, theme])
+  }, [segments, theme])
   return (
-    <>
-      <div
-        ref={ref}
-        key={theme} // a theme change re-renders mermaid from the source, so start from fresh HTML
-        className={className}
-        dangerouslySetInnerHTML={{ __html: html }}
-        onClick={(e) => {
-          const a = (e.target as HTMLElement).closest('a')
-          if (!a) return
-          e.preventDefault()
-          const href = a.getAttribute('href') ?? ''
-          if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
-          else if (/^https:\/\//.test(href)) mag.open(href)
-        }}
-      />
-      {slots.map((el, i) => {
-        const canvas = canvases?.find((c) => c.id === el.dataset.canvas)
-        return canvas && createPortal(<CanvasCard key={canvas.version} canvas={canvas} />, el, i)
+    <div
+      ref={ref}
+      className={className}
+      onClick={(e) => {
+        const a = (e.target as HTMLElement).closest('a')
+        if (!a) return
+        e.preventDefault()
+        const href = a.getAttribute('href') ?? ''
+        if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
+        else if (/^https:\/\//.test(href)) mag.open(href)
+      }}
+    >
+      {segments.map((seg, i) => {
+        // A theme change re-renders mermaid from the source, so start from fresh HTML.
+        if (seg.kind === 'md') return <div key={`${i}-${theme}`} dangerouslySetInnerHTML={{ __html: seg.html }} />
+        const canvas = canvases?.find((c) => c.id === seg.id)
+        return canvas ? <div key={i} className="canvasslot"><CanvasCard key={canvas.version} canvas={canvas} /></div> : <p key={i}>{seg.title}</p>
       })}
-    </>
+    </div>
   )
 }
 
