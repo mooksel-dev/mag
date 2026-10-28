@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { integrationRules, resolveChoice, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
+import { cleanTitle, integrationRules, resolveChoice, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -395,6 +395,36 @@ export class Orchestrator {
       if (session.status === 'running') session.status = 'idle'
       if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
       this.afterRun(session)
+      this.nameChat(session)
+      this.store.changed()
+    })
+  }
+
+  /** After a chat's first turn: a short generated title in place of the first message. Once; a failure keeps the old title. */
+  private nameChat(session: AgentSession) {
+    if (session.role !== 'chat' || session.titleGenerated || session.status === 'error') return
+    const first = session.items.find((i) => i.kind === 'user')
+    const reply = session.items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : [])).join('\n\n')
+    if (first?.kind !== 'user' || !reply) return
+    session.titleGenerated = true
+    const adapter = adapters[session.agent]
+    let text = ''
+    let failed = false
+    const handle = adapter.start(
+      {
+        cwd: this.paths.runsDir, // neutral: no repo instructions to load
+        prompt: titlePrompt(first.text || first.attachments?.[0]?.name || '', reply),
+        model: adapter.cheapModel,
+        noTools: true,
+      },
+      (e) => {
+        if (e.type === 'message') text += e.text
+        else if (e.type === 'error' || (e.type === 'turn.done' && !e.ok)) failed = true
+      },
+    )
+    handle.done.then(() => {
+      const title = failed ? null : cleanTitle(text)
+      if (title) session.title = title
       this.store.changed()
     })
   }

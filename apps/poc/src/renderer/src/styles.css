@@ -171,7 +171,6 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .chathead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .chathead select { min-width: 0; flex: 0 1 auto; }
 .chatmodel { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chatpanel .chatbox { border: none; border-radius: 0; background: var(--surface); }
 .projectchat.embedded { width: auto; flex: 1; min-height: 0; border-left: none; }
 .banner { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); padding: 8px 12px; border-radius: 8px; }
 .meta { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
@@ -182,8 +181,8 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .md h1 { font-size: 17px; margin: 18px 0 6px; }
 .md h2 { font-size: 15px; margin: 14px 0 6px; }
 .md pre { background: var(--subtle); padding: 10px; border-radius: 8px; overflow: auto; }
-.chatbox { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; }
-.items { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.chatbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.items { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; }
 /* Never shrink chat items: an item with overflow: hidden (canvas cards) would collapse to 0 px in a long thread. */
 .items > * { flex: none; }
 .msg { padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; max-width: 92%; }
@@ -194,6 +193,9 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .toolgroup { display: flex; flex-direction: column; gap: 2px; }
 .toolsrow { align-self: flex-start; border: none; background: none; padding: 2px 4px; font-size: 12px; color: var(--muted); text-align: left; }
 .toolsrow:hover { color: var(--text); }
+.reply { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.turnmeta { font-size: 11px; color: var(--muted); padding: 0 4px; visibility: hidden; }
+.reply:hover .turnmeta { visibility: visible; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; max-width: 760px; font-weight: 500; }
 .field textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 400; }
@@ -254,10 +256,22 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 
 /* project chat drawer */
 .workspace { flex: 1; min-width: 0; display: flex; }
-.projectchat { width: 460px; flex: none; border-left: 1px solid var(--line); display: flex; flex-direction: column; padding: 10px; gap: 8px; background: var(--panel); }
-.projectchat .chatbox { background: var(--surface); }
-.pchead { display: flex; gap: 6px; align-items: center; }
-.pchead select { flex: 1; min-width: 0; }
+.projectchat { width: 460px; flex: none; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); }
+.pchead { position: relative; display: flex; gap: 2px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+button.iconbtn { flex: none; position: relative; width: 28px; height: 28px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--muted); font-size: 14px; line-height: 1; display: grid; place-items: center; }
+button.iconbtn:not(:disabled):hover { background: var(--hover); color: var(--text); }
+.iconbtn .cnt { position: absolute; right: 1px; bottom: 1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--status); color: var(--muted); font-size: 9px; line-height: 13px; }
+.threadpicker { flex: 1; min-width: 0; }
+.threadbtn { width: 100%; display: flex; align-items: center; gap: 6px; border: none; background: none; padding: 5px 8px; font-weight: 500; text-align: left; }
+.threadbtn:hover, .threadbtn[aria-expanded='true'] { background: var(--hover); }
+.threadbtn .title, .threadlist .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.threadbtn .caret { color: var(--muted); font-size: 11px; }
+.threadbtn .dot.live, .threadlist .dot.live { margin-right: 0; flex: none; }
+.threadlist { position: absolute; left: 8px; right: 8px; top: calc(100% - 2px); z-index: 5; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.threadlist button { display: flex; gap: 8px; align-items: center; border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 6px; }
+.threadlist button:hover { background: var(--hover); }
+.threadlist button.on { background: var(--soft); }
+.threadlist .newthread { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; color: var(--accent); }
 .agentroles { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 6px 8px; align-items: center; }
 .agentrole { display: contents; }
 .dot.inline { display: inline-block; vertical-align: middle; margin-left: 4px; }
@@ -278,10 +292,22 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .plain { white-space: pre-wrap; }
 
 /* attachments */
-.composer { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
-.composer.drag { background: var(--soft); }
-.composerrow { display: flex; gap: 8px; align-items: flex-end; }
-.composerrow textarea { flex: 1; resize: none; max-height: 40vh; overflow-y: auto; }
+.composer { position: relative; padding: 4px 12px 12px; }
+.composerbox { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.composerbox:focus-within { border-color: var(--accent); }
+.composerbox.drag { background: var(--soft); }
+.composerbox textarea { border: none; background: none; outline: none; padding: 4px 6px; resize: none; max-height: 40vh; overflow-y: auto; font-size: 13px; line-height: 1.5; }
+.composerbox .attachments { margin: 4px 4px 0; }
+.composerbar { display: flex; gap: 4px; align-items: center; }
+.composerbar .iconbtn { font-size: 16px; }
+.composerbar .iconbtn.send { background: var(--accent); color: var(--on-accent); }
+.composerbar .iconbtn.send:not(:disabled):hover { background: var(--accent); color: var(--on-accent); opacity: .9; }
+.composerbar .iconbtn.stop { background: var(--status); color: var(--text); font-size: 11px; }
+.nowrap { white-space: nowrap; }
+.modelchip { position: relative; min-width: 0; }
+.modelchip .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; border-radius: 7px; background: none; padding: 4px 8px; font-size: 12px; color: var(--muted); }
+.modelchip .chip:hover, .modelchip .chip[aria-expanded='true'] { background: var(--hover); color: var(--text); }
+.chippop { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
 button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-height: 1; }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .attachment { position: relative; display: inline-flex; align-items: center; }
@@ -339,7 +365,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .home button.link.key { padding: 0; }
 .statuschip { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--info-bg); color: var(--info-fg); font-size: 12px; }
 .statuschip button.icon { border: none; background: none; padding: 0 6px; color: inherit; }
-.cmdmenu { position: absolute; left: 10px; right: 10px; bottom: calc(100% - 4px); z-index: 5; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.cmdmenu { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 2px); z-index: 5; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
 .cmdmenu button { border: none; background: none; text-align: left; padding: 5px 8px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .cmdmenu button.sel, .cmdmenu button:hover { background: var(--hover); }
 .notice { text-align: center; }

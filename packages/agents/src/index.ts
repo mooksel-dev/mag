@@ -18,6 +18,8 @@ export interface RunSpec {
   permissionPromptTool?: string
   addDirs?: string[]
   env?: Record<string, string>
+  /** Plain completion: no tools and no MCP servers. Codex runs read-only anyway. */
+  noTools?: boolean
 }
 
 export interface RunHandle {
@@ -33,6 +35,8 @@ export interface AgentAdapter {
   detect(): Promise<string | null>
   /** Models the user can pick; the provider's default is implied and not listed. */
   listModels(): Promise<AgentModel[]>
+  /** Cheapest model, for small background jobs like naming a chat; omitted = the provider's default. */
+  cheapModel?: string
   start(spec: RunSpec, onEvent: (e: AgentEvent) => void): RunHandle
 }
 

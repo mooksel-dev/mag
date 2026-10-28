@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { createPortal } from 'react-dom'
-import { TASK_KEY_RE, chatCommands, resolveChoice, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, chatCommands, resolveChoice, turnMeta, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ModelPicker, useAgents } from './Agents'
-import { inputPreview } from './format'
+import { ModelPicker, agentName, useAgents } from './Agents'
+import { inputPreview, threadTime } from './format'
 import { useAppliedTheme } from './useTheme'
 
 const mag = window.mag
@@ -146,8 +146,8 @@ function CanvasMenu({ canvases }: { canvases: AppState['canvases'] }) {
   if (!canvases.length) return null
   return (
     <div className="menu">
-      <button onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" title="Project canvases">
-        ▣ Canvases ({canvases.length})
+      <button className="iconbtn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" aria-label="Canvases" title="Canvases">
+        ▣<span className="cnt">{canvases.length}</span>
       </button>
       {open && (
         <>
@@ -168,13 +168,24 @@ function CanvasMenu({ canvases }: { canvases: AppState['canvases'] }) {
   )
 }
 
-export function Chat({ session, sessions, onOpenTask, placeholder }: { session: AgentSession; sessions: AgentSession[]; onOpenTask?: (key: string) => void; placeholder?: string }) {
+export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { session: AgentSession; sessions: AgentSession[]; onOpenTask?: (key: string) => void; placeholder?: string; chip?: ReactNode }) {
   const busy = session.status === 'running'
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [session.items.length, busy])
   // Only the last mention of a canvas renders it; earlier ones point forward.
   const lastCanvasAt = new Map<string, number>()
   session.items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
+
+  // A turn's model, cost and duration go under its last reply, shown on hover.
+  const metaAt = new Map<number, string>()
+  let lastReply = -1
+  session.items.forEach((i, n) => {
+    if (i.kind === 'assistant') lastReply = n
+    else if (i.kind === 'result') {
+      if (lastReply >= 0) metaAt.set(lastReply, turnMeta(session.items, n, session.activeModel))
+      lastReply = -1
+    }
+  })
 
   // Runs of consecutive tool calls render as one collapsible row. n = index of the (first) item, used as key.
   const rows: { n: number; item?: ChatItem; tools?: ToolItem[] }[] = []
@@ -198,12 +209,20 @@ export function Chat({ session, sessions, onOpenTask, placeholder }: { session: 
                   {i.attachments && <Attachments items={i.attachments} />}
                 </div>
               )
-            case 'assistant':
-              return <Markdown key={n} className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
+            case 'assistant': {
+              const meta = metaAt.get(n)
+              if (!meta) return <Markdown key={n} className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
+              return (
+                <div key={n} className="reply">
+                  <Markdown className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
+                  <div className="turnmeta">{meta}</div>
+                </div>
+              )
+            }
             case 'canvas':
               return <CanvasCard key={n} canvas={i.canvas} latest={lastCanvasAt.get(i.canvas.id) === n} />
             case 'result':
-              return <div key={n} className="muted small">turn done{i.costUsd != null ? ` · $${i.costUsd.toFixed(3)}` : ''}</div>
+              return i.ok ? null : <div key={n} className="small err">Turn failed</div>
             case 'error':
               return <div key={n} className="msg error">{i.text}</div>
             case 'notice':
@@ -221,6 +240,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder }: { session: 
         commands={chatCommands(session, sessions)}
         onSend={(text, att) => mag.send(session.id, text, att)}
         onStop={() => mag.stop(session.id)}
+        chip={chip}
       />
     </div>
   )
@@ -279,9 +299,9 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
           {a.mime.startsWith('image/') ? (
             <img src={fileUrl(a)} alt={a.name} onClick={() => mag.open(a.path)} />
           ) : (
-            <button className="link" onClick={() => mag.open(a.path)}>📎 {a.name}</button>
+            <button type="button" className="link" onClick={() => mag.open(a.path)}>📎 {a.name}</button>
           )}
-          {onRemove && <button className="x" aria-label={`Remove ${a.name}`} onClick={() => onRemove(a)}>×</button>}
+          {onRemove && <button type="button" className="x" aria-label={`Remove ${a.name}`} onClick={() => onRemove(a)}>×</button>}
         </span>
       ))}
     </div>
@@ -294,6 +314,7 @@ export function Composer({
   commands = [],
   onSend,
   onStop,
+  chip,
 }: {
   busy: boolean
   placeholder: string
@@ -301,6 +322,8 @@ export function Composer({
   commands?: string[]
   onSend: (text: string, attachments: Attachment[]) => Promise<void>
   onStop?: () => void
+  /** Shown next to the attach button, e.g. the model chip. */
+  chip?: ReactNode
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
@@ -378,9 +401,10 @@ export function Composer({
     }
   }
 
+  const keys = `↵ to send, ⇧↵ for a new line, paste or drop screenshots${commands.length ? ', / for commands' : ''}`
   return (
     <form
-      className={`composer ${drag ? 'drag' : ''}`}
+      className="composer"
       onSubmit={(e) => { e.preventDefault(); void submit() }}
       onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
       onDragLeave={() => setDrag(false)}
@@ -403,10 +427,8 @@ export function Composer({
           ))}
         </div>
       )}
-      {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
-      <div className="composerrow">
-        <button type="button" className="icon" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>+</button>
-        <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
+      <div className={`composerbox ${drag ? 'drag' : ''}`}>
+        {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
         <textarea
           ref={ta}
           value={text}
@@ -416,13 +438,90 @@ export function Composer({
             if (imgs.length) { e.preventDefault(); void add(imgs) }
           }}
           onKeyDown={onKeyDown}
-          placeholder={busy ? 'Wait for the agent to finish…' : `${placeholder}  (↵ to send, ⇧↵ for a new line, paste screenshots${commands.length ? ', / for commands' : ''})`}
+          placeholder={busy ? 'Wait for the agent to finish…' : placeholder}
           rows={1}
           aria-label="Message"
         />
-        {busy && onStop ? <button type="button" onClick={onStop}>Stop</button> : <button type="submit" className="primary" disabled={busy}>Send</button>}
+        <div className="composerbar">
+          <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>＋</button>
+          <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
+          {chip}
+          <div className="grow" />
+          {commands.length > 0 && <span className="muted small nowrap">/ commands</span>}
+          {busy && onStop ? (
+            <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop">■</button>
+          ) : (
+            <button type="submit" className="iconbtn send" disabled={busy} title={`Send (${keys})`} aria-label="Send">↑</button>
+          )}
+        </div>
       </div>
     </form>
+  )
+}
+
+/** Closes a popover on Escape or a mousedown outside `ref`. */
+function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, setOpen: (open: boolean) => void) {
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, ref, setOpen])
+}
+
+/** Thread title as a button; opens the list of threads with "New chat" at the bottom. */
+function ThreadPicker({ chats, current, onPick, onNew }: { chats: AgentSession[]; current: AgentSession | null; onPick: (id: string) => void; onNew: () => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useDismiss(open, box, setOpen)
+  const live = (c: AgentSession) => c.status === 'running'
+  return (
+    <div ref={box} className="threadpicker">
+      <button className="threadbtn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="listbox" title={current?.title}>
+        {current && live(current) && <span className="dot live" />}
+        <span className="title">{current?.title ?? 'New chat'}</span>
+        <span className="caret">▾</span>
+      </button>
+      {open && (
+        <div className="threadlist" role="listbox" aria-label="Chat threads">
+          {chats.map((c) => (
+            <button key={c.id} role="option" aria-selected={c === current} className={c === current ? 'on' : ''} onClick={() => { onPick(c.id); setOpen(false) }}>
+              {live(c) && <span className="dot live" />}
+              <span className="title" title={c.title}>{c.title ?? 'Chat'}</span>
+              <span className="muted small">{threadTime(c.createdAt)}</span>
+            </button>
+          ))}
+          <button className="newthread" onClick={() => { onNew(); setOpen(false) }}>＋ New chat</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** "Claude Code · Opus ▾": the project chat's agent and model, picked in a popover. */
+function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
+  const agents = useAgents()
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useDismiss(open, box, setOpen)
+  const choice = resolveChoice(project, 'chat')
+  const model = choice.model ? (agents.find((a) => a.id === choice.agent)?.models.find((m) => m.id === choice.model)?.label ?? choice.model) : 'Default'
+  return (
+    <div ref={box} className="modelchip">
+      <button type="button" className="chip" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={activeModel ? `Last run: ${activeModel}` : 'Agent and model for project chats'}>
+        {agentName(agents, choice.agent)} · {model} ▾
+      </button>
+      {open && (
+        <div className="chippop">
+          <ModelPicker agents={agents} label="Chat" choice={choice} onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -433,7 +532,6 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
   const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
   const project = state.projects.find((p) => p.id === projectId)
   const canvases = state.canvases.filter((c) => c.projectId === projectId && c.taskId === null).sort((a, b) => b.updatedAt - a.updatedAt)
-  const agents = useAgents()
 
   const startNew = async (text?: string, att?: Attachment[]) => {
     const id = await mag.newChat(projectId)
@@ -441,31 +539,18 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
     if (text !== undefined) await mag.send(id, text, att)
   }
 
+  const chip = project && <ModelChip project={project} activeModel={chat?.activeModel} />
   const Box = embedded ? 'div' : 'aside'
   return (
     <Box className={embedded ? 'projectchat embedded' : 'projectchat'}>
       <div className="pchead">
-        <select value={chat?.id ?? ''} onChange={(e) => setChatId(e.target.value)} aria-label="Chat thread" disabled={!chats.length}>
-          {!chats.length && <option value="">No chats yet</option>}
-          {chats.map((c) => <option key={c.id} value={c.id}>{c.status === 'running' ? '● ' : ''}{c.title ?? 'Chat'}</option>)}
-        </select>
-        <button onClick={() => startNew()} title="New thread">New</button>
+        <ThreadPicker chats={chats} current={chat} onPick={setChatId} onNew={() => void startNew()} />
+        <button className="iconbtn" onClick={() => startNew()} aria-label="New chat" title="New chat">✎</button>
         <CanvasMenu canvases={canvases} />
-        {onClose && <button className="link" onClick={onClose} aria-label="Close chat">×</button>}
+        {onClose && <button className="iconbtn" onClick={onClose} aria-label="Close chat" title="Close">✕</button>}
       </div>
-      {project && (
-        <div className="pchead">
-          <ModelPicker
-            agents={agents}
-            label="Chat"
-            choice={resolveChoice(project, 'chat')}
-            onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })}
-          />
-          {chat?.activeModel && <span className="muted small" title="Model of this thread's last run">{chat.activeModel}</span>}
-        </div>
-      )}
       {chat && chat.items.length > 0 ? (
-        <Chat session={chat} sessions={state.sessions} onOpenTask={onOpenTask} placeholder="Talk about the project…" />
+        <Chat session={chat} sessions={state.sessions} onOpenTask={onOpenTask} placeholder="Message…" chip={chip} />
       ) : (
         <div className="chatbox">
           <div className="items">
@@ -476,9 +561,11 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
           </div>
           <Composer
             busy={false}
-            placeholder="Talk about the project…"
+            placeholder="Message…"
             commands={chatCommands(chat ?? { projectId, agent: project ? resolveChoice(project, 'chat').agent : 'claude-code' }, state.sessions)}
-            onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))} />
+            onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))}
+            chip={chip}
+          />
         </div>
       )}
     </Box>

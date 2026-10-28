@@ -63,3 +63,9 @@ test('parseClaudeLine reports compaction', () => {
   const line = { type: 'system', subtype: 'compact_boundary', session_id: 's1', compact_metadata: { trigger: 'manual', pre_tokens: 20154, post_tokens: 6464 } }
   assert.deepEqual(parseClaudeLine(JSON.stringify(line)), [{ type: 'context.compacted', preTokens: 20154 }])
 })
+
+test('buildArgs turns off tools and MCP servers for noTools', () => {
+  const args = buildArgs({ cwd: '/tmp', prompt: 'hi', noTools: true })
+  assert.deepEqual(args.slice(args.indexOf('--tools')), ['--tools', '', '--strict-mcp-config'])
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--tools'))
+})
