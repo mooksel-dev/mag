@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { layerRule, type ArchApp, type ArchLayer, type ArchNode, type Project } from '@mag/core'
+import { routeEdges, type Box } from './archEdges.ts'
 
 const mag = window.mag
 
@@ -9,32 +10,38 @@ const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'client', label: 'Clients', hint: 'other runtimes' },
   { layer: 'lib', label: 'Lib', hint: 'project libraries' },
 ]
-const STYLE: Record<ArchLayer, { fill: string; stroke: string; text: string }> = {
-  app: { fill: '#F3F4F6', stroke: '#C4C8D0', text: '#3D4250' },
-  service: { fill: '#EEF1FD', stroke: '#3451D1', text: '#23389C' },
-  client: { fill: '#FDF1E6', stroke: '#C2410C', text: '#8E2E07' },
-  lib: { fill: '#EDF6EF', stroke: '#1D8A4B', text: '#1D6B3A' },
-}
-const W = 210
-const H = 62
-const GAP = 22
-const LANE_H = 124
-const LEFT = 130
 
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const key = (app: ArchApp, n: ArchNode) => `${app.name}::${n.id}`
+
+/** A box gets the "!" mark when the agent flagged it or one of its dependencies breaks the layering rules. */
+function flagged(app: ArchApp, n: ArchNode) {
+  if (n.concern) return true
+  return n.uses.some((u) => {
+    const t = app.nodes.find((x) => x.id === u)
+    return !!t && layerRule(n.layer, t.layer)?.severity === 'error'
+  })
+}
 
 export function Architecture({ project }: { project: Project }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const [tab, setTab] = useState<string | null>(null)
   const arch = project.architecture
   const run = project.archRun
   const running = run?.status === 'running'
+  const app = arch?.apps.find((a) => a.name === tab) ?? arch?.apps[0]
 
   const sel = useMemo(() => {
-    if (!arch || !selected) return null
-    for (const app of arch.apps) for (const n of app.nodes) if (key(app, n) === selected) return { app, node: n }
-    return null
-  }, [arch, selected])
+    if (!app || !selected) return null
+    const node = app.nodes.find((n) => key(app, n) === selected)
+    return node ? { app, node } : null
+  }, [app, selected])
+
+  useEffect(() => {
+    if (!sel) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setSelected(null)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sel])
 
   const start = () => mag.runArchitect(project.id).catch((e: Error) => alert(e.message))
 
@@ -62,113 +69,168 @@ export function Architecture({ project }: { project: Project }) {
       )}
       {arch && (
         <>
-          <p className="summary">{arch.summary}</p>
-          <div className="archbody">
-            <div className="archdiagrams">
-              {arch.apps.map((app) => (
-                <AppDiagram key={app.name} app={app} selected={selected} onSelect={setSelected} />
-              ))}
+          <Summary text={arch.summary} />
+          {arch.apps.length > 0 && (
+            <div className="archtabs">
+              {arch.apps.map((a) => {
+                const issues = a.nodes.filter((n) => flagged(a, n)).length
+                return (
+                  <button
+                    key={a.name}
+                    className={a === app ? 'on' : ''}
+                    onClick={() => {
+                      setTab(a.name)
+                      setSelected(null)
+                    }}
+                  >
+                    {a.name}
+                    {issues > 0 && <span className="badge" title={`${issues} with issues`}>{issues}</span>}
+                  </button>
+                )
+              })}
             </div>
-            <aside className="archside">
-              {sel ? (
-                <NodeDetails app={sel.app} node={sel.node} onSelect={setSelected} />
-              ) : (
-                <p className="muted">Select a box to see its interface and dependencies. Red arrows break the layering rules.</p>
-              )}
-            </aside>
-          </div>
+          )}
+          {app && (
+            <>
+              <div className="archlegend muted small">
+                {app.kind && <span className="archkind">{app.kind}</span>}
+                <span>Hover or select a box to see its links.</span>
+                <span><i className="sw error" /> breaks layering</span>
+                <span><i className="sw warning" /> app uses a client directly</span>
+              </div>
+              <div className="archbody">
+                <AppDiagram key={app.name} app={app} selected={selected} onSelect={setSelected} />
+                {sel && (
+                  <aside className="archside">
+                    <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
+                    <NodeDetails app={sel.app} node={sel.node} onSelect={setSelected} />
+                  </aside>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </section>
   )
 }
 
-function AppDiagram({ app, selected, onSelect }: { app: ArchApp; selected: string | null; onSelect: (k: string) => void }) {
-  const layout = useMemo(() => {
-    const pos = new Map<string, { x: number; y: number }>()
-    let maxN = 1
-    LANES.forEach((lane, li) => {
-      const nodes = app.nodes.filter((n) => n.layer === lane.layer)
-      maxN = Math.max(maxN, nodes.length)
-      nodes.forEach((n, i) => pos.set(n.id, { x: LEFT + i * (W + GAP), y: li * LANE_H + 30 }))
-    })
-    return { pos, width: LEFT + maxN * (W + GAP) + 20, height: LANES.length * LANE_H + 20 }
-  }, [app])
+function Summary({ text }: { text: string }) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [open, setOpen] = useState(false)
+  const [long, setLong] = useState(false)
 
-  const byId = new Map(app.nodes.map((n) => [n.id, n]))
-  const selNode = app.nodes.find((n) => key(app, n) === selected)
-  const near = (n: ArchNode) =>
-    !selNode || n.id === selNode.id || selNode.uses.includes(n.id) || n.uses.includes(selNode.id)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || open) return
+    const check = () => setLong(el.scrollHeight > el.clientHeight + 1)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text, open])
 
   return (
-    <div className="archapp">
-      <div className="label">
-        {app.name}
-        {app.kind && <span className="muted"> · {app.kind}</span>}
-      </div>
-      <svg width={layout.width} height={layout.height} role="img" aria-label={`Architecture of ${app.name}`}>
+    <div className={`archsummary${open ? ' open' : ''}`}>
+      <p ref={ref}>{text}</p>
+      {(long || open) && (
+        <button className="link" onClick={() => setOpen(!open)}>{open ? 'less' : 'more'}</button>
+      )}
+    </div>
+  )
+}
+
+function AppDiagram({ app, selected, onSelect }: { app: ArchApp; selected: string | null; onSelect: (k: string) => void }) {
+  const [hover, setHover] = useState<string | null>(null)
+  const [boxes, setBoxes] = useState<Map<string, Box>>(new Map())
+  const wrap = useRef<HTMLDivElement>(null)
+  const els = useRef(new Map<string, HTMLElement>())
+  const uid = useId()
+
+  // Box positions drive the arrows; they change whenever the diagram reflows (window resize, drawer open, new data).
+  useLayoutEffect(() => {
+    const root = wrap.current
+    if (!root) return
+    const measure = () => {
+      const o = root.getBoundingClientRect()
+      const next = new Map<string, Box>()
+      for (const [id, el] of els.current) {
+        const r = el.getBoundingClientRect()
+        next.set(id, { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height })
+      }
+      setBoxes(next)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(root)
+    return () => ro.disconnect()
+  }, [app])
+
+  const byId = useMemo(() => new Map(app.nodes.map((n) => [n.id, n])), [app])
+  const selNode = app.nodes.find((n) => key(app, n) === selected)
+  const focus = (hover ? byId.get(hover) : undefined) ?? selNode
+  const near = (n: ArchNode) => !focus || n.id === focus.id || focus.uses.includes(n.id) || n.uses.includes(focus.id)
+
+  const routes = useMemo(() => {
+    if (!focus) return []
+    const edges = app.nodes.flatMap((n) =>
+      n.uses
+        .filter((to) => byId.has(to) && (n.id === focus.id || to === focus.id))
+        .map((to) => ({ from: n.id, to, sev: layerRule(n.layer, byId.get(to)!.layer)?.severity ?? 'ok' })),
+    )
+    return routeEdges(edges, boxes)
+  }, [app, byId, focus, boxes])
+
+  const marker = (sev: string) => `${uid}-${sev}`
+
+  return (
+    <div className="archdiagram" ref={wrap}>
+      {LANES.map((lane) => {
+        const nodes = app.nodes.filter((n) => n.layer === lane.layer)
+        return (
+          <div key={lane.layer} className="archlane">
+            <div className="archlanehead">
+              <div>{lane.label}</div>
+              <div className="muted small">{lane.hint}</div>
+            </div>
+            <div className="archboxes">
+              {nodes.length === 0 && <span className="muted small">none</span>}
+              {nodes.map((n) => {
+                const k = key(app, n)
+                return (
+                  <button
+                    key={n.id}
+                    ref={(el) => {
+                      if (el) els.current.set(n.id, el)
+                      else els.current.delete(n.id)
+                    }}
+                    className={`archbox ${n.layer}${k === selected ? ' on' : ''}${near(n) ? '' : ' dim'}`}
+                    title={`${n.name}\n${n.description}`}
+                    onClick={() => onSelect(k)}
+                    onMouseEnter={() => setHover(n.id)}
+                    onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
+                  >
+                    <span className="name">{n.name}</span>
+                    <span className="desc">{n.description}</span>
+                    {flagged(app, n) && <span className="flag">!</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+      <svg className="archarrows" aria-hidden="true">
         <defs>
-          <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0 1 L9 5 L0 9 Z" fill="context-stroke" />
-          </marker>
+          {['ok', 'warning', 'error'].map((sev) => (
+            <marker key={sev} id={marker(sev)} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 1 L9 5 L0 9 Z" className={sev} />
+            </marker>
+          ))}
         </defs>
-        {LANES.map((lane, li) => (
-          <g key={lane.layer}>
-            <rect x={0} y={li * LANE_H + 14} width={layout.width} height={LANE_H - 12} rx={10} fill={li % 2 ? '#FFFFFF' : '#FAFAFB'} />
-            <text x={14} y={li * LANE_H + 52} fontSize={13} fontWeight={600} fill="#15171C">{lane.label}</text>
-            <text x={14} y={li * LANE_H + 70} fontSize={11} fill="#8A8F9C">{lane.hint}</text>
-          </g>
+        {routes.map((r) => (
+          <path key={r.from + '>' + r.to} d={r.d} className={r.sev} markerEnd={`url(#${marker(r.sev)})`} />
         ))}
-        {app.nodes.flatMap((n) =>
-          n.uses.map((to) => {
-            const t = byId.get(to)
-            const a = layout.pos.get(n.id)
-            const b = layout.pos.get(to)
-            if (!t || !a || !b) return null
-            const sev = layerRule(n.layer, t.layer)?.severity
-            const color = sev === 'error' ? '#C0392B' : sev === 'warning' ? '#D68910' : '#B8BDC7'
-            const dim = selNode && n.id !== selNode.id && to !== selNode.id
-            const ax = a.x + W / 2
-            const bx = b.x + W / 2
-            const d =
-              b.y > a.y
-                ? `M ${ax} ${a.y + H} C ${ax} ${a.y + H + 40}, ${bx} ${b.y - 40}, ${bx} ${b.y}`
-                : `M ${ax} ${a.y} C ${ax} ${a.y - 36}, ${bx} ${b.y - 36}, ${bx} ${b.y}`
-            return (
-              <path
-                key={n.id + '>' + to}
-                d={d}
-                fill="none"
-                stroke={color}
-                strokeWidth={sev ? 2.2 : 1.4}
-                strokeDasharray={sev === 'warning' ? '5 4' : undefined}
-                opacity={dim ? 0.12 : 1}
-                markerEnd="url(#arch-arrow)"
-              />
-            )
-          }),
-        )}
-        {app.nodes.map((n) => {
-          const p = layout.pos.get(n.id)
-          if (!p) return null
-          const s = STYLE[n.layer]
-          const k = key(app, n)
-          const broken = n.uses.some((u) => byId.get(u) && layerRule(n.layer, byId.get(u)!.layer)?.severity === 'error')
-          return (
-            <g key={n.id} transform={`translate(${p.x},${p.y})`} onClick={() => onSelect(k)} style={{ cursor: 'pointer' }} opacity={near(n) ? 1 : 0.3}>
-              <title>{n.description}</title>
-              <rect width={W} height={H} rx={8} fill={s.fill} stroke={k === selected ? '#15171C' : s.stroke} strokeWidth={k === selected ? 2 : 1} />
-              <text x={12} y={24} fontSize={14} fontWeight={600} fill={s.text}>{clip(n.name, 24)}</text>
-              <text x={12} y={44} fontSize={11} fill="#5B6170">{clip(n.description, 34)}</text>
-              {(n.concern || broken) && (
-                <g transform={`translate(${W - 24},8)`}>
-                  <circle cx={8} cy={8} r={8} fill="#C0392B" />
-                  <text x={8} y={12} fontSize={11} fill="#fff" textAnchor="middle">!</text>
-                </g>
-              )}
-            </g>
-          )
-        })}
       </svg>
     </div>
   )
