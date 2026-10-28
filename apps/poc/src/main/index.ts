@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { canMoveInPlan, nextPlanRank, planBlockers, planQueue, type Attachment, type Project, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, canMoveInPlan, planQueue, subtaskStatusChanges, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -97,7 +97,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {} }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {} }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -110,6 +110,7 @@ app.whenReady().then(async () => {
   })
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
+  actions.cancel = (id, reason) => orch.cancel(id, reason)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -138,13 +139,20 @@ app.whenReady().then(async () => {
   handle('task:update', (_, id: string, patch: Partial<Task>) => store.updateTask(id, patch))
   handle('task:groom', (_, id: string) => orch.groom(id))
   const projectTasks = (projectId: string) => store.data.tasks.filter((t) => t.projectId === projectId)
-  handle('task:addToPlan', (_, id: string) => {
-    const task = store.task(id)
-    const reasons = planBlockers(task)
-    if (reasons.length) return { ok: false, reasons }
-    const tasks = projectTasks(task.projectId)
-    store.updateTask(id, { status: 'planned', rank: nextPlanRank(tasks) })
-    return { ok: true, reasons }
+  handle('task:cancel', (_, id: string, reason: string | null) => orch.cancel(id, reason))
+  handle('task:archive', (_, ids: string[]) => {
+    const now = Date.now()
+    for (const id of ids) {
+      const task = store.task(id)
+      if (!canArchive(task)) throw new Error(`${task.key} is ${task.status}; only done or canceled tasks can be archived`)
+      store.updateTask(id, { archivedAt: now })
+    }
+  })
+  handle('task:restore', (_, id: string) => store.updateTask(id, { archivedAt: null }))
+  handle('task:setSubtaskStatus', (_, id: string, status: SubtaskStatus) => {
+    const sub = store.task(id)
+    if (!sub.parentId || !SUBTASK_STATUSES.includes(status)) throw new Error(`Cannot set ${sub.key} to ${status}`)
+    for (const c of subtaskStatusChanges(sub, status, store.data.tasks)) store.updateTask(c.id, { status: c.status })
   })
   handle('task:move', (_, id: string, dir: 'up' | 'down') => {
     const task = store.task(id)

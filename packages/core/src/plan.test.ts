@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMoveInPlan, canMoveSubtask, findRepoWork, nextPlanRank, nextWork, planBlockers, planQueue, prRollup, repoDirNames, repoWorkName, subtaskProgress, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { canMoveInPlan, canMoveSubtask, findRepoWork, nextPlanRank, nextWork, planQueue, prRollup, repoDirNames, repoWorkName, subtaskProgress, subtaskStatusChanges, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
   id,
@@ -15,6 +15,7 @@ const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task>
   needsInput: null,
   work: null,
   nextSubNo: 1,
+  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
@@ -23,58 +24,63 @@ const sub = (id: string, parentId: string, status: TaskStatus, rank: number, pat
   task(id, status, rank, { parentId, ...patch })
 const repo = (path: string, worktree: string): RepoWork => ({ repo: path, branch: 'b', worktree, prUrl: null, prState: null })
 
-test('planQueue: top-level plan tasks by rank', () => {
-  const tasks = [task('b', 'planned', 2), task('a', 'done', 1), task('c', 'groomed', 0), sub('s', 'b', 'todo', 0)]
+test('planQueue: top-level todo and in-progress tasks by rank', () => {
+  const tasks = [task('b', 'todo', 2), task('a', 'in_progress', 1), task('d', 'done', 0), task('c', 'grooming', 0), sub('s', 'b', 'todo', 0)]
   assert.deepEqual(planQueue(tasks).map((t) => t.id), ['a', 'b'])
 })
 
-test('nextPlanRank: after the last plan task, ignoring backlog and subtasks', () => {
+test('nextPlanRank: after the last queued task, ignoring the rest and subtasks', () => {
   assert.equal(nextPlanRank([]), 1)
-  assert.equal(nextPlanRank([task('c', 'groomed', 9)]), 1)
-  const tasks = [task('a', 'done', 1), task('b', 'planned', 3), task('c', 'groomed', 9), sub('s', 'b', 'todo', 7)]
+  assert.equal(nextPlanRank([task('c', 'grooming', 9)]), 1)
+  const tasks = [task('a', 'done', 5), task('b', 'todo', 3), task('c', 'backlog', 9), sub('s', 'b', 'todo', 7)]
   assert.equal(nextPlanRank(tasks), 4)
-})
-
-test('planBlockers', () => {
-  assert.deepEqual(planBlockers(task('a', 'groomed', 0)), [])
-  assert.deepEqual(planBlockers(task('a', 'backlog', 0, { needsInput: 'q' })), ['not groomed yet', 'agent is waiting for input'])
-  assert.deepEqual(planBlockers(sub('s', 'a', 'todo', 0)), ['subtasks are planned with their task', 'not groomed yet'])
 })
 
 test('nextWork: the unit is the task, never a subtask', () => {
   const tasks = [
     task('t1', 'done', 0),
-    task('t2', 'planned', 1),
+    task('t2', 'todo', 1),
     sub('s2', 't2', 'todo', 1),
     sub('s1', 't2', 'todo', 0),
-    task('t3', 'planned', 2),
+    task('t3', 'todo', 2),
   ]
   assert.equal(nextWork(tasks)?.id, 't2')
-  assert.equal(nextWork([task('t1', 'planned', 1), task('t0', 'planned', 0)])?.id, 't0')
+  assert.equal(nextWork([task('t1', 'todo', 1), task('t0', 'todo', 0)])?.id, 't0')
 })
 
 test('nextWork: one task at a time, whatever its subtasks say', () => {
-  assert.equal(nextWork([task('t1', 'in_review', 0), task('t2', 'planned', 1)]), null)
-  assert.equal(nextWork([task('t1', 'in_progress', 0), sub('s1', 't1', 'done', 0), task('t2', 'planned', 1)]), null)
+  const pr: TaskWork = { dir: 'd', feedbackSeenAt: 0, repos: [{ ...repo('r', 'd/r'), prUrl: 'u', prState: 'open' }] }
+  assert.equal(nextWork([task('t1', 'in_progress', 0, { work: pr }), task('t2', 'todo', 1)]), null, 'PR open')
+  assert.equal(nextWork([task('t1', 'in_progress', 0), sub('s1', 't1', 'done', 0), task('t2', 'todo', 1)]), null)
 })
 
-test('nextWork moves on once the task is done', () => {
-  assert.equal(nextWork([task('t1', 'done', 0), sub('s1', 't1', 'todo', 0), task('t2', 'planned', 1)])?.id, 't2')
+test('nextWork moves on once the task is done or canceled', () => {
+  assert.equal(nextWork([task('t1', 'done', 0), sub('s1', 't1', 'todo', 0), task('t2', 'todo', 1)])?.id, 't2')
+  assert.equal(nextWork([task('t1', 'canceled', 0), task('t2', 'todo', 1)])?.id, 't2')
 })
 
 test('nextWork waits on a task that needs input', () => {
-  assert.equal(nextWork([task('t1', 'planned', 0, { needsInput: 'x' }), task('t2', 'planned', 1)]), null)
+  assert.equal(nextWork([task('t1', 'todo', 0, { needsInput: 'x' }), task('t2', 'todo', 1)]), null)
 })
 
-test('nextWork: empty or finished plan', () => {
+test('nextWork: empty or finished queue', () => {
   assert.equal(nextWork([]), null)
-  assert.equal(nextWork([task('t1', 'done', 0), task('b', 'groomed', 1)]), null)
+  assert.equal(nextWork([task('t1', 'done', 0), task('b', 'grooming', 1)]), null)
 })
 
 test('subtaskProgress', () => {
-  const tasks = [task('t', 'in_progress', 0), sub('a', 't', 'done', 0), sub('b', 't', 'todo', 1), sub('c', 'x', 'done', 0)]
+  const tasks = [task('t', 'in_progress', 0), sub('a', 't', 'done', 0), sub('b', 't', 'in_progress', 1), sub('c', 'x', 'done', 0)]
   assert.deepEqual(subtaskProgress('t', tasks), { done: 1, total: 2 })
   assert.deepEqual(subtaskProgress('none', tasks), { done: 0, total: 0 })
+})
+
+test('subtaskStatusChanges: one step in progress at a time', () => {
+  const tasks = [task('t', 'in_progress', 0), sub('a', 't', 'in_progress', 0), sub('b', 't', 'todo', 1), sub('c', 't', 'done', 2), sub('o', 'x', 'in_progress', 0)]
+  const t = (id: string) => tasks.find((x) => x.id === id)!
+  assert.deepEqual(subtaskStatusChanges(t('b'), 'in_progress', tasks), [{ id: 'a', status: 'todo' }, { id: 'b', status: 'in_progress' }])
+  assert.deepEqual(subtaskStatusChanges(t('a'), 'done', tasks), [{ id: 'a', status: 'done' }])
+  assert.deepEqual(subtaskStatusChanges(t('a'), 'in_progress', tasks), [{ id: 'a', status: 'in_progress' }], 'already the one')
+  assert.deepEqual(subtaskStatusChanges(t('c'), 'in_progress', tasks), [{ id: 'a', status: 'todo' }, { id: 'c', status: 'in_progress' }], 'reopening a done step')
 })
 
 test('repoDirNames: base names, unique within the task', () => {
@@ -98,22 +104,22 @@ test('prRollup', () => {
   const b = repo('b', 'd/b')
   const pr = (r: RepoWork, prState: RepoWork['prState']) => ({ ...r, prUrl: `https://github.com/o/${r.repo}/pull/1`, prState })
   assert.equal(prRollup(w(a, b), ['a']), null, 'no PR yet')
-  assert.equal(prRollup(w(pr(a, 'open'), b), ['a']), 'in_review', 'the only changed repo has a PR')
+  assert.equal(prRollup(w(pr(a, 'open'), b), ['a']), 'review', 'the only changed repo has a PR')
   assert.equal(prRollup(w(pr(a, 'open'), b), ['a', 'b']), null, 'b has commits but no PR')
-  assert.equal(prRollup(w(pr(a, 'open'), pr(b, 'open')), ['a', 'b']), 'in_review')
-  assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'open')), ['a', 'b']), 'in_review', 'waits for every PR')
+  assert.equal(prRollup(w(pr(a, 'open'), pr(b, 'open')), ['a', 'b']), 'review')
+  assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'open')), ['a', 'b']), 'review', 'waits for every PR')
   assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'merged')), []), 'done')
-  assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'closed')), []), 'in_progress', 'closed without merge')
+  assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'closed')), []), 'closed', 'closed without merge')
 })
 
-test('canMoveInPlan: only between not-started tasks', () => {
+test('canMoveInPlan: only between not-started todo tasks', () => {
   const work: TaskWork = { dir: 'w', feedbackSeenAt: 0, repos: [repo('r', 'w/r')] }
   const tasks = [
-    task('done', 'done', 0),
-    task('a', 'planned', 1, { work }),
-    task('b', 'planned', 2),
-    task('c', 'planned', 3),
-    task('x', 'groomed', 4),
+    task('run', 'in_progress', 0, { work }),
+    task('a', 'todo', 1, { work }),
+    task('b', 'todo', 2),
+    task('c', 'todo', 3),
+    task('x', 'grooming', 4),
   ]
   const t = (id: string) => tasks.find((x) => x.id === id)!
   assert.equal(canMoveInPlan(t('c'), tasks, 'up'), true)
@@ -121,8 +127,8 @@ test('canMoveInPlan: only between not-started tasks', () => {
   assert.equal(canMoveInPlan(t('c'), tasks, 'down'), false, 'last one')
   assert.equal(canMoveInPlan(t('b'), tasks, 'up'), false, 'a has started work')
   assert.equal(canMoveInPlan(t('a'), tasks, 'down'), false, 'a has started work')
-  assert.equal(canMoveInPlan(t('done'), tasks, 'down'), false)
-  assert.equal(canMoveInPlan(t('x'), tasks, 'up'), false, 'not in the plan')
+  assert.equal(canMoveInPlan(t('run'), tasks, 'down'), false)
+  assert.equal(canMoveInPlan(t('x'), tasks, 'up'), false, 'not in the queue')
 })
 
 test('canMoveSubtask: any step of the checklist, done or not', () => {

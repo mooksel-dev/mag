@@ -35,21 +35,28 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 ## What the PoC does
 
 1. Create a project, attach repositories (Settings).
-2. Add tasks to the backlog (Plan tab).
+2. Add tasks to the backlog (Tasks tab → Backlog).
+   Statuses: `backlog` → `grooming` → `todo` → `in_progress` → `done`, plus `canceled` from any status before done.
 3. **Groom** a task: Claude Code runs in the background in the first repo (read-only tools),
    writes the task document and either asks for input or marks the task groomed. A task with several steps gets
-   subtasks: a short checklist of the plan (title + optional note, todo/done), with no doc, agent or PR of their own.
-4. **Needs you** lists tasks waiting on you. Open one, answer in the chat; the agent updates the doc.
-5. **Add to plan** puts a groomed task at the end of the plan; reorder not-started tasks with ▲▼.
-   Only top-level tasks enter the plan, and only when groomed with nothing pending.
-6. The plan runs top to bottom, **one task at a time**; the next one starts only after every PR of the previous one is merged.
+   subtasks: a short checklist of the plan (title + optional note, todo / in progress / done), with no doc, agent or
+   PR of their own.
+4. **Waiting on you** (Home) lists what needs you. Open a task, answer in the chat; the agent updates the doc.
+5. A groomed task goes to **todo** by itself, at the end of the queue; reorder not-started tasks by dragging or ▲▼.
+   The Tasks tab has three views: **Active** (In progress, Todo, Grooming, Recently finished), **Backlog** and
+   **Archive**. Rows expand to show their subtasks live. A dot shows the agent state: green = an agent works
+   (`developer · 12m`), yellow = waiting on you (a question, an approval, or a PR to merge).
+6. Todo runs top to bottom, **one task at a time**; the next one starts when no task is in progress.
    One developer session owns a task from start to merge. Its cwd is the task dir (`worktrees/<projectId>/<key>/`), with a
    git worktree per project repository (`<task dir>/<repo-name>/`, branch `mag/<key>-<title>` from the base branch).
-   It implements, tests, self-reviews, ticks the subtasks with `check_subtask`, pushes and opens one PR per changed repo
-   with `gh`, recording each with `set_pr`. Once every repo with commits has a PR, the task moves to review.
-7. Every minute the app checks the PRs of tasks in review: all merged → task done and worktrees removed; one closed
-   without merge → back to in progress with a note; new comments on any of them → the same developer session is resumed
-   with them. You merge; agents never do.
+   It implements, tests, self-reviews, marks the subtasks in progress and done with `set_subtask_status`, pushes and
+   opens one PR per changed repo with `gh`, recording each with `set_pr`. An open PR is a badge on the task.
+7. Every minute the app checks the open PRs of tasks in progress: all merged (and no repo with commits left without
+   one) → task done and worktrees removed; one closed without merge → a note for you; new comments on any of them →
+   the same developer session is resumed with them. You merge; agents never do.
+8. **Cancel** stops a task's agent and removes its worktrees (open PRs stay; close them on GitHub). Done and canceled
+   tasks can be **archived** (a flag; they keep their status) by hand, with Archive all, or automatically after
+   `autoArchiveDays` (Settings, default 14, 0 = off). **Restore** brings them back.
 
 ### Architecture
 
@@ -69,7 +76,7 @@ Developer agents need `git` and an authenticated `gh` CLI. Worktrees live in use
 
 The **Chat** panel sits next to every tab: a free conversation about the project, one or more threads per project.
 The agent reads the code and the web but never edits code; decisions become tasks (`create_task`, `start_grooming`;
-a task already fully discussed can go straight to the end of the plan with `create_task` + `doc` + `plan: true`),
+a task already fully discussed can go straight to the end of the todo queue with `create_task` + `doc` + `plan: true`),
 notes (`update_notes`) or task-doc changes. Paste screenshots or drop files into any chat (task chats too); they are
 copied to userData/attachments and handed to the agent as paths. Agents draw mockups and diagrams with `show_canvas`:
 self-contained HTML rendered in a sandboxed iframe in the chat, kept with the project and the task.
@@ -84,18 +91,19 @@ Each run gets a stdio MCP server (`src/main/task-mcp.ts`, server name `mag`). Ta
 | `get_task` | Task, subtask checklist, project repos, work (task dir; per repo worktree, branch, PR), doc template |
 | `get_doc` / `update_doc` | Read / replace the task document |
 | `set_needs_input` | One-line reason shown in Needs you, or `null` |
-| `mark_groomed` | No open questions left, plan ready |
+| `mark_groomed` | No open questions left, plan ready; the task goes to the end of todo |
 | `create_subtask` | Groomer: add a checklist step (title, optional note) |
 | `update_subtask` / `delete_subtask` / `reorder_subtasks` | Groomer: change the checklist when re-grooming |
-| `check_subtask` | Developer ticks (or unticks) a step |
-| `set_pr` | Developer records the PR of one repo; the task moves to review once every changed repo has one |
+| `set_subtask_status` | Developer marks a step `in_progress` / `done` (or back to `todo`); one in progress at a time. `check_subtask` is a deprecated alias |
+| `set_pr` | Developer records the PR of one repo; once every changed repo has one, the task waits for your merge |
 | `check_architecture` | Programmatic rule check (imports between layers) of the working copy |
 | `get_architecture` | The project's architecture diagram |
 | `list_tasks` | All tasks of the project |
 | `show_canvas` | Show an HTML mockup/diagram; revise by id |
 
 Project chats and the architect get `list_tasks`, `read_task`, `create_task`, `update_task`, `update_task_doc`,
-`start_grooming`, `update_notes`, `run_architect`, `show_canvas` and the architecture tools.
+`start_grooming`, `cancel_task` (after asking you), `archive_task`, `update_notes`, `run_architect`, `show_canvas` and
+the architecture tools.
 
 The MCP server forwards calls to a localhost endpoint in the main process (random port + token).
 

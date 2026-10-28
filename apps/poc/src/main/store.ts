@@ -95,6 +95,36 @@ export class Store {
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
     this.migrateSubtaskKeys()
     this.migrateToTaskWork()
+    this.migrateStatuses()
+  }
+
+  /**
+   * Statuses before T-26: groomed and planned become todo, planned first in their order, then groomed by creation;
+   * in_review becomes in_progress (its open PR shows as a badge). Every task gets an archive flag.
+   */
+  private migrateStatuses() {
+    let changed = false
+    const old = (t: Task) => t.status as string
+    for (const pid of new Set(this.data.tasks.map((t) => t.projectId))) {
+      const mine = this.data.tasks.filter((t) => t.projectId === pid && !t.parentId)
+      const groomed = mine.filter((t) => old(t) === 'groomed').sort((a, b) => a.createdAt - b.createdAt)
+      let rank = Math.max(0, ...mine.filter((t) => ['planned', 'in_progress', 'in_review'].includes(old(t))).map((t) => t.rank))
+      for (const t of groomed) Object.assign(t, { status: 'todo', rank: ++rank })
+      for (const t of mine) if (old(t) === 'planned') t.status = 'todo'
+      changed ||= groomed.length > 0
+    }
+    for (const t of this.data.tasks) {
+      if (t.archivedAt === undefined) {
+        t.archivedAt = null
+        changed = true
+      }
+      if (old(t) === 'planned') t.status = 'todo'
+      else if (old(t) === 'in_review') t.status = 'in_progress'
+      else if (t.parentId && !['todo', 'in_progress', 'done'].includes(old(t))) t.status = 'todo'
+      else continue
+      changed = true
+    }
+    if (changed) this.changed()
   }
 
   /**
@@ -135,8 +165,9 @@ export class Store {
       changed = true
     }
     for (const t of this.data.tasks) {
-      if (t.parentId || t.work || (t.status !== 'in_progress' && t.status !== 'in_review')) continue
-      t.status = 'planned'
+      if (t.parentId || t.work || (t.status !== 'in_progress' && (t.status as string) !== 'in_review')) continue
+      // Before T-26's statuses; migrateStatuses turns it into todo.
+      ;(t as { status: string }).status = 'planned'
       changed = true
     }
     if (changed) this.changed()
@@ -323,6 +354,7 @@ export class Store {
       needsInput: null,
       work: null,
       nextSubNo: 1,
+      archivedAt: null,
       createdAt: now,
       updatedAt: now,
     }

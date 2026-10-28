@@ -15,6 +15,7 @@ const task = (id: string, projectId: string, status: TaskStatus, patch: Partial<
   needsInput: null,
   work: null,
   nextSubNo: 1,
+  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
@@ -34,12 +35,16 @@ test('projectColor: from the palette, stable per id', () => {
 
 test('projectState: waiting, in review, idle', () => {
   assert.equal(projectState('p', [task('t', 'p', 'in_progress', { needsInput: 'Which one?' })], []), 'waiting')
-  assert.equal(projectState('p', [task('t', 'p', 'in_review')], []), 'in_review')
+  const pr = { dir: 'd', feedbackSeenAt: 0, repos: [{ repo: 'r', branch: 'b', worktree: 'd/r', prUrl: 'u', prState: 'open' as const }] }
+  const dev = { id: 's', projectId: 'p', taskId: 't', role: 'developer' as const, agent: 'claude-code' as const, nativeSessionId: null, status: 'running' as const, items: [], createdAt: 0 }
+  assert.equal(projectState('p', [task('t', 'p', 'in_progress', { work: pr })], []), 'waiting', 'PR waits for merge')
+  assert.equal(projectState('p', [task('t', 'p', 'in_progress', { work: pr })], [dev]), 'in_review', 'developer addresses feedback')
   assert.equal(projectState('p', [task('t', 'p', 'in_progress')], []), 'idle')
-  assert.equal(projectState('p', [task('t', 'q', 'in_review')], []), 'idle', 'other projects do not count')
+  assert.equal(projectState('p', [task('t', 'q', 'in_progress', { work: pr })], []), 'idle', 'other projects do not count')
 })
 
 test('waitingTotal sums the inbox of every project', () => {
-  const tasks = [task('a', 'p', 'groomed'), task('b', 'p', 'backlog', { needsInput: '?' }), task('c', 'q', 'groomed'), task('d', 'gone', 'groomed')]
+  const q = { needsInput: '?' }
+  const tasks = [task('a', 'p', 'grooming', q), task('b', 'p', 'backlog', q), task('c', 'q', 'todo', q), task('d', 'gone', 'todo', q)]
   assert.equal(waitingTotal([{ id: 'p' }, { id: 'q' }], tasks, []), 3)
 })
