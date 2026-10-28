@@ -1,16 +1,20 @@
 import { rmdir } from 'node:fs'
-import { nextWork, prRollup, repoWorkName, type PrState, type RepoWork } from '@mag/core'
+import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, nextWork, prRollup, repoWorkName, type PrState, type RepoWork, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
-import { prFeedback, prState, removeWorktree, type PrFeedback } from './git'
+import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
 import { log } from './log'
 
 const PICK_EVERY_MS = 5_000
 const PR_POLL_EVERY_MS = 60_000
+const ARCHIVE_EVERY_MS = 60 * 60_000
 
 const STATES: Record<Awaited<ReturnType<typeof prState>>, PrState> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
-/** Runs the plan of every project in order, one task at a time, and watches every PR of the tasks in review. */
+/**
+ * Runs the todo queue of every project in order, one task at a time, watches the open PRs of the tasks in progress
+ * and archives finished tasks after the project's autoArchiveDays.
+ */
 export function startScheduler(store: Store, orch: Orchestrator) {
   const pick = () => {
     for (const project of store.data.projects) {
@@ -24,17 +28,29 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     }
   }
 
+  /**
+   * Every PR is merged, but is the task done? Not while its developer still works, nor while a repo with commits has
+   * no merged PR yet (the developer opened the first PR before finishing the others).
+   */
+  const finished = async (taskId: string, work: TaskWork) => {
+    if (store.data.sessions.some((s) => s.taskId === taskId && orch.isRunning(s.id))) return false
+    const changed = await changedRepos(work, store.project(store.task(taskId).projectId).baseBranch)
+    return changed.every((c) => work.repos.some((r) => r.repo === c && r.prState === 'merged'))
+  }
+
   let polling = false
   const pollPrs = async () => {
     if (polling) return
     polling = true
     try {
-      for (const task of store.data.tasks.filter((t) => t.status === 'in_review' && t.work?.repos.some((r) => r.prUrl))) {
+      // A PR closed without merge is not polled again; the developer opens a new one (set_pr) if needed.
+      const live = (r: RepoWork) => !!r.prUrl && r.prState !== 'merged' && r.prState !== 'closed'
+      for (const task of store.data.tasks.filter((t) => t.status === 'in_progress' && t.work?.repos.some(live))) {
         const work = task.work!
         const repos: RepoWork[] = []
         const feedback: (PrFeedback & { repo: string })[] = []
         for (const r of work.repos) {
-          if (!r.prUrl || r.prState === 'merged') {
+          if (!r.prUrl || !live(r)) {
             repos.push(r)
             continue
           }
@@ -55,9 +71,14 @@ export function startScheduler(store: Store, orch: Orchestrator) {
           }
         }
         const next = { ...work, repos }
-        // The task is already in review, so only merges and closes can change its status here.
-        const status = prRollup(next, [])
-        if (status === 'done') {
+        // Only merges and closes matter here; whether every changed repo has a PR is set_pr's business.
+        const closed = repos.filter((r, i) => r.prState === 'closed' && work.repos[i].prState !== 'closed').map((r) => repoWorkName(work, r))
+        if (closed.length) {
+          log.info('scheduler', `${task.key}: PR closed for ${closed.join(', ')}`)
+          store.updateTask(task.id, { needsInput: `PR for ${closed.join(', ')} was closed without merging`, work: next })
+          continue
+        }
+        if (prRollup(next, []) === 'done' && (await finished(task.id, next))) {
           log.info('scheduler', `${task.key} done: every PR merged`)
           store.updateTask(task.id, { status: 'done', needsInput: null, work: next })
           for (const r of repos) await removeWorktree(r.repo, r.worktree)
@@ -69,12 +90,6 @@ export function startScheduler(store: Store, orch: Orchestrator) {
               orch.architect(task.projectId)
             } catch {}
           }
-          continue
-        }
-        if (status === 'in_progress') {
-          const closed = repos.filter((r) => r.prState === 'closed').map((r) => repoWorkName(work, r))
-          log.info('scheduler', `${task.key} back in progress: PR closed for ${closed.join(', ')}`)
-          store.updateTask(task.id, { status: 'in_progress', needsInput: `PR for ${closed.join(', ')} was closed without merging`, work: next })
           continue
         }
         if (!feedback.length) {
@@ -91,10 +106,23 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     }
   }
 
+  const archiveOld = () => {
+    const now = Date.now()
+    for (const project of store.data.projects) {
+      const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
+      for (const t of autoArchiveDue(tasks, project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS, now)) {
+        log.info('scheduler', `${t.key} archived after ${project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS} days`)
+        store.updateTask(t.id, { archivedAt: now })
+      }
+    }
+  }
+
   pick()
   void pollPrs()
+  archiveOld()
   setInterval(pick, PICK_EVERY_MS)
   setInterval(pollPrs, PR_POLL_EVERY_MS)
+  setInterval(archiveOld, ARCHIVE_EVERY_MS)
   return { pollNow: pollPrs }
 }
 

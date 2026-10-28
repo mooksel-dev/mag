@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, Task, TaskStatus, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -49,7 +49,7 @@ export interface NewTask {
   type: TaskType
   description: string
   parentId?: string | null
-  /** Defaults to backlog; subtasks are todo or done. */
+  /** Defaults to backlog; subtasks are todo, in_progress or done. */
   status?: TaskStatus
 }
 
@@ -71,12 +71,19 @@ export interface MagApi {
   createTask(t: NewTask): Promise<Task>
   updateTask(id: string, patch: Partial<Task>): Promise<void>
   groom(taskId: string): Promise<void>
-  addToPlan(taskId: string): Promise<{ ok: boolean; reasons: string[] }>
-  /** Swap a plan task with its neighbour in the queue. */
+  /** Cancel a task not done yet: its agent stops and its worktrees are removed; open PRs stay. */
+  cancel(taskId: string, reason: string | null): Promise<void>
+  /** Archive done or canceled tasks; they keep their status. */
+  archive(taskIds: string[]): Promise<void>
+  /** Bring an archived task back. */
+  restore(taskId: string): Promise<void>
+  /** Swap a todo task with its neighbour in the queue. */
   move(taskId: string, dir: 'up' | 'down'): Promise<void>
+  /** Set a subtask's status; starting one sends the task's other in-progress step back to todo. */
+  setSubtaskStatus(subtaskId: string, status: SubtaskStatus): Promise<void>
   /** Set the order of a task's subtasks; `ids` lists each of them exactly once. */
   reorderSubtasks(parentId: string, ids: string[]): Promise<void>
-  /** Start or restart the developer agent on a planned/in-progress task. */
+  /** Start or restart the developer agent on a todo or in-progress task. */
   develop(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */
   checkPrs(): Promise<void>

@@ -1,12 +1,12 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { cleanTitle, integrationRules, prRollup, repoDirNames, repoWorkName, resolveChoice, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork } from '@mag/core'
+import { canCancel, cleanTitle, integrationRules, prRollup, repoDirNames, repoWorkName, resolveChoice, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, changedRepos, prepareWorktree, slug, type PrFeedback } from './git'
+import { AGENT_MARK, changedRepos, prepareWorktree, removeWorktree, slug, type PrFeedback } from './git'
 import { APPROVE_TOOL } from './tool-defs'
 import { log } from './log'
 
@@ -34,10 +34,11 @@ Your output is the task document, not chat. Work like this:
    the doc itself can be \`\`\`mermaid blocks.
 6. One developer session does the whole task, with one PR per changed repository. For a task with several
    steps, add them with create_subtask: a short checklist of the plan (title plus an optional one-line note), in
-   order. Subtasks have no doc, agent or PR of their own; the developer ticks them off. The task doc carries the
+   order. Subtasks have no doc, agent or PR of their own; the developer marks their progress. The task doc carries the
    details. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
    reorder_subtasks instead of creating duplicates (get_task lists them).
-7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed.
+7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed. The task then goes
+   to the end of the todo queue by itself.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
@@ -48,7 +49,7 @@ const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
 Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
 ${repos.join('\n')}
-1. Call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\n   get_task lists the subtasks: the plan as a checklist. Tick each one with check_subtask as soon as it is done.' : ''}
+1. Call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\n   get_task lists the subtasks: the plan as a checklist. Call set_subtask_status(key, "in_progress") when you start a step\n   and set_subtask_status(key, "done") as soon as it is finished; the user watches them live.' : ''}
 2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
 3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
 4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
@@ -79,18 +80,21 @@ Call get_architecture first, then set_architecture once with the full picture. B
 const chatPrompt = (project: Project, logsDir: string) => `You are the user's partner for project "${project.name}" in "mag",
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
-How mag works: backlog task -> groomer agent writes the task doc, asks questions and may split it into subtasks
-(a checklist of the plan) -> the user adds the task to the plan -> one developer agent implements the whole task,
-with a worktree per repository and one PR per changed repository -> the user merges. The plan is an ordered queue
-run one task at a time: the next task starts after every PR of the previous one is merged.
+How mag works: backlog task -> grooming: the groomer agent writes the task doc, asks questions and may split it
+into subtasks (a checklist of the plan) -> todo: once groomed, the task joins the end of the queue by itself ->
+in progress: one developer agent implements the whole task, with a worktree per repository and one PR per changed
+repository -> done when the user has merged every PR. Any task not done yet can be canceled. The todo queue runs one
+task at a time: the next one starts when no task is in progress. Done and canceled tasks can be archived; mag
+archives them after some days.
 - You never change code. A change becomes a task: create_task with a concise brief (what and why), and
   start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
 - If a task is already fully discussed here and the user asks to get it done, skip grooming: create_task with
   a complete doc (Problem / Changes per layer / Plan, following the project's doc template) and plan: true.
-  It goes to the end of the plan and a developer picks it up automatically. Anything that needs splitting into
+  It goes to the end of the todo queue and a developer picks it up automatically. Anything that needs splitting into
   subtasks or still has open questions goes to the backlog and through start_grooming instead.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
   update_task / update_task_doc. Say in one line what you recorded.
+- cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
 - For anything visual (UI mockups, flows, diagrams, comparisons) use show_canvas with one self-contained HTML page;
   revise it by id instead of drawing a new one. Prefer showing over describing.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
@@ -192,6 +196,8 @@ export class Orchestrator {
   groom(taskId: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
+    // A todo task leaves the queue while it is groomed again; started work is past grooming.
+    if (!['backlog', 'grooming', 'todo'].includes(task.status) || task.work) throw new Error(`${task.key} is ${task.status}; only backlog, grooming or not started todo tasks can be groomed`)
     const session = this.newSession(taskId, 'groomer')
     this.store.updateTask(taskId, { status: 'grooming', needsInput: null })
     this.run(session, `Groom task ${task.key}. Start with get_task.`)
@@ -201,6 +207,7 @@ export class Orchestrator {
   async develop(taskId: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
+    if (task.status !== 'todo' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only todo or in progress tasks are developed`)
     const project = this.store.project(task.projectId)
     if (!project.repos.length) {
       this.store.updateTask(taskId, { needsInput: 'Project has no repository' })
@@ -286,6 +293,20 @@ export class Orchestrator {
 
   stop(sessionId: string) {
     this.runs.get(sessionId)?.kill()
+  }
+
+  /** Cancel a task not done yet: stop its agents and remove its worktrees. Branches and open PRs stay as they are. */
+  async cancel(taskId: string, reason: string | null) {
+    const task = this.store.task(taskId)
+    if (!canCancel(task)) throw new Error(`${task.key} is ${task.status}; it cannot be canceled`)
+    for (const s of this.store.data.sessions) if (s.taskId === taskId) this.stop(s.id)
+    this.store.updateTask(taskId, { status: 'canceled', cancelReason: reason, needsInput: null })
+    log.info('agent', `${task.key} canceled`, { reason })
+    const work = task.work
+    if (!work) return
+    for (const r of work.repos) await removeWorktree(r.repo, r.worktree)
+    // Only removes the task dir once it is empty.
+    rmdir(work.dir, () => {})
   }
 
   private newSession(taskId: string, role: AgentRole) {
@@ -489,7 +510,8 @@ export class Orchestrator {
       const changed = await changedRepos(work, this.store.project(task.projectId).baseBranch)
       const now = this.store.task(task.id)
       if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id)) return
-      if (prRollup(work, changed) === 'in_review') return this.store.updateTask(task.id, { status: 'in_review' })
+      // Every changed repo has a PR: the task waits for the user to merge.
+      if (prRollup(work, changed) === 'review') return
       const missing = work.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed'))
       this.store.updateTask(task.id, {
         needsInput: missing.length

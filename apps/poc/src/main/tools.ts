@@ -1,4 +1,4 @@
-import { BACKLOG_STATUSES, DEFAULT_TEMPLATES, PLAN_STATUSES, findRepoWork, nextPlanRank, planQueue, prRollup, repoWorkName, subtaskProgress, subtasksOf, type ArchApp, type Project, type Task, type TaskType } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, findRepoWork, nextPlanRank, planQueue, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, type ArchApp, type Project, type SubtaskStatus, type Task, type TaskType } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -17,6 +17,8 @@ export interface ToolContext {
 export interface ToolActions {
   groom(taskId: string): void
   architect(projectId: string): void
+  /** Stops the task's agents, removes its worktrees and marks it canceled. */
+  cancel(taskId: string, reason: string | null): Promise<void>
 }
 
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -44,7 +46,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
     }
     /** A subtask of the current task that grooming may still change. */
     const ownSubtask = (key: unknown) => {
-      if (PLAN_STATUSES.includes(task.status)) throw new Error(`${task.key} is already in the plan; its subtasks can no longer change`)
+      if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; its subtasks change only while grooming`)
       return subtask(key)
     }
     const note = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '')
@@ -87,8 +89,9 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       case 'mark_groomed':
         if (task.parentId) throw new Error('Subtasks are not groomed separately; groom the parent task')
         if (task.needsInput) throw new Error('needs_input is still set; clear it first')
-        store.updateTask(task.id, { status: 'groomed' })
-        return 'Task marked as groomed. The user will review it.'
+        if (task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}, not grooming`)
+        store.updateTask(task.id, { status: 'todo', rank: nextPlanRank(store.data.tasks.filter((t) => t.projectId === project.id)) })
+        return 'Task groomed: it is in todo, at the end of the queue.'
 
       case 'create_subtask': {
         if (task.parentId) throw new Error('Subtasks cannot have subtasks')
@@ -108,11 +111,15 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         return `Updated ${sub.key}.`
       }
 
+      // check_subtask: the pre-T-26 name, kept for one release.
+      case 'set_subtask_status':
       case 'check_subtask': {
         const sub = subtask(args.key)
-        store.updateTask(sub.id, { status: args.done === false ? 'todo' : 'done' })
+        const status = (name === 'check_subtask' ? (args.done === false ? 'todo' : 'done') : args.status) as SubtaskStatus
+        if (!SUBTASK_STATUSES.includes(status)) throw new Error(`status must be one of ${SUBTASK_STATUSES.join(', ')}`)
+        for (const c of subtaskStatusChanges(sub, status, store.data.tasks)) store.updateTask(c.id, { status: c.status })
         const { done, total } = subtaskProgress(task.id, store.data.tasks)
-        return `${sub.key} ${args.done === false ? 'unticked' : 'ticked'}; ${done}/${total} done.`
+        return `${sub.key} is ${status.replace('_', ' ')}; ${done}/${total} done.`
       }
 
       case 'delete_subtask': {
@@ -145,11 +152,11 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           feedbackSeenAt: first ? Date.now() : work.feedbackSeenAt,
         }
         const changed = await changedRepos(next, project.baseBranch)
-        const review = prRollup(next, changed) === 'in_review'
-        store.updateTask(task.id, { work: next, ...(review && { status: 'in_review' }) })
+        const review = prRollup(next, changed) === 'review'
+        store.updateTask(task.id, { work: next })
         const missing = next.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed')).map((r) => repoWorkName(next, r))
         return review
-          ? 'PR recorded. The task is in review: the user merges; you will be resumed if they leave comments.'
+          ? 'PR recorded. Every changed repo has a PR: the user merges; you will be resumed if they leave comments.'
           : `PR recorded for ${repoWorkName(next, target)}. Still without a PR: ${missing.join(', ') || 'none'}; open one per changed repo.`
       }
 
@@ -181,7 +188,7 @@ function sharedTool(
   ctx: ToolContext,
   name: string,
   args: Record<string, unknown>,
-): string | undefined {
+): string | Promise<string> | undefined {
   const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
   const byKey = (key: unknown) => {
     const t = tasks.find((x) => x.key.toLowerCase() === String(key).toLowerCase())
@@ -192,26 +199,26 @@ function sharedTool(
   const withSubtasks = (t: Task): Task[] => [t, ...subtasksOf(t.id, tasks).flatMap(withSubtasks)]
 
   switch (name) {
-    case 'list_tasks':
+    case 'list_tasks': {
+      const active = activeSections(tasks)
       return JSON.stringify(
         {
           project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
-          tasks: [
-            ...planQueue(tasks),
-            ...tasks.filter((t) => !t.parentId && BACKLOG_STATUSES.includes(t.status)).sort((a, b) => a.createdAt - b.createdAt),
-          ].flatMap(withSubtasks).map((t) => ({
+          tasks: [...planQueue(tasks), ...active.grooming, ...backlogTasks(tasks), ...active.finished].flatMap(withSubtasks).map((t) => ({
             key: t.key,
             title: t.title,
             type: t.type,
             status: t.status,
             parent: t.parentId ? keyOf(t.parentId) : undefined,
             needsInput: t.needsInput ?? undefined,
-            prs: t.work?.repos.flatMap((r) => (r.prUrl ? [r.prUrl] : [])),
+            prs: t.work?.repos.flatMap((r) => (r.prUrl ? [`${r.prUrl} (${r.prState ?? 'unknown'})`] : [])),
+            cancelReason: t.cancelReason ?? undefined,
           })),
         },
         null,
         2,
       )
+    }
 
     case 'read_task': {
       const t = byKey(args.key)
@@ -227,13 +234,13 @@ function sharedTool(
         title: String(args.title),
         type: taskType(args.type),
         description: String(args.description ?? ''),
-        status: plan ? 'planned' : undefined,
+        status: plan ? 'todo' : undefined,
       })
       // `tasks` was read before the new task existed, so it is the plan ahead of it.
       if (md.trim()) store.data.docs[t.id] = md
       if (plan) store.updateTask(t.id, { rank: nextPlanRank(tasks) })
       else if (md.trim()) store.changed()
-      return plan ? `Created ${t.key} in the plan (position ${planQueue(tasks).length + 1}).` : `Created ${t.key} in the backlog.`
+      return plan ? `Created ${t.key} at the end of the queue (position ${planQueue(tasks).length + 1}).` : `Created ${t.key} in the backlog.`
     }
 
     case 'update_task': {
@@ -255,9 +262,22 @@ function sharedTool(
     case 'start_grooming': {
       const t = byKey(args.key)
       if (t.parentId) throw new Error(`${t.key} is a subtask; groom its parent ${keyOf(t.parentId)}`)
-      if (!['backlog', 'groomed'].includes(t.status)) throw new Error(`${t.key} is ${t.status}; only backlog or groomed tasks can be groomed`)
       actions.groom(t.id)
       return `Groomer started on ${t.key}.`
+    }
+
+    case 'cancel_task': {
+      const t = byKey(args.key)
+      if (!canCancel(t)) throw new Error(`${t.key} is ${t.status}${t.parentId ? ' (a subtask)' : ''}; only tasks not done or canceled yet can be canceled`)
+      const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : null
+      return actions.cancel(t.id, reason).then(() => `Canceled ${t.key}.${taskPrs(t).some((r) => r.prState === 'open') ? ' Its open PRs are left as they are.' : ''}`)
+    }
+
+    case 'archive_task': {
+      const t = byKey(args.key)
+      if (!canArchive(t)) throw new Error(`${t.key} is ${t.status}${t.archivedAt ? ', already archived' : ''}; only done or canceled tasks can be archived`)
+      store.updateTask(t.id, { archivedAt: Date.now() })
+      return `Archived ${t.key}.`
     }
 
     case 'update_notes':

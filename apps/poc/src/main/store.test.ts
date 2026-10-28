@@ -45,7 +45,8 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   assert.equal(t('done').work?.repos[0].prState, 'merged')
   assert.deepEqual([t('doneSub').status, t('runSub1').status, t('runSub2').status], ['done', 'done', 'todo'])
   assert.deepEqual([t('doneSub').work, t('runSub2').work, t('runSub2').needsInput], [null, null, null])
-  assert.equal(t('run').status, 'planned', 'started only through its subtasks: picked up again as a whole')
+  assert.equal(t('run').status, 'todo', 'started only through its subtasks: picked up again as a whole')
+  assert.equal(t('review').status, 'in_progress', 'in review is in progress with an open PR')
   assert.equal(store.session('s').taskId, 'run')
   assert.equal(store.session('s').nativeSessionId, null)
   assert.equal(store.data.canvases.c.taskId, 'run')
@@ -54,6 +55,37 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   store.flush()
   const again = new Store(file)
   assert.deepEqual(again.data.tasks, store.data.tasks)
+})
+
+test('T-26 migration: groomed and planned become todo in queue order, in_review in progress, an archive flag', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, updatedAt: 0 }
+  const task = (id: string, status: string, rank: number, createdAt: number, patch = {}) => ({ ...base, id, key: id, title: id, status, rank, createdAt, ...patch })
+  const pr = { repos: [{ repo: '/r', branch: 'b', worktree: '/w/r', prUrl: 'https://github.com/o/r/pull/1', prState: 'open' }], dir: '/w', feedbackSeenAt: 0 }
+  const tasks = [
+    task('g2', 'groomed', 1, 20),
+    task('p2', 'planned', 5, 1),
+    task('g1', 'groomed', 99, 10),
+    task('p1', 'planned', 4, 2),
+    task('rev', 'in_review', 3, 0, { work: pr }),
+    task('d', 'done', 2, 0),
+    task('b', 'backlog', 0, 0),
+    task('s', 'todo', 0, 0, { parentId: 'p1' }),
+    task('q', 'groomed', 1, 0, { projectId: 'other' }),
+  ]
+  writeFileSync(file, JSON.stringify({ projects: [], tasks, sessions: [] }))
+  const store = new Store(file)
+  const t = (id: string) => store.task(id)
+  const todo = store.data.tasks.filter((x) => x.projectId === 'p' && !x.parentId && x.status === 'todo').sort((a, b) => a.rank - b.rank)
+  assert.deepEqual(todo.map((x) => x.id), ['p1', 'p2', 'g1', 'g2'], 'planned by rank, then groomed by creation')
+  assert.equal(t('rev').status, 'in_progress')
+  assert.equal(t('rev').work?.repos[0].prState, 'open')
+  assert.deepEqual([t('d').status, t('b').status, t('s').status, t('q').status], ['done', 'backlog', 'todo', 'todo'])
+  assert.ok(store.data.tasks.every((x) => x.archivedAt === null))
+
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.data.tasks, store.data.tasks, 'idempotent')
 })
 
 test('project windows and recent projects persist', () => {

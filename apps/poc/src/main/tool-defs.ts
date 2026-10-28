@@ -36,14 +36,14 @@ export const TOOL_DEFS = [
   {
     name: 'mark_groomed',
     scope: 'task',
-    description: 'Mark the task as groomed: no open questions left, plan and context ready. Fails while needs_input is set.',
+    description: 'Mark the task as groomed: no open questions left, plan and context ready. It goes to todo, at the end of the queue, and a developer picks it up in turn. Fails while needs_input is set.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'create_subtask',
     scope: 'task',
     description:
-      'Groomer only: add a step to the plan checklist of the current task: a short title and an optional one-line note. Subtasks have no doc, agent or PR of their own; the developer of the task ticks them off. Kept in creation order.',
+      'Groomer only: add a step to the plan checklist of the current task: a short title and an optional one-line note. Subtasks have no doc, agent or PR of their own; the developer of the task marks them in progress and done. Kept in creation order.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,9 +84,20 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'set_subtask_status',
+    scope: 'task',
+    description:
+      'Developer only: set the status of a subtask of the current task: in_progress when you start the step, done when it is finished, todo to reopen it. One step is in progress at a time: starting one sends the previous in-progress step back to todo, so mark it done first.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string' }, status: { type: 'string', enum: ['todo', 'in_progress', 'done'] } },
+      required: ['key', 'status'],
+    },
+  },
+  {
     name: 'check_subtask',
     scope: 'task',
-    description: 'Developer only: tick a subtask of the current task as done (done: false unticks it).',
+    description: 'Deprecated: use set_subtask_status. Tick a subtask of the current task as done (done: false sets it back to todo).',
     inputSchema: {
       type: 'object',
       properties: { key: { type: 'string' }, done: { type: 'boolean' } },
@@ -97,7 +108,7 @@ export const TOOL_DEFS = [
     name: 'set_pr',
     scope: 'task',
     description:
-      'Developer only: record the pull request you opened for one repository of this task. One PR per changed repo; the task moves to review once every repo with commits has one.',
+      'Developer only: record the pull request you opened for one repository of this task. One PR per changed repo; once every repo with commits has one, the task waits for the user to merge.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,7 +174,8 @@ export const TOOL_DEFS = [
   {
     name: 'list_tasks',
     scope: 'any',
-    description: 'All tasks of the project: the plan in execution order, then the backlog; subtasks (checklist steps, todo/done) follow their task. Key, title, type, status, parent, needs_input, PRs.',
+    description:
+      'Tasks of the project, archived ones left out: the queue in execution order (in_progress, then todo), then grooming, backlog and recently finished (done, canceled); subtasks (checklist steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -177,7 +189,7 @@ export const TOOL_DEFS = [
     scope: 'project',
     description:
       'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise. ' +
-      'doc pre-fills the task document. plan: true puts the task at the end of the plan, ready for a developer; ' +
+      'doc pre-fills the task document. plan: true puts the task in todo at the end of the queue, ready for a developer; ' +
       "only when the doc is complete (follow the project's doc template) and the user asked for it.",
     inputSchema: {
       type: 'object',
@@ -186,7 +198,7 @@ export const TOOL_DEFS = [
         type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
         description: { type: 'string' },
         doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
-        plan: { type: 'boolean', description: 'Skip grooming and append the task to the plan.' },
+        plan: { type: 'boolean', description: 'Skip grooming and append the task to the queue (todo).' },
       },
       required: ['title', 'type', 'description'],
     },
@@ -214,7 +226,24 @@ export const TOOL_DEFS = [
   {
     name: 'start_grooming',
     scope: 'project',
-    description: 'Start the groomer agent on a backlog task. It works in the background and pings the user with questions.',
+    description: 'Start the groomer agent on a backlog task (or re-groom a todo task not started yet). It works in the background and pings the user with questions; when done, the task goes to todo by itself.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+  },
+  {
+    name: 'cancel_task',
+    scope: 'project',
+    description:
+      'Cancel a task that is not done yet: its running agent stops and its worktrees are removed; open PRs stay open. Always ask the user and get a yes before calling this.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string' }, reason: { type: 'string', description: 'Optional one line: why it is canceled.' } },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'archive_task',
+    scope: 'project',
+    description: 'Archive a done or canceled task: it leaves the Active view and keeps its status. The user can restore it.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
