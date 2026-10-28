@@ -1,4 +1,4 @@
-import { Menu, app, crashReporter, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, crashReporter, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent } from 'electron'
 import { basename, extname, join, normalize } from 'node:path'
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -15,6 +15,8 @@ import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
 import { ICON, createWindows } from './windows'
+import { startAppMenu } from './menu'
+import { startAttention } from './attention'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 
@@ -119,9 +121,10 @@ app.whenReady().then(async () => {
 
   const snapshot = (): AppState => {
     const { canvases: _, ui: __, ...data } = store.data
-    return { ...data, canvases: store.canvasList(), claudeBin, appVersion: app.getVersion() }
+    return { ...data, canvases: store.canvasList(), claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects() }
   }
   store.onChange(() => windows.broadcast(snapshot()))
+  windows.onChange(() => windows.broadcast(snapshot()))
   app.on('browser-window-focus', () => void scheduler.pollNow())
 
   handle('state:get', () => snapshot())
@@ -177,6 +180,7 @@ app.whenReady().then(async () => {
   handle('session:stop', (_, sid: string) => orch.stop(sid))
   handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
   handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
+  handle('window:openProject', (e, projectId: string) => windows.openProjectFrom(e.sender, projectId))
   handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))
   handle('log:crash', (_, c: RendererCrash) => {
     log.error('crash', `renderer error on ${c.screen ?? 'unknown screen'}: ${c.message}`)
@@ -186,21 +190,13 @@ app.whenReady().then(async () => {
   handle('crash:dismiss', () => crashes.dismiss())
   const openLogs = () => shell.openPath(logsDir)
   handle('logs:open', () => openLogs())
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-      { role: 'fileMenu' },
-      { role: 'editMenu' },
-      { role: 'viewMenu' },
-      { role: 'windowMenu' },
-      { role: 'help', submenu: [{ label: 'Open logs folder', click: () => void openLogs() }] },
-    ]),
-  )
+  startAppMenu(store, windows, openLogs)
+  startAttention(store, windows)
 
-  windows.createMainWindow()
-  // The dock icon brings the main window back, even while pop-outs are open.
+  windows.restore()
+  // The dock icon brings Welcome back when no project is open, even while pop-outs are.
   app.on('activate', () => {
-    if (!windows.hasMainWindow()) windows.createMainWindow()
+    if (!windows.hasMainWindow()) windows.welcome()
   })
 })
 

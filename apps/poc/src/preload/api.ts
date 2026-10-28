@@ -15,7 +15,12 @@ export interface AppState {
   integrations: Integration[]
   claudeBin: string | null
   appVersion: string
+  /** Projects that have a window open. */
+  openProjects: string[]
 }
+
+/** What the main process asks a window to show: the project picker or the new-project form. */
+export type PickerMode = 'open' | 'new'
 
 /** What failed: a main-process hook, a child process, a React render (`renderer`) or a native crash found on start. */
 export type CrashKind = 'uncaughtException' | 'unhandledRejection' | 'render-process-gone' | 'child-process-gone' | 'renderer' | 'native'
@@ -95,9 +100,15 @@ export interface MagApi {
   decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */
   openWindow(target: WindowTarget): Promise<void>
-  /** Focus the main window (opening it if closed) and show this task there. */
+  /** Project this window shows; null in the Welcome window. */
+  windowProjectId(): string | null
+  /** Focus the project's window, or open one. */
+  openProject(projectId: string): Promise<void>
+  /** The main process asks to show the project picker (⌘O, File menu, dock menu). */
+  onOpenPicker(cb: (mode: PickerMode) => void): () => void
+  /** Focus the task's project window (opening it if closed) and show this task there. */
   openTask(taskId: string): Promise<void>
-  /** Main window: a pop-out asked to show a task. */
+  /** Project window: show this task (a task key clicked in a pop-out, a notification clicked). */
   onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
   /** Save a renderer error as a crash report in the logs folder. */
   reportCrash(crash: RendererCrash): Promise<void>

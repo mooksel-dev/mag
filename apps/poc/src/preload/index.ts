@@ -1,13 +1,23 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppState, MagApi } from './api'
+import type { AppState, MagApi, PickerMode } from './api'
 
-// Listen from the start: a main window opened for a task gets the event before the page subscribes.
+// Listen from the start: a window opened for a task or the picker gets the event before the page subscribes.
 let pendingTask: [projectId: string, taskId: string] | null = null
 let openTaskCb: ((projectId: string, taskId: string) => void) | null = null
 ipcRenderer.on('open-task', (_, projectId: string, taskId: string) => {
   if (openTaskCb) openTaskCb(projectId, taskId)
   else pendingTask = [projectId, taskId]
 })
+let pendingPicker: PickerMode | null = null
+let pickerCb: ((mode: PickerMode) => void) | null = null
+ipcRenderer.on('picker:open', (_, mode: PickerMode) => {
+  if (pickerCb) pickerCb(mode)
+  else pendingPicker = mode
+})
+
+// Project windows load with `#project=<id>`; Welcome and pop-outs have no project. (The preload is typed for Node.)
+const { hash } = (globalThis as unknown as { location: { hash: string } }).location
+const windowProject = new URLSearchParams(hash.slice(1)).get('project')
 
 const api: MagApi = {
   getState: () => ipcRenderer.invoke('state:get'),
@@ -39,6 +49,16 @@ const api: MagApi = {
   stop: (sessionId) => ipcRenderer.invoke('session:stop', sessionId),
   decideApproval: (sessionId, approvalId, allow) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow),
   openWindow: (target) => ipcRenderer.invoke('window:open', target),
+  windowProjectId: () => windowProject,
+  openProject: (projectId) => ipcRenderer.invoke('window:openProject', projectId),
+  onOpenPicker: (cb) => {
+    pickerCb = cb
+    if (pendingPicker) cb(pendingPicker)
+    pendingPicker = null
+    return () => {
+      if (pickerCb === cb) pickerCb = null
+    }
+  },
   openTask: (taskId) => ipcRenderer.invoke('window:openTask', taskId),
   onOpenTask: (cb) => {
     openTaskCb = cb
