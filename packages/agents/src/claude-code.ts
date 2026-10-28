@@ -91,12 +91,14 @@ export function buildArgs(spec: RunSpec): string[] {
   if (spec.disallowedTools?.length) args.push('--disallowedTools', spec.disallowedTools.join(','))
   if (spec.permissionPromptTool) args.push('--permission-prompt-tool', spec.permissionPromptTool)
   for (const d of spec.addDirs ?? []) args.push('--add-dir', d)
+  if (spec.noTools) args.push('--tools', '', '--strict-mcp-config')
   return args
 }
 
 export const claudeCode: AgentAdapter = {
   id: 'claude-code',
   displayName: 'Claude Code',
+  cheapModel: 'haiku',
 
   async detect() {
     return findBin('claude', 'MAG_CLAUDE_BIN')

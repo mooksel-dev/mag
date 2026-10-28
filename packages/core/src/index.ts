@@ -233,8 +233,10 @@ export interface AgentSession {
   projectId: string
   /** null for project chats. */
   taskId: string | null
-  /** Project chats: short title from the first message. */
+  /** Project chats: the first message until a title is generated after the first turn. */
   title?: string
+  /** A title generation has run for this chat (whatever its outcome); it runs once. */
+  titleGenerated?: boolean
   role: AgentRole
   agent: AgentKind
   /** The agent's own session id, used to resume. */
@@ -290,7 +292,38 @@ export function chatCommands(session: Pick<AgentSession, 'projectId' | 'agent' |
   return prev?.commands ?? ['compact']
 }
 
-export const PLAN_STATUSES: TaskStatus[] = ['planned', 'in_progress', 'in_review', 'done']
+/** Prompt for a one-off, tool-less run that names a chat from its first exchange. */
+export function titlePrompt(firstMessage: string, reply: string): string {
+  const excerpt = `User: ${firstMessage}\n\nAssistant: ${reply}`.slice(0, 2000)
+  return `Name this conversation in 3-6 words, in the user's language. Reply with the title only: no quotes, no trailing period.\n\n<conversation>\n${excerpt}\n</conversation>`
+}
+
+/** The title from a title run's reply, or null if it doesn't look like one. */
+export function cleanTitle(raw: string): string | null {
+  const line = raw.trim().split('\n')[0] ?? ''
+  const title = line
+    .replace(/^(title|назва)\s*:\s*/i, '')
+    .replace(/^[\s"'«»“”*#`]+|[\s"'«»“”*`.]+$/g, '')
+    .replace(/\s+/g, ' ')
+  return title && title.length <= 80 ? title : null
+}
+
+/** "opus · $0.48 · 38s" under a turn's last reply; missing parts are left out. */
+export function turnMeta(items: ChatItem[], resultIndex: number, model?: string): string {
+  const result = items[resultIndex]
+  if (result?.kind !== 'result') return ''
+  let start: number | undefined
+  for (let n = resultIndex - 1; n >= 0 && start === undefined; n--) {
+    const i = items[n]
+    if (i.kind === 'result') break
+    if (i.kind === 'user') start = i.at
+  }
+  const secs = start === undefined ? undefined : Math.max(0, Math.round((result.at - start) / 1000))
+  const time = secs === undefined ? null : secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
+  return [model, result.costUsd != null ? `$${result.costUsd.toFixed(2)}` : null, time].filter(Boolean).join(' · ')
+}
+
+export const PLAN_STATUSES: TaskStatus[] =['planned', 'in_progress', 'in_review', 'done']
 export const BACKLOG_STATUSES: TaskStatus[] = ['backlog', 'grooming', 'groomed']
 
 /** A task key: T-12, or T-12.3 for a subtask. No boundaries; wrap it for the context. */
