@@ -29,6 +29,7 @@ import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
 import { ago, prLabel } from './format'
+import { ErrorBoundary } from './ErrorBoundary'
 import { Home, StatusChip } from './Home'
 import { Logo } from './Logo'
 import { useTheme, type ThemeMode } from './useTheme'
@@ -45,6 +46,7 @@ const loadFlag = (k: string, d: boolean) => {
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 type Tab = 'home' | 'backlog' | 'plan' | 'architecture' | 'settings'
+const TAB_NAMES: Record<Tab, string> = { home: 'Home', backlog: 'Backlog', plan: 'Plan', architecture: 'Architecture', settings: 'Settings' }
 
 export function App() {
   const [state, setState] = useState<AppState | null>(null)
@@ -89,6 +91,7 @@ export function App() {
   const go = (t: Tab) => { setTab(t); setTaskId(null); setStatusFilter(null); setFocusNewTask(false) }
   const filterBy = (s: TaskStatus) => { go(BACKLOG_STATUSES.includes(s) ? 'backlog' : 'plan'); setStatusFilter(s) }
   const openKey = (key: string) => setTaskId(tasks.find((t) => t.key === key)?.id ?? null)
+  const screen = task ? `Task ${task.key}` : TAB_NAMES[tab]
   const chatBusy = state.sessions.some((s) => s.projectId === project?.id && s.role === 'chat' && s.status === 'running')
 
   return (
@@ -120,21 +123,27 @@ export function App() {
             <ThemeSwitch mode={theme} onChange={setTheme} />
             {!chatOpen && !task && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
-          {task ? (
-            <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={go} onOpenKey={openKey} />
-          ) : tab === 'home' ? (
-            <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onFilter={filterBy} onNewTask={() => { go('backlog'); setFocusNewTask(true) }} />
-          ) : tab === 'backlog' ? (
-            <BacklogView project={project} tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} focusNewTask={focusNewTask} />
-          ) : tab === 'plan' ? (
-            <PlanView tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} />
-          ) : tab === 'architecture' ? (
-            <Architecture key={project.id} project={project} />
-          ) : (
-            <Settings project={project} integrations={state.integrations} />
-          )}
+          <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => go('home')}>
+            {task ? (
+              <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={go} onOpenKey={openKey} />
+            ) : tab === 'home' ? (
+              <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onFilter={filterBy} onNewTask={() => { go('backlog'); setFocusNewTask(true) }} />
+            ) : tab === 'backlog' ? (
+              <BacklogView project={project} tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} focusNewTask={focusNewTask} />
+            ) : tab === 'plan' ? (
+              <PlanView tasks={tasks} onOpen={setTaskId} statusFilter={statusFilter} onClearFilter={() => setStatusFilter(null)} />
+            ) : tab === 'architecture' ? (
+              <Architecture key={project.id} project={project} />
+            ) : (
+              <Settings project={project} integrations={state.integrations} />
+            )}
+          </ErrorBoundary>
         </main>
-        {chatOpen && !task && <ProjectChat key={project.id} projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />}
+        {chatOpen && !task && (
+          <ErrorBoundary key={project.id} screen="Project chat" appVersion={state.appVersion}>
+            <ProjectChat projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />
+          </ErrorBoundary>
+        )}
         </div>
       ) : (
         <main className="main empty">Create a project to start.</main>
@@ -608,6 +617,11 @@ function Settings({ project, integrations }: { project: Project; integrations: I
           <textarea rows={6} defaultValue={project.templates[t] ?? DEFAULT_TEMPLATES[t]} onChange={(e) => update({ templates: { ...project.templates, [t]: e.target.value } })} />
         </label>
       ))}
+      <h2>Diagnostics</h2>
+      <div className="field">
+        <div><button onClick={() => mag.openLogs()}>Open logs folder</button></div>
+        <span className="muted small">mag's logs and crash reports. The project chat can read them: ask it to look at the last crash.</span>
+      </div>
     </section>
   )
 }
