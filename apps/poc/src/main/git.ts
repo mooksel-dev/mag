@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
+import type { TaskWork } from '@mag/core'
 
 const exec = promisify(execFile)
 
@@ -34,6 +35,20 @@ export async function prepareWorktree(repo: string, base: string, branch: string
 
 export async function removeWorktree(repo: string, dir: string) {
   await ok(run('git', ['worktree', 'remove', '--force', dir], repo))
+}
+
+/** Whether the worktree's branch has commits that are not on the base yet. A missing worktree has none. */
+export async function hasOwnCommits(worktree: string, base: string): Promise<boolean> {
+  if (!existsSync(worktree)) return false
+  const ref = (await ok(run('git', ['rev-parse', '--verify', `origin/${base}`], worktree))) ? `origin/${base}` : base
+  const count = await run('git', ['rev-list', '--count', `${ref}..HEAD`], worktree).catch(() => '0')
+  return Number(count) > 0
+}
+
+/** Repositories (RepoWork.repo) of a task whose branch has commits of its own. Merged ones count as changed. */
+export async function changedRepos(work: TaskWork, base: string): Promise<string[]> {
+  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, base))))
+  return work.repos.filter((_, i) => flags[i]).map((r) => r.repo)
 }
 
 export interface PrFeedback {

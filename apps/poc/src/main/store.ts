@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { BACKLOG_STATUSES, PLAN_STATUSES, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -18,6 +18,16 @@ interface Data {
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: { windows: Partial<Record<WindowKind, Bounds>> }
+}
+
+/** Task work before T-22: one worktree per task. */
+interface LegacyWork {
+  repo: string
+  branch: string
+  worktree: string
+  prUrl: string | null
+  feedbackSeenAt: number
+  checkError?: string | null
 }
 
 /** Events kept per project. */
@@ -61,16 +71,55 @@ export class Store {
       if ((t.type as string) === 'story') t.type = 'dev'
       t.rank ??= t.createdAt
     }
-    // Subtasks are no longer groomed separately: not-started ones follow their parent.
-    for (const t of this.data.tasks) {
-      const parent = t.parentId ? this.data.tasks.find((x) => x.id === t.parentId) : undefined
-      if (!parent || !BACKLOG_STATUSES.includes(t.status)) continue
-      t.status = PLAN_STATUSES.includes(parent.status) ? 'planned' : 'groomed'
-      t.needsInput = null
-    }
     for (const s of this.data.sessions)
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
     this.migrateSubtaskKeys()
+    this.migrateToTaskWork()
+  }
+
+  /**
+   * One developer session per task (T-22): work moves to the per-repo shape, subtasks become todo/done plan steps
+   * without work, and their sessions and canvases move to the parent. A started parent that has no work of its own
+   * (its subtasks had it) goes back to planned, so a developer picks it up as a whole.
+   */
+  private migrateToTaskWork() {
+    let changed = false
+    for (const t of this.data.tasks) {
+      const old = t.work as unknown as (LegacyWork & { repos?: unknown }) | null
+      if (!old || old.repos) continue
+      const prState = old.prUrl ? (t.status === 'done' ? 'merged' : 'open') : null
+      t.work = { repos: [{ repo: old.repo, branch: old.branch, worktree: old.worktree, prUrl: old.prUrl, prState, checkError: old.checkError ?? null }], dir: old.worktree, feedbackSeenAt: old.feedbackSeenAt }
+      changed = true
+    }
+    for (const sub of this.data.tasks) {
+      const parent = sub.parentId ? this.data.tasks.find((x) => x.id === sub.parentId) : undefined
+      if (!parent) continue
+      const status = sub.status === 'done' || parent.status === 'done' ? 'done' : 'todo'
+      if (sub.status === status && !sub.work && !sub.needsInput) continue
+      Object.assign(sub, { status, work: null, needsInput: null })
+      changed = true
+    }
+    const parentOf = new Map(this.data.tasks.filter((t) => t.parentId).map((t) => [t.id, t.parentId!]))
+    for (const s of this.data.sessions) {
+      const parentId = s.taskId && parentOf.get(s.taskId)
+      if (!parentId) continue
+      s.taskId = parentId
+      // It ran in the subtask's worktree; the agent can't resume it from the task dir, so the next run starts fresh.
+      s.nativeSessionId = null
+      changed = true
+    }
+    for (const c of Object.values(this.data.canvases)) {
+      const parentId = c.taskId && parentOf.get(c.taskId)
+      if (!parentId) continue
+      c.taskId = parentId
+      changed = true
+    }
+    for (const t of this.data.tasks) {
+      if (t.parentId || t.work || (t.status !== 'in_progress' && t.status !== 'in_review')) continue
+      t.status = 'planned'
+      changed = true
+    }
+    if (changed) this.changed()
   }
 
   /** Subtasks used to take keys from the project counter (T-7); give them parent-based keys (T-6.1) and rewrite mentions. */

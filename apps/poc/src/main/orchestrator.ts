@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { cleanTitle, integrationRules, resolveChoice, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task } from '@mag/core'
+import { cleanTitle, integrationRules, prRollup, repoDirNames, repoWorkName, resolveChoice, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, prepareWorktree, slug, type PrFeedback } from './git'
+import { AGENT_MARK, changedRepos, prepareWorktree, slug, type PrFeedback } from './git'
 import { APPROVE_TOOL } from './tool-defs'
 
 interface Paths {
@@ -29,26 +29,33 @@ Your output is the task document, not chat. Work like this:
 5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc
    as a link [title](canvas:<id>), using the id show_canvas returned; the app renders the canvas in place. Diagrams in
    the doc itself can be \`\`\`mermaid blocks.
-6. If the task is too big for one PR, split it with create_subtask: one subtask = one PR, each with a short doc
-   (what this part changes, how to check it). Subtasks run one by one in creation order; they are not groomed
-   separately. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
+6. One developer session does the whole task, with one PR per changed repository. For a task with several
+   steps, add them with create_subtask: a short checklist of the plan (title plus an optional one-line note), in
+   order. Subtasks have no doc, agent or PR of their own; the developer ticks them off. The task doc carries the
+   details. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
    reorder_subtasks instead of creating duplicates (get_task lists them).
 7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
 
-const developerPrompt = (project: Project, task: Task, parent?: Task) => `You are a developer agent in "mag".
-${parent ? `This is subtask ${task.key} of ${parent.key}; the parent's doc (get_task -> parent) is context, implement only this subtask.\n` : ''}You work in your own git worktree on branch ${task.work?.branch}, based on ${project.baseBranch}.
-1. Call get_task and get_doc. The doc is the agreed plan; follow it.
+const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean) => {
+  const repos = work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+  const base = project.baseBranch
+  return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
+Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
+${repos.join('\n')}
+1. Call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\n   get_task lists the subtasks: the plan as a checklist. Tick each one with check_subtask as soon as it is done.' : ''}
 2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
-3. Review your own diff (git diff ${project.baseBranch}...HEAD) like a strict reviewer and fix what you find.
-4. Commit with clear messages, then: git push -u origin ${task.work?.branch}
-5. Open a PR: gh pr create --base ${project.baseBranch} --head ${task.work?.branch} --title ... --body ...
-   Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL.
-6. If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
-Never merge. Never push to ${project.baseBranch}. Anything you post on GitHub starts with "${AGENT_MARK}".
+3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
+4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
+   gh pr create --base ${base} --head <branch> --title ... --body ...
+   Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL
+   and the repo. One PR per changed repo; a repo without changes gets no PR.
+5. If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
+Never merge. Never push to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.`
+}
 
 const ARCHITECT_PROMPT = `You are the architect agent in "mag". Read the project's code (read-only) and record its
 architecture with set_architecture. The project's preferred pattern, use it to classify everything:
@@ -70,9 +77,9 @@ const chatPrompt = (project: Project) => `You are the user's partner for project
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
 How mag works: backlog task -> groomer agent writes the task doc, asks questions and may split it into subtasks
-(one PR each) -> the user adds the task to the plan -> developer agents implement it in a worktree and open a PR
--> the user merges. The plan is an ordered queue run one task at a time: subtasks one by one, the next task after
-the previous one is merged.
+(a checklist of the plan) -> the user adds the task to the plan -> one developer agent implements the whole task,
+with a worktree per repository and one PR per changed repository -> the user merges. The plan is an ordered queue
+run one task at a time: the next task starts after every PR of the previous one is merged.
 - You never change code. A change becomes a task: create_task with a concise brief (what and why), and
   start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
 - If a task is already fully discussed here and the user asks to get it done, skip grooming: create_task with
@@ -182,43 +189,63 @@ export class Orchestrator {
     this.run(session, `Groom task ${task.key}. Start with get_task.`)
   }
 
-  /** Pick up a planned task: worktree + branch, then a developer session. */
+  /** Pick up a planned task: a worktree + branch per repository, then its developer session (the same one on a restart). */
   async develop(taskId: string) {
     const task = this.store.task(taskId)
-    if (this.store.data.tasks.some((t) => t.parentId === taskId)) throw new Error(`${task.key} has subtasks; they are developed one by one`)
+    if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
     const project = this.store.project(task.projectId)
-    const repo = project.repos[0]
-    if (!repo) {
+    if (!project.repos.length) {
       this.store.updateTask(taskId, { needsInput: 'Project has no repository' })
       return
     }
-    const work = task.work ?? {
-      repo,
-      branch: `mag/${task.key.toLowerCase()}-${slug(task.title)}`,
-      worktree: join(this.paths.worktreesDir, project.id, task.key),
-      prUrl: null,
-      feedbackSeenAt: 0,
-    }
-    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work })
-    const session = this.newSession(taskId, 'developer')
-    try {
-      await prepareWorktree(work.repo, project.baseBranch, work.branch, work.worktree)
-    } catch (e) {
-      session.items.push({ kind: 'error', text: `Worktree failed: ${(e as Error).message}`, at: Date.now() })
-      session.status = 'error'
-      this.store.updateTask(taskId, { needsInput: 'Could not create the worktree' })
-      return
-    }
+    const last = this.lastSession(taskId, 'developer')
+    if (last && this.runs.has(last.id)) throw new Error('Developer is still working')
+    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task, project) })
+    const session = last ?? this.newSession(taskId, 'developer')
+    if (!(await this.prepareWorktrees(session))) return
     this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
   }
 
-  /** New PR comments: resume the developer with them. */
-  feedback(taskId: string, items: PrFeedback[]) {
+  /** The task's workspace: its existing work, plus a worktree for every project repository it does not cover yet. */
+  private workFor(task: Task, project: Project): TaskWork {
+    const prev = task.work
+    // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
+    if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
+    const dir = prev?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
+    const branch = `mag/${task.key.toLowerCase()}-${slug(task.title)}`
+    const known = prev?.repos ?? []
+    const fresh = project.repos.filter((r) => !known.some((w) => w.repo === r))
+    const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
+    const added = fresh.map((repo, i) => ({ repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null }))
+    return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
+  }
+
+  /** (Re)creates every worktree of the session's task that is missing; false (and the session in error) if one fails. */
+  private async prepareWorktrees(session: AgentSession): Promise<boolean> {
+    const task = this.store.task(session.taskId!)
+    const project = this.store.project(task.projectId)
+    for (const r of task.work?.repos ?? []) {
+      if (!project.repos.includes(r.repo) || r.prState === 'merged') continue
+      try {
+        await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
+      } catch (e) {
+        session.items.push({ kind: 'error', text: `Worktree for ${r.repo} failed: ${(e as Error).message}`, at: Date.now() })
+        session.status = 'error'
+        this.store.updateTask(task.id, { needsInput: 'Could not create the worktree' })
+        return false
+      }
+    }
+    return true
+  }
+
+  /** New comments on any of the task's PRs: resume its developer session with them. */
+  feedback(taskId: string, items: (PrFeedback & { repo: string })[]) {
     const session = this.lastSession(taskId, 'developer')
     if (!session || this.runs.has(session.id)) return false
+    const many = new Set(items.map((f) => f.repo)).size > 1 || (this.store.task(taskId).work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     const text =
-      'New feedback on your PR:\n' +
-      items.map((f) => `- @${f.author}${f.where ? ` on ${f.where}` : ''}: ${f.body}`).join('\n') +
+      `New feedback on your PR${many ? 's' : ''}:\n` +
+      items.map((f) => `- ${many ? `[${f.repo}] ` : ''}@${f.author}${f.where ? ` on ${f.where}` : ''}: ${f.body}`).join('\n') +
       `\nAddress it: change the code, run tests, push. Reply on GitHub (starting with ${AGENT_MARK}) only where a comment needs an answer. If something is unclear, set_needs_input.`
     session.items.push({ kind: 'user', text, at: Date.now() })
     this.store.updateTask(taskId, { status: 'in_progress' })
@@ -243,17 +270,8 @@ export class Orchestrator {
     }
     this.store.updateTask(session.taskId, { needsInput: null })
     const task = this.store.task(session.taskId)
-    if (session.role === 'developer' && task.work) {
-      // The worktree may have failed earlier or been removed: recreate it before resuming.
-      try {
-        await prepareWorktree(task.work.repo, this.store.project(task.projectId).baseBranch, task.work.branch, task.work.worktree)
-      } catch (e) {
-        session.items.push({ kind: 'error', text: `Worktree failed: ${(e as Error).message}`, at: Date.now() })
-        session.status = 'error'
-        this.store.updateTask(task.id, { needsInput: 'Could not create the worktree' })
-        return
-      }
-    }
+    // A worktree may have failed earlier or been removed: recreate it before resuming.
+    if (session.role === 'developer' && task.work && !(await this.prepareWorktrees(session))) return
     this.run(session, prompt)
   }
 
@@ -293,11 +311,13 @@ export class Orchestrator {
     }
     const task = this.store.task(session.taskId)
     if (session.role === 'developer' && task.work) {
+      const work = task.work
       return {
-        cwd: task.work.worktree,
-        addDirs: [...project.repos.filter((r) => r !== task.work!.repo), this.paths.attachmentsDir],
+        cwd: work.dir,
+        // Repositories without a worktree in the task (pre-T-22 tasks) stay readable from their main checkout.
+        addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r)), this.paths.attachmentsDir],
         appendSystemPrompt:
-          developerPrompt(project, task, task.parentId ? this.store.data.tasks.find((t) => t.id === task.parentId) : undefined) +
+          developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0) +
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
             : ''),
@@ -394,7 +414,7 @@ export class Orchestrator {
       this.runs.delete(session.id)
       if (session.status === 'running') session.status = 'idle'
       if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
-      this.afterRun(session)
+      void this.afterRun(session)
       this.nameChat(session)
       this.store.changed()
     })
@@ -437,7 +457,7 @@ export class Orchestrator {
   }
 
   /** Make sure a finished run never leaves a task silently stuck. */
-  private afterRun(session: AgentSession) {
+  private async afterRun(session: AgentSession) {
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
     if (task.needsInput) return
@@ -447,11 +467,21 @@ export class Orchestrator {
       else this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
     }
     if (session.role === 'developer' && task.status === 'in_progress') {
-      if (!failed && task.work?.prUrl) this.store.updateTask(task.id, { status: 'in_review' })
-      else
-        this.store.updateTask(task.id, {
-          needsInput: failed ? 'Developer agent failed; check the chat' : 'Developer stopped without opening a PR',
-        })
+      if (failed || !task.work?.repos.some((r) => r.prUrl)) {
+        this.store.updateTask(task.id, { needsInput: failed ? 'Developer agent failed; check the chat' : 'Developer stopped without opening a PR' })
+        return
+      }
+      const work = task.work
+      const changed = await changedRepos(work, this.store.project(task.projectId).baseBranch)
+      const now = this.store.task(task.id)
+      if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id)) return
+      if (prRollup(work, changed) === 'in_review') return this.store.updateTask(task.id, { status: 'in_review' })
+      const missing = work.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed'))
+      this.store.updateTask(task.id, {
+        needsInput: missing.length
+          ? `Developer stopped without a PR for ${missing.map((r) => repoWorkName(work, r)).join(', ')}`
+          : 'Developer stopped without opening a PR',
+      })
     }
   }
 }

@@ -4,6 +4,7 @@ import {
   inbox,
   pipelineCounts,
   queueHead,
+  taskPrs,
   type InboxItem,
   type InboxKind,
   type PipelineStage,
@@ -12,7 +13,7 @@ import {
   type TaskStatus,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ago, inputPreview, prName } from './format'
+import { ago, inputPreview, prLabel, prName } from './format'
 
 const mag = window.mag
 
@@ -169,7 +170,10 @@ function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; s
   const { task, kind, text } = item
   const [blockers, setBlockers] = useState<string[]>([])
   const [color, label] = PILLS[kind]
-  const pr = task.work?.prUrl
+  const prs = taskPrs(task)
+  // The PR whose check failed, else the first one still open.
+  const pr = (kind === 'check_failed' ? prs.find((r) => r.checkError) : prs.find((r) => r.prState !== 'merged'))?.prUrl ?? prs[0]?.prUrl
+  const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
   const restart = () => {
     const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
     return last?.role === 'groomer' ? mag.groom(task.id) : mag.develop(task.id)
@@ -180,7 +184,7 @@ function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; s
   }
   const sub =
     kind === 'check_failed' && pr ? `${prName(pr)} · ${text}`
-    : kind === 'ready_to_merge' && pr ? `${prName(pr)} · merge it yourself; comments go back to the agent`
+    : kind === 'ready_to_merge' && open.length ? `${open.map(prName).join(', ')} · merge ${open.length > 1 ? 'them' : 'it'} yourself; comments go back to the agent`
     : text
 
   return (
@@ -195,7 +199,8 @@ function InboxRow({ item, state, onOpen }: { item: InboxItem & { task: Task }; s
       {kind === 'agent_failed' && <><button onClick={act(() => onOpen(task.id))}>Open</button><button className="primary" onClick={act(restart)}>Restart</button></>}
       {kind === 'check_failed' && <>{pr && <button onClick={act(() => mag.open(pr))}>Open PR ↗</button>}<button className="primary" onClick={act(() => mag.checkPrs())}>Check again</button></>}
       {kind === 'question' && <button className="primary" onClick={act(() => onOpen(task.id))}>Answer</button>}
-      {kind === 'ready_to_merge' && pr && <button className="primary" onClick={act(() => mag.open(pr))}>Open PR ↗</button>}
+      {kind === 'ready_to_merge' &&
+        open.map((url) => <button key={url} className="primary" onClick={act(() => mag.open(url))}>{open.length > 1 ? prLabel(url) : 'Open PR ↗'}</button>)}
       {kind === 'groomed' && <><button onClick={act(() => onOpen(task.id))}>Review</button><button className="primary" onClick={act(addToPlan)}>Add to plan</button></>}
     </div>
   )
