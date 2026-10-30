@@ -156,6 +156,11 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .subtitle { min-width: 0; }
 .subname { font-weight: 500; }
 .subrow.done .subname { color: var(--muted); text-decoration: line-through; }
+.subextra { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.subticket:empty { display: none; }
+.stepline { margin-top: 10px; }
+.pill.prbadge { border: none; cursor: pointer; }
+.workgroup h2 { display: flex; align-items: center; gap: 8px; }
 .subedit { grid-column: 4 / -1; display: flex; gap: 8px; min-width: 0; }
 .subedit input { flex: 1; min-width: 0; }
 .repolist { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 18px; }
@@ -176,6 +181,8 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .chatmodel { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .projectchat.embedded { width: auto; flex: 1; min-height: 0; border-left: none; }
 .banner { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); padding: 8px 12px; border-radius: 8px; }
+.banner button { margin-left: 10px; }
+.banner.info { background: var(--green-bg); border-color: transparent; color: var(--green-fg); }
 .meta { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
 .docmd > :first-child, .docmd > :first-child > :first-child { margin-top: 0; }
 .md .mermaid { margin: 10px 0; overflow: auto; }

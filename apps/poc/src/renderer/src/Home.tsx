@@ -31,6 +31,7 @@ const PILLS: Record<InboxKind, [string, string]> = {
   check_failed: ['red', 'PR check failed'],
   question: ['amber', 'Question'],
   ready_to_merge: ['green', 'Ready to merge'],
+  ready_to_start: ['amber', 'Waits for Start'],
 }
 
 const RECENT = 15
@@ -167,13 +168,14 @@ function ApprovalRow({ item, onOpen }: { item: InboxItem; onOpen: (id: string) =
 function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task }; state: AppState; now: number; onOpen: (id: string) => void }) {
   const { task, kind, text } = item
   const [color, label] = PILLS[kind]
-  const prs = taskPrs(task)
+  const prs = taskPrs(task, state.tasks)
   // The PR whose check failed, else the first one still open.
   const pr = (kind === 'check_failed' ? prs.find((r) => r.checkError) : prs.find((r) => r.prState !== 'merged'))?.prUrl ?? prs[0]?.prUrl
   const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
   const restart = () => {
     const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
-    return last?.role === 'groomer' ? mag.groom(task.id) : mag.develop(task.id)
+    if (last?.role !== 'groomer') return mag.develop(task.id)
+    return task.status === 'in_progress' ? mag.regroomRemaining(task.id) : mag.groom(task.id)
   }
   const sub =
     kind === 'check_failed' && pr ? `${prName(pr)} · ${text}`
@@ -188,10 +190,11 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
         <div className="title">{task.title}</div>
         <div className="muted small">{sub}</div>
       </div>
-      <AgentDot state={agentState(task, state.sessions)} now={now} />
+      <AgentDot state={agentState(task, state.sessions, state.tasks)} now={now} />
       {kind === 'agent_failed' && <><button onClick={act(() => onOpen(task.id))}>Open</button><button className="primary" onClick={act(restart)}>Restart</button></>}
       {kind === 'check_failed' && <>{pr && <button onClick={act(() => mag.open(pr))}>Open PR ↗</button>}<button className="primary" onClick={act(() => mag.checkPrs())}>Check again</button></>}
       {kind === 'question' && <button className="primary" onClick={act(() => onOpen(task.id))}>Answer</button>}
+      {kind === 'ready_to_start' && <button className="primary" onClick={act(() => mag.startStep(task.id))}>Start</button>}
       {kind === 'ready_to_merge' &&
         open.map((url) => <button key={url} className="primary" onClick={act(() => mag.open(url))}>{open.length > 1 ? prLabel(url) : 'Open PR ↗'}</button>)}
     </div>
