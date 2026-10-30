@@ -210,7 +210,7 @@ function AppDiagram({ app, selected, onSelect }: { app: ArchApp; selected: strin
                       if (el) els.current.set(n.id, el)
                       else els.current.delete(n.id)
                     }}
-                    className={`archbox ${n.layer}${k === selected ? ' on' : ''}${near(n) ? '' : ' dim'}`}
+                    className={`archbox layer-${n.layer}${k === selected ? ' on' : ''}${near(n) ? '' : ' dim'}`}
                     title={`${n.name}\n${n.description}`}
                     onClick={() => onSelect(k)}
                     onMouseEnter={() => setHover(n.id)}
