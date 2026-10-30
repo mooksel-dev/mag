@@ -3,7 +3,7 @@ import {
   agentState,
   inbox,
   pipelineCounts,
-  queueHead,
+  runningAgents,
   taskPrs,
   type InboxItem,
   type InboxKind,
@@ -48,10 +48,7 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewT
   const now = useNow(15_000)
   const counts = pipelineCounts(tasks, now)
   const items = inbox(project.id, tasks, state.sessions)
-  const running = state.sessions.filter(
-    (s) => s.status === 'running' && (tasks.some((t) => t.id === s.taskId) || (s.role === 'architect' && s.projectId === project.id)),
-  )
-  const { current, next } = queueHead(tasks)
+  const running = runningAgents(state.sessions).filter((s) => s.projectId === project.id)
   const events = state.events.filter((e) => e.projectId === project.id).slice(-RECENT).reverse()
   const keyOf = (taskId: string | null) => tasks.find((t) => t.id === taskId)?.key
   const [crash, setCrash] = useState<CrashReport | null>(null)
@@ -91,19 +88,14 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewT
 
       <div className="side">
         <div className="card">
-          <h2>Now</h2>
+          <h2>Now · {running.length}</h2>
           {running.length ? running.map((s) => (
             <div key={s.id} className="q">
-              {s.taskId ? <button className="link key" onClick={() => onOpen(s.taskId!)}>{keyOf(s.taskId)}</button> : null}
+              {s.taskId ? <button className="link key" onClick={() => onOpen(s.taskId!)}>{keyOf(s.taskId)}</button> : s.role === 'chat' ? <span className="muted small">chat</span> : null}
               <span className="grow" />
               <AgentDot state={{ kind: 'working', role: s.role, since: s.runStartedAt ?? s.createdAt }} now={now} />
             </div>
           )) : <div className="muted small">No agents working.</div>}
-          <div className="muted small qnext">
-            {next ? (
-              <>Next in queue: <button className="link key" onClick={() => onOpen(next.id)}>{next.key}</button>{current && ` (after ${current.key} is merged)`}</>
-            ) : current ? `Working on ${current.key}; nothing after it in Todo.` : 'Todo is empty.'}
-          </div>
           <button className="link small" onClick={() => mag.checkPrs()}>check PRs now</button>
         </div>
 

@@ -1,33 +1,20 @@
 import { rmdir } from 'node:fs'
-import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, nextWork, prRollup, repoWorkName, type PrState, type RepoWork, type TaskWork } from '@mag/core'
+import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, prRollup, repoWorkName, type PrState, type RepoWork, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
 import { log } from './log'
 
-const PICK_EVERY_MS = 5_000
 const PR_POLL_EVERY_MS = 60_000
 const ARCHIVE_EVERY_MS = 60 * 60_000
 
 const STATES: Record<Awaited<ReturnType<typeof prState>>, PrState> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
 /**
- * Runs the todo queue of every project in order, one task at a time, watches the open PRs of the tasks in progress
- * and archives finished tasks after the project's autoArchiveDays.
+ * Watches the open PRs of the tasks in progress and archives finished tasks after the project's autoArchiveDays.
+ * It never starts development: the user starts each todo task.
  */
 export function startScheduler(store: Store, orch: Orchestrator) {
-  const pick = () => {
-    for (const project of store.data.projects) {
-      const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
-      const next = nextWork(tasks)
-      const busy = store.data.sessions.some((s) => s.taskId === next?.id && s.role === 'developer' && orch.isRunning(s.id))
-      if (next && !busy) {
-        log.info('scheduler', `developing ${next.key}`, { project: project.name })
-        orch.develop(next.id).catch((e) => log.error('scheduler', `develop ${next.key} failed`, e))
-      }
-    }
-  }
-
   /**
    * Every PR is merged, but is the task done? Not while its developer still works, nor while a repo with commits has
    * no merged PR yet (the developer opened the first PR before finishing the others).
@@ -117,10 +104,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     }
   }
 
-  pick()
   void pollPrs()
   archiveOld()
-  setInterval(pick, PICK_EVERY_MS)
   setInterval(pollPrs, PR_POLL_EVERY_MS)
   setInterval(archiveOld, ARCHIVE_EVERY_MS)
   return { pollNow: pollPrs }

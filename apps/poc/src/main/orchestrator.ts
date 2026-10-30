@@ -37,8 +37,8 @@ Your output is the task document, not chat. Work like this:
    order. Subtasks have no doc, agent or PR of their own; the developer marks their progress. The task doc carries the
    details. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
    reorder_subtasks instead of creating duplicates (get_task lists them).
-7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed. The task then goes
-   to the end of the todo queue by itself.
+7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed. The task then is in
+   todo, ready for the user to start.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
@@ -81,16 +81,16 @@ const chatPrompt = (project: Project, logsDir: string) => `You are the user's pa
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
 How mag works: backlog task -> grooming: the groomer agent writes the task doc, asks questions and may split it
-into subtasks (a checklist of the plan) -> todo: once groomed, the task joins the end of the queue by itself ->
-in progress: one developer agent implements the whole task, with a worktree per repository and one PR per changed
-repository -> done when the user has merged every PR. Any task not done yet can be canceled. The todo queue runs one
-task at a time: the next one starts when no task is in progress. Done and canceled tasks can be archived; mag
-archives them after some days.
+into subtasks (a checklist of the plan) -> todo: groomed and ready to work; the order of todo tasks is only the user's
+priority -> in progress: the user starts a todo task with Start, and one developer agent implements the whole task,
+with a worktree per repository and one PR per changed repository -> done when the user has merged every PR. Nothing
+starts on its own; any number of tasks can be in progress in parallel, one developer each. Any task not done yet can
+be canceled. Done and canceled tasks can be archived; mag archives them after some days.
 - You never change code. A change becomes a task: create_task with a concise brief (what and why), and
   start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
 - If a task is already fully discussed here and the user asks to get it done, skip grooming: create_task with
   a complete doc (Problem / Changes per layer / Plan, following the project's doc template) and plan: true.
-  It goes to the end of the todo queue and a developer picks it up automatically. Anything that needs splitting into
+  It goes to todo and starts nothing: the user starts it with Start. Anything that needs splitting into
   subtasks or still has open questions goes to the backlog and through start_grooming instead.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
   update_task / update_task_doc. Say in one line what you recorded.
@@ -196,14 +196,14 @@ export class Orchestrator {
   groom(taskId: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
-    // A todo task leaves the queue while it is groomed again; started work is past grooming.
+    // A todo task leaves todo while it is groomed again; started work is past grooming.
     if (!['backlog', 'grooming', 'todo'].includes(task.status) || task.work) throw new Error(`${task.key} is ${task.status}; only backlog, grooming or not started todo tasks can be groomed`)
     const session = this.newSession(taskId, 'groomer')
     this.store.updateTask(taskId, { status: 'grooming', needsInput: null })
     this.run(session, `Groom task ${task.key}. Start with get_task.`)
   }
 
-  /** Pick up a planned task: a worktree + branch per repository, then its developer session (the same one on a restart). */
+  /** Start a todo task (the user's Start) or restart one in progress: a worktree + branch per repository, then its developer session (the same one on a restart). */
   async develop(taskId: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)

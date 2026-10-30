@@ -114,6 +114,7 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .row { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; border: none; border-radius: 0; text-align: left; padding: 9px 12px; background: none; }
 .rowwrap:hover { background: var(--hover); }
 .no { color: var(--muted); min-width: 28px; }
+.todoactions { display: flex; align-items: center; padding-left: 10px; }
 .moves { display: flex; gap: 4px; padding: 0 8px; width: 80px; justify-content: flex-end; }
 .moves button.icon { width: 28px; height: 26px; font-size: 11px; }
 .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--badge); }
@@ -373,7 +374,6 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .inboxrow button { font-size: 12px; padding: 4px 10px; }
 .inboxrow .blockers { color: var(--danger-fg); }
 .home .q { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
-.home .qnext { margin: 6px 0 4px; }
 .home .ev { padding: 3px 0; }
 .home button.link.key { padding: 0; }
 .statuschip { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--info-bg); color: var(--info-fg); font-size: 12px; }
@@ -404,13 +404,14 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .titlebar { flex: none; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 12px; -webkit-app-region: drag; user-select: none;
   background: color-mix(in srgb, var(--pc) 16%, var(--bg)); border-top: 3px solid var(--pc); border-bottom: 1px solid var(--line); }
 .mac .titlebar { padding-left: 84px; }
-.titlebar button, .titlebar .clawarn, .titlebar .menuscrim { -webkit-app-region: no-drag; }
+.titlebar button, .titlebar .clawarn, .titlebar .agentcount, .titlebar .menuscrim { -webkit-app-region: no-drag; }
 .titlebar .brand { font-size: 13px; margin: 0; color: var(--muted); }
 .projmenu { position: relative; }
 .projbtn { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: none; background: none; font-weight: 600; }
 .projbtn:hover, .projbtn[aria-expanded="true"] { background: color-mix(in srgb, var(--pc) 22%, var(--bg)); }
 .projbtn .caret { color: var(--muted); font-size: 11px; }
 .psq { flex: none; width: 12px; height: 12px; border-radius: 3px; }
+.agentcount { font-size: 12px; padding: 3px 8px; border-radius: 6px; color: var(--muted); cursor: default; white-space: pre; }
 .clawarn { font-size: 12px; padding: 3px 8px; border-radius: 6px; color: var(--notice-fg); background: var(--notice-bg); cursor: help; }
 .picker { position: absolute; left: 0; top: calc(100% + 6px); z-index: 5; width: 380px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); overflow: hidden; -webkit-app-region: no-drag; }
 .psearch { margin: 8px; }
