@@ -113,12 +113,21 @@ test('canMoveInPlan: in-progress tasks between todo tasks do not block reorderin
   assert.equal(canMoveInPlan(t('a'), tasks, 'up'), false, 'first todo')
 })
 
-test('canMoveSubtask: any step of the checklist, done or not', () => {
-  const tasks = [task('p', 'in_progress', 0), sub('s1', 'p', 'done', 0), sub('s2', 'p', 'todo', 1), sub('s3', 'p', 'todo', 2), sub('o', 'other', 'todo', 0)]
+test('canMoveSubtask: a legacy checklist moves freely, done or not', () => {
+  const tasks = [task('p', 'in_progress', 0, { work: { repos: [], dir: 'd', feedbackSeenAt: 0 } }), sub('s1', 'p', 'done', 0), sub('s2', 'p', 'todo', 1), sub('s3', 'p', 'todo', 2), sub('o', 'other', 'todo', 0)]
   const t = (id: string) => tasks.find((x) => x.id === id)!
   assert.equal(canMoveSubtask(t('s2'), tasks, 'up'), true, 'past a done one')
   assert.equal(canMoveSubtask(t('s1'), tasks, 'down'), true)
   assert.equal(canMoveSubtask(t('s3'), tasks, 'down'), false, 'last one')
   assert.equal(canMoveSubtask(t('o'), tasks, 'up'), false, 'first of its parent')
   assert.equal(canMoveSubtask(t('p'), tasks, 'down'), false, 'not a subtask')
+})
+
+test('canMoveSubtask: steps that started keep their place', () => {
+  const tasks = [task('p', 'in_progress', 0), sub('s1', 'p', 'done', 0), sub('s2', 'p', 'in_progress', 1), sub('s3', 'p', 'todo', 2), sub('s4', 'p', 'todo', 3)]
+  const t = (id: string) => tasks.find((x) => x.id === id)!
+  assert.equal(canMoveSubtask(t('s3'), tasks, 'up'), false, 'past the current step')
+  assert.equal(canMoveSubtask(t('s2'), tasks, 'down'), false, 'the current step')
+  assert.equal(canMoveSubtask(t('s3'), tasks, 'down'), true)
+  assert.equal(canMoveSubtask(t('s4'), tasks, 'up'), true)
 })

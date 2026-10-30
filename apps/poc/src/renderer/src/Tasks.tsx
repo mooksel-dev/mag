@@ -9,6 +9,7 @@ import {
   canArchive,
   canCancel,
   canMoveInPlan,
+  canMoveToTodo,
   openPrs,
   subtaskProgress,
   subtasksOf,
@@ -65,6 +66,36 @@ export function SubtaskIcon({ status }: { status: TaskStatus }) {
   return <span className={`subicon sub-${s}`} title={STATUS_LABELS[s]} aria-label={STATUS_LABELS[s]}>{SUBTASK_ICONS[s] ?? '○'}</span>
 }
 
+/** A step's PRs as small badges that open the PR: its number and state. */
+export function PrBadges({ task }: { task: Task }) {
+  return (
+    <>
+      {taskPrs(task).map((r) => (
+        <button
+          key={r.prUrl}
+          className={`pill prbadge ${r.prState === 'merged' ? 'violet' : r.prState === 'open' ? 'green' : ''}`}
+          title={`${r.prUrl} (${r.prState ?? 'unknown'})`}
+          onClick={(e) => { e.stopPropagation(); void mag.open(r.prUrl!) }}
+        >
+          {prLabel(r.prUrl!)}{r.prState && r.prState !== 'open' ? ` · ${r.prState}` : ''}
+        </button>
+      ))}
+    </>
+  )
+}
+
+/** Moves a backlog or grooming task to todo; disabled, with the reason, while it has no steps. */
+export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
+  const can = canMoveToTodo(task, tasks)
+  const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
+  const why = !can.ok ? can.reason : busy ? 'An agent is running on this task' : 'Ready to start: move to todo'
+  return (
+    <button className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onClick={(e) => { e.stopPropagation(); void mag.moveToTodo(task.id) }}>
+      Move to todo
+    </button>
+  )
+}
+
 const VIEWS: [TasksView, string][] = [['active', 'Active'], ['backlog', 'Backlog'], ['archive', 'Archive']]
 
 /** The Tasks tab: Active · Backlog · Archive. */
@@ -116,7 +147,7 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
     <>
       <Section title="In progress" list={s.inProgress} empty="No task in progress." {...row} />
       <Section title="Todo" note="ready to start; order is priority; drag or ▲▼ to reorder" list={s.todo} empty="Nothing in todo." ordered {...row} />
-      <Section title="Grooming" list={s.grooming} {...row} />
+      <Section title="Grooming" list={s.grooming} rowActions={(t) => <span className="rowactions"><MoveToTodoButton task={t} tasks={tasks} sessions={sessions} small /></span>} {...row} />
       <Section
         title="Recently finished"
         note={days > 0 ? `archived after ${days} days` : undefined}
@@ -128,7 +159,15 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
   )
 }
 
-function Section({ title, note, list, empty, ordered, action, ...row }: { title: string; note?: string; list: Task[]; empty?: string; ordered?: boolean; action?: React.ReactNode } & RowProps) {
+function Section({ title, note, list, empty, ordered, action, rowActions, ...row }: {
+  title: string
+  note?: string
+  list: Task[]
+  empty?: string
+  ordered?: boolean
+  action?: React.ReactNode
+  rowActions?: (t: Task) => React.ReactNode
+} & RowProps) {
   const [dragId, setDragId] = useState<string | null>(null)
   if (!list.length && !empty) return null
   /** Moves the dragged task step by step to `target`'s place; every step must be allowed. */
@@ -164,12 +203,12 @@ function Section({ title, note, list, empty, ordered, action, ...row }: { title:
               {...row}
               order={ordered ? i + 1 : undefined}
               drag={ordered ? { dragging: dragId === t.id, onStart: () => setDragId(t.id), onEnd: () => setDragId(null), canDrop: () => canDrop(t), onDrop: () => void drop(t) } : undefined}
-              actions={ordered && (
+              actions={ordered ? (
                 <span className="todoactions">
                   <StartButton task={t} sessions={row.sessions} />
                   <Moves task={t} tasks={row.tasks} />
                 </span>
-              )}
+              ) : rowActions?.(t)}
             />
           ))}
         </div>
@@ -211,7 +250,7 @@ interface Drag {
   onDrop: () => void
 }
 
-/** A task row: chevron, key, title, agent indicator, badges, progress and status; expands to its live subtasks. */
+/** A task row: chevron, key, title, agent indicator, badges, progress and status; expands to its steps with their PRs. */
 export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actions, extra }: RowProps & {
   task: Task
   /** Position in the todo list: its priority. */
@@ -225,7 +264,7 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
   const [over, setOver] = useState(false)
   const subs = subtasksOf(task.id, tasks)
   const progress = subtaskProgress(task.id, tasks)
-  const prs = task.status === 'in_progress' ? openPrs(task) : []
+  const prs = task.status === 'in_progress' ? openPrs(task, tasks) : []
   return (
     <div
       className={`taskrow-wrap ${drag?.dragging ? 'dragging' : ''} ${over ? 'dropover' : ''}`}
@@ -250,7 +289,7 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
           {order !== undefined && <span className="ordno muted small">{order}</span>}
           <span className="key">{task.key}</span>
           <span className="title grow">{task.title}</span>
-          <AgentDot state={agentState(task, sessions)} now={now} />
+          <AgentDot state={agentState(task, sessions, tasks)} now={now} />
           {prs.length > 0 && <span className="pill green" title={prs.map((r) => r.prUrl).join('\n')}>PR open</span>}
           {extra}
           {progress.total > 0 && <span className="muted small" title="Subtasks done">{progress.done}/{progress.total}</span>}
@@ -266,6 +305,8 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
               <SubtaskIcon status={s.status} />
               <span className="key">{s.key}</span>
               <span className="grow">{s.title}</span>
+              {s.startManually && <span className="muted small" title="Waits for your Start">start manually</span>}
+              <PrBadges task={s} />
             </div>
           ))}
         </div>
@@ -294,6 +335,7 @@ function BacklogView({ project, tasks, sessions, now, onOpen, focusNewTask }: { 
               actions={
                 <span className="rowactions">
                   <button className="small" onClick={() => mag.groom(t.id)}>Groom</button>
+                  <MoveToTodoButton task={t} tasks={tasks} sessions={sessions} small />
                   <CancelButton task={t} small />
                 </span>
               }
@@ -326,7 +368,7 @@ function ArchiveView({ tasks, sessions, now, onOpen }: RowProps) {
       {list.length ? (
         <div className="tree">
           {list.map((t) => {
-            const pr = taskPrs(t)[0]?.prUrl
+            const pr = taskPrs(t, tasks)[0]?.prUrl
             return (
               <TaskRow
                 key={t.id}

@@ -4,7 +4,8 @@ export const TOOL_DEFS = [
   {
     name: 'get_task',
     scope: 'task',
-    description: 'Get the current task: title, type, status, description, subtasks (the plan as a checklist, in order), project repos, the work (task dir and per repo: worktree, branch, PR) and the doc template for this task type.',
+    description:
+      'Get the current task: title, type, status, description, subtasks (its steps in order, with status, startManually, PRs and current: true on the step being worked on), project repos, the work (your step\'s dir and per repo: worktree, branch, PR) and the doc template for this task type.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -36,19 +37,21 @@ export const TOOL_DEFS = [
   {
     name: 'mark_groomed',
     scope: 'task',
-    description: 'Mark the task as groomed: no open questions left, plan and context ready. It goes to todo, ready for the user to start. Fails while needs_input is set.',
+    description:
+      'Mark the task as groomed: no open questions left, plan and steps ready. It goes to todo, ready for the user to start. When re-grooming the remaining steps of a task in progress, the task continues with its current step. Fails while needs_input is set or without steps.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'create_subtask',
     scope: 'task',
     description:
-      'Groomer only: add a step to the plan checklist of the current task: a short title and an optional one-line note. Subtasks have no doc, agent or PR of their own; the developer of the task marks them in progress and done. Kept in creation order.',
+      'Groomer only: add an execution step to the current task: a short title and an optional one-line note saying what ships in it. Each step runs in its own developer session from fresh base, with at most one PR per changed repo; steps run in order, kept in creation order.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
         note: { type: 'string', description: 'Optional one line; the task doc carries the details.' },
+        start_manually: { type: 'boolean', description: 'The step waits for the user to press Start instead of starting when the previous one is done (releases in parts).' },
       },
       required: ['title'],
     },
@@ -56,13 +59,14 @@ export const TOOL_DEFS = [
   {
     name: 'update_subtask',
     scope: 'task',
-    description: 'Groomer only: change the title or note of a subtask of the current task while re-grooming.',
+    description: 'Groomer only: change the title, note or start_manually of a step while re-grooming. In remaining mode done steps are locked.',
     inputSchema: {
       type: 'object',
       properties: {
         key: { type: 'string' },
         title: { type: 'string' },
         note: { type: 'string' },
+        start_manually: { type: 'boolean' },
       },
       required: ['key'],
     },
@@ -70,13 +74,13 @@ export const TOOL_DEFS = [
   {
     name: 'delete_subtask',
     scope: 'task',
-    description: 'Groomer only: remove a subtask of the current task that is no longer needed.',
+    description: 'Groomer only: remove a step that is no longer needed. In remaining mode only todo steps can be removed.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
     name: 'reorder_subtasks',
     scope: 'task',
-    description: 'Groomer only: set the order of the subtasks. Pass every subtask key of the current task, in the new order.',
+    description: 'Groomer only: set the order of the steps. Pass every step key of the current task, in the new order. In remaining mode done steps and the current one keep their places at the front.',
     inputSchema: {
       type: 'object',
       properties: { keys: { type: 'array', items: { type: 'string' } } },
@@ -87,7 +91,7 @@ export const TOOL_DEFS = [
     name: 'set_subtask_status',
     scope: 'task',
     description:
-      'Developer only: set the status of a subtask of the current task: in_progress when you start the step, done when it is finished, todo to reopen it. One step is in progress at a time: starting one sends the previous in-progress step back to todo, so mark it done first.',
+      'Legacy tasks only (started before steps): set the status of a checklist subtask: in_progress, done or todo. Steps of other tasks follow their lifecycle; use complete_step for a step without code.',
     inputSchema: {
       type: 'object',
       properties: { key: { type: 'string' }, status: { type: 'string', enum: ['todo', 'in_progress', 'done'] } },
@@ -97,7 +101,7 @@ export const TOOL_DEFS = [
   {
     name: 'check_subtask',
     scope: 'task',
-    description: 'Deprecated: use set_subtask_status. Tick a subtask of the current task as done (done: false sets it back to todo).',
+    description: 'Deprecated, legacy tasks only: use set_subtask_status. Tick a subtask of the current task as done (done: false sets it back to todo).',
     inputSchema: {
       type: 'object',
       properties: { key: { type: 'string' }, done: { type: 'boolean' } },
@@ -105,10 +109,16 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'complete_step',
+    scope: 'task',
+    description: 'Developer only: close your step when it needs no code change. Fails if any repo of the step has commits of its own; those go through a PR.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'set_pr',
     scope: 'task',
     description:
-      'Developer only: record the pull request you opened for one repository of this task. One PR per changed repo; once every repo with commits has one, the task waits for the user to merge.',
+      'Developer only: record the pull request you opened for one repository of your step. One PR per changed repo per step; once every repo with commits has one, the step waits for the user to merge.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -175,7 +185,7 @@ export const TOOL_DEFS = [
     name: 'list_tasks',
     scope: 'any',
     description:
-      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (checklist steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
+      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -190,7 +200,7 @@ export const TOOL_DEFS = [
     description:
       'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise. ' +
       'doc pre-fills the task document. plan: true puts the task in todo (lowest priority) and starts nothing; the user starts it. Use it ' +
-      "only when the doc is complete (follow the project's doc template) and the user asked for it.",
+      "only when the doc is complete (follow the project's doc template) and the user asked for it; it needs steps.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -199,6 +209,15 @@ export const TOOL_DEFS = [
         description: { type: 'string' },
         doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
         plan: { type: 'boolean', description: 'Skip grooming and put the task in todo; the user starts it.' },
+        steps: {
+          type: 'array',
+          description: 'Execution steps in order; at least one with plan: true. Each runs in its own developer session with at most one PR per repo.',
+          items: {
+            type: 'object',
+            properties: { title: { type: 'string' }, note: { type: 'string' }, start_manually: { type: 'boolean' } },
+            required: ['title'],
+          },
+        },
       },
       required: ['title', 'type', 'description'],
     },
