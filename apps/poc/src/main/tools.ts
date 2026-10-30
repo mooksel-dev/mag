@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, findRepoWork, nextPlanRank, planQueue, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, type ArchApp, type Project, type SubtaskStatus, type Task, type TaskType } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, findRepoWork, nextPlanRank, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, type ArchApp, type Project, type SubtaskStatus, type Task, type TaskType } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -91,7 +91,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (task.needsInput) throw new Error('needs_input is still set; clear it first')
         if (task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}, not grooming`)
         store.updateTask(task.id, { status: 'todo', rank: nextPlanRank(store.data.tasks.filter((t) => t.projectId === project.id)) })
-        return 'Task groomed: it is in todo, at the end of the queue.'
+        return 'Task groomed: it is in todo, ready for the user to start.'
 
       case 'create_subtask': {
         if (task.parentId) throw new Error('Subtasks cannot have subtasks')
@@ -204,7 +204,7 @@ function sharedTool(
       return JSON.stringify(
         {
           project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
-          tasks: [...planQueue(tasks), ...active.grooming, ...backlogTasks(tasks), ...active.finished].flatMap(withSubtasks).map((t) => ({
+          tasks: [...active.inProgress, ...active.todo, ...active.grooming, ...backlogTasks(tasks), ...active.finished].flatMap(withSubtasks).map((t) => ({
             key: t.key,
             title: t.title,
             type: t.type,
@@ -240,7 +240,7 @@ function sharedTool(
       if (md.trim()) store.data.docs[t.id] = md
       if (plan) store.updateTask(t.id, { rank: nextPlanRank(tasks) })
       else if (md.trim()) store.changed()
-      return plan ? `Created ${t.key} at the end of the queue (position ${planQueue(tasks).length + 1}).` : `Created ${t.key} in the backlog.`
+      return plan ? `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.` : `Created ${t.key} in the backlog.`
     }
 
     case 'update_task': {

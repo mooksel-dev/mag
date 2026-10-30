@@ -111,11 +111,11 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
   const row = { tasks, sessions, now, onOpen }
   const days = project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS
   if (!s.inProgress.length && !s.todo.length && !s.grooming.length && !s.finished.length)
-    return <p className="muted">Nothing active. Groom tasks from the Backlog: once groomed they join the Todo queue by themselves.</p>
+    return <p className="muted">Nothing active. Groom tasks from the Backlog: groomed tasks land in Todo, and you start them with Start.</p>
   return (
     <>
       <Section title="In progress" list={s.inProgress} empty="No task in progress." {...row} />
-      <Section title="Todo" note="the queue: runs top to bottom, one task at a time; drag or ▲▼ to reorder" list={s.todo} empty="The queue is empty." queue {...row} />
+      <Section title="Todo" note="ready to start; order is priority; drag or ▲▼ to reorder" list={s.todo} empty="Nothing in todo." ordered {...row} />
       <Section title="Grooming" list={s.grooming} {...row} />
       <Section
         title="Recently finished"
@@ -128,7 +128,7 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
   )
 }
 
-function Section({ title, note, list, empty, queue, action, ...row }: { title: string; note?: string; list: Task[]; empty?: string; queue?: boolean; action?: React.ReactNode } & RowProps) {
+function Section({ title, note, list, empty, ordered, action, ...row }: { title: string; note?: string; list: Task[]; empty?: string; ordered?: boolean; action?: React.ReactNode } & RowProps) {
   const [dragId, setDragId] = useState<string | null>(null)
   if (!list.length && !empty) return null
   /** Moves the dragged task step by step to `target`'s place; every step must be allowed. */
@@ -162,9 +162,14 @@ function Section({ title, note, list, empty, queue, action, ...row }: { title: s
               key={t.id}
               task={t}
               {...row}
-              order={queue ? i + 1 : undefined}
-              drag={queue ? { dragging: dragId === t.id, onStart: () => setDragId(t.id), onEnd: () => setDragId(null), canDrop: () => canDrop(t), onDrop: () => void drop(t) } : undefined}
-              actions={queue && <Moves task={t} tasks={row.tasks} />}
+              order={ordered ? i + 1 : undefined}
+              drag={ordered ? { dragging: dragId === t.id, onStart: () => setDragId(t.id), onEnd: () => setDragId(null), canDrop: () => canDrop(t), onDrop: () => void drop(t) } : undefined}
+              actions={ordered && (
+                <span className="todoactions">
+                  <StartButton task={t} sessions={row.sessions} />
+                  <Moves task={t} tasks={row.tasks} />
+                </span>
+              )}
             />
           ))}
         </div>
@@ -172,6 +177,17 @@ function Section({ title, note, list, empty, queue, action, ...row }: { title: s
         <p className="muted small">{empty}</p>
       )}
     </div>
+  )
+}
+
+/** Starts development of a todo task. Not while it waits on the user or an agent of it is running. */
+function StartButton({ task, sessions }: { task: Task; sessions: AgentSession[] }) {
+  const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
+  const why = task.needsInput ? `Needs input: ${task.needsInput}` : busy ? 'An agent is running on this task' : `Start a developer on ${task.key}`
+  return (
+    <button className="small" disabled={!!task.needsInput || busy} title={why} onClick={() => mag.develop(task.id)}>
+      Start
+    </button>
   )
 }
 
@@ -198,7 +214,7 @@ interface Drag {
 /** A task row: chevron, key, title, agent indicator, badges, progress and status; expands to its live subtasks. */
 export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actions, extra }: RowProps & {
   task: Task
-  /** Position in the queue. */
+  /** Position in the todo list: its priority. */
   order?: number
   drag?: Drag
   actions?: React.ReactNode

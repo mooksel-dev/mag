@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, canMoveInPlan, planQueue, subtaskStatusChanges, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, canMoveInPlan, subtaskStatusChanges, todoTasks, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -158,8 +158,8 @@ app.whenReady().then(async () => {
     const task = store.task(id)
     const tasks = projectTasks(task.projectId)
     if (!canMoveInPlan(task, tasks, dir)) throw new Error(`${task.key} cannot move ${dir}`)
-    const queue = planQueue(tasks)
-    const other = queue[queue.indexOf(task) + (dir === 'up' ? -1 : 1)]
+    const todo = todoTasks(tasks)
+    const other = todo[todo.indexOf(task) + (dir === 'up' ? -1 : 1)]
     const [a, b] = [task.rank, other.rank]
     store.updateTask(other.id, { rank: a })
     store.updateTask(task.id, { rank: b })

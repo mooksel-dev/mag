@@ -4,7 +4,7 @@
 export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
 /**
- * backlog → grooming → todo (the queue) → in_progress → done; canceled from any status before done. An open PR is a
+ * backlog → grooming → todo (ready to work) → in_progress → done; canceled from any status before done. An open PR is a
  * badge on an in_progress task, not a status. Subtasks use SubtaskStatus.
  */
 export type TaskStatus = 'backlog' | 'grooming' | 'todo' | 'in_progress' | 'done' | 'canceled'
@@ -416,7 +416,7 @@ export function turnMeta(items: ChatItem[], resultIndex: number, model?: string)
   return [model, result.costUsd != null ? `$${result.costUsd.toFixed(2)}` : null, time].filter(Boolean).join(' · ')
 }
 
-/** Top-level statuses of the queue: what the scheduler runs, in rank order. */
+/** Top-level statuses of the plan: ready (todo) and started (in progress) work, in rank order. */
 export const QUEUE_STATUSES: TaskStatus[] = ['todo', 'in_progress']
 /** Finished statuses: only these can be archived. */
 export const FINISHED_STATUSES: TaskStatus[] = ['done', 'canceled']
@@ -442,25 +442,22 @@ export function subtasksOf(id: string, tasks: Task[]): Task[] {
   return tasks.filter((t) => t.parentId === id).sort((a, b) => a.rank - b.rank)
 }
 
-/** Top-level tasks in the queue (todo and in progress), in rank order. */
+/** Top-level todo and in-progress tasks, in rank order. */
 export function planQueue(tasks: Task[]): Task[] {
   return tasks.filter((t) => !t.parentId && QUEUE_STATUSES.includes(t.status)).sort((a, b) => a.rank - b.rank)
 }
 
-/** Rank that puts a task at the end of the queue. */
-export function nextPlanRank(tasks: Task[]): number {
-  return Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
+/**
+ * Top-level todo tasks: ready to work, in priority order (by rank). Nothing starts them on its own; the user does, and
+ * any number of tasks can be in progress at once.
+ */
+export function todoTasks(tasks: Task[]): Task[] {
+  return tasks.filter((t) => !t.parentId && t.status === 'todo').sort((a, b) => a.rank - b.rank)
 }
 
-/**
- * The next task a developer should start, or null. Execution is linear: one task at a time, in queue order; the
- * first todo task starts only when no task is in progress.
- */
-export function nextWork(tasks: Task[]): Task | null {
-  const queue = planQueue(tasks)
-  if (queue.some((t) => t.status === 'in_progress')) return null
-  const next = queue[0]
-  return next && !next.needsInput ? next : null
+/** Rank that puts a task at the end of the todo list: the lowest priority. */
+export function nextPlanRank(tasks: Task[]): number {
+  return Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
 }
 
 /** Done and total subtasks of a task: the progress of its plan. */
@@ -480,16 +477,16 @@ export function subtaskStatusChanges(sub: Task, status: SubtaskStatus, tasks: Ta
   return [...others.map((s) => ({ id: s.id, status: 'todo' as const })), { id: sub.id, status }]
 }
 
-/** Whether a todo task can swap places with its neighbour: both must be not started, so nothing jumps above started work. */
+/** Whether a todo task can swap priority with its todo neighbour; both must be not started. In-progress tasks don't count. */
 export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
-  const queue = planQueue(tasks)
-  const i = queue.findIndex((t) => t.id === task.id)
-  const other = i < 0 ? undefined : queue[dir === 'up' ? i - 1 : i + 1]
+  const todo = todoTasks(tasks)
+  const i = todo.findIndex((t) => t.id === task.id)
+  const other = i < 0 ? undefined : todo[dir === 'up' ? i - 1 : i + 1]
   const notStarted = (t: Task) => t.status === 'todo' && !t.work
   return !!other && notStarted(task) && notStarted(other)
 }
 
-/** Whether a subtask can swap places with its neighbour. The checklist is a plan, not a queue: any step can move. */
+/** Whether a subtask can swap places with its neighbour. The checklist is a plan: any step can move. */
 export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
   if (!sub.parentId) return false
   const subs = subtasksOf(sub.parentId, tasks)
@@ -527,7 +524,7 @@ export function taskView(task: Task): TasksView {
 /** Sections of the Active view, each in display order. */
 export interface ActiveSections {
   inProgress: Task[]
-  /** The queue. */
+  /** Ready to start, in priority order. */
   todo: Task[]
   grooming: Task[]
   /** Done and canceled, not archived, newest first. */
@@ -536,10 +533,9 @@ export interface ActiveSections {
 
 export function activeSections(tasks: Task[]): ActiveSections {
   const active = tasks.filter((t) => !t.parentId && taskView(t) === 'active')
-  const queue = planQueue(active)
   return {
-    inProgress: queue.filter((t) => t.status === 'in_progress'),
-    todo: queue.filter((t) => t.status === 'todo'),
+    inProgress: planQueue(active).filter((t) => t.status === 'in_progress'),
+    todo: todoTasks(active),
     grooming: active.filter((t) => t.status === 'grooming').sort((a, b) => a.createdAt - b.createdAt),
     finished: active.filter((t) => FINISHED_STATUSES.includes(t.status)).sort((a, b) => b.updatedAt - a.updatedAt),
   }
@@ -702,10 +698,9 @@ export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage
   return counts
 }
 
-/** The task being worked on and the one after it, in nextWork order. */
-export function queueHead(tasks: Task[]): { current: Task | null; next: Task | null } {
-  const queue = planQueue(tasks)
-  return { current: queue.find((t) => t.status === 'in_progress') ?? null, next: queue.find((t) => t.status === 'todo') ?? null }
+/** Agent sessions running now, any role, any project: no limit on how many. */
+export function runningAgents(sessions: AgentSession[]): AgentSession[] {
+  return sessions.filter((s) => s.status === 'running')
 }
 
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {

@@ -14,6 +14,7 @@ import {
   projectColor,
   repoWorkName,
   resolveChoice,
+  runningAgents,
   subtaskProgress,
   subtasksOf,
   taskPrs,
@@ -121,6 +122,7 @@ export function App({ projectId }: { projectId: string }) {
         </div>
         <span className="brand"><Logo size={16} />mag <span>PoC</span></span>
         <div className="grow" />
+        <AgentCounter state={state} />
         {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠ Claude CLI not found</span>}
       </div>
         <div className="workspace">
@@ -161,6 +163,22 @@ export function App({ projectId }: { projectId: string }) {
 }
 
 const THEMES: [ThemeMode, string, string][] = [['light', '☀︎', 'Light'], ['dark', '☾', 'Dark'], ['system', 'Auto', 'Follow the system']]
+
+/** Agents running now across all projects; there is no limit on how many. */
+function AgentCounter({ state }: { state: AppState }) {
+  const running = runningAgents(state.sessions)
+  if (!running.length) return null
+  const line = (s: AgentSession) => {
+    const project = state.projects.find((p) => p.id === s.projectId)?.name ?? '?'
+    const key = s.taskId ? state.tasks.find((t) => t.id === s.taskId)?.key ?? '?' : 'chat'
+    return `${project} · ${key} · ${s.role}`
+  }
+  return (
+    <span className="agentcount" title={running.map(line).join('\n')}>
+      ● {running.length} {running.length === 1 ? 'agent' : 'agents'}
+    </span>
+  )
+}
 
 function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
   return (
@@ -227,9 +245,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
             <div className="grow" />
             {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
             {canDevelop && (
-              <button onClick={() => mag.develop(task.id)} title="Normally the queue starts the next task by itself">
-                {task.status === 'todo' ? 'Start developer now' : 'Restart developer'}
-              </button>
+              <button onClick={() => mag.develop(task.id)}>{task.status === 'todo' ? 'Start' : 'Restart developer'}</button>
             )}
             <ArchiveButton task={task} />
             <CancelButton task={task} />
@@ -316,7 +332,7 @@ function SubtaskList({ parent, subs, tasks }: { parent: Task; subs: Task[]; task
           <SubtaskRow key={t.id} sub={t} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
         ))}
       </div>
-      <p className="muted small">{done}/{total} done. A plan, not a queue: one developer works through it in one session and marks each step ◐ in progress, then ● done. Click an icon to change it.</p>
+      <p className="muted small">{done}/{total} done. A plan: one developer works through it in one session and marks each step ◐ in progress, then ● done. Click an icon to change it.</p>
     </>
   )
 }

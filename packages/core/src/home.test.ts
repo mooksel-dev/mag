@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activeSections, agentState, archivedTasks, autoArchiveDue, backlogTasks, inbox, pipelineCounts, queueHead, taskChangeEvents, viewCounts, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { activeSections, agentState, archivedTasks, autoArchiveDue, backlogTasks, inbox, pipelineCounts, runningAgents, taskChangeEvents, viewCounts, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -159,25 +159,11 @@ test('pipelineCounts: top-level only, done in the last 7 days', () => {
   assert.deepEqual(pipelineCounts(tasks, now), { backlog: 2, grooming: 1, todo: 2, in_progress: 1, done7d: 1 })
 })
 
-test('queueHead: no current unit', () => {
-  const tasks = [task('t1', 'done', 0), task('t2', 'todo', 1), task('t3', 'todo', 2), task('x', 'grooming', 3)]
-  assert.deepEqual(ids(queueHead(tasks)), { current: null, next: 't2' })
-  assert.deepEqual(ids(queueHead([])), { current: null, next: null })
+test('runningAgents: running sessions of any role and project', () => {
+  const sessions = [session('t1', 'developer', 'running'), session('t2', 'groomer', 'running'), session('t3', 'developer', 'idle'), session('t4', 'developer', 'error'), { ...session('c', 'chat', 'running'), projectId: 'q', taskId: null }]
+  assert.deepEqual(runningAgents(sessions).map((s) => s.id), ['t1-developer', 't2-groomer', 'c-chat'])
+  assert.deepEqual(runningAgents([]), [])
 })
-
-test('queueHead: subtasks are not units', () => {
-  const tasks = [task('t1', 'in_progress', 0), sub('s1', 't1', 'done', 0), sub('s2', 't1', 'todo', 1), task('t2', 'todo', 1), sub('t2s', 't2', 'todo', 0)]
-  assert.deepEqual(ids(queueHead(tasks)), { current: 't1', next: 't2' })
-})
-
-test('queueHead: current task and the next task', () => {
-  assert.deepEqual(ids(queueHead([task('t1', 'in_progress', 0), task('t2', 'todo', 1)])), { current: 't1', next: 't2' })
-  assert.deepEqual(ids(queueHead([task('t1', 'in_progress', 0)])), { current: 't1', next: null })
-})
-
-function ids(h: { current: Task | null; next: Task | null }) {
-  return { current: h.current?.id ?? null, next: h.next?.id ?? null }
-}
 
 test('agentState: working, waiting, or nothing', () => {
   const running = { ...session('t', 'developer', 'running'), runStartedAt: 42 }

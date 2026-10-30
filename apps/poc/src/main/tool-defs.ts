@@ -36,7 +36,7 @@ export const TOOL_DEFS = [
   {
     name: 'mark_groomed',
     scope: 'task',
-    description: 'Mark the task as groomed: no open questions left, plan and context ready. It goes to todo, at the end of the queue, and a developer picks it up in turn. Fails while needs_input is set.',
+    description: 'Mark the task as groomed: no open questions left, plan and context ready. It goes to todo, ready for the user to start. Fails while needs_input is set.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -175,7 +175,7 @@ export const TOOL_DEFS = [
     name: 'list_tasks',
     scope: 'any',
     description:
-      'Tasks of the project, archived ones left out: the queue in execution order (in_progress, then todo), then grooming, backlog and recently finished (done, canceled); subtasks (checklist steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
+      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (checklist steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -189,7 +189,7 @@ export const TOOL_DEFS = [
     scope: 'project',
     description:
       'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise. ' +
-      'doc pre-fills the task document. plan: true puts the task in todo at the end of the queue, ready for a developer; ' +
+      'doc pre-fills the task document. plan: true puts the task in todo (lowest priority) and starts nothing; the user starts it. Use it ' +
       "only when the doc is complete (follow the project's doc template) and the user asked for it.",
     inputSchema: {
       type: 'object',
@@ -198,7 +198,7 @@ export const TOOL_DEFS = [
         type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
         description: { type: 'string' },
         doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
-        plan: { type: 'boolean', description: 'Skip grooming and append the task to the queue (todo).' },
+        plan: { type: 'boolean', description: 'Skip grooming and put the task in todo; the user starts it.' },
       },
       required: ['title', 'type', 'description'],
     },
@@ -226,7 +226,7 @@ export const TOOL_DEFS = [
   {
     name: 'start_grooming',
     scope: 'project',
-    description: 'Start the groomer agent on a backlog task (or re-groom a todo task not started yet). It works in the background and pings the user with questions; when done, the task goes to todo by itself.',
+    description: 'Start the groomer agent on a backlog task (or re-groom a todo task not started yet). It works in the background and pings the user with questions; when done, the task goes to todo, ready for the user to start.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
