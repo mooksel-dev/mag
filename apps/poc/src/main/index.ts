@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, canMoveInPlan, subtaskStatusChanges, todoTasks, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, todoTasks, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -97,7 +97,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {} }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, regroomed: async () => {} }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -111,6 +111,8 @@ app.whenReady().then(async () => {
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)
+  actions.completeStep = (id) => orch.completeStep(id)
+  actions.regroomed = (id) => orch.regroomed(id)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -136,9 +138,30 @@ app.whenReady().then(async () => {
   handle('project:create', (_, name: string) => store.createProject(name))
   handle('project:update', (_, id: string, patch: Partial<Project>) => store.updateProject(id, patch))
   handle('task:create', (_, t: NewTask) => store.createTask(t))
-  handle('task:update', (_, id: string, patch: Partial<Task>) => store.updateTask(id, patch))
-  handle('task:groom', (_, id: string) => orch.groom(id))
   const projectTasks = (projectId: string) => store.data.tasks.filter((t) => t.projectId === projectId)
+  /** A legacy task, or the parent of a legacy checklist subtask: the only ones whose subtask status the user sets. */
+  const legacyParent = (t: Task) => isLegacy(t.parentId ? store.task(t.parentId) : t)
+  handle('task:update', (_, id: string, patch: Partial<Task>) => {
+    const task = store.task(id)
+    if (patch.status !== undefined && patch.status !== task.status) {
+      if (task.parentId && !legacyParent(task)) throw new Error(`${task.key} is a step: its status follows its lifecycle`)
+      const todo = patch.status === 'todo' && !task.parentId ? canMoveToTodo(task, projectTasks(task.projectId)) : { ok: true }
+      if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
+    }
+    store.updateTask(id, patch)
+  })
+  handle('task:moveToTodo', (_, id: string) => {
+    const task = store.task(id)
+    if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; only backlog and grooming tasks move to todo`)
+    if (store.data.sessions.some((s) => s.taskId === id && orch.isRunning(s.id))) throw new Error('An agent is still working on this task')
+    const tasks = projectTasks(task.projectId)
+    const todo = canMoveToTodo(task, tasks)
+    if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
+    store.updateTask(id, { status: 'todo', needsInput: null, rank: nextPlanRank(tasks) })
+  })
+  handle('task:groom', (_, id: string) => orch.groom(id))
+  handle('task:startStep', (_, id: string) => orch.startStep(id))
+  handle('task:regroomRemaining', (_, id: string) => orch.regroomRemaining(id))
   handle('task:cancel', (_, id: string, reason: string | null) => orch.cancel(id, reason))
   handle('task:archive', (_, ids: string[]) => {
     const now = Date.now()
@@ -152,6 +175,7 @@ app.whenReady().then(async () => {
   handle('task:setSubtaskStatus', (_, id: string, status: SubtaskStatus) => {
     const sub = store.task(id)
     if (!sub.parentId || !SUBTASK_STATUSES.includes(status)) throw new Error(`Cannot set ${sub.key} to ${status}`)
+    if (!legacyParent(sub)) throw new Error(`${sub.key} is a step: its status follows its lifecycle`)
     for (const c of subtaskStatusChanges(sub, status, store.data.tasks)) store.updateTask(c.id, { status: c.status })
   })
   handle('task:move', (_, id: string, dir: 'up' | 'down') => {
@@ -164,7 +188,12 @@ app.whenReady().then(async () => {
     store.updateTask(other.id, { rank: a })
     store.updateTask(task.id, { rank: b })
   })
-  handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => store.reorderSubtasks(parentId, ids))
+  handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => {
+    // Steps that started (done, current) keep their places at the front; a legacy checklist moves freely.
+    const locked = isLegacy(store.task(parentId)) ? [] : subtasksOf(parentId, store.data.tasks).filter((s) => s.status !== 'todo')
+    if (locked.some((s, i) => ids[i] !== s.id)) throw new Error(`${locked.map((s) => s.key).join(', ')} started; they keep their places`)
+    store.reorderSubtasks(parentId, ids)
+  })
   handle('task:develop', (_, id: string) => orch.develop(id))
   handle('pr:checkNow', () => scheduler.pollNow())
   handle('shell:open', (_, url: string) => {

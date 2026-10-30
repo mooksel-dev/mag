@@ -51,6 +51,8 @@ export interface NewTask {
   parentId?: string | null
   /** Defaults to backlog; subtasks are todo, in_progress or done. */
   status?: TaskStatus
+  /** Steps: wait for the user's Start (see Task.startManually). */
+  startManually?: boolean
 }
 
 /** A kind of pop-out window; each kind remembers its own size and position. */
@@ -79,12 +81,18 @@ export interface MagApi {
   restore(taskId: string): Promise<void>
   /** Swap a todo task with its neighbour in the queue. */
   move(taskId: string, dir: 'up' | 'down'): Promise<void>
-  /** Set a subtask's status; starting one sends the task's other in-progress step back to todo. */
+  /** Legacy tasks only: set a checklist subtask's status; starting one sends the task's other in-progress step back to todo. */
   setSubtaskStatus(subtaskId: string, status: SubtaskStatus): Promise<void>
   /** Set the order of a task's subtasks; `ids` lists each of them exactly once. */
   reorderSubtasks(parentId: string, ids: string[]): Promise<void>
-  /** Start or restart the developer agent on a todo or in-progress task. */
+  /** Start a todo task, or restart the developer of the current step of a task in progress. */
   develop(taskId: string): Promise<void>
+  /** Start the next step of a task in progress that waits for the user's Start. */
+  startStep(taskId: string): Promise<void>
+  /** Re-groom the steps not done yet of a task in progress (no agent running); done steps are locked. */
+  regroomRemaining(taskId: string): Promise<void>
+  /** Move a backlog or grooming task to todo; it needs at least one step. */
+  moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */
   checkPrs(): Promise<void>
   /** Open a URL in the browser or a path in Finder. */

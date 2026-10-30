@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -18,6 +18,8 @@ interface Data {
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
+  /** migrateToSteps has run (T-28). */
+  stepsMigrated?: boolean
 }
 
 /** A project window that was open, to reopen on start. */
@@ -91,11 +93,35 @@ export class Store {
       if ((t.type as string) === 'story') t.type = 'dev'
       t.rank ??= t.createdAt
     }
-    for (const s of this.data.sessions)
+    for (const s of this.data.sessions) {
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
+      s.stepId ??= null
+    }
     this.migrateSubtaskKeys()
     this.migrateToTaskWork()
     this.migrateStatuses()
+    this.migrateToSteps()
+  }
+
+  /**
+   * Subtasks become steps (T-28), once. Checklists become steps that start on their own; a todo or in-progress task
+   * without subtasks gets one step with its title. A legacy task (see isLegacy) is left alone: it finishes on its own
+   * work, its subtasks stay a checklist.
+   */
+  private migrateToSteps() {
+    if (this.data.stepsMigrated) return
+    for (const t of this.data.tasks) if (t.parentId) t.startManually ??= false
+    for (const t of [...this.data.tasks]) {
+      if (t.parentId || isLegacy(t) || (t.status !== 'todo' && t.status !== 'in_progress')) continue
+      if (subtasksOf(t.id, this.data.tasks).length) continue
+      const now = Date.now()
+      this.data.tasks.push({
+        id: id(), projectId: t.projectId, key: subtaskKey(t.key, t.nextSubNo++), parentId: t.id, title: t.title, type: t.type, status: 'todo', description: '',
+        rank: 1, needsInput: null, work: null, startManually: false, nextSubNo: 1, archivedAt: null, createdAt: now, updatedAt: now,
+      })
+    }
+    this.data.stepsMigrated = true
+    this.changed()
   }
 
   /**
@@ -353,6 +379,7 @@ export class Store {
       rank: Math.max(0, ...siblings.map((x) => x.rank)) + 1,
       needsInput: null,
       work: null,
+      ...(parent && { startManually: n.startManually ?? false }),
       nextSubNo: 1,
       archivedAt: null,
       createdAt: now,

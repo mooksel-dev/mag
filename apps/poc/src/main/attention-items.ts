@@ -1,7 +1,7 @@
 import { inbox, type AgentSession, type InboxKind, type Project, type Task } from '@mag/core'
 
 /** Inbox kinds that get a system notification. Approvals don't: they come up while a chat is being watched. */
-const NOTIFY: InboxKind[] = ['question', 'agent_failed', 'check_failed', 'ready_to_merge']
+const NOTIFY: InboxKind[] = ['question', 'agent_failed', 'check_failed', 'ready_to_merge', 'ready_to_start']
 
 /** An inbox item a notification can be shown for. */
 export interface Attention {

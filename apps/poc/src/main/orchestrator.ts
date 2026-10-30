@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { canCancel, cleanTitle, integrationRules, prRollup, repoDirNames, repoWorkName, resolveChoice, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork } from '@mag/core'
+import { canCancel, cleanTitle, currentStep, integrationRules, isLegacy, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -32,19 +32,46 @@ Your output is the task document, not chat. Work like this:
 5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc
    as a link [title](canvas:<id>), using the id show_canvas returned; the app renders the canvas in place. Diagrams in
    the doc itself can be \`\`\`mermaid blocks.
-6. One developer session does the whole task, with one PR per changed repository. For a task with several
-   steps, add them with create_subtask: a short checklist of the plan (title plus an optional one-line note), in
-   order. Subtasks have no doc, agent or PR of their own; the developer marks their progress. The task doc carries the
-   details. When re-grooming, change the existing subtasks with update_subtask / delete_subtask /
-   reorder_subtasks instead of creating duplicates (get_task lists them).
+6. Split the work into execution steps with create_subtask, in order; at least one, or mark_groomed fails. Each step
+   runs in its own developer session from fresh base, with at most one PR per changed repository; the next step starts
+   when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
+   details. A small task is one step. Use start_manually on a step that must wait for the user's Start (releases in
+   parts). When re-grooming, change the existing steps with update_subtask / delete_subtask / reorder_subtasks instead
+   of creating duplicates (get_task lists them).
 7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed. The task then is in
    todo, ready for the user to start.
+Remaining mode (re-grooming a task in progress, usually because its developer found the plan no longer fits): done
+steps are locked; the current step can be renamed or re-noted but not deleted or moved; todo steps can change freely.
+Update the doc to match, then set_needs_input(null) and mark_groomed: the task continues with its current step.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
 
+const workLines = (work: TaskWork) => work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+
+/** Developer of one step (T-28). */
+const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
+  const base = project.baseBranch
+  return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
+Your cwd and worktrees are for this step only; base is fresh ${base}. Every project repository has its own git worktree there, on its own branch:
+${workLines(work).join('\n')}
+1. Read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
+2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
+3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
+4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
+   gh pr create --base ${base} --head <branch> --title ... --body ...
+   Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL
+   and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
+5. At the end, append to §Progress in the doc (update_doc): what was done in ${step.key} and what changed against the plan.
+6. If the plan no longer fits reality, do not rewrite it: set_needs_input with a one-line reason and stop. The same for
+   a decision only the user can make.
+Never merge. Never push to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}".
+Keep chat replies short.`
+}
+
+/** Developer of a legacy task (started before T-28): the whole task in one session. */
 const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean) => {
-  const repos = work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+  const repos = workLines(work)
   const base = project.baseBranch
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
 Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
@@ -80,18 +107,20 @@ Call get_architecture first, then set_architecture once with the full picture. B
 const chatPrompt = (project: Project, logsDir: string) => `You are the user's partner for project "${project.name}" in "mag",
 a task-centric workspace. This is a free conversation about the project: ideas, product and design decisions,
 architecture, priorities, reviewing what agents did. You can read the code (read-only) and the web.
-How mag works: backlog task -> grooming: the groomer agent writes the task doc, asks questions and may split it
-into subtasks (a checklist of the plan) -> todo: groomed and ready to work; the order of todo tasks is only the user's
-priority -> in progress: the user starts a todo task with Start, and one developer agent implements the whole task,
-with a worktree per repository and one PR per changed repository -> done when the user has merged every PR. Nothing
-starts on its own; any number of tasks can be in progress in parallel, one developer each. Any task not done yet can
-be canceled. Done and canceled tasks can be archived; mag archives them after some days.
+How mag works: backlog task -> grooming: the groomer agent writes the task doc, asks questions and splits it into
+steps (subtasks; at least one) -> todo: groomed and ready to work; the order of todo tasks is only the user's
+priority -> in progress: the user starts a todo task with Start, and its steps run one after another. Each step gets a
+new developer session from fresh base, its own branch and worktree per repository, and at most one PR per changed
+repository; a step is done when its PRs are merged (or, without code, when its developer closes it), and the next one
+starts on its own unless it is marked start manually (then it waits for the user's Start) -> done when every step is
+done. Any number of tasks can be in progress in parallel. Any task not done yet can be canceled. Done and canceled
+tasks can be archived; mag archives them after some days.
 - You never change code. A change becomes a task: create_task with a concise brief (what and why), and
   start_grooming if the user wants it moving. Check list_tasks first to avoid duplicates.
 - If a task is already fully discussed here and the user asks to get it done, skip grooming: create_task with
-  a complete doc (Problem / Changes per layer / Plan, following the project's doc template) and plan: true.
-  It goes to todo and starts nothing: the user starts it with Start. Anything that needs splitting into
-  subtasks or still has open questions goes to the backlog and through start_grooming instead.
+  a complete doc (Problem / Changes per layer / Plan, following the project's doc template), plan: true and its
+  steps (at least one). It goes to todo and starts nothing: the user starts it with Start. Anything that still has
+  open questions goes to the backlog and through start_grooming instead.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
   update_task / update_task_doc. Say in one line what you recorded.
 - cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
@@ -114,6 +143,10 @@ function summarize(input: unknown): string {
 
 export class Orchestrator {
   private runs = new Map<string, RunHandle>()
+  /** Groomer sessions re-grooming the remaining steps of a task in progress. */
+  private remainingGroomers = new Set<string>()
+  /** Tasks whose remaining steps a groomer marked groomed during its current run. */
+  private regroomedTasks = new Set<string>()
 
   constructor(
     private store: Store,
@@ -203,8 +236,12 @@ export class Orchestrator {
     this.run(session, `Groom task ${task.key}. Start with get_task.`)
   }
 
-  /** Start a todo task (the user's Start) or restart one in progress: a worktree + branch per repository, then its developer session (the same one on a restart). */
-  async develop(taskId: string) {
+  /**
+   * Start a todo task (the user's Start) or restart one in progress, on its current step: a todo step gets a worktree +
+   * branch per repository from fresh base and a new developer session; a step in progress resumes its session.
+   * `message`, if given, is what the resumed session is told (shown in its chat). Legacy tasks run as one whole.
+   */
+  async develop(taskId: string, message?: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
     if (task.status !== 'todo' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only todo or in progress tasks are developed`)
@@ -213,21 +250,93 @@ export class Orchestrator {
       this.store.updateTask(taskId, { needsInput: 'Project has no repository' })
       return
     }
-    const last = this.lastSession(taskId, 'developer')
+    if (isLegacy(task)) {
+      const last = this.lastSession(taskId, 'developer')
+      if (last && this.runs.has(last.id)) throw new Error('Developer is still working')
+      const dir = task.work?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
+      this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`) })
+      const session = last ?? this.newSession(taskId, 'developer')
+      if (!(await this.prepareWorktrees(session))) return
+      this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
+      return
+    }
+    const step = currentStep(taskId, this.store.data.tasks)
+    if (!step) throw new Error(`${task.key} has no step to develop; groom it into steps first`)
+    const last = this.lastStepSession(step.id)
     if (last && this.runs.has(last.id)) throw new Error('Developer is still working')
-    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task, project) })
-    const session = last ?? this.newSession(taskId, 'developer')
+    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null })
+    const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
+    this.store.updateTask(step.id, { status: 'in_progress', work: this.workFor(step.work, project, dir, stepBranch(step.key)) })
+    const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
-    this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
+    if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
+    this.run(session, message ?? `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`)
   }
 
-  /** The task's workspace: its existing work, plus a worktree for every project repository it does not cover yet. */
-  private workFor(task: Task, project: Project): TaskWork {
-    const prev = task.work
+  /** The user's Start on the task's next step (one that starts manually): it runs as develop does. */
+  startStep(taskId: string) {
+    const task = this.store.task(taskId)
+    if (isLegacy(task) || task.status !== 'in_progress') throw new Error(`${task.key} is ${isLegacy(task) ? 'a legacy task' : task.status}; only steps of a task in progress are started`)
+    const step = currentStep(taskId, this.store.data.tasks)
+    if (step?.status !== 'todo') throw new Error(`${task.key} has no step waiting for Start${step ? `: ${step.key} is in progress` : ''}`)
+    return this.develop(taskId)
+  }
+
+  /**
+   * Re-groom what is left of a task in progress (no agent running): a groomer session in remaining mode. The task
+   * stays in progress; done steps are locked. Its mark_groomed calls regroomed.
+   */
+  regroomRemaining(taskId: string) {
+    const task = this.store.task(taskId)
+    if (isLegacy(task) || task.status !== 'in_progress') throw new Error(`${task.key} is ${isLegacy(task) ? 'a legacy task' : task.status}; only the remaining steps of a task in progress are re-groomed`)
+    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.runs.has(s.id))) throw new Error('An agent is still working on this task')
+    const session = this.newSession(taskId, 'groomer')
+    this.remainingGroomers.add(session.id)
+    this.store.updateTask(taskId, { needsInput: null })
+    this.run(session, `Re-groom the remaining steps of ${task.key} (remaining mode). Start with get_task and get_doc.`)
+  }
+
+  /** mark_groomed in remaining mode: the task goes on, resuming its current step's developer if that step started. */
+  async regroomed(taskId: string) {
+    this.regroomedTasks.add(taskId)
+    const task = this.store.task(taskId)
+    const step = currentStep(taskId, this.store.data.tasks)
+    if (step?.status !== 'in_progress') return
+    await this.develop(taskId, `The remaining steps of ${task.key} were re-groomed. Read get_task and get_doc again, then continue step ${step.key}.`)
+  }
+
+  /**
+   * A step is done (its PRs merged, or closed by its developer without code). Its worktrees go once its developer is
+   * not running; the task is done when every step is, and the architecture refreshes.
+   */
+  async completeStep(stepId: string) {
+    const step = this.store.task(stepId)
+    if (!step.parentId) throw new Error(`${step.key} is not a step`)
+    this.store.updateTask(stepId, { status: 'done' })
+    log.info('agent', `${step.key} done`)
+    if (!this.store.data.sessions.some((s) => s.stepId === stepId && this.runs.has(s.id))) await this.removeWork(step.work)
+    const task = this.store.task(step.parentId)
+    if (currentStep(task.id, this.store.data.tasks)) return
+    this.store.updateTask(task.id, { status: 'done', needsInput: null })
+    // Merged code changes the architecture; refresh it if the project keeps one.
+    if (this.store.project(task.projectId).architecture) {
+      try {
+        this.architect(task.projectId)
+      } catch {}
+    }
+  }
+
+  /** Removes a task's or step's worktrees, then its dir once empty. */
+  private async removeWork(work: TaskWork | null) {
+    if (!work) return
+    for (const r of work.repos) await removeWorktree(r.repo, r.worktree)
+    rmdir(work.dir, () => {})
+  }
+
+  /** A workspace in `dir`: the existing work, plus a worktree on `branch` for every project repository it does not cover yet. */
+  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string): TaskWork {
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
-    const dir = prev?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
-    const branch = `mag/${task.key.toLowerCase()}-${slug(task.title)}`
     const known = prev?.repos ?? []
     const fresh = project.repos.filter((r) => !known.some((w) => w.repo === r))
     const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
@@ -235,11 +344,16 @@ export class Orchestrator {
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
   }
 
-  /** (Re)creates every worktree of the session's task that is missing; false (and the session in error) if one fails. */
+  /** What a developer session works on: its step, or a legacy session's task. */
+  private ownerOf(session: AgentSession): Task {
+    return this.store.task(session.stepId ?? session.taskId!)
+  }
+
+  /** (Re)creates every worktree of the session's step (or legacy task) that is missing; false (and the session in error) if one fails. */
   private async prepareWorktrees(session: AgentSession): Promise<boolean> {
     const task = this.store.task(session.taskId!)
     const project = this.store.project(task.projectId)
-    for (const r of task.work?.repos ?? []) {
+    for (const r of this.ownerOf(session).work?.repos ?? []) {
       if (!project.repos.includes(r.repo) || r.prState === 'merged') continue
       try {
         await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
@@ -254,11 +368,13 @@ export class Orchestrator {
     return true
   }
 
-  /** New comments on any of the task's PRs: resume its developer session with them. */
-  feedback(taskId: string, items: (PrFeedback & { repo: string })[]) {
-    const session = this.lastSession(taskId, 'developer')
+  /** New comments on any PR of a step (or a legacy task): resume the developer session of that step with them. */
+  feedback(ownerId: string, items: (PrFeedback & { repo: string })[]) {
+    const owner = this.store.task(ownerId)
+    const taskId = owner.parentId ?? owner.id
+    const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
     if (!session || this.runs.has(session.id)) return false
-    const many = new Set(items.map((f) => f.repo)).size > 1 || (this.store.task(taskId).work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
+    const many = new Set(items.map((f) => f.repo)).size > 1 || (owner.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     const text =
       `New feedback on your PR${many ? 's' : ''}:\n` +
       items.map((f) => `- ${many ? `[${f.repo}] ` : ''}@${f.author}${f.where ? ` on ${f.where}` : ''}: ${f.body}`).join('\n') +
@@ -287,7 +403,7 @@ export class Orchestrator {
     this.store.updateTask(session.taskId, { needsInput: null })
     const task = this.store.task(session.taskId)
     // A worktree may have failed earlier or been removed: recreate it before resuming.
-    if (session.role === 'developer' && task.work && !(await this.prepareWorktrees(session))) return
+    if (session.role === 'developer' && this.ownerOf(session).work && !(await this.prepareWorktrees(session))) return
     this.run(session, prompt)
   }
 
@@ -302,16 +418,12 @@ export class Orchestrator {
     for (const s of this.store.data.sessions) if (s.taskId === taskId) this.stop(s.id)
     this.store.updateTask(taskId, { status: 'canceled', cancelReason: reason, needsInput: null })
     log.info('agent', `${task.key} canceled`, { reason })
-    const work = task.work
-    if (!work) return
-    for (const r of work.repos) await removeWorktree(r.repo, r.worktree)
-    // Only removes the task dir once it is empty.
-    rmdir(work.dir, () => {})
+    for (const t of [task, ...subtasksOf(taskId, this.store.data.tasks)]) await this.removeWork(t.work)
   }
 
-  private newSession(taskId: string, role: AgentRole) {
+  private newSession(taskId: string, role: AgentRole, stepId: string | null = null) {
     const projectId = this.store.task(taskId).projectId
-    return this.store.createSession({ projectId, taskId, role, agent: this.choice(projectId, role).agent, status: 'running' })
+    return this.store.createSession({ projectId, taskId, stepId, role, agent: this.choice(projectId, role).agent, status: 'running' })
   }
 
   private mcpConfig(name: string, env: Record<string, string>) {
@@ -322,8 +434,13 @@ export class Orchestrator {
     return path
   }
 
+  /** The task's last session of the role outside steps: groomers, a legacy task's developer. */
   private lastSession(taskId: string, role: AgentRole) {
-    return this.store.data.sessions.filter((s) => s.taskId === taskId && s.role === role).at(-1)
+    return this.store.data.sessions.filter((s) => s.taskId === taskId && s.role === role && !s.stepId).at(-1)
+  }
+
+  private lastStepSession(stepId: string) {
+    return this.store.data.sessions.filter((s) => s.stepId === stepId && s.role === 'developer').at(-1)
   }
 
   private spec(session: AgentSession): Omit<RunSpec, 'prompt'> {
@@ -340,14 +457,15 @@ export class Orchestrator {
       }
     }
     const task = this.store.task(session.taskId)
-    if (session.role === 'developer' && task.work) {
-      const work = task.work
+    const owner = this.ownerOf(session)
+    if (session.role === 'developer' && owner.work) {
+      const work = owner.work
       return {
         cwd: work.dir,
         // Repositories without a worktree in the task (pre-T-22 tasks) stay readable from their main checkout.
         addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r)), this.paths.attachmentsDir],
         appendSystemPrompt:
-          developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0) +
+          (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
             : ''),
@@ -495,21 +613,29 @@ export class Orchestrator {
   private async afterRun(session: AgentSession) {
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
+    const regroomed = session.role === 'groomer' && this.regroomedTasks.delete(task.id)
+    if (regroomed) this.remainingGroomers.delete(session.id)
+    // A step its developer closed: its worktrees could not go while the run was on.
+    if (session.stepId && this.ownerOf(session).status === 'done') return this.removeWork(this.ownerOf(session).work)
     if (task.needsInput) return
     const failed = session.status === 'error'
     if (session.role === 'groomer' && task.status === 'grooming') {
       if (failed) this.store.updateTask(task.id, { status: 'backlog' })
       else this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
     }
+    // Remaining mode: the steps continue only after mark_groomed.
+    if (this.remainingGroomers.has(session.id) && task.status === 'in_progress')
+      this.store.updateTask(task.id, { needsInput: failed ? 'Groomer failed; check the chat' : 'Groomer stopped without finishing; check the chat' })
     if (session.role === 'developer' && task.status === 'in_progress') {
-      if (failed || !task.work?.repos.some((r) => r.prUrl)) {
-        this.store.updateTask(task.id, { needsInput: failed ? 'Developer agent failed; check the chat' : 'Developer stopped without opening a PR' })
+      const work = this.ownerOf(session).work
+      if (failed || !work?.repos.some((r) => r.prUrl)) {
+        const stopped = session.stepId ? 'Developer stopped without opening a PR or completing the step' : 'Developer stopped without opening a PR'
+        this.store.updateTask(task.id, { needsInput: failed ? 'Developer agent failed; check the chat' : stopped })
         return
       }
-      const work = task.work
       const changed = await changedRepos(work, this.store.project(task.projectId).baseBranch)
       const now = this.store.task(task.id)
-      if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id)) return
+      if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id) || this.ownerOf(session).status === 'done') return
       // Every changed repo has a PR: the task waits for the user to merge.
       if (prRollup(work, changed) === 'review') return
       const missing = work.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed'))

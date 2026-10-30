@@ -104,3 +104,39 @@ test('project windows and recent projects persist', () => {
   assert.deepEqual(again.projectWindows(), [{ projectId: 'a', bounds: b }])
   assert.deepEqual(again.recent(), ['a', 'b'])
 })
+
+test('T-28 migration: steps for todo and in-progress tasks, legacy tasks untouched, once', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, rank: 0, archivedAt: null, createdAt: 0, updatedAt: 0 }
+  const task = (id: string, status: string, patch = {}) => ({ ...base, id, key: id, title: `title ${id}`, status, ...patch })
+  const work = { repos: [{ repo: '/r', branch: 'b', worktree: '/w/r', prUrl: null, prState: null }], dir: '/w', feedbackSeenAt: 0 }
+  const tasks = [
+    task('T-1', 'todo'),
+    task('T-2', 'todo', { nextSubNo: 3 }),
+    task('T-2.1', 'done', { parentId: 'T-2' }),
+    task('T-2.2', 'todo', { parentId: 'T-2' }),
+    task('T-3', 'in_progress', { work }),
+    task('T-4', 'backlog'),
+    task('T-5', 'done'),
+    task('T-6', 'in_progress'),
+  ]
+  const sessions = [{ id: 's', projectId: 'p', taskId: 'T-3', role: 'developer', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [], createdAt: 0 }]
+  writeFileSync(file, JSON.stringify({ projects: [], tasks, sessions }))
+  const store = new Store(file)
+  const steps = (id: string) => store.data.tasks.filter((t) => t.parentId === id)
+
+  const [one] = steps('T-1')
+  assert.equal(steps('T-1').length, 1)
+  assert.deepEqual([one.key, one.title, one.status, one.work, one.startManually], ['T-1.1', 'title T-1', 'todo', null, false])
+  assert.deepEqual(steps('T-2').map((s) => [s.key, s.status, s.startManually]), [['T-2.1', 'done', false], ['T-2.2', 'todo', false]], 'checklist becomes steps')
+  assert.deepEqual(steps('T-6').map((s) => s.title), ['title T-6'])
+  assert.deepEqual([steps('T-3'), steps('T-4'), steps('T-5')], [[], [], []], 'legacy, backlog and done tasks get none')
+  assert.deepEqual(store.task('T-3').work, work)
+  assert.equal(store.session('s').stepId, null)
+
+  // Once: a todo task without steps later is not given one again.
+  store.deleteTask(one.id)
+  store.flush()
+  const again = new Store(file)
+  assert.equal(again.data.tasks.filter((t) => t.parentId === 'T-1').length, 0)
+})
