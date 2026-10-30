@@ -167,19 +167,19 @@ test('runningAgents: running sessions of any role and project', () => {
 
 test('agentState: working, waiting, or nothing', () => {
   const running = { ...session('t', 'developer', 'running'), runStartedAt: 42 }
-  assert.deepEqual(agentState(task('t', 'in_progress'), [session('t', 'groomer', 'idle'), running]), { kind: 'working', role: 'developer', since: 42 })
-  assert.deepEqual(agentState(task('t', 'grooming', 0, { needsInput: 'Which DB?' }), [session('t', 'groomer', 'idle')]), { kind: 'waiting', reason: 'Which DB?' })
+  assert.deepEqual(agentState(task('t', 'in_progress'), [session('t', 'groomer', 'idle'), running], []), { kind: 'working', role: 'developer', since: 42 })
+  assert.deepEqual(agentState(task('t', 'grooming', 0, { needsInput: 'Which DB?' }), [session('t', 'groomer', 'idle')], []), { kind: 'waiting', reason: 'Which DB?' })
   const pr = work({ prUrl: 'u', prState: 'open' })
-  assert.deepEqual(agentState(task('t', 'in_progress', 0, { work: pr }), [session('t', 'developer', 'idle')]), { kind: 'waiting', reason: 'PR waits for merge' })
-  assert.equal(agentState(task('t', 'in_progress', 0, { work: pr }), [running])?.kind, 'working', 'addressing PR feedback')
-  assert.equal(agentState(task('t', 'todo'), []), null)
-  assert.equal(agentState(task('t', 'done', 0, { work: work({ prUrl: 'u', prState: 'merged' }) }), []), null)
-  assert.equal(agentState(task('t', 'in_progress'), [session('x', 'developer', 'running')]), null, 'another task')
+  assert.deepEqual(agentState(task('t', 'in_progress', 0, { work: pr }), [session('t', 'developer', 'idle')], []), { kind: 'waiting', reason: 'PR waits for merge' })
+  assert.equal(agentState(task('t', 'in_progress', 0, { work: pr }), [running], [])?.kind, 'working', 'addressing PR feedback')
+  assert.equal(agentState(task('t', 'todo'), [], []), null)
+  assert.equal(agentState(task('t', 'done', 0, { work: work({ prUrl: 'u', prState: 'merged' }) }), [], []), null)
+  assert.equal(agentState(task('t', 'in_progress'), [session('x', 'developer', 'running')], []), null, 'another task')
 })
 
 test('agentState: a pending approval waits even while the agent runs', () => {
   const dev = { ...session('t', 'developer', 'running'), items: [{ kind: 'approval', id: 'a', tool: 'execute', server: 'Cloudflare', input: {}, status: 'pending', at: 0 } as const] }
-  assert.deepEqual(agentState(task('t', 'in_progress'), [dev]), { kind: 'waiting', reason: 'Approval: Cloudflare · execute' })
+  assert.deepEqual(agentState(task('t', 'in_progress'), [dev], []), { kind: 'waiting', reason: 'Approval: Cloudflare · execute' })
 })
 
 test('Tasks views: active sections, backlog and archive', () => {

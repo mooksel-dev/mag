@@ -9,7 +9,10 @@ export type TaskType = 'dev' | 'design' | 'spike' | 'research'
  */
 export type TaskStatus = 'backlog' | 'grooming' | 'todo' | 'in_progress' | 'done' | 'canceled'
 
-/** A plan step: a live view of the developer's progress. At most one per task is in_progress. */
+/**
+ * A step of a task: its own developer session, branch and PR (T-28). Steps run in order, one at a time; the status
+ * follows the step's lifecycle. Legacy tasks (see isLegacy) keep their subtasks as a checklist.
+ */
 export type SubtaskStatus = 'todo' | 'in_progress' | 'done'
 
 export const SUBTASK_STATUSES: SubtaskStatus[] = ['todo', 'in_progress', 'done']
@@ -158,9 +161,9 @@ export function findRepoWork(work: TaskWork, ref: string): RepoWork | undefined 
   return work.repos.find((w) => w.repo === r || w.worktree === r || repoWorkName(work, w) === r)
 }
 
-/** Repos of a task that have a PR recorded. */
-export function taskPrs(task: Pick<Task, 'work'>): RepoWork[] {
-  return task.work?.repos.filter((r) => r.prUrl) ?? []
+/** Repos of a task that have a PR recorded: its own (legacy) and, with `tasks`, those of its steps in order. */
+export function taskPrs(task: Pick<Task, 'id' | 'work'>, tasks: Task[] = []): RepoWork[] {
+  return [task, ...subtasksOf(task.id, tasks)].flatMap((t) => t.work?.repos.filter((r) => r.prUrl) ?? [])
 }
 
 /** The first PR check problem of a task, if any. */
@@ -182,9 +185,40 @@ export function prRollup(work: TaskWork, changed: string[]): 'done' | 'review' |
   return changed.every((c) => live.has(c)) ? 'review' : null
 }
 
-/** PRs of a task that are open: the "PR open" badge. */
-export function openPrs(task: Pick<Task, 'work'>): RepoWork[] {
-  return taskPrs(task).filter((r) => r.prState === 'open')
+/** PRs of a task that are open: the "PR open" badge. With `tasks`, its steps' PRs count too. */
+export function openPrs(task: Pick<Task, 'id' | 'work'>, tasks: Task[] = []): RepoWork[] {
+  return taskPrs(task, tasks).filter((r) => r.prState === 'open')
+}
+
+/** A task started before T-28: it has work of its own and finishes the old way, its subtasks a checklist. */
+export function isLegacy(task: Pick<Task, 'parentId' | 'work'>): boolean {
+  return !task.parentId && !!task.work
+}
+
+/** The step a task is on: its first step that is not done. null when every step is done or it has none. */
+export function currentStep(taskId: string, tasks: Task[]): Task | null {
+  return subtasksOf(taskId, tasks).find((s) => s.status !== 'done') ?? null
+}
+
+/** Whether a task can go to todo: it needs at least one step. */
+export function canMoveToTodo(task: Task, tasks: Task[]): { ok: boolean; reason?: string } {
+  if (task.parentId) return { ok: false, reason: 'A step has no status of its own' }
+  return subtasksOf(task.id, tasks).length ? { ok: true } : { ok: false, reason: 'Add at least one step' }
+}
+
+/** Branch of a step: T-41.3 → mag/t-41-3. */
+export function stepBranch(stepKey: string): string {
+  return `mag/${stepKey.toLowerCase().replace(/\./g, '-')}`
+}
+
+/** Directory of a step's worktrees: <worktrees>/<project>/T-41.3. */
+export function stepDir(worktreesDir: string, projectId: string, stepKey: string): string {
+  return [worktreesDir.replace(/[/\\]+$/, ''), projectId, stepKey].join('/')
+}
+
+/** prRollup of a step's work; null while it has none. */
+export function stepRollup(step: Pick<Task, 'work'>, changed: string[]): ReturnType<typeof prRollup> {
+  return step.work ? prRollup(step.work, changed) : null
 }
 
 export interface Task {
@@ -203,8 +237,10 @@ export interface Task {
   rank: number
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
-  /** Top-level tasks only; subtasks are plan steps without work of their own. */
+  /** Steps: their worktrees, branch and PRs. Top-level tasks: legacy only (started before T-28); new ones keep null. */
   work: TaskWork | null
+  /** Steps: the step waits for the user's Start instead of starting when the previous one is done (releases in parts). */
+  startManually?: boolean
   /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
   nextSubNo: number
   /** Set when a done or canceled task is archived; a flag, the status stays. */
@@ -331,6 +367,8 @@ export interface AgentSession {
   /** A title generation has run for this chat (whatever its outcome); it runs once. */
   titleGenerated?: boolean
   role: AgentRole
+  /** Developer sessions: the step they implement; null for groomers, chats and legacy developers. */
+  stepId?: string | null
   agent: AgentKind
   /** The agent's own session id, used to resume. */
   nativeSessionId: string | null
@@ -486,12 +524,18 @@ export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): bo
   return !!other && notStarted(task) && notStarted(other)
 }
 
-/** Whether a subtask can swap places with its neighbour. The checklist is a plan: any step can move. */
+/**
+ * Whether a subtask can swap places with its neighbour. A legacy checklist is a plan: any step can move. Steps that
+ * started (in progress or done) keep their place; only todo steps swap, with each other.
+ */
 export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
   if (!sub.parentId) return false
   const subs = subtasksOf(sub.parentId, tasks)
   const i = subs.findIndex((t) => t.id === sub.id)
-  return i >= 0 && !!subs[dir === 'up' ? i - 1 : i + 1]
+  const other = i < 0 ? undefined : subs[dir === 'up' ? i - 1 : i + 1]
+  if (!other) return false
+  const parent = tasks.find((t) => t.id === sub.parentId)
+  return (parent && isLegacy(parent)) || (sub.status === 'todo' && other.status === 'todo')
 }
 
 /** A top-level task that is not done or canceled yet can be canceled. */
@@ -577,7 +621,8 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
 export function taskChangeEvents(prev: Task, next: Task): NewEvent[] {
   const base = { projectId: next.projectId, taskId: next.id, taskKey: next.key }
   const events: NewEvent[] = []
-  // A subtask's status is plan progress, not activity.
+  // A step's status is plan progress, not activity; only a step merged is.
+  if (prev.status !== next.status && next.parentId && next.status === 'done' && taskPrs(next).length) events.push({ ...base, kind: 'status', text: 'merged' })
   if (prev.status !== next.status && !next.parentId) {
     const text =
       next.status === 'done' && taskPrs(next).length ? 'merged'
@@ -599,23 +644,38 @@ export type AgentState =
   | { kind: 'waiting'; reason: string }
   | null
 
+/** What the current step of a task in progress waits on the user for: its Start, or the merge of its PRs. */
+function stepWait(task: Task, tasks: Task[]): { kind: 'start' | 'merge'; step: Task; prs: RepoWork[] } | null {
+  if (task.parentId || task.status !== 'in_progress' || isLegacy(task)) return null
+  const step = currentStep(task.id, tasks)
+  if (!step) return null
+  if (step.status === 'todo' && step.startManually) return { kind: 'start', step, prs: [] }
+  const prs = openPrs(step)
+  return step.status === 'in_progress' && prs.length ? { kind: 'merge', step, prs } : null
+}
+
 /**
  * What the task's agent is doing. Waiting wins over working: a pending approval or a question blocks the agent. A
- * task in progress whose PRs are open and with no agent running waits for the user to merge.
+ * task in progress with no agent running waits for the user to merge its open PRs (the current step's, or a legacy
+ * task's own) or to Start a step that starts manually.
  */
-export function agentState(task: Task, sessions: AgentSession[]): AgentState {
+export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]): AgentState {
   const mine = sessions.filter((s) => s.taskId === task.id)
   const approval = mine.flatMap((s) => s.items).find((i) => i.kind === 'approval' && i.status === 'pending')
   if (approval?.kind === 'approval') return { kind: 'waiting', reason: `Approval: ${approval.server} · ${approval.tool}` }
   if (task.needsInput) return { kind: 'waiting', reason: task.needsInput }
   const running = mine.filter((s) => s.status === 'running').at(-1)
   if (running) return { kind: 'working', role: running.role, since: running.runStartedAt ?? running.createdAt }
+  const wait = stepWait(task, tasks)
+  if (wait?.kind === 'start') return { kind: 'waiting', reason: `${wait.step.key} waits for Start` }
+  if (wait) return { kind: 'waiting', reason: `${wait.step.key}: ${wait.prs.length > 1 ? `${wait.prs.length} PRs wait` : 'PR waits'} for merge` }
+  // A legacy task's own PRs; new tasks have none.
   const prs = openPrs(task)
   if (task.status === 'in_progress' && prs.length) return { kind: 'waiting', reason: prs.length > 1 ? `${prs.length} PRs wait for merge` : 'PR waits for merge' }
   return null
 }
 
-export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge'
+export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge' | 'ready_to_start'
 
 export interface InboxItem {
   /** null for an approval in a project chat. */
@@ -628,19 +688,24 @@ export interface InboxItem {
   approvalId?: string
 }
 
-const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'ready_to_merge']
+const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'ready_to_merge', 'ready_to_start']
 
-function inboxItem(task: Task, sessions: AgentSession[]): InboxItem | null {
-  if (task.archivedAt || task.status === 'canceled') return null
+/** One item for a top-level task; its steps' PRs and Start count for it. */
+function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
+  if (task.parentId || task.archivedAt || task.status === 'canceled') return null
   const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
   const base = { task, session: last }
   if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
-  const checkError = workCheckError(task.work)
+  const step = isLegacy(task) ? null : currentStep(task.id, tasks)
+  const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }
   if (task.needsInput) return { ...base, kind: 'question', text: task.needsInput }
-  const prs = openPrs(task)
-  if (task.status === 'in_progress' && prs.length && last?.status !== 'running')
-    return { ...base, kind: 'ready_to_merge', text: prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge' }
+  if (last?.status === 'running') return null
+  const wait = stepWait(task, tasks)
+  if (wait?.kind === 'start') return { ...base, kind: 'ready_to_start', text: `${wait.step.key} waits for Start` }
+  const prs = wait ? wait.prs : openPrs(task)
+  const ready = prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge'
+  if (task.status === 'in_progress' && prs.length) return { ...base, kind: 'ready_to_merge', text: wait ? `${wait.step.key}: ${ready}` : ready }
   return null
 }
 
@@ -664,7 +729,7 @@ function approvalItems(projectId: string, tasks: Task[], sessions: AgentSession[
 export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]): InboxItem[] {
   return [
     ...approvalItems(projectId, tasks, sessions),
-    ...tasks.map((t) => inboxItem(t, sessions)).filter((i): i is InboxItem => !!i),
+    ...tasks.map((t) => inboxItem(t, tasks, sessions)).filter((i): i is InboxItem => !!i),
   ].sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
 }
 
@@ -674,7 +739,7 @@ export type ProjectState = 'waiting' | 'in_review' | 'idle'
 export function projectState(projectId: string, tasks: Task[], sessions: AgentSession[]): ProjectState {
   const mine = tasks.filter((t) => t.projectId === projectId)
   if (inbox(projectId, mine, sessions).length) return 'waiting'
-  if (mine.some((t) => !t.parentId && t.status === 'in_progress' && openPrs(t).length)) return 'in_review'
+  if (mine.some((t) => !t.parentId && t.status === 'in_progress' && openPrs(t, mine).length)) return 'in_review'
   return 'idle'
 }
 
