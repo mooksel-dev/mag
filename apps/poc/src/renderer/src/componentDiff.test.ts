@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt, normalizeDiagram, type ComponentDiagram } from '@mag/core'
-import { changedModule, edgeCalls, moveEdges, movedOut, unchangedAt } from './componentDiff.ts'
+import { callGroups, changedModule, edgePill, moveEdges, movedOut, unchangedAt } from './componentDiff.ts'
 
 const diagram = normalizeDiagram({
   type: 'component',
@@ -37,22 +37,44 @@ test('a module with only a line moved out of it still changes', () => {
   assert.equal(changedModule(old, out), true)
 })
 
-test('a changed arrow names its changed calls, a del and add of one method as one change', () => {
+test('a changed arrow gets a count pill, a del and add of one method as one mod', () => {
   const e = edgesAt(diagram.modules, null).find((x) => x.from === 'ui')!
-  assert.deepEqual(edgeCalls(e), { calls: [{ name: 'get', mark: 'mod' }, { name: 'drop', mark: 'add' }], more: 0 })
+  assert.deepEqual(edgePill(e), { count: { add: 1, mod: 1, del: 0, move: 0 }, mark: 'mod' })
 })
 
-test('an unchanged arrow keeps its count', () => {
+test('an arrow with no changed call has no pill', () => {
   const e = edgesAt(diagram.modules, null).find((x) => x.from === 'svc')!
-  assert.equal(edgeCalls(e), null)
+  assert.equal(edgePill(e), null)
 })
 
-test('a changed arrow shows at most three names and the rest as more', () => {
-  const calls = ['a()', 'b()', 'c()', 'd()', 'e()']
-  const e = { from: 'x', to: 'y', calls, diff: 'add' as const, callDiff: Object.fromEntries(calls.map((c) => [c, 'add' as const])) }
-  const named = edgeCalls(e)!
-  assert.deepEqual(named.calls.map((c) => c.name), ['a', 'b', 'c'])
-  assert.equal(named.more, 2)
+test('an arrow to a removed module counts every call as removed', () => {
+  const d = normalizeDiagram({
+    type: 'component',
+    modules: [
+      { id: 'ui', name: 'UI', uses: [{ to: 'old', calls: ['a()', 'b()'] }] },
+      { id: 'old', name: 'Old', diff: 'del', uses: [] },
+    ],
+  }) as ComponentDiagram
+  assert.deepEqual(edgePill(edgesAt(d.modules, null)[0]), { count: { add: 0, mod: 0, del: 2, move: 0 }, mark: 'del' })
+})
+
+test('callGroups: full call lists by target and by caller, marks of a whole use passed on', () => {
+  const d = normalizeDiagram({
+    type: 'component',
+    modules: [
+      { id: 'ui', name: 'UI', uses: [{ to: 'svc', calls: ['list()', { text: 'drop(id)', diff: 'add' }] }] },
+      { id: 'jobs', name: 'Jobs', diff: 'add', uses: [{ to: 'svc', calls: ['list()'] }] },
+      { id: 'svc', name: 'Service', uses: [{ to: 'db', calls: ['find()'] }] },
+      { id: 'db', name: 'Db', uses: [] },
+    ],
+  }) as ComponentDiagram
+  const svc = d.modules.find((m) => m.id === 'svc')!
+  const g = callGroups(d.modules, svc)
+  assert.deepEqual(g.calls, [{ id: 'db', diff: undefined, calls: [{ text: 'find()', diff: undefined }] }])
+  assert.deepEqual(g.callers, [
+    { id: 'ui', diff: 'mod', calls: [{ text: 'list()', diff: undefined }, { text: 'drop(id)', diff: 'add' }] },
+    { id: 'jobs', diff: 'add', calls: [{ text: 'list()', diff: 'add' }] },
+  ])
 })
 
 test('move arrows link the modules that stand for both ends on a level', () => {

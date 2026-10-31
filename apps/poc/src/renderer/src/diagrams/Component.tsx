@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { boxLines, callersOf, componentSummary, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
-import { edgeCalls, moveEdges, unchangedAt } from '../componentDiff'
+import { callGroups, edgePill, moveEdges, unchangedAt, type CallGroup } from '../componentDiff'
 import { DiffLegend } from './DiffLegend'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
@@ -60,10 +60,13 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
   const at = (id: string | undefined) => (id ? pathTo(modules, id) : [])
   const [level, setLevel] = useState<string | null>(() => at(focus).at(-2)?.id ?? null)
   const [selected, setSelected] = useState<string | null>(() => (at(focus).length ? focus! : null))
+  // A hovered module of a diff shows in the side panel until the pointer leaves it; a click fixes the selection.
+  const [hover, setHover] = useState<string | null>(null)
   const crumbs = level ? pathTo(modules, level) : []
   // The tree may change under us (a new architect run): fall back to the top when the level is gone.
   const parentId = level && crumbs.length ? level : null
   const sel = selected ? findNode(modules, selected) : undefined
+  const shown = (diff && hover ? findNode(modules, hover) : undefined) ?? sel
 
   useEffect(() => {
     if (!sel) return
@@ -75,6 +78,7 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
   const go = (id: string | null) => {
     setLevel(id)
     setSelected(null)
+    setHover(null)
   }
   /** Shows a module on its own level and selects it. */
   const reveal = (id: string) => {
@@ -99,7 +103,11 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
         ))}
       </nav>
       <div className="archlegend muted small">
-        <span>Click a module with ▸ to go inside. Hover or select a box to see its links; hover an arrow label for the calls.</span>
+        <span>
+          {diff
+            ? 'Click a module with ▸ to go inside. Hover or click a box to see its calls; Esc clears.'
+            : 'Click a module with ▸ to go inside. Hover or select a box to see its links; hover an arrow label for the calls.'}
+        </span>
         {diff ? (
           <DiffLegend move />
         ) : (
@@ -110,28 +118,43 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
         )}
       </div>
       <div className="archbody">
-        <Level key={parentId ?? ''} all={modules} diff={diff} parentId={parentId} selected={selected} onSelect={setSelected} onOpen={go} onReveal={reveal} />
-        {sel && (
+        <Level key={parentId ?? ''} all={modules} diff={diff} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} />
+        {diff ? (
+          // A diff keeps the panel in place, so hovering a box does not reflow the diagram under the pointer.
           <aside className="archside">
-            <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
-            <NodeDetails all={modules} diff={diff} node={sel} onReveal={reveal} onOpen={go} />
+            {shown ? (
+              <>
+                {shown === sel && <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>}
+                <DiffDetails all={modules} node={shown} onReveal={reveal} onOpen={go} />
+              </>
+            ) : (
+              <p className="muted small">Hover or click a module to see what it calls and who calls it.</p>
+            )}
           </aside>
+        ) : (
+          sel && (
+            <aside className="archside">
+              <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
+              <NodeDetails all={modules} node={sel} onReveal={reveal} onOpen={go} />
+            </aside>
+          )
         )}
       </div>
     </>
   )
 }
 
-function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
+function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal }: {
   all: DNode[]
   diff: boolean
   parentId: string | null
   selected: string | null
+  hover: string | null
+  onHover: Dispatch<SetStateAction<string | null>>
   onSelect: (id: string) => void
   onOpen: (id: string) => void
   onReveal: (id: string) => void
 }) {
-  const [hover, setHover] = useState<string | null>(null)
   const [boxes, setBoxes] = useState<Map<string, Box>>(new Map())
   // Unchanged modules of a diff the user unfolded back into their lanes.
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set())
@@ -181,7 +204,7 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
     return () => ro.disconnect()
   }, [nodes, ports, folded, unfolded])
 
-  const focus = hover ?? (selected && boxes.has(selected) ? selected : null)
+  const focus = (hover && boxes.has(hover) ? hover : null) ?? (selected && boxes.has(selected) ? selected : null)
   const near = (id: string) =>
     !focus || id === focus || [...edges, ...moved].some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id))
 
@@ -249,7 +272,7 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
                 >
                   <span className="name">{n.name}</span>
                   {n.kind && <span className="kind">{n.kind}</span>}
-                  <span className="desc">{n.description}</span>
+                  {!diff && <span className="desc">{n.description}</span>}
                   {changed && changed.shown.length > 0 && (
                     <span className="lines">
                       {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} />)}
@@ -309,31 +332,26 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
       </svg>
       <div className="archbadges">
         {routes.filter((r) => r.moved).map((r) => (
-          <span key={`move:${r.from}>${r.to}`} className="archbadge names d-move" style={{ left: r.mid.x, top: r.mid.y }}>
-            {r.moved!.slice(0, 3).map((name) => <span key={name} className="d-move">↷ {name}</span>)}
-            {r.moved!.length > 3 && <span className="muted">+{r.moved!.length - 3}</span>}
-            <span className="calls">
-              <span className="muted">moved {findNode(all, r.from)?.name} → {findNode(all, r.to)?.name}</span>
-              {r.moved!.map((name) => <code key={name} className="diff-move">{name}</code>)}
-            </span>
+          <span key={`move:${r.from}>${r.to}`} className="archbadge pill d-move" style={{ left: r.mid.x, top: r.mid.y }} title={`moved ${findNode(all, r.from)?.name} → ${findNode(all, r.to)?.name}\n${r.moved!.join('\n')}`}>
+            ↷{r.moved!.length}
           </span>
         ))}
         {routes.filter((r) => r.calls.length).map((r) => {
-          // A changed arrow names its changed calls; an unchanged one keeps the count.
-          const named = diff ? edgeCalls(r) : null
+          // A diff arrow carries only the count of its changed calls, colored by the main change; the calls are in the side panel.
+          if (diff) {
+            const pill = edgePill(r)
+            return pill && (
+              <span key={r.from + '>' + r.to} className={`archbadge pill d-${pill.mark}`} style={{ left: r.mid.x, top: r.mid.y }}>
+                {formatDiffCount(pill.count)}
+              </span>
+            )
+          }
           return (
-            <span key={r.from + '>' + r.to} className={`archbadge ${r.sev}${named ? ' names' : ''}`} style={{ left: r.mid.x, top: r.mid.y }}>
-              {named ? (
-                <>
-                  {named.calls.map((c) => <span key={c.name} className={`d-${c.mark}${c.mark === 'del' ? ' struck' : ''}`}>{SIGNS[c.mark]} {c.name}</span>)}
-                  {named.more > 0 && <span className="muted">+{named.more}</span>}
-                </>
-              ) : (
-                r.calls.length
-              )}
+            <span key={r.from + '>' + r.to} className={`archbadge ${r.sev}`} style={{ left: r.mid.x, top: r.mid.y }}>
+              {r.calls.length}
               <span className="calls">
                 <span className="muted">{findNode(all, r.from)?.name} → {findNode(all, r.to)?.name}</span>
-                {r.calls.map((c) => <code key={c} className={diffCls(diff && !!r.callDiff?.[c], r.callDiff?.[c])}>{c}</code>)}
+                {r.calls.map((c) => <code key={c}>{c}</code>)}
               </span>
             </span>
           )
@@ -343,15 +361,14 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
   )
 }
 
-function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff: boolean; node: DNode; onReveal: (id: string) => void; onOpen: (id: string) => void }) {
+/** The side panel of the architecture view (no diff): interface, calls, callers and layering. */
+function NodeDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNode; onReveal: (id: string) => void; onOpen: (id: string) => void }) {
   const path = pathTo(all, node.id).slice(0, -1)
   const callers = callersOf(all, node.id)
   const lines = node.interface ?? []
   const names = new Set(lines.map((l) => methodName(l.text)))
-  const mark = diff ? nodeDiff(node) : undefined
   // With an interface: callers of a method not in it or with no calls recorded; without one: every caller.
   const others = lines.length ? callers.filter((c) => !c.calls.length || c.calls.some((x) => !names.has(methodName(x)))) : callers
-  const movedOut = diff ? moves({ type: 'component', modules: all }).filter((m) => m.from === node.id) : []
   const issues = node.uses.map((u) => ({ to: u.to, r: ruleOf(all, node, u.to) })).filter((x) => x.r)
   const link = (id: string, title?: string) => {
     const n = findNode(all, id)
@@ -362,10 +379,7 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
   return (
     <div className="moddetails">
       {meta.length > 0 && <div className="muted small">{meta.join(' · ')}</div>}
-      <h2>
-        {node.name}
-        {mark && <span className={`diffpill${diffCls(true, mark)}`}>{DIFF_NAMES[mark]}</span>}
-      </h2>
+      <h2>{node.name}</h2>
       <p>{node.description}</p>
       {node.concern && <div className="violation error">{node.concern}</div>}
       {!!node.children?.length && (
@@ -378,16 +392,16 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
       {node.uses.length ? (
         <ul className="archcalls">
           {node.uses.map((u) => (
-            <li key={u.to} className={diffCls(diff && !!u.diff, u.diff)}>
+            <li key={u.to}>
               {link(u.to)}
-              {u.calls.map((c, i) => <code key={i} className={diffCls(diff && !!c.diff, c.diff)}>{c.text}</code>)}
+              {u.calls.map((c, i) => <code key={i}>{c.text}</code>)}
             </li>
           ))}
         </ul>
       ) : (
         <span className="muted small">nothing</span>
       )}
-      {(lines.length > 0 || movedOut.length > 0) && (
+      {lines.length > 0 && (
         <>
           <div className="label">Interface · who calls</div>
           <ul className="archcalls">
@@ -395,18 +409,11 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
               const by = callers.filter((c) => c.calls.some((x) => methodName(x) === methodName(line.text)))
               return (
                 <li key={i}>
-                  <code className={diffCls(diff && !!line.diff, line.diff)}>{line.text}</code>
-                  {diff && line.diff === 'move' && line.from && <span className="muted small">moved from {link(line.from)}</span>}
+                  <code>{line.text}</code>
                   {by.length > 0 && <span className="chips">{by.map((c) => link(c.node.id))}</span>}
                 </li>
               )
             })}
-            {movedOut.map((m, i) => (
-              <li key={`out${i}`}>
-                <code className="diff-move out">{m.line.text}</code>
-                <span className="muted small">moved to {link(m.to)}</span>
-              </li>
-            ))}
           </ul>
         </>
       )}
@@ -426,6 +433,74 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
           ))}
         </>
       )}
+    </div>
+  )
+}
+
+/**
+ * The side panel of a diff: the module, its whole interface diff, then every call it makes by target ("Викликає →")
+ * and every call made to it by caller ("← Хто викликає"), one per line with its mark.
+ */
+function DiffDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNode; onReveal: (id: string) => void; onOpen: (id: string) => void }) {
+  const path = pathTo(all, node.id).slice(0, -1)
+  const mark = nodeDiff(node)
+  const lines = node.interface ?? []
+  const movedOut = moves({ type: 'component', modules: all }).filter((m) => m.from === node.id)
+  const { calls, callers } = callGroups(all, node)
+  const link = (id: string) => {
+    const n = findNode(all, id)
+    return n ? <button className="link" onClick={() => onReveal(id)}>{n.name}</button> : <span>{id}</span>
+  }
+  const meta = [path.map((a) => a.name).join(' › '), node.kind, LANES.find((l) => l.layer === node.layer)?.label, node.path].filter(Boolean)
+  const groups = (list: CallGroup[], arrow: 'in' | 'out') =>
+    list.length ? (
+      list.map((g) => (
+        <div key={g.id} className={`callgroup${diffCls(true, g.diff)}`}>
+          <div className="callhead">{arrow === 'out' ? <>→ {link(g.id)}</> : <>← {link(g.id)}</>}</div>
+          {g.calls.length ? g.calls.map((c, i) => <CallLine key={i} text={c.text} mark={c.diff} />) : <span className="muted small">no calls recorded</span>}
+        </div>
+      ))
+    ) : (
+      <span className="muted small">nobody</span>
+    )
+
+  return (
+    <div className="moddetails">
+      {meta.length > 0 && <div className="muted small">{meta.join(' · ')}</div>}
+      <h2>
+        {node.name}
+        {mark && <span className={`diffpill${diffCls(true, mark)}`}>{DIFF_NAMES[mark]}</span>}
+      </h2>
+      <p>{node.description}</p>
+      {node.concern && <div className="violation error">{node.concern}</div>}
+      {!!node.children?.length && (
+        <>
+          <div className="label">Inside <button className="link" onClick={() => onOpen(node.id)}>open ▸</button></div>
+          <div className="chips">{node.children.map((c) => <Fragment key={c.id}>{link(c.id)}</Fragment>)}</div>
+        </>
+      )}
+      {(lines.some((l) => l.diff) || movedOut.length > 0) && (
+        <>
+          <div className="label">Інтерфейс</div>
+          {lines.filter((l) => l.diff).map((l, i) => <CallLine key={i} text={l.text} mark={l.diff} note={l.diff === 'move' && l.from ? <>← {link(l.from)}</> : undefined} />)}
+          {movedOut.map((m, i) => <CallLine key={`out${i}`} text={m.line.text} mark="move" note={<>→ {link(m.to)}</>} />)}
+        </>
+      )}
+      <div className="label">Викликає → Ціль</div>
+      {node.uses.length ? groups(calls, 'out') : <span className="muted small">nothing</span>}
+      <div className="label">← Хто викликає</div>
+      {groups(callers, 'in')}
+    </div>
+  )
+}
+
+/** One interface line or call of the side panel: its sign (none when unchanged) and full text. */
+function CallLine({ text, mark, note }: { text: string; mark?: LineMark; note?: ReactNode }) {
+  return (
+    <div className={`bline d-${mark ?? 'none'}${mark === 'del' ? ' struck' : ''}`} title={mark ? `${mark === 'move' ? 'moved' : DIFF_NAMES[mark]}: ${text}` : text}>
+      <b>{mark ? SIGNS[mark] : ''}</b>
+      <code>{text}</code>
+      {note && <span className="muted small"> {note}</span>}
     </div>
   )
 }

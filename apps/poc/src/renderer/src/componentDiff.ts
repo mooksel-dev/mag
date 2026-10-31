@@ -1,9 +1,6 @@
-// What a Component diff shows on the diagram itself (T-43): which modules fold into the "Без змін" row, the call
-// names on changed arrows and the move arrows of one level.
-import { methodName, moves, nodeDiff, pathTo, type ArchEdge, type ComponentDiagram, type DiffMark, type DNode } from '@mag/core'
-
-/** How many call names a changed arrow shows; the rest is "+N". */
-export const EDGE_CALLS = 3
+// What a Component diff shows on the diagram itself (T-43, T-48): which modules fold into the "Без змін" row, the call
+// count pills on changed arrows, the calls of the side panel and the move arrows of one level.
+import { callsCount, dominantDiff, methodName, moves, nodeDiff, pathTo, useDiff, walkArch, type ArchEdge, type ComponentDiagram, type DiffCount, type DiffMark, type DNode, type DUse, type Line } from '@mag/core'
 
 /** Ids of the modules something moved out of. */
 export function movedOut(d: ComponentDiagram): Set<string> {
@@ -20,22 +17,39 @@ export function changedModule(n: DNode, out: Set<string>): boolean {
 }
 
 /**
- * The changed calls of an arrow, for its label instead of the count: one name per method, a del and an add of the
- * same method as one mod. null for an unchanged arrow or one with no changed call of its own (it keeps the count).
+ * The count pill of an arrow: its changed calls by mark (callsCount over the calls of every use folded into it) and
+ * the mark it is colored by. null when no call on it changes.
  */
-export function edgeCalls(e: ArchEdge): { calls: { name: string; mark: DiffMark }[]; more: number } | null {
-  if (!e.diff || !e.callDiff) return null
-  const marks = new Map<string, DiffMark>()
-  for (const c of e.calls) {
-    const m = e.callDiff[c]
-    if (!m) continue
-    const name = methodName(c)
-    const was = marks.get(name)
-    marks.set(name, was && was !== m ? 'mod' : m)
-  }
-  if (!marks.size) return null
-  const calls = [...marks].map(([name, mark]) => ({ name, mark }))
-  return { calls: calls.slice(0, EDGE_CALLS), more: Math.max(0, calls.length - EDGE_CALLS) }
+export function edgePill(e: ArchEdge): { count: DiffCount; mark: DiffMark } | null {
+  const count = callsCount({ to: e.to, calls: e.calls.map((text) => ({ text, diff: e.callDiff?.[text] })) })
+  const mark = dominantDiff(count)
+  return mark ? { count, mark } : null
+}
+
+/** One end of a selected module's links in the side panel: the module at the other end and every call, marked. */
+export interface CallGroup {
+  id: string
+  diff?: DiffMark
+  calls: Line[]
+}
+
+const whole = (m?: DiffMark) => (m === 'add' || m === 'del' ? m : undefined)
+
+/** A use as a group of calls; an unmarked call takes the mark of an added or removed use (see useDiff). */
+function group(all: Map<string, DNode>, from: DNode, u: DUse, id: string): CallGroup {
+  const m = useDiff(from, u, all.get(u.to))
+  return { id, diff: m, calls: u.calls.map((c) => ({ text: c.text, diff: c.diff ?? whole(m) })) }
+}
+
+/** What a module calls, by target, and who calls it, by caller: the full lists for the side panel of a diff. */
+export function callGroups(modules: DNode[], node: DNode): { calls: CallGroup[]; callers: CallGroup[] } {
+  const byId = new Map<string, DNode>()
+  walkArch(modules, (n) => byId.set(n.id, n))
+  const callers: CallGroup[] = []
+  walkArch(modules, (n) => {
+    for (const u of n.uses) if (u.to === node.id) callers.push(group(byId, n, u, n.id))
+  })
+  return { calls: node.uses.map((u) => group(byId, node, u, u.to)), callers }
 }
 
 /** A move arrow on one level: the modules that stand for both ends and the names of what moved. */

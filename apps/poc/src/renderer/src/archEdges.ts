@@ -21,6 +21,9 @@ const PAD = 4
 /** How far an arrow keeps from the boxes beside a gap it goes through, when the gap is wide enough. */
 const GAP = 8
 
+/** The size of a count pill ("+2 ~1 −1") on an arrow. */
+const PILL = { w: 64, h: 20 }
+
 const inflate = (b: Box): Box => ({ x: b.x - PAD, y: b.y - PAD, w: b.w + 2 * PAD, h: b.h + 2 * PAD })
 
 /** Whether the segment p–q crosses the inside of box b (Liang–Barsky clipping). */
@@ -57,10 +60,10 @@ const sample = (p0: Pt, c1: Pt, c2: Pt, p3: Pt, n = 24) => Array.from({ length: 
 
 const crosses = (pts: Pt[], obstacles: Box[]) => pts.some((p, i) => i > 0 && obstacles.some((b) => segHits(pts[i - 1], p, b)))
 
-/** The point halfway along a polyline. */
-function halfway(pts: Pt[]): Pt {
+/** The point at fraction f of the length of a polyline. */
+function along(pts: Pt[], f: number): Pt {
   const len = (i: number) => Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
-  let rest = pts.reduce((s, _, i) => (i ? s + len(i) : 0), 0) / 2
+  let rest = pts.reduce((s, _, i) => (i ? s + len(i) : 0), 0) * f
   for (let i = 1; i < pts.length; i++) {
     const l = len(i)
     if (l >= rest && l > 0) {
@@ -132,7 +135,7 @@ function smooth(pts: Pt[]) {
     d += ` C ${r(c1.x)} ${r(c1.y)}, ${r(c2.x)} ${r(c2.y)}, ${r(q.x)} ${r(q.y)}`
     line.push(...sample(p, c1, c2, q, 12).slice(1))
   }
-  return { d, mid: halfway(line) }
+  return { d, mid: along(line, 0.5), line }
 }
 
 /**
@@ -158,7 +161,7 @@ function under(s: Pt, t: Pt, side: Side, obstacles: Box[]) {
   const d =
     `M ${r(s.x)} ${r(s.y)} L ${r(s.x)} ${r(ch - dir * k)} Q ${r(s.x)} ${r(ch)}, ${r(s.x + hx)} ${r(ch)}` +
     ` L ${r(t.x - hx)} ${r(ch)} Q ${r(t.x)} ${r(ch)}, ${r(t.x)} ${r(ch - dir * k)} L ${r(t.x)} ${r(t.y)}`
-  return { d, mid: { x: r((s.x + t.x) / 2), y: r(ch) } }
+  return { d, mid: { x: r((s.x + t.x) / 2), y: r(ch) }, line: [s, { x: s.x, y: ch }, { x: t.x, y: ch }, t] }
 }
 
 /** Neighbours on one row: their boxes overlap vertically and no other box of that row stands between them. */
@@ -182,9 +185,9 @@ function neighbours(a: Box, b: Box, boxes: Map<string, Box>) {
  * never meet in one point. An arrow never crosses a box other than its two ends: when the plain curve would, it
  * goes through the gaps beside the boxes in the way, or below (above) them for a bottom-to-bottom (top-to-top)
  * arrow. Several arrows between the same neighbours are drawn on parallel lines. `mid` is the middle of the arrow,
- * for a label.
+ * for a label of size `pill`: moved along the arrow off boxes and the labels of other arrows when there is room.
  */
-export function routeEdges<E extends Edge>(edges: E[], boxes: Map<string, Box>): (E & { d: string; mid: { x: number; y: number } })[] {
+export function routeEdges<E extends Edge>(edges: E[], boxes: Map<string, Box>, pill = PILL): (E & { d: string; mid: { x: number; y: number } })[] {
   const ends: { edge: E; a: Box; b: Box; out: Side; in: Side; sx: number; tx: number }[] = []
   const sides: { edge: E; a: Box; b: Box }[] = []
   for (const edge of edges) {
@@ -230,7 +233,8 @@ export function routeEdges<E extends Edge>(edges: E[], boxes: Map<string, Box>):
     if (!crosses(sample(s, { x: e.sx, y: c1 }, { x: e.tx, y: c2 }, t), obstacles)) {
       // A cubic Bézier at t = 0.5.
       const mid = { x: r((e.sx + 3 * e.sx + 3 * e.tx + e.tx) / 8), y: r((sy + 3 * c1 + 3 * c2 + ty) / 8) }
-      return { ...e.edge, d: `M ${r(e.sx)} ${r(sy)} C ${r(e.sx)} ${r(c1)}, ${r(e.tx)} ${r(c2)}, ${r(e.tx)} ${r(ty)}`, mid }
+      const line = sample(s, { x: e.sx, y: c1 }, { x: e.tx, y: c2 }, t)
+      return { ...e.edge, d: `M ${r(e.sx)} ${r(sy)} C ${r(e.sx)} ${r(c1)}, ${r(e.tx)} ${r(c2)}, ${r(e.tx)} ${r(ty)}`, mid, line }
     }
     if (e.out === e.in) return { ...e.edge, ...under(s, t, e.out, obstacles) }
     // The curve hits a box: go through the gaps beside the boxes in the way.
@@ -252,8 +256,28 @@ export function routeEdges<E extends Edge>(edges: E[], boxes: Map<string, Box>):
     const pair = pairs.get([edge.from, edge.to].sort().join('\n'))!
     const shift = (pair.indexOf(edge) - (pair.length - 1) / 2) * 12
     const y = (Math.max(a.y, b.y) + Math.min(a.y + a.h, b.y + b.h)) / 2 + shift
-    return { ...edge, d: `M ${r(sx)} ${r(y)} L ${r(tx)} ${r(y)}`, mid: { x: r((sx + tx) / 2), y: r(y) } }
+    return { ...edge, d: `M ${r(sx)} ${r(y)} L ${r(tx)} ${r(y)}`, mid: { x: r((sx + tx) / 2), y: r(y) }, line: [{ x: sx, y }, { x: tx, y }] }
   })
 
-  return [...routed, ...straight]
+  return place([...routed, ...straight], [...boxes.values()], pill)
+}
+
+/** Where along an arrow its label may go when the middle is taken, nearest to the middle first. */
+const SPOTS = [0.4, 0.6, 0.3, 0.7, 0.2, 0.8]
+
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+/**
+ * Moves the label of each arrow (`mid`) along its path off the boxes and off the labels placed before it: the middle
+ * when it is free, else the free spot nearest to it. An arrow with no free spot keeps its middle.
+ */
+function place<R extends { mid: Pt; line: Pt[] }>(routes: R[], boxes: Box[], pill: { w: number; h: number }) {
+  const taken: Box[] = []
+  const rect = (p: Pt): Box => ({ x: p.x - pill.w / 2, y: p.y - pill.h / 2, w: pill.w, h: pill.h })
+  return routes.map((route) => {
+    const spots = [route.mid, ...SPOTS.map((f) => along(route.line, f))]
+    const mid = spots.find((p) => !boxes.some((b) => overlaps(rect(p), b)) && !taken.some((b) => overlaps(rect(p), b))) ?? route.mid
+    taken.push(rect(mid))
+    return { ...route, mid }
+  })
 }
