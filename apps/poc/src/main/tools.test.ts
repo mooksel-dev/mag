@@ -19,7 +19,6 @@ const setup = () => {
       calls.push(`complete ${store.task(id).key}`)
       store.updateTask(id, { status: 'done' })
     },
-    regroomed: async (id) => void calls.push(`regroomed ${store.task(id).key}`),
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
@@ -35,12 +34,11 @@ const work = (prUrl: string | null = null): TaskWork => ({
   feedbackSeenAt: 0,
 })
 
-test('mark_groomed needs at least one step', async () => {
+test('the groomer cannot move a task to todo: mark_groomed is gone', async () => {
   const { store, task, call } = setup()
-  await assert.rejects(call('mark_groomed'), /Add at least one step with create_subtask/)
   await call('create_subtask', { title: 'Core', note: 'models', start_manually: true })
-  assert.equal(await call('mark_groomed'), 'Task groomed: it is in todo, ready for the user to start.')
-  assert.equal(store.task(task.id).status, 'todo')
+  await assert.rejects(call('mark_groomed'), /Unknown tool mark_groomed/)
+  assert.equal(store.task(task.id).status, 'grooming')
   const [step] = store.data.tasks.filter((t) => t.parentId === task.id)
   assert.deepEqual([step.key, step.description, step.startManually, step.work], ['T-1.1', 'models', true, null])
 })
@@ -73,28 +71,20 @@ test('create_task ticket_url and link_ticket: one ticket, one task', async () =>
   await assert.rejects(tools(ctx, 'link_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; link its task T-2 instead/)
 })
 
-test('remaining mode: done steps locked, the current one renamed only, todo ones free', async () => {
-  const { store, task, call, calls } = setup()
-  for (const title of ['a', 'b', 'c', 'd']) await call('create_subtask', { title })
-  const [a, b, c, d] = store.data.tasks.filter((t) => t.parentId === task.id)
-  store.updateTask(a.id, { status: 'done' })
-  store.updateTask(b.id, { status: 'in_progress', work: work() })
+test('steps change only while grooming: never in a task in progress', async () => {
+  const { store, task, call } = setup()
+  for (const title of ['a', 'b']) await call('create_subtask', { title })
+  const [a, b] = store.data.tasks.filter((t) => t.parentId === task.id)
+  store.updateTask(a.id, { status: 'in_progress', work: work() })
   store.updateTask(task.id, { status: 'in_progress' })
 
-  await assert.rejects(call('update_subtask', { key: a.key, title: 'x' }), /done steps are locked/)
-  await call('update_subtask', { key: b.key, title: 'b2' })
-  assert.equal(store.task(b.id).title, 'b2')
-  await assert.rejects(call('delete_subtask', { key: b.key }), /current step/)
-  await assert.rejects(call('reorder_subtasks', { keys: [b.key, a.key, c.key, d.key] }), /keep their places/)
-  await call('reorder_subtasks', { keys: [a.key, b.key, d.key, c.key] })
-  await call('delete_subtask', { key: c.key })
-  await call('create_subtask', { title: 'e' })
-
-  const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: b.id, role: 'developer', agent: 'claude-code', status: 'running' })
-  await assert.rejects(call('create_subtask', { title: 'f' }, dev.id), /Only the groomer/)
-
-  assert.match(await call('mark_groomed'), /continues with T-1.2/)
-  assert.deepEqual(calls, ['regroomed T-1'])
+  await assert.rejects(call('create_subtask', { title: 'c' }), /in_progress; its steps change only while grooming/)
+  await assert.rejects(call('update_subtask', { key: b.key, title: 'x' }), /only while grooming/)
+  await assert.rejects(call('delete_subtask', { key: b.key }), /only while grooming/)
+  await assert.rejects(call('reorder_subtasks', { keys: [b.key, a.key] }), /only while grooming/)
+  const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  await assert.rejects(call('create_subtask', { title: 'c' }, dev.id), /only while grooming/)
+  assert.equal(store.data.tasks.filter((t) => t.parentId === task.id).length, 2)
 })
 
 test('step status follows the lifecycle: set_subtask_status is legacy only, complete_step closes a step without code', async () => {

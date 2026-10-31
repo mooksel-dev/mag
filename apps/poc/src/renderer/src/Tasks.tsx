@@ -125,10 +125,12 @@ export function TicketLink({ task }: { task: Task }) {
 export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
   const can = canMoveToTodo(task, tasks)
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
-  const why = !can.ok ? can.reason : busy ? 'An agent is running on this task' : 'Ready to start: move to todo'
+  // On a groomed plan the click is the user's approval of it.
+  const approve = task.status === 'grooming' && subtasksOf(task.id, tasks).length > 0
+  const why = !can.ok ? can.reason : busy ? 'An agent is running on this task' : approve ? 'Approve the plan: move to todo' : 'Ready to start: move to todo'
   return (
     <button className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onClick={(e) => { e.stopPropagation(); void mag.moveToTodo(task.id) }}>
-      Move to todo
+      {approve ? 'Approve → todo' : 'Move to todo'}
     </button>
   )
 }

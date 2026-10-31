@@ -248,7 +248,6 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   const manualNext = task.status === 'in_progress' && step?.status === 'todo' && !!step.startManually
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
-  const canRegroomRemaining = !anyRunning && !legacy && task.status === 'in_progress'
   // An import that ended without a brief (T-10); the inbox shows it as Import failed.
   const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
   const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
@@ -309,12 +308,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
               <SubtaskRow sub={children[0]} steps canMove={() => false} onMove={() => {}} />
             </div>
           )}
-          {task.needsInput && (
-            <div className="banner">
-              Agent needs you: {task.needsInput}
-              {canRegroomRemaining && <button className="small" onClick={() => mag.regroomRemaining(task.id)}>Re-groom remaining</button>}
-            </div>
-          )}
+          {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
           {importFailed && (
             <div className="banner">
               Import of {task.tracker!.key} failed: the tracker agent wrote no brief. See its session in the chat panel.

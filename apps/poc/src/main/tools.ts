@@ -22,8 +22,6 @@ export interface ToolActions {
   cancel(taskId: string, reason: string | null): Promise<void>
   /** Marks a step done and removes its worktrees; the task is done once every step is. */
   completeStep(stepId: string): Promise<void>
-  /** The remaining steps of a task in progress were re-groomed: it goes on, resuming its current step's developer. */
-  regroomed(taskId: string): Promise<void>
 }
 
 /**
@@ -73,30 +71,21 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
     const task = store.task(ctx.taskId)
     const project = store.project(task.projectId)
     const doc = (id: string) => store.data.docs[id] ?? '(empty)'
-    const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
     const steps = () => subtasksOf(task.id, store.data.tasks)
     const subtask = (key: unknown) => {
       const sub = store.data.tasks.find((t) => t.parentId === task.id && t.key.toLowerCase() === String(key).toLowerCase())
       if (!sub) throw new Error(`${key} is not a subtask of ${task.key}`)
       return sub
     }
-    /** Remaining mode: a task in progress is re-groomed; its done steps are locked, the current one is only renamed. */
-    const remaining = task.status === 'in_progress' && !isLegacy(task)
-    /** Grooming, or re-grooming the remaining steps; throws otherwise. */
+    /** Steps change only while grooming; throws otherwise. */
     const canEditSteps = () => {
       if (task.parentId) throw new Error('Subtasks cannot have subtasks')
-      if (task.status === 'backlog' || task.status === 'grooming') return
-      if (!remaining) throw new Error(`${task.key} is ${task.status}; its steps change only while grooming`)
-      if (session && session.role !== 'groomer') throw new Error('Only the groomer changes the steps; if the plan no longer fits, set_needs_input')
+      if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; its steps change only while grooming`)
     }
-    /** A step grooming may still change: in remaining mode not a done one, and the current one only by edit. */
-    const ownSubtask = (key: unknown, op: 'edit' | 'delete' = 'edit') => {
+    /** A step of the task, while grooming. */
+    const ownSubtask = (key: unknown) => {
       canEditSteps()
-      const sub = subtask(key)
-      if (!remaining) return sub
-      if (sub.status === 'done') throw new Error(`${sub.key} is done; done steps are locked`)
-      if (op === 'delete' && sub.status === 'in_progress') throw new Error(`${sub.key} is the current step: it can be renamed, not deleted or moved`)
-      return sub
+      return subtask(key)
     }
     const note = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '')
 
@@ -155,21 +144,6 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         return reason ? 'The user will be notified.' : 'Cleared.'
       }
 
-      case 'mark_groomed': {
-        if (task.parentId) throw new Error('Subtasks are not groomed separately; groom the parent task')
-        if (task.needsInput) throw new Error('needs_input is still set; clear it first')
-        if (task.status !== 'grooming' && !remaining) throw new Error(`${task.key} is ${task.status}, not grooming`)
-        if (!steps().length) throw new Error('Add at least one step with create_subtask')
-        if (task.status === 'grooming') {
-          store.updateTask(task.id, { status: 'todo', rank: nextPlanRank(store.data.tasks.filter((t) => t.projectId === project.id)) })
-          return 'Task groomed: it is in todo, ready for the user to start.'
-        }
-        canEditSteps()
-        await actions.regroomed(task.id)
-        const step = currentStep(task.id, store.data.tasks)
-        return step ? `Remaining steps groomed: the task continues with ${step.key}.` : 'Remaining steps groomed.'
-      }
-
       case 'create_subtask': {
         canEditSteps()
         const title = String(args.title ?? '').trim()
@@ -201,7 +175,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       }
 
       case 'delete_subtask': {
-        const sub = ownSubtask(args.key, 'delete')
+        const sub = ownSubtask(args.key)
         store.deleteTask(sub.id)
         return `Deleted ${sub.key}.`
       }
@@ -209,9 +183,6 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       case 'reorder_subtasks': {
         canEditSteps()
         const ordered = (Array.isArray(args.keys) ? args.keys : []).map(subtask)
-        // Steps that started (done, current) keep their places at the front.
-        const locked = remaining ? steps().filter((s) => s.status !== 'todo') : []
-        if (locked.some((s, i) => ordered[i]?.id !== s.id)) throw new Error(`${locked.map((s) => s.key).join(', ')} started; they keep their places at the front`)
         store.reorderSubtasks(task.id, ordered.map((t) => t.id))
         return `Order: ${ordered.map((t) => t.key).join(', ')}.`
       }

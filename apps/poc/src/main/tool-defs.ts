@@ -224,13 +224,6 @@ export const TOOL_DEFS = [
     },
   },
   {
-    name: 'mark_groomed',
-    scope: 'task',
-    description:
-      'Mark the task as groomed: no open questions left, plan and steps ready. It goes to todo, ready for the user to start. When re-grooming the remaining steps of a task in progress, the task continues with its current step. Fails while needs_input is set or without steps.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
     name: 'create_subtask',
     scope: 'task',
     description:
@@ -248,7 +241,7 @@ export const TOOL_DEFS = [
   {
     name: 'update_subtask',
     scope: 'task',
-    description: 'Groomer only: change the title, note or start_manually of a step while re-grooming. In remaining mode done steps are locked.',
+    description: 'Groomer only: change the title, note or start_manually of a step while re-grooming.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -263,13 +256,13 @@ export const TOOL_DEFS = [
   {
     name: 'delete_subtask',
     scope: 'task',
-    description: 'Groomer only: remove a step that is no longer needed. In remaining mode only todo steps can be removed.',
+    description: 'Groomer only: remove a step that is no longer needed.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
     name: 'reorder_subtasks',
     scope: 'task',
-    description: 'Groomer only: set the order of the steps. Pass every step key of the current task, in the new order. In remaining mode done steps and the current one keep their places at the front.',
+    description: 'Groomer only: set the order of the steps. Pass every step key of the current task, in the new order.',
     inputSchema: {
       type: 'object',
       properties: { keys: { type: 'array', items: { type: 'string' } } },

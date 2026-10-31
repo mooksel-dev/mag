@@ -91,7 +91,6 @@ Each run gets a stdio MCP server (`src/main/task-mcp.ts`, server name `mag`). Ta
 | `get_task` | Task, subtask checklist, project repos, work (task dir; per repo worktree, branch, PR), doc template |
 | `get_doc` / `update_doc` | Read / replace the task document |
 | `set_needs_input` | One-line reason shown in Needs you, or `null` |
-| `mark_groomed` | No open questions left, plan ready; the task goes to the end of todo |
 | `create_subtask` | Groomer: add a checklist step (title, optional note) |
 | `update_subtask` / `delete_subtask` / `reorder_subtasks` | Groomer: change the checklist when re-grooming |
 | `set_subtask_status` | Developer marks a step `in_progress` / `done` (or back to `todo`); one in progress at a time. `check_subtask` is a deprecated alias |
