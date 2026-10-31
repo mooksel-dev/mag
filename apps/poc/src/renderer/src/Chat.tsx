@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, interimReplies, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
@@ -193,6 +193,9 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
     }
   })
 
+  // Replies followed by another one in the same turn are interim: muted and clamped, so the turn reads as one answer.
+  const interim = interimReplies(session.items)
+
   // Runs of consecutive tool calls render as one collapsible row. n = index of the (first) item, used as key.
   const rows: { n: number; item?: ChatItem; tools?: ToolItem[] }[] = []
   session.items.forEach((item, n) => {
@@ -216,6 +219,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
                 </div>
               )
             case 'assistant': {
+              if (interim.has(n)) return <InterimReply key={n} text={i.text} onOpenTask={onOpenTask} />
               const meta = metaAt.get(n)
               if (!meta) return <Markdown key={n} className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
               return (
@@ -250,6 +254,16 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
         onStop={() => mag.stop(session.id)}
         chip={chip}
       />
+    </div>
+  )
+}
+
+/** An interim reply: two muted lines; a click (not on a link) expands or collapses it. */
+function InterimReply({ text, onOpenTask }: { text: string; onOpenTask?: (key: string) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="interimwrap" onClick={(e) => !(e.target as HTMLElement).closest('a') && setOpen(!open)}>
+      <Markdown className={`msg agent md interim${open ? ' open' : ''}`} text={text} onOpenTask={onOpenTask} />
     </div>
   )
 }

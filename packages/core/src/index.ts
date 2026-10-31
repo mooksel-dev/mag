@@ -574,6 +574,22 @@ export function turnMeta(items: ChatItem[], resultIndex: number, model?: string)
   return [model, result.costUsd != null ? `$${result.costUsd.toFixed(2)}` : null, time].filter(Boolean).join(' · ')
 }
 
+/**
+ * Indices of assistant replies followed by another assistant reply in the same turn (before the next user item or
+ * result). A turn still running counts too: a new reply makes the one before it interim.
+ */
+export function interimReplies(items: ChatItem[]): Set<number> {
+  const interim = new Set<number>()
+  let lastReply = -1
+  items.forEach((i, n) => {
+    if (i.kind === 'assistant') {
+      if (lastReply >= 0) interim.add(lastReply)
+      lastReply = n
+    } else if (i.kind === 'user' || i.kind === 'result') lastReply = -1
+  })
+  return interim
+}
+
 /** Top-level statuses of the plan: ready (todo) and started (in progress) work, in rank order. */
 export const QUEUE_STATUSES: TaskStatus[] = ['todo', 'in_progress']
 /** Finished statuses: only these can be archived. */

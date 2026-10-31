@@ -135,7 +135,9 @@ tasks can be archived; mag archives them after some days.
   steps (at least one). It goes to todo and starts nothing: the user starts it with Start. Anything that still has
   open questions goes to the backlog and through start_grooming instead.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
-  update_task / update_task_doc. Say in one line what you recorded.
+  update_task / update_task_doc.
+- One answer per turn: make the tool calls first, then reply once at the end. Don't answer before recording and
+  again after it; say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
 - For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
   diagram of a change (component, sequence, state, flowchart) use show_diagram. Revise either by id instead of drawing
