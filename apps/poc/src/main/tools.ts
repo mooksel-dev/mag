@@ -249,7 +249,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         const first = !work.repos.some((r) => r.prUrl)
         const next = {
           ...work,
-          repos: work.repos.map((r) => (r === target ? { ...r, prUrl: url, prState: 'open' as const, checkError: null } : r)),
+          repos: work.repos.map((r) => (r === target ? { ...r, prUrl: url, prState: 'open' as const, prDraft: false, checkError: null } : r)),
           // Comments made before the first PR are not feedback; later ones on any PR are.
           feedbackSeenAt: first ? Date.now() : work.feedbackSeenAt,
         }

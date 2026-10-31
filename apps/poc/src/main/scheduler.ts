@@ -10,7 +10,7 @@ const ARCHIVE_EVERY_MS = 60 * 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
 const ADVANCE_DELAY_MS = 300
 
-const STATES: Record<Awaited<ReturnType<typeof prState>>, PrState> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
+const STATES: Record<Awaited<ReturnType<typeof prState>>['state'], PrState> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
 /**
  * Watches the open PRs of the tasks in progress, step by step: a step whose PRs are merged is done and the next one
@@ -44,17 +44,19 @@ export function startScheduler(store: Store, orch: Orchestrator) {
         continue
       }
       try {
-        const state = STATES[await prState(r.prUrl)]
+        const pr = await prState(r.prUrl)
+        const state = STATES[pr.state]
+        const prDraft = state === 'open' && pr.draft
         // Feedback problems must not block merge detection.
         if (state === 'open') {
           try {
             for (const f of await prFeedback(r.prUrl)) if (f.at > work.feedbackSeenAt) feedback.push({ ...f, repo: repoWorkName(work, r) })
           } catch (e) {
-            repos.push({ ...r, prState: state, checkError: checkError(owner.key, e) })
+            repos.push({ ...r, prState: state, prDraft, checkError: checkError(owner.key, e) })
             continue
           }
         }
-        repos.push({ ...r, prState: state, checkError: null })
+        repos.push({ ...r, prState: state, prDraft, checkError: null })
       } catch (e) {
         repos.push({ ...r, checkError: checkError(owner.key, e) })
       }
