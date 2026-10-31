@@ -318,6 +318,38 @@ code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(
 .diffcount { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .d-add { color: var(--diff-add); } .d-mod { color: var(--diff-mod); } .d-del { color: var(--diff-del); }
 .diagramview { padding: 10px 12px; }
+/* Flowchart and State: SVG laid out by elkjs */
+.graphentity { margin-bottom: 6px; }
+.graphview { overflow: auto; }
+.graph { display: block; margin-top: 8px; }
+.graph .dim { opacity: .25; }
+.gedge { fill: none; stroke: var(--arch-edge); stroke-width: 1.5; transition: opacity .12s; }
+.gedge.d-add { stroke: var(--diff-add); stroke-width: 2.2; }
+.gedge.d-mod { stroke: var(--diff-mod); stroke-width: 2.2; }
+.gedge.d-del { stroke: var(--diff-del); stroke-width: 2.2; stroke-dasharray: 5 4; }
+.gedge.d-none:not(.dim) { opacity: .6; }
+.graph marker path { fill: var(--arch-edge); }
+.graph marker path.d-add { fill: var(--diff-add); }
+.graph marker path.d-mod { fill: var(--diff-mod); }
+.graph marker path.d-del { fill: var(--diff-del); }
+.glabel rect { fill: var(--bg); }
+.glabel text { font-size: 11px; fill: var(--muted); text-anchor: middle; dominant-baseline: central; }
+.glabel.d-add text { fill: var(--diff-add); }
+.glabel.d-mod text { fill: var(--diff-mod); }
+.glabel.d-del text { fill: var(--diff-del); text-decoration: line-through; }
+.gnode { cursor: pointer; transition: opacity .12s; }
+.gnode .shape { fill: var(--surface); stroke: var(--arch-edge); stroke-width: 1.5; }
+.gnode .shape.solid { fill: var(--text); stroke: none; }
+.gnode .shape.inner { fill: none; }
+.gnode.start .shape, .gnode.end .shape { fill: var(--subtle); }
+.gnode.decision .shape { fill: var(--arch-lane); }
+.gnode text { fill: var(--text); text-anchor: middle; dominant-baseline: central; }
+.gnode.diff-add .shape:not(.solid) { stroke: var(--diff-add); stroke-width: 2.2; }
+.gnode.diff-mod .shape:not(.solid) { stroke: var(--diff-mod); stroke-width: 2.2; }
+.gnode.diff-del .shape:not(.solid) { stroke: var(--diff-del); stroke-width: 2.2; stroke-dasharray: 5 4; }
+.gnode.diff-del text { text-decoration: line-through; }
+.gnode.diff-none:not(.dim):not(.on):not(.initial):not(.final) { opacity: .6; }
+.gnode.on .shape:not(.solid):not(.inner) { stroke: var(--text); stroke-width: 2.5; }
 .canvasdiagram { max-height: 560px; overflow: auto; }
 .canvasdiagram.fill { flex: 1; min-height: 0; max-height: none; }
 .difflist ul { list-style: none; padding: 0; margin: 0 0 14px; font-size: 13px; }
