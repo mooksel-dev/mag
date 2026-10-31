@@ -89,6 +89,17 @@ test('T-26 migration: groomed and planned become todo in queue order, in_review 
   assert.deepEqual(again.data.tasks, store.data.tasks, 'idempotent')
 })
 
+test('T-37 migration: no integration on tracker scopes and links; scopes without a base go', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const projects = [{ id: 'p', name: 'p', repos: [], trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'OLD' }, { integrationId: 'atl', kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] }]
+  const tracker = { integrationId: 'atl', kind: 'jira', key: 'ABC-1', url: null, importedAt: 5 }
+  const tasks = [{ id: 't', projectId: 'p', key: 'T-1', parentId: null, title: 't', type: 'dev', status: 'backlog', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0, tracker }]
+  writeFileSync(file, JSON.stringify({ projects, tasks, sessions: [] }))
+  const store = new Store(file)
+  assert.deepEqual(store.project('p').trackers, [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }])
+  assert.deepEqual(store.task('t').tracker, { kind: 'jira', key: 'ABC-1', url: null, importedAt: 5 })
+})
+
 test('project windows and recent projects persist', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   writeFileSync(file, JSON.stringify({ projects: [], tasks: [], sessions: [], ui: { windows: {} } }))

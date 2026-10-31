@@ -122,7 +122,8 @@ export class Store {
       p.archRun ??= null
       p.agents ??= {}
       p.integrations ??= {}
-      p.trackers ??= []
+      // T-37: no integration per scope; a scope without its site / workspace can't link a bare key.
+      p.trackers = (p.trackers ?? []).filter((s) => !!s.base).map(({ kind, scope, base }) => ({ kind, scope, base }))
       if (p.archRun?.status === 'running') p.archRun.status = 'error'
     }
     for (const t of this.data.tasks) {
@@ -130,6 +131,7 @@ export class Store {
       delete (t as { dependsOn?: unknown }).dependsOn
       if ((t.type as string) === 'story') t.type = 'dev'
       t.rank ??= t.createdAt
+      if (t.tracker) delete (t.tracker as { integrationId?: unknown }).integrationId
     }
     for (const c of Object.values(this.data.canvases)) c.kind ??= 'html'
     for (const s of this.data.sessions) {

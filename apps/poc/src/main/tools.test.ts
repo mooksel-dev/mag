@@ -57,18 +57,17 @@ test('create_task with plan: true needs steps', async () => {
 
 test('create_task ticket_url and link_ticket: one ticket, one task', async () => {
   const { store, project, tools } = setup()
-  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
   const ctx = { projectId: project.id }
   assert.equal(await tools(ctx, 'create_task', { title: 'X', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/abc-12' }), 'Created T-2 in the backlog.')
   const x = store.data.tasks.find((t) => t.key === 'T-2')!
-  assert.deepEqual(x.tracker, { integrationId: 'atl', kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
+  assert.deepEqual(x.tracker, { kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
   const count = store.data.tasks.length
   await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
   await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'ABC-13' }), /Not a Jira or Linear ticket link/)
   assert.equal(store.data.tasks.length, count, 'nothing created')
 
   assert.equal(await tools(ctx, 'link_ticket', { key: 't-1', url: 'https://linear.app/acme/issue/ENG-7/slug' }), 'Linked T-1 to ENG-7.')
-  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-1')!.tracker, { integrationId: null, kind: 'linear', key: 'ENG-7', url: 'https://linear.app/acme/issue/ENG-7', importedAt: null })
+  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-1')!.tracker, { kind: 'linear', key: 'ENG-7', url: 'https://linear.app/acme/issue/ENG-7', importedAt: null })
   await assert.rejects(tools(ctx, 'link_ticket', { key: 'T-1', url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
   const step = store.createTask({ projectId: project.id, parentId: x.id, title: 's', type: 'dev', description: '' })
   await assert.rejects(tools(ctx, 'link_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; link its task T-2 instead/)
@@ -130,13 +129,13 @@ test('set_pr writes to the step; a second live PR for a repo is an error', async
 
 test('tracker tools: get_import and set_brief for the tracker only; get_task shows the ticket', async () => {
   const { store, project, tools } = setup()
-  const link = { integrationId: 'atl', kind: 'jira' as const, key: 'ABC-12', url: null, importedAt: null }
+  const link = { kind: 'jira' as const, key: 'ABC-12', url: null, importedAt: null }
   const task = store.createTask({ projectId: project.id, title: 'ABC-12', type: 'dev', description: '', tracker: link })
   const tracker = store.createSession({ projectId: project.id, taskId: task.id, role: 'tracker', agent: 'claude-code', status: 'running' })
   const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
   const call = (name: string, args: Record<string, unknown> = {}, sessionId = tracker.id) => tools({ taskId: task.id, sessionId }, name, args)
 
-  assert.deepEqual(JSON.parse(await call('get_import')), { key: 'ABC-12', url: null, kind: 'jira', scope: 'ABC' })
+  assert.deepEqual(JSON.parse(await call('get_import')), { key: 'ABC-12', url: null, kind: 'jira' })
   await assert.rejects(call('update_doc', { markdown: 'x' }), /not available to the tracker agent/)
   await assert.rejects(call('set_brief', { title: 'T', brief: 'B' }, groomer.id), /not available to the groomer agent/)
   await assert.rejects(call('set_brief', { title: 'T', brief: ' ' }), /required/)

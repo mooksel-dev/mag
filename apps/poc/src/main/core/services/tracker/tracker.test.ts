@@ -16,10 +16,10 @@ const setup = () => {
 
 test('import: a backlog task linked to the ticket, then the import run', async () => {
   const { store, project, tracker, started } = setup()
-  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
+  store.updateProject(project.id, { trackers: [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] })
   const task = await tracker.import(project.id, 'https://acme.atlassian.net/browse/ABC-12')
   assert.deepEqual([task.key, task.title, task.status, task.parentId], ['T-1', 'ABC-12', 'backlog', null])
-  assert.deepEqual(task.tracker, { integrationId: 'atl', kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
+  assert.deepEqual(task.tracker, { kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
   assert.deepEqual(started, ['T-1'])
   await assert.rejects(tracker.import(project.id, 'abc-12'), /ABC-12 is already imported as T-1/)
   assert.deepEqual(started, ['T-1'])
@@ -28,15 +28,22 @@ test('import: a backlog task linked to the ticket, then the import run', async (
 test('import: an unknown ref creates nothing', async () => {
   const { store, project, tracker, started } = setup()
   await assert.rejects(tracker.import(project.id, 'ABC-1'), /add a tracker in Settings → Trackers/)
-  store.updateProject(project.id, { trackers: [{ integrationId: 'lin', kind: 'linear', scope: 'ENG' }] })
+  store.updateProject(project.id, { trackers: [{ kind: 'linear', scope: 'ENG', base: 'acme' }] })
   await assert.rejects(tracker.import(project.id, 'ABC-1'), /^Error: Unknown tracker link or key$/)
   assert.equal(store.data.tasks.length, 0)
   assert.deepEqual(started, [])
 })
 
-test('retryImport: runs the import again on a linked task only', async () => {
+test('import by bare key: the link comes from the scope base', async () => {
+  const { store, project, tracker } = setup()
+  store.updateProject(project.id, { trackers: [{ kind: 'linear', scope: 'ENG', base: 'acme' }] })
+  const task = await tracker.import(project.id, 'eng-4')
+  assert.deepEqual(task.tracker, { kind: 'linear', key: 'ENG-4', url: 'https://linear.app/acme/issue/ENG-4', importedAt: null })
+})
+
+test('retryImport: runs the import again on any linked task', async () => {
   const { store, project, tracker, started } = setup()
-  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
+  store.updateProject(project.id, { trackers: [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] })
   const task = await tracker.import(project.id, 'ABC-3')
   tracker.retryImport(task.id)
   assert.deepEqual(started, ['T-1', 'T-1'])
@@ -47,14 +54,12 @@ test('retryImport: runs the import again on a linked task only', async () => {
 
 test('link: a plain link by URL, replaced on change, no import', () => {
   const { store, project, tracker, started } = setup()
-  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
   const a = store.createTask({ projectId: project.id, title: 'a', type: 'dev', description: 'brief' })
   const b = store.createTask({ projectId: project.id, title: 'b', type: 'dev', description: '' })
   const linked = tracker.link(a.id, 'https://acme.atlassian.net/browse/XYZ-1')
-  assert.deepEqual(linked.tracker, { integrationId: null, kind: 'jira', key: 'XYZ-1', url: 'https://acme.atlassian.net/browse/XYZ-1', importedAt: null })
+  assert.deepEqual(linked.tracker, { kind: 'jira', key: 'XYZ-1', url: 'https://acme.atlassian.net/browse/XYZ-1', importedAt: null })
   assert.equal(linked.description, 'brief')
-  assert.throws(() => tracker.retryImport(a.id), /T-1 is linked without an integration/)
-  assert.equal(tracker.link(a.id, 'https://acme.atlassian.net/browse/ABC-2').tracker?.integrationId, 'atl', 'Change link')
+  assert.equal(tracker.link(a.id, 'https://acme.atlassian.net/browse/ABC-2').tracker?.key, 'ABC-2', 'Change link')
   assert.throws(() => tracker.link(b.id, 'https://acme.atlassian.net/browse/abc-2'), /ABC-2 is already linked to T-1/)
   assert.throws(() => tracker.link(b.id, 'ABC-3'), /^Error: Not a Jira or Linear ticket link$/)
   assert.equal(store.task(b.id).tracker, undefined)
@@ -63,4 +68,6 @@ test('link: a plain link by URL, replaced on change, no import', () => {
   assert.equal(tracker.unlink(a.id).tracker, null)
   assert.equal(tracker.link(b.id, 'https://acme.atlassian.net/browse/ABC-2').tracker?.key, 'ABC-2', 'free again after unlink')
   assert.deepEqual(started, [])
+  tracker.retryImport(b.id)
+  assert.deepEqual(started, ['T-2'], 'a plain link can be imported too')
 })

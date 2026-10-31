@@ -264,9 +264,8 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'get_import': {
         if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
-        // The scope is the key's prefix (see parseTrackerRef).
         const { key, url, kind } = task.tracker
-        return JSON.stringify({ key, url, kind, scope: key.slice(0, key.lastIndexOf('-')) }, null, 2)
+        return JSON.stringify({ key, url, kind }, null, 2)
       }
 
       case 'set_brief': {
@@ -393,7 +392,7 @@ function sharedTool(
       if (plan && !steps.length) throw new Error('plan: true needs steps: at least one { title, note?, start_manually? }')
       // The link is checked first: a bad URL or a ticket linked elsewhere creates nothing.
       const ticketUrl = typeof args.ticket_url === 'string' && args.ticket_url.trim() ? args.ticket_url : null
-      const tracker = ticketUrl ? ticketLink(tasks, null, ticketUrl, project.trackers ?? []) : undefined
+      const tracker = ticketUrl ? ticketLink(tasks, null, ticketUrl) : undefined
       const t = store.createTask({
         projectId: project.id,
         title: String(args.title),
@@ -413,7 +412,7 @@ function sharedTool(
     case 'link_ticket': {
       const t = byKey(args.key)
       if (t.parentId) throw new Error(`${t.key} is a step; link its task ${keyOf(t.parentId)} instead`)
-      const tracker = ticketLink(tasks, t, String(args.url ?? ''), project.trackers ?? [])
+      const tracker = ticketLink(tasks, t, String(args.url ?? ''))
       store.updateTask(t.id, { tracker })
       return `Linked ${t.key} to ${tracker.key}.`
     }
