@@ -1,5 +1,6 @@
 import type { Diagram, DiffMark } from '@mag/core'
 import { ComponentView } from './Component'
+import { FlowchartView, StateView } from './Graph'
 
 export const DIAGRAM_NAMES: Record<Diagram['type'], string> = { component: 'Component', sequence: 'Sequence', state: 'State', flowchart: 'Flowchart' }
 
@@ -8,6 +9,10 @@ export function DiagramView({ diagram, focus }: { diagram: Diagram; focus?: stri
   switch (diagram.type) {
     case 'component':
       return <div className="diagramview"><ComponentView modules={diagram.modules} diff focus={focus} /></div>
+    case 'flowchart':
+      return <div className="diagramview"><FlowchartView diagram={diagram} focus={focus} /></div>
+    case 'state':
+      return <div className="diagramview"><StateView diagram={diagram} focus={focus} /></div>
     default:
       return <DiagramList diagram={diagram} focus={focus} />
   }
