@@ -175,7 +175,7 @@ test('set_architecture records a module tree, drops unknown and self uses, rejec
 
 test('show_diagram validates, saves a diagram canvas and lists it in get_task and get_diagrams', async () => {
   const { store, task, call } = setup()
-  const diagram = { type: 'component', modules: [{ id: 'tasks', name: 'Tasks', interface: ['list()', { text: 'groom(id)', diff: 'add' }], uses: ['queue'] }, { id: 'queue', name: 'Queue', diff: 'add' }] }
+  const diagram = { type: 'component', summary: 'Tasks get a queue.', modules: [{ id: 'tasks', name: 'Tasks', interface: ['list()', { text: 'groom(id)', diff: 'add' }], uses: ['queue'] }, { id: 'queue', name: 'Queue', diff: 'add' }] }
   await assert.rejects(call('show_diagram', { title: 'Bad', diagram: { type: 'component', modules: [{ id: 'a', name: 'A', uses: ['nope'] }] } }), /Not saved[\s\S]*uses "nope": no such module/)
   assert.equal(Object.keys(store.data.canvases).length, 0)
   assert.equal(await call('get_diagrams'), 'This task has no diagrams.')

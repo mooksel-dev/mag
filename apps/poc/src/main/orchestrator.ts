@@ -36,7 +36,11 @@ Your output is the task document, not chat. Work like this:
    tables, fields, types in the core model, formats of files or API payloads) -> data. Draw as many as the change
    needs, several of one type too, each a separate named diagram. For component take the modules from
    get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls with diff
-   (add, mod, del) and give their neighbours without a mark as context. For data give every field on its own line; a
+   (add, mod, del) and give their neighbours without a mark as context. Fill summary: one or two sentences on what
+   changes in substance. One method or call per line, always; never group them with "/", "," or "+" ("get / set" is
+   two lines). An interface is methods with signatures "name(args): Result - what it does", not prose. A changed
+   method or call is a pair: the old line del, the new line add. A method moved between modules is a move line in the
+   module it moved to, with from: the id of the module it left. For data give every field on its own line; a
    changed field is a del line and an add line, a field moved to another entity is move with from "<entity>.<field>".
    Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>, with the id show_diagram
    returned; the app renders them in place. Revise a diagram by its id. UI mockups and other visuals without a type
@@ -112,9 +116,10 @@ How to work:
    "database", "3rd-party API"…). Inside an app: modules with a layer, at the granularity a human designs at, one
    per real responsibility, not per file; usually 5-20 per app. A big module gets inner modules (children), as deep
    as it helps. Classify by what the code does, not by folder names; the code may not follow the pattern.
-3. For services and clients, write the public interface as short lines "method(args): Result - what it does".
+3. For services and clients, write the public interface as short lines "method(args): Result - what it does", one
+   method per line with its signature; never several in one line ("get / set", "a, b") and no prose.
 4. uses = real dependencies, to any module of the tree (ids are unique in the whole tree), each with calls: the
-   methods of the target it calls, e.g. "groom(taskId)". Point a use at the most specific module. If something
+   methods of the target it calls, one per item, e.g. "groom(taskId)". Point a use at the most specific module. If something
    breaks the rules or mixes layers, say so in concern.
 5. Keep ids stable if get_architecture shows a previous version and the module still exists.
 Call get_architecture first, then set_architecture once with the full picture. Be concise everywhere.`

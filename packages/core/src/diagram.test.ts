@@ -1,11 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt } from './arch.ts'
-import { archToDNodes, diagramSummary, fieldMoves, formatDiffCount, innerSummary, normalizeDiagram, sequenceActivations, validateDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
+import { archToDNodes, boxLines, componentSummary, diagramSummary, fieldMoves, formatDiffCount, innerSummary, looksGrouped, moves, normalizeDiagram, sequenceActivations, validateDiagram, type ComponentDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
 
 // app (mod) holds ui and tasks; tasks gets a new client "queue" (add), drops "store" (del); github is context.
 const component = normalizeDiagram({
   type: 'component',
+  summary: 'Tasks queue their jobs instead of storing them.',
   modules: [
     {
       id: 'app',
@@ -57,7 +58,134 @@ test('validateDiagram: unknown type, repeated ids, unknown targets, bad marks', 
   assert.ok(errors.includes('Module a uses itself'))
   assert.ok(errors.includes('Module a uses "nope": no such module'))
   assert.ok(errors.some((e) => e.startsWith('Module a: diff must be')))
-  assert.deepEqual(validateDiagram(normalizeDiagram({ type: 'component', modules: [] })), ['modules is empty'])
+  assert.deepEqual(validateDiagram(normalizeDiagram({ type: 'component', summary: 'x', modules: [] })), ['modules is empty'])
+})
+
+test('validateDiagram: a component diagram needs a summary', () => {
+  const d = (summary?: string) => validateDiagram(normalizeDiagram({ type: 'component', summary, modules: [{ id: 'a', name: 'A' }] }))
+  assert.deepEqual(d('Adds A.'), [])
+  for (const s of [undefined, '', '  ']) assert.deepEqual(d(s), ['summary is required: one or two sentences on what changes in substance'])
+})
+
+test('looksGrouped: several names joined by "/", "," or " + " in the signature', () => {
+  for (const t of ['get / ensureActive', 'Get/EnsureActive/SetAgent', 'Users: DBR fields + their acquire/set methods', 'get, set', 'acquire(id) / release(id)'])
+    assert.equal(looksGrouped(t), true, t)
+  for (const t of [
+    'get(id, opts): User - loads it, or null',
+    'validateDiagram(d): string[] - errors before save',
+    'merge(a: Map<string, number>, b): { x, y }',
+    "formatDiffCount(c): string - '+a ~m −d'",
+    'list(): Task[] — the open ones / done ones',
+    'GET /users/:id - one user',
+    'C++ code(x)',
+  ])
+    assert.equal(looksGrouped(t), false, t)
+})
+
+// users (mod) moves its DBR state methods to a new dbr service; app calls it.
+const moved = (patch: (d: ComponentDiagram) => void = () => {}) => {
+  const d = normalizeDiagram({
+    type: 'component',
+    summary: 'DBR state moves from users into its own service.',
+    modules: [
+      {
+        id: 'users',
+        name: 'Users',
+        interface: [
+          'get(id): User',
+          { text: 'setAgent(id, a): void', diff: 'del' },
+          { text: 'save(u): void', diff: 'del' },
+          { text: 'save(u, opts): void', diff: 'add' },
+          { text: 'touch(id): void', diff: 'mod' },
+        ],
+      },
+      {
+        id: 'dbr',
+        name: 'DBR',
+        diff: 'add',
+        interface: [
+          { text: 'getState(userId): State', diff: 'move', from: 'users' },
+          { text: 'ensureActive(userId): void', diff: 'move', from: 'users' },
+          { text: 'reset(userId): void', diff: 'add' },
+          { text: 'audit(userId): Log[]', diff: 'add' },
+        ],
+      },
+      {
+        id: 'app',
+        name: 'App',
+        uses: [
+          { to: 'users', calls: ['get(id)', { text: 'save(u)', diff: 'del' }, { text: 'save(u, opts)', diff: 'add' }, { text: 'setAgent(id, a)', diff: 'del' }] },
+          { to: 'dbr', calls: ['getState(userId)', 'reset(userId)'] },
+        ],
+      },
+    ],
+  }) as ComponentDiagram
+  patch(d)
+  return d
+}
+
+test('validateDiagram component: one method or call per line', () => {
+  const errors = validateDiagram(
+    moved((d) => {
+      d.modules[0].interface![0].text = 'get / ensureActive'
+      d.modules[2].uses[0].calls[0].text = 'Get/Set'
+    }),
+  )
+  assert.deepEqual(errors, [
+    'Interface line "get / ensureActive" of users: one method per line with its signature "name(args): Result - what it does", never several joined by "/", "," or "+"; a changed method is a del line and an add line',
+    'Call "Get/Set" of app → users: one call per line with its signature "name(args)", never several joined by "/", "," or "+"; a changed call is a del line and an add line',
+  ])
+})
+
+test('validateDiagram component: move needs from, another module of the diagram', () => {
+  assert.deepEqual(validateDiagram(moved()), [])
+  const at = (l: object) => validateDiagram(moved((d) => Object.assign(d.modules[1].interface![0], l)))
+  const what = 'Interface line "getState(userId): State" of dbr'
+  assert.deepEqual(at({ from: undefined }), [`${what}: move needs from, the id of the module it moved from`])
+  assert.deepEqual(at({ from: 'nope' }), [`${what}: moved from "nope", no such module`])
+  assert.deepEqual(at({ from: 'dbr' }), [`${what}: moved from dbr itself; a changed method is a del line and an add line`])
+  assert.deepEqual(at({ diff: 'add' }), [`${what}: from is only for diff move`])
+  assert.deepEqual(at({ diff: 'moved' }), [`${what}: diff must be one of add, mod, del, move`, `${what}: from is only for diff move`])
+  // move is for interface lines only.
+  assert.deepEqual(validateDiagram(moved((d) => (d.modules[1].diff = 'move' as never))), ['Module dbr: diff must be one of add, mod, del'])
+  assert.deepEqual(validateDiagram(moved((d) => (d.modules[2].uses[1].calls[0].diff = 'move' as never))), ['Call "getState(userId)" of app → dbr: diff must be one of add, mod, del'])
+})
+
+test('componentSummary: a del + add of one method is one change, a move counts once', () => {
+  assert.deepEqual(componentSummary(moved()), {
+    // users: its lines change; dbr: added.
+    modules: { add: 1, mod: 1, del: 0, move: 0 },
+    // save del + add → ~, touch ~; setAgent −; reset, audit +; getState, ensureActive ↷.
+    methods: { add: 2, mod: 2, del: 1, move: 2 },
+    // save del + add → ~; setAgent −; app → dbr is a use of an added module: its calls are added.
+    calls: { add: 2, mod: 1, del: 1, move: 0 },
+  })
+  // A del and an add of different methods stay apart; the add may come first.
+  const d = moved((x) => (x.modules[0].interface = [{ text: 'b(): void', diff: 'add' }, { text: 'a(): void', diff: 'del' }, { text: 'b(x): void', diff: 'del' }]))
+  assert.deepEqual(componentSummary(d).methods, { add: 2, mod: 1, del: 1, move: 2 })
+})
+
+test('moves and boxLines', () => {
+  const d = moved()
+  assert.deepEqual(moves(d).map((m) => [m.line.text, m.from, m.to]), [
+    ['getState(userId): State', 'users', 'dbr'],
+    ['ensureActive(userId): void', 'users', 'dbr'],
+  ])
+  // A move whose source is missing is left out.
+  assert.deepEqual(moves(moved((x) => (x.modules[1].interface![0].from = 'nope'))).length, 1)
+
+  const dbr = boxLines(d.modules[1])
+  assert.deepEqual(dbr.shown.map((l) => l.text), ['getState(userId): State', 'ensureActive(userId): void', 'reset(userId): void'])
+  assert.equal(dbr.more, 1)
+  // The source box lists the lines that left it after its own changes.
+  const users = boxLines(d.modules[0], d)
+  assert.deepEqual(users.shown.map((l) => [l.text, l.diff, l.to]), [
+    ['setAgent(id, a): void', 'del', undefined],
+    ['save(u): void', 'del', undefined],
+    ['save(u, opts): void', 'add', undefined],
+  ])
+  assert.equal(users.more, 3)
+  assert.deepEqual(boxLines(d.modules[2]), { shown: [], more: 0 })
 })
 
 test('validateDiagram: sequence replies need an open call, before and after the change', () => {

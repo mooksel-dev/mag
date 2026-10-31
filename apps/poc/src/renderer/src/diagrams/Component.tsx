@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { callersOf, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, nodeDiff, pathTo, type ArchLayer, type DNode, type DiffMark } from '@mag/core'
+import { callersOf, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, nodeDiff, pathTo, type ArchLayer, type DNode, type DiffMark, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
 import { DiffLegend } from './DiffLegend'
 
@@ -36,7 +36,7 @@ function ruleOf(all: DNode[], from: DNode, to: string) {
 }
 
 /** Diff class of an element; in a diff diagram an unmarked one is context. */
-const diffCls = (on: boolean, m: DiffMark | undefined) => (on ? ` diff-${m ?? 'none'}` : '')
+const diffCls = (on: boolean, m: LineMark | undefined) => (on ? ` diff-${m ?? 'none'}` : '')
 
 const DIFF_NAMES: Record<DiffMark, string> = { add: 'added', mod: 'changed', del: 'removed' }
 
