@@ -324,16 +324,21 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbadge.d-add { border-color: var(--diff-add); }
 .archbadge.d-mod { border-color: var(--diff-mod); }
 .archbadge.d-del { border-color: var(--diff-del); }
-code.diff-add, .archcalls li.diff-add > button { box-shadow: inset 0 -2px 0 var(--diff-add); }
-code.diff-mod, .archcalls li.diff-mod > button { box-shadow: inset 0 -2px 0 var(--diff-mod); }
-code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(--diff-del); text-decoration: line-through; }
-code.diff-move { box-shadow: inset 0 -2px 0 var(--diff-move); }
-code.diff-move.out { text-decoration: line-through; }
 .archarrows path.d-move { stroke: var(--diff-move); stroke-width: 2; stroke-dasharray: 6 4; }
 .archarrows marker path.d-move { stroke: none; fill: var(--diff-move); }
 .archbadge.d-move { border-color: var(--diff-move); }
-/* a changed arrow names its changed calls instead of a count */
-.archbadge.names { height: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 2px 6px; border-radius: 6px; white-space: nowrap; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 500; }
+/* a diff arrow carries only the count of its changed calls: "+2 ~1 −1" */
+.archbadge.pill { white-space: nowrap; padding: 0 7px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 500; }
+/* the side panel of a diff: full call lists, one per line */
+.archside .bline { display: flex; gap: 4px; align-items: baseline; font-size: 12px; overflow-wrap: anywhere; }
+.archside .bline b { flex: none; width: 1em; }
+.archside .bline code { font-size: 12px; color: inherit; }
+.archside .bline.d-none { color: var(--muted); }
+.archside .callgroup { margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--line); }
+.archside .callgroup.diff-add { border-left-color: var(--diff-add); }
+.archside .callgroup.diff-mod { border-left-color: var(--diff-mod); }
+.archside .callgroup.diff-del { border-left-color: var(--diff-del); }
+.archside .callhead { font-weight: 600; margin-bottom: 2px; }
 .struck { text-decoration: line-through; }
 /* changed interface lines on a diff box */
 .archbox.withlines { width: 240px; }

@@ -195,3 +195,30 @@ test('several arrows between the same neighbours each keep their own line', () =
   )
   assert.deepEqual(rs.map((r) => r.mid.y), [138, 150, 162])
 })
+
+const pillAt = (p: P): Box => ({ x: p.x - 32, y: p.y - 10, w: 64, h: 20 })
+const overlap = (a: Box, b: Box) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+test('a pill moves along its arrow off a box beside the middle', () => {
+  const side = new Map<string, Box>([
+    ['a', { x: 0, y: 0, w: 100, h: 40 }],
+    ['c', { x: 0, y: 300, w: 100, h: 40 }],
+    ['x', { x: 60, y: 160, w: 100, h: 40 }],
+  ])
+  const [r] = routeEdges([{ from: 'a', to: 'c' }], side)
+  assert.equal(r.mid.x, 50)
+  assert.ok(![...side.values()].some((b) => overlap(pillAt(r.mid), b)))
+  assert.ok(r.mid.y > 40 && r.mid.y < 300)
+})
+
+test('pills of crossing arrows do not cover each other', () => {
+  const cross = new Map<string, Box>([
+    ['a', { x: 0, y: 0, w: 100, h: 40 }],
+    ['b', { x: 300, y: 0, w: 100, h: 40 }],
+    ['c', { x: 0, y: 200, w: 100, h: 40 }],
+    ['d', { x: 300, y: 200, w: 100, h: 40 }],
+  ])
+  const [p, q] = routeEdges([{ from: 'a', to: 'd' }, { from: 'b', to: 'c' }], cross)
+  assert.deepEqual(p.mid, { x: 200, y: 120 })
+  assert.ok(!overlap(pillAt(p.mid), pillAt(q.mid)))
+})

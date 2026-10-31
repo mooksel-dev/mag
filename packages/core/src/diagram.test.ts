@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt } from './arch.ts'
-import { archToDNodes, boxLines, componentSummary, diagramSummary, fieldMoves, formatDiffCount, innerSummary, looksGrouped, moves, normalizeDiagram, sequenceActivations, validateDiagram, type ComponentDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
+import { archToDNodes, boxLines, callsCount, componentSummary, dominantDiff, diagramSummary, fieldMoves, formatDiffCount, innerSummary, looksGrouped, moves, normalizeDiagram, sequenceActivations, validateDiagram, type ComponentDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
 
 // app (mod) holds ui and tasks; tasks gets a new client "queue" (add), drops "store" (del); github is context.
 const component = normalizeDiagram({
@@ -400,4 +400,23 @@ test('diagramSummary data: entities, fields and relations, moves apart', () => {
   assert.deepEqual(diagramSummary(data()), { add: 4, mod: 0, del: 1, move: 1 })
   assert.equal(formatDiffCount(diagramSummary(data())), '+4 ~0 −1 ↷1')
   assert.equal(formatDiffCount({ add: 0, mod: 0, del: 0, move: 2 }), '+0 ~0 −0 ↷2')
+})
+
+test('callsCount: changed calls of a use; unmarked calls take an added or removed use or target', () => {
+  const calls = [{ text: 'list()' }, { text: 'get(id)', diff: 'del' as const }, { text: 'get(id, opts)', diff: 'add' as const }, { text: 'drop(id)', diff: 'add' as const }]
+  assert.deepEqual(callsCount({ to: 'svc', calls }), { add: 1, mod: 1, del: 0, move: 0 })
+  assert.deepEqual(callsCount({ to: 'svc', calls: [{ text: 'a()' }, { text: 'b()' }], diff: 'add' }), { add: 2, mod: 0, del: 0, move: 0 })
+  assert.deepEqual(callsCount({ to: 'svc', calls: [{ text: 'a()' }, { text: 'b()', diff: 'mod' }], diff: 'mod' }), { add: 0, mod: 1, del: 0, move: 0 })
+  const gone: DNode = { id: 'svc', name: 'Svc', diff: 'del', uses: [] }
+  assert.deepEqual(callsCount({ to: 'svc', calls: [{ text: 'a()' }] }, gone), { add: 0, mod: 0, del: 1, move: 0 })
+  assert.deepEqual(callsCount({ to: 'svc', calls: [{ text: 'a()' }] }), { add: 0, mod: 0, del: 0, move: 0 })
+})
+
+test('dominantDiff: the largest count; on a tie mod, then add, then del', () => {
+  const c = (add: number, mod: number, del: number) => ({ add, mod, del, move: 0 })
+  assert.equal(dominantDiff(c(2, 1, 1)), 'add')
+  assert.equal(dominantDiff(c(0, 0, 3)), 'del')
+  assert.equal(dominantDiff(c(1, 1, 1)), 'mod')
+  assert.equal(dominantDiff(c(2, 0, 2)), 'add')
+  assert.equal(dominantDiff(c(0, 0, 0)), undefined)
 })

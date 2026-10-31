@@ -475,6 +475,10 @@ function countLines(c: DiffCount, list: { text: string; diff?: LineMark }[]) {
   for (const n of adds.values()) c.add += n
 }
 
+const addCount = (c: DiffCount, d: DiffCount) => {
+  for (const k of ['add', 'mod', 'del', 'move'] as const) c[k] += d[k]
+}
+
 /** The counts behind the chips of a Component diff: modules, interface methods and calls. */
 export interface ComponentSummary {
   modules: DiffCount
@@ -494,13 +498,29 @@ export function componentSummary(d: ComponentDiagram): ComponentSummary {
   walkArch(d.modules, (n) => {
     count(out.modules, nodeDiff(n))
     countLines(out.methods, n.interface ?? [])
-    for (const u of n.uses) {
-      const m = useDiff(n, u, byId.get(u.to))
-      const whole = m === 'add' || m === 'del' ? m : undefined
-      countLines(out.calls, u.calls.map((c) => ({ text: c.text, diff: c.diff ?? whole })))
-    }
+    for (const u of n.uses) addCount(out.calls, callsCount({ ...u, diff: useDiff(n, u, byId.get(u.to)) }))
   })
   return out
+}
+
+/**
+ * The changed calls of a use, for the count pill on its arrow. A call without a mark takes the one of the use when it
+ * is added or removed, else the one of an added or removed `target` (as useDiff); a del and an add of the same method
+ * count once as mod.
+ */
+export function callsCount(use: DUse, target?: DNode): DiffCount {
+  const whole = (m?: DiffMark) => (m === 'add' || m === 'del' ? m : undefined)
+  const m = whole(use.diff) ?? whole(target?.diff)
+  const c = zero()
+  countLines(c, use.calls.map((x) => ({ text: x.text, diff: x.diff ?? m })))
+  return c
+}
+
+/** The mark a count is mostly made of, for the color of its pill; on a tie mod wins over add, add over del. */
+export function dominantDiff(c: DiffCount): DiffMark | undefined {
+  let best: DiffMark | undefined
+  for (const k of ['mod', 'add', 'del'] as const) if (c[k] > (best ? c[best] : 0)) best = k
+  return best
 }
 
 /** An interface line moved between two modules of a Component diagram. */
