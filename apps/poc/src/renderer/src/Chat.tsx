@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, chatCommands, resolveChoice, turnMeta, type AgentSession, type Attachment, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, chatCommands, liveSession, resolveChoice, turnMeta, type AgentSession, type Attachment, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
@@ -242,6 +242,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
       </div>
       <Composer
         busy={busy}
+        queue={liveSession(session)}
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
         commands={chatCommands(session, sessions)}
         onSend={(text, att) => mag.send(session.id, text, att)}
@@ -316,6 +317,7 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
 
 export function Composer({
   busy,
+  queue = false,
   placeholder,
   commands = [],
   onSend,
@@ -323,6 +325,8 @@ export function Composer({
   chip,
 }: {
   busy: boolean
+  /** Messages may be sent while busy: the agent gets them in its current turn (live sessions). */
+  queue?: boolean
   placeholder: string
   /** Slash commands to offer after "/", without the slash; empty = text starting with "/" is plain text. */
   commands?: string[]
@@ -375,7 +379,7 @@ export function Composer({
     }
   }
   const submit = async () => {
-    if (busy || (!text.trim() && !files.length)) return
+    if ((busy && !queue) || (!text.trim() && !files.length)) return
     // Files never go with a command; they stay for the next message.
     await onSend(text.trim(), isCommand ? [] : files)
     setText('')
@@ -444,7 +448,7 @@ export function Composer({
             if (imgs.length) { e.preventDefault(); void add(imgs) }
           }}
           onKeyDown={onKeyDown}
-          placeholder={busy ? 'Wait for the agent to finish…' : placeholder}
+          placeholder={busy && !queue ? 'Wait for the agent to finish…' : placeholder}
           rows={1}
           aria-label="Message"
         />
@@ -454,10 +458,9 @@ export function Composer({
           {chip}
           <div className="grow" />
           {commands.length > 0 && <span className="muted small nowrap">/ commands</span>}
-          {busy && onStop ? (
-            <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop">■</button>
-          ) : (
-            <button type="submit" className="iconbtn send" disabled={busy} title={`Send (${keys})`} aria-label="Send">↑</button>
+          {busy && onStop && <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop">■</button>}
+          {(!busy || !onStop || queue) && (
+            <button type="submit" className="iconbtn send" disabled={busy && !queue} title={`Send (${keys})`} aria-label="Send">↑</button>
           )}
         </div>
       </div>

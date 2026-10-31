@@ -195,19 +195,27 @@ export const codex: AgentAdapter = {
       }
     })
 
+    let killed = false
     const done = new Promise<void>((resolve) => {
       child.on('error', (err) => {
         onEvent({ type: 'error', message: `Could not start ${bin}: ${err.message}` })
         resolve()
       })
       child.on('close', (code) => {
+        if (killed) onEvent({ type: 'stopped' })
         // After a reported error the exit code and stderr log noise add nothing.
-        if (code && code !== 0 && lastError === null)
+        else if (code && code !== 0 && lastError === null)
           onEvent({ type: 'error', message: stderr.trim() || `codex exited with ${code}` })
         resolve()
       })
     })
 
-    return { kill: () => child.kill('SIGTERM'), done }
+    return {
+      kill: () => {
+        killed = true
+        child.kill('SIGTERM')
+      },
+      done,
+    }
   },
 }
