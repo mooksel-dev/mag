@@ -217,6 +217,9 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .msg { padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; max-width: 92%; }
 .msg.user { align-self: flex-end; background: var(--soft); }
 .msg.agent { background: var(--subtle); }
+.interimwrap { display: contents; }
+.msg.agent.interim { background: none; color: var(--muted); cursor: pointer; }
+.msg.agent.interim:not(.open) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .msg.error { background: var(--danger-bg); color: var(--danger-fg); }
 .tool { font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding-left: 16px; }
 .toolgroup { display: flex; flex-direction: column; gap: 2px; }
