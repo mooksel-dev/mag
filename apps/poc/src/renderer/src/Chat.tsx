@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, chatCommands, resolveChoice, turnMeta, type AgentSession, type Attachment, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, chatCommands, resolveChoice, turnMeta, type AgentSession, type Attachment, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
 import { useAppliedTheme } from './useTheme'
 import { mdSegments } from './markdown'
+import { DiagramView } from './diagrams/DiagramView'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -37,7 +38,7 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
 
 /**
  * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams and [title](canvas:<id>) links as
- * inline canvases. Agent output is sanitized: it may echo repo or web content.
+ * inline canvases (canvas:<id>#<node> focuses a node of a diagram). Agent output is sanitized: it may echo repo or web content.
  */
 export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; canvases?: CanvasRef[]; className?: string }) {
   const theme = useAppliedTheme()
@@ -72,7 +73,7 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
         // A theme change re-renders mermaid from the source, so start from fresh HTML.
         if (seg.kind === 'md') return <div key={`${i}-${theme}`} dangerouslySetInnerHTML={{ __html: seg.html }} />
         const canvas = canvases?.find((c) => c.id === seg.id)
-        return canvas ? <div key={i} className="canvasslot"><CanvasCard key={canvas.version} canvas={canvas} /></div> : <p key={i}>{seg.title}</p>
+        return canvas ? <div key={i} className="canvasslot"><CanvasCard key={canvas.version} canvas={canvas} focus={seg.node} /></div> : <p key={i}>{seg.title}</p>
       })}
     </div>
   )
@@ -80,17 +81,27 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
 
 const fileUrl = (a: Attachment) => `mag-file://att/${encodeURIComponent(a.path.split(/[\\/]/).pop() ?? '')}`
 
-export function CanvasFrame({ canvas, height = 340 }: { canvas: CanvasRef; height?: number | string }) {
-  const [html, setHtml] = useState<string | null>(null)
+/**
+ * A canvas's content: an HTML page in a sandboxed frame, or a diagram drawn by mag. `height`: of the frame; a diagram
+ * takes the height it needs (scrolling past a cap), or fills its box at '100%'. `focus`: a node of a diagram to show.
+ */
+export function CanvasFrame({ canvas, height = 340, focus }: { canvas: CanvasRef; height?: number | string; focus?: string }) {
+  const [content, setContent] = useState<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null | undefined>(undefined)
   useEffect(() => {
-    mag.getCanvas(canvas.id).then(setHtml)
+    mag.getCanvas(canvas.id).then(setContent)
   }, [canvas.id, canvas.version])
-  if (html === null) return <div className="muted small">Loading…</div>
+  if (content === undefined) return <div className="muted small">Loading…</div>
+  if (content?.kind === 'diagram' && content.diagram)
+    return (
+      <div className={`canvasdiagram${height === '100%' ? ' fill' : ''}`}>
+        <DiagramView diagram={content.diagram} focus={focus} />
+      </div>
+    )
   // No allow-same-origin: the page can run scripts but cannot reach window.mag.
-  return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={html} style={{ height }} />
+  return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={content?.html ?? ''} style={{ height }} />
 }
 
-export function CanvasCard({ canvas, latest = true }: { canvas: CanvasRef; latest?: boolean }) {
+export function CanvasCard({ canvas, latest = true, focus }: { canvas: CanvasRef; latest?: boolean; focus?: string }) {
   const [full, setFull] = useState(false)
   return (
     <div className="canvascard">
@@ -101,8 +112,8 @@ export function CanvasCard({ canvas, latest = true }: { canvas: CanvasRef; lates
         {latest && <OpenCanvasWindow canvas={canvas} />}
         {latest && <button className="link" onClick={() => setFull(true)}>Expand</button>}
       </div>
-      {latest ? <CanvasFrame canvas={canvas} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
-      {full && <CanvasOverlay canvas={canvas} onClose={() => setFull(false)} />}
+      {latest ? <CanvasFrame canvas={canvas} focus={focus} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
+      {full && <CanvasOverlay canvas={canvas} focus={focus} onClose={() => setFull(false)} />}
     </div>
   )
 }
@@ -116,7 +127,7 @@ function OpenCanvasWindow({ canvas }: { canvas: CanvasRef }) {
 }
 
 /** Full-screen view of one canvas. */
-export function CanvasOverlay({ canvas, onClose }: { canvas: CanvasRef; onClose: () => void }) {
+export function CanvasOverlay({ canvas, focus, onClose }: { canvas: CanvasRef; focus?: string; onClose: () => void }) {
   return (
     <div className="overlay" onClick={onClose}>
       <div className="overlaybox" onClick={(e) => e.stopPropagation()}>
@@ -127,7 +138,7 @@ export function CanvasOverlay({ canvas, onClose }: { canvas: CanvasRef; onClose:
           <OpenCanvasWindow canvas={canvas} />
           <button onClick={onClose}>Close</button>
         </div>
-        <CanvasFrame canvas={canvas} height="100%" />
+        <CanvasFrame canvas={canvas} height="100%" focus={focus} />
       </div>
     </div>
   )

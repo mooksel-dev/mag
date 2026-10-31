@@ -2,6 +2,25 @@
 
 export type ArchLayer = 'app' | 'service' | 'client' | 'lib'
 
+/** How an element of a task diagram changes; no mark = unchanged context. */
+export type DiffMark = 'add' | 'mod' | 'del'
+
+/** A line of text with its change, e.g. an interface method. A changed line is the old one `del` and the new one `add`. */
+export interface Line {
+  text: string
+  diff?: DiffMark
+}
+
+/** What the tree helpers need of a module: the architecture's ArchNode and a Component diagram's DNode alike. */
+export interface TreeNode<N> {
+  id: string
+  uses: { to: string; calls: (string | Line)[]; diff?: DiffMark }[]
+  children?: N[]
+  diff?: DiffMark
+}
+
+const callText = (c: string | Line) => (typeof c === 'string' ? c : c.text)
+
 /** A dependency of a module: the module it uses and which of its methods it calls. */
 export interface ArchUse {
   /** Id of any module in the tree. */
@@ -49,19 +68,19 @@ export function layerRule(from: ArchLayer, to: ArchLayer): { severity: 'error' |
 }
 
 /** Visits every module depth-first; `ancestors` runs from the top level down to the module's parent. */
-export function walkArch(nodes: ArchNode[], visit: (node: ArchNode, ancestors: ArchNode[]) => void, ancestors: ArchNode[] = []) {
+export function walkArch<N extends { children?: N[] }>(nodes: N[], visit: (node: N, ancestors: N[]) => void, ancestors: N[] = []) {
   for (const n of nodes) {
     visit(n, ancestors)
     if (n.children?.length) walkArch(n.children, visit, [...ancestors, n])
   }
 }
 
-export function findNode(nodes: ArchNode[], id: string): ArchNode | undefined {
+export function findNode<N extends { id: string; children?: N[] }>(nodes: N[], id: string): N | undefined {
   return pathTo(nodes, id).at(-1)
 }
 
 /** The module and its ancestors, top level first (for breadcrumbs); [] when there is no such id. */
-export function pathTo(nodes: ArchNode[], id: string): ArchNode[] {
+export function pathTo<N extends { id: string; children?: N[] }>(nodes: N[], id: string): N[] {
   for (const n of nodes) {
     if (n.id === id) return [n]
     const inner = n.children ? pathTo(n.children, id) : []
@@ -78,6 +97,25 @@ export interface ArchEdge {
   calls: string[]
   /** 'out': `to` is outside the level, 'in': `from` is; such an end is drawn as a port. */
   port?: 'in' | 'out'
+  /** Diagrams only: the change of the uses behind the arrow; mixed changes make it 'mod'. */
+  diff?: DiffMark
+  /** Diagrams only: the change of each call that has one, by its text. */
+  callDiff?: Record<string, DiffMark>
+}
+
+/**
+ * The change of a use: its own mark, else the one of a module at either end that is added or removed, else 'mod'
+ * when one of its calls changes.
+ */
+export function useDiff<N extends TreeNode<N>>(from: N, use: N['uses'][number], to: N | undefined): DiffMark | undefined {
+  const whole = (m?: DiffMark) => (m === 'add' || m === 'del' ? m : undefined)
+  return use.diff ?? whole(from.diff) ?? whole(to?.diff) ?? (use.calls.some((c) => typeof c !== 'string' && c.diff) ? 'mod' : undefined)
+}
+
+/** One mark for several: the common one, 'mod' when they differ and any is marked. */
+function combine(marks: (DiffMark | undefined)[]): DiffMark | undefined {
+  if (!marks.some(Boolean)) return undefined
+  return marks.every((m) => m === marks[0]) ? marks[0] : 'mod'
 }
 
 /**
@@ -86,7 +124,7 @@ export interface ArchEdge {
  * of the level, so a call from inside an app to another app's service shows as a call to that app. Uses inside one
  * module of the level are not arrows here.
  */
-export function edgesAt(nodes: ArchNode[], parentId: string | null): ArchEdge[] {
+export function edgesAt<N extends TreeNode<N>>(nodes: N[], parentId: string | null): ArchEdge[] {
   const level = parentId ? pathTo(nodes, parentId) : []
   if (parentId && !level.length) return []
   const depth = level.length
@@ -99,7 +137,10 @@ export function edgesAt(nodes: ArchNode[], parentId: string | null): ArchEdge[] 
     const split = p.findIndex((n, i) => n.id !== level[i]?.id)
     return split < 0 ? null : { id: p[split].id, port: true } // split < 0: an ancestor of the level
   }
+  const byId = new Map<string, N>()
+  walkArch(nodes, (n) => byId.set(n.id, n))
   const edges = new Map<string, ArchEdge>()
+  const marks = new Map<string, (DiffMark | undefined)[]>()
   walkArch(nodes, (n) => {
     for (const u of n.uses) {
       const a = anchor(n.id)
@@ -112,10 +153,22 @@ export function edgesAt(nodes: ArchNode[], parentId: string | null): ArchEdge[] 
         if (a.port) e.port = 'in'
         if (b.port) e.port = 'out'
         edges.set(k, e)
+        marks.set(k, [])
       }
-      for (const c of u.calls) if (!e.calls.includes(c)) e.calls.push(c)
+      const m = useDiff(n, u, byId.get(u.to))
+      marks.get(k)!.push(m)
+      for (const c of u.calls) {
+        const text = callText(c)
+        if (!e.calls.includes(text)) e.calls.push(text)
+        const cm = (typeof c !== 'string' && c.diff) || (m === 'add' || m === 'del' ? m : undefined)
+        if (cm && !e.callDiff?.[text]) e.callDiff = { ...e.callDiff, [text]: cm }
+      }
     }
   })
+  for (const [k, e] of edges) {
+    const m = combine(marks.get(k)!)
+    if (m) e.diff = m
+  }
   return [...edges.values()]
 }
 
@@ -125,10 +178,10 @@ export function methodName(line: string): string {
 }
 
 /** Modules that use `id`, with what they call on it. */
-export function callersOf(nodes: ArchNode[], id: string): { node: ArchNode; calls: string[] }[] {
-  const out: { node: ArchNode; calls: string[] }[] = []
+export function callersOf<N extends TreeNode<N>>(nodes: N[], id: string): { node: N; calls: string[] }[] {
+  const out: { node: N; calls: string[] }[] = []
   walkArch(nodes, (n) => {
-    const calls = n.uses.filter((u) => u.to === id).flatMap((u) => u.calls)
+    const calls = n.uses.filter((u) => u.to === id).flatMap((u) => u.calls.map(callText))
     if (n.uses.some((u) => u.to === id)) out.push({ node: n, calls })
   })
   return out

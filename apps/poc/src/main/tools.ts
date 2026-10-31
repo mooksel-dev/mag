@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, findRepoWork, isLegacy, nextPlanRank, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, walkArch, type ArchNode, type ArchUse, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -126,6 +126,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
               dir: work.dir,
               repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, prUrl: r.prUrl, prState: r.prState })),
             },
+            diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c) })),
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
             tracker: task.tracker ?? undefined,
           },
@@ -136,6 +137,12 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'get_doc':
         return doc(task.id)
+
+      case 'get_diagrams': {
+        const list = taskDiagrams(store, task.id)
+        if (!list.length) return 'This task has no diagrams.'
+        return JSON.stringify(list.map((c) => ({ id: c.id, title: c.title, version: c.version, changes: changes(c), diagram: c.diagram })), null, 2)
+      }
 
       case 'update_doc':
         store.data.docs[task.id] = String(args.markdown ?? '')
@@ -280,6 +287,14 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
   }
 }
 
+/** Diagrams of a task, in the order they were drawn. */
+function taskDiagrams(store: Store, taskId: string): Canvas[] {
+  return Object.values(store.data.canvases).filter((c) => c.taskId === taskId && c.kind === 'diagram' && c.diagram)
+}
+
+/** "+2 ~1 −0", or "no changes". */
+const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'no changes'
+
 /**
  * Records the module tree. Ids must be unique in the whole tree; uses of unknown ids or of the module itself are
  * dropped, repeats of one target merged. A plain string in `uses` counts as `{ to, calls: [] }`.
@@ -316,6 +331,13 @@ function setArchitecture(store: Store, projectId: string, args: Record<string, u
     architecture: { summary: String(args.summary ?? ''), modules, updatedAt: Date.now() },
   })
   return `Recorded ${ids.size} module(s), ${modules.length} on the top level.${dropped ? ` Dropped ${dropped} use(s) of unknown ids or of the module itself.` : ''}`
+}
+
+/** Puts a card of the canvas into the run's chat. */
+function showInChat(store: Store, ctx: ToolContext, canvas: Canvas) {
+  const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+  session?.items.push({ kind: 'canvas', canvas: { id: canvas.id, title: canvas.title, version: canvas.version }, at: Date.now() })
+  store.changed()
 }
 
 /** Tools that work in task runs and project chats alike. Returns undefined when `name` is not one of them. */
@@ -454,12 +476,37 @@ function sharedTool(
         taskId: ctx.taskId ?? null,
         sessionId: ctx.sessionId ?? null,
         title: String(args.title ?? 'Canvas'),
+        kind: 'html',
         html,
       })
-      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      session?.items.push({ kind: 'canvas', canvas: { id: canvas.id, title: canvas.title, version: canvas.version }, at: Date.now() })
-      store.changed()
+      showInChat(store, ctx, canvas)
       return `Shown to the user as canvas ${canvas.id} (v${canvas.version}).`
+    }
+
+    case 'show_diagram': {
+      // Some agent CLIs pass a nested object as a JSON string.
+      let raw = args.diagram
+      if (typeof raw === 'string') {
+        try {
+          raw = JSON.parse(raw)
+        } catch {
+          throw new Error('diagram must be an object (or its JSON)')
+        }
+      }
+      const diagram = normalizeDiagram(raw)
+      const errors = validateDiagram(diagram)
+      if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
+      const canvas = store.saveCanvas({
+        id: args.id ? String(args.id) : undefined,
+        projectId: project.id,
+        taskId: ctx.taskId ?? null,
+        sessionId: ctx.sessionId ?? null,
+        title: String(args.title ?? 'Diagram'),
+        kind: 'diagram',
+        diagram,
+      })
+      showInChat(store, ctx, canvas)
+      return `Diagram ${canvas.id} (v${canvas.version}): ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
     }
   }
   return undefined

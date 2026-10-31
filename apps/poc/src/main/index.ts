@@ -216,7 +216,10 @@ app.whenReady().then(async () => {
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
-  handle('canvas:get', (_, id: string) => store.data.canvases[id]?.html ?? null)
+  handle('canvas:get', (_, id: string) => {
+    const c = store.data.canvases[id]
+    return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null
+  })
   handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
     const name = basename(f.name || (f.path ? basename(f.path) : 'file')).replace(/[^\w.-]+/g, '_') || 'file'
     const path = join(attachmentsDir, `${randomUUID().slice(0, 8)}-${name}`)

@@ -154,3 +154,30 @@ test('set_architecture records a module tree, drops unknown and self uses, rejec
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { children: [mod('a')] })] }), /repeated: a/)
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', apps: [] }), /modules is required/)
 })
+
+test('show_diagram validates, saves a diagram canvas and lists it in get_task and get_diagrams', async () => {
+  const { store, task, call } = setup()
+  const diagram = { type: 'component', modules: [{ id: 'tasks', name: 'Tasks', interface: ['list()', { text: 'groom(id)', diff: 'add' }], uses: ['queue'] }, { id: 'queue', name: 'Queue', diff: 'add' }] }
+  await assert.rejects(call('show_diagram', { title: 'Bad', diagram: { type: 'component', modules: [{ id: 'a', name: 'A', uses: ['nope'] }] } }), /Not saved[\s\S]*uses "nope": no such module/)
+  assert.equal(Object.keys(store.data.canvases).length, 0)
+  assert.equal(await call('get_diagrams'), 'This task has no diagrams.')
+
+  const out = await call('show_diagram', { title: 'Queue', diagram })
+  const [c] = Object.values(store.data.canvases)
+  assert.equal(out, `Diagram ${c.id} (v1): +2 ~1 −0. Link it as [Queue](canvas:${c.id}), a node as canvas:${c.id}#<node-id>.`)
+  assert.deepEqual([c.kind, c.taskId, c.html], ['diagram', task.id, undefined])
+  assert.deepEqual(c.diagram!.type === 'component' && c.diagram!.modules[0].uses, [{ to: 'queue', calls: [] }])
+  assert.equal(store.data.sessions[0].items.at(-1)?.kind, 'canvas')
+
+  assert.deepEqual(JSON.parse(await call('get_task')).diagrams, [{ id: c.id, type: 'component', title: 'Queue', changes: '+2 ~1 −0' }])
+  assert.equal(JSON.parse(await call('get_diagrams'))[0].diagram.modules[1].id, 'queue')
+
+  await call('show_diagram', { id: c.id, title: 'Queue v2', diagram: { type: 'state', entity: 'Job', states: [{ id: 'a' }], transitions: [] } })
+  assert.deepEqual([store.data.canvases[c.id].version, store.data.canvases[c.id].diagram!.type], [2, 'state'])
+  // An HTML canvas is not revised as a diagram, nor the other way round; neither is listed as a diagram.
+  await call('show_canvas', { title: 'Mock', html: '<p>hi</p>' })
+  const html = Object.values(store.data.canvases).find((x) => x.kind === 'html')!
+  await assert.rejects(call('show_diagram', { id: html.id, title: 'X', diagram }), /is HTML: revise it with show_canvas/)
+  await assert.rejects(call('show_canvas', { id: c.id, title: 'X', html: '<p/>' }), /is a diagram: revise it with show_diagram/)
+  assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
+})

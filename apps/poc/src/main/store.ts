@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type ChatItem, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -10,7 +10,7 @@ interface Data {
   tasks: Task[]
   sessions: AgentSession[]
   docs: Record<string, string>
-  /** Agent-drawn HTML; not sent to the renderer with the state (see canvasList). */
+  /** Agent-drawn HTML pages and diagrams; the HTML is not sent to the renderer with the state (see canvasList). */
   canvases: Record<string, Canvas>
   /** Project activity log, oldest first; kept after its task is deleted. */
   events: ProjectEvent[]
@@ -128,6 +128,7 @@ export class Store {
       if ((t.type as string) === 'story') t.type = 'dev'
       t.rank ??= t.createdAt
     }
+    for (const c of Object.values(this.data.canvases)) c.kind ??= 'html'
     for (const s of this.data.sessions) {
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
       s.stepId ??= null
@@ -270,7 +271,7 @@ export class Store {
       for (const c of Object.values(this.data.canvases)) {
         if (c.projectId !== pid) continue
         c.title = rw(c.title)
-        c.html = rw(c.html)
+        if (c.html) c.html = rw(c.html)
       }
     }
     if (maps.size) this.changed()
@@ -352,17 +353,22 @@ export class Store {
     return s
   }
 
-  /** Canvas metadata for the renderer, without the HTML. */
+  /** Canvases for the renderer: without the HTML, with diagram data (it is small). */
   canvasList() {
     return Object.values(this.data.canvases).map(({ html: _, ...meta }) => meta)
   }
 
-  saveCanvas(c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string; html: string }): Canvas {
+  /** A new canvas, or a new version of `id`; a revision keeps the kind. */
+  saveCanvas(
+    c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string } & ({ kind: 'html'; html: string } | { kind: 'diagram'; diagram: Diagram }),
+  ): Canvas {
     const prev = c.id ? this.data.canvases[c.id] : undefined
     if (c.id && !prev) throw new Error(`No canvas ${c.id}`)
+    if (prev && prev.kind !== c.kind) throw new Error(`Canvas ${prev.id} is ${prev.kind === 'diagram' ? 'a diagram: revise it with show_diagram' : 'HTML: revise it with show_canvas'}`)
+    const content = c.kind === 'html' ? { kind: c.kind, html: c.html } : { kind: c.kind, diagram: c.diagram }
     const canvas: Canvas = prev
-      ? { ...prev, title: c.title || prev.title, html: c.html, version: prev.version + 1, updatedAt: Date.now() }
-      : { id: id(), projectId: c.projectId, taskId: c.taskId, sessionId: c.sessionId, title: c.title, html: c.html, version: 1, updatedAt: Date.now() }
+      ? { ...prev, title: c.title || prev.title, ...content, version: prev.version + 1, updatedAt: Date.now() }
+      : { id: id(), projectId: c.projectId, taskId: c.taskId, sessionId: c.sessionId, title: c.title, ...content, version: 1, updatedAt: Date.now() }
     this.data.canvases[canvas.id] = canvas
     this.changed()
     return canvas
