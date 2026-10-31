@@ -128,6 +128,8 @@ export interface MagApi {
   /** Absolute path of a dropped File, if it has one. */
   pathForFile(file: File): string
   stop(sessionId: string): Promise<void>
+  /** Stop one background task (Monitor, background Bash…) of a live session; the agent is not woken. */
+  stopBackground(sessionId: string, taskId: string): Promise<void>
   /** Allow or deny a pending integration call (an approval chat item). */
   decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */

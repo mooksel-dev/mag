@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, chatCommands, liveSession, resolveChoice, turnMeta, type AgentSession, type Attachment, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
@@ -240,6 +240,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
         {busy && <div className="muted small">Agent is working…</div>}
         <div ref={end} />
       </div>
+      {!!session.background?.length && <BackgroundTasks sessionId={session.id} tasks={session.background} />}
       <Composer
         busy={busy}
         queue={liveSession(session)}
@@ -293,6 +294,26 @@ function ToolGroup({ tools }: { tools: ToolItem[] }) {
       </button>
       {open && tools.map((t, i) => (
         <div key={i} className="tool">{toolMark(t.ok)} {t.name} <span className="muted">{t.summary}</span></div>
+      ))}
+    </div>
+  )
+}
+
+/** "▸ 1 background task · Monitor" above the composer; expands to one line per task, each with its own stop. */
+function BackgroundTasks({ sessionId, tasks }: { sessionId: string; tasks: BackgroundTask[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bgtasks">
+      <button className="toolsrow" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? '▾' : '▸'} {backgroundLabel(tasks)}
+      </button>
+      {open && tasks.map((t) => (
+        <div key={t.id} className="bgtask">
+          <span>{t.name}</span>
+          <span className="muted small">{t.id}</span>
+          <div className="grow" />
+          <button type="button" className="iconbtn stop" onClick={() => void mag.stopBackground(sessionId, t.id)} title={`Stop ${t.name}`} aria-label={`Stop ${t.name}`}>■</button>
+        </div>
       ))}
     </div>
   )

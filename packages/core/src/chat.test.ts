@@ -1,6 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cleanTitle, liveSession, titlePrompt, turnMeta, type ChatItem } from './index.ts'
+import { backgroundLabel, cleanTitle, liveSession, titlePrompt, turnMeta, type ChatItem } from './index.ts'
+
+test('backgroundLabel counts the tasks and names their tools', () => {
+  assert.equal(backgroundLabel([{ id: 'a', name: 'Monitor' }]), '1 background task · Monitor')
+  assert.equal(
+    backgroundLabel([{ id: 'a', name: 'Monitor' }, { id: 'b', name: 'Bash' }, { id: 'c', name: 'Monitor' }]),
+    '3 background tasks · Monitor ×2, Bash',
+  )
+})
 
 test('titlePrompt caps the excerpt at 2000 characters', () => {
   const prompt = titlePrompt('hi', 'x'.repeat(5000))
