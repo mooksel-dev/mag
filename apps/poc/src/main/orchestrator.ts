@@ -6,9 +6,9 @@ import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/ag
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, changedRepos, prepareWorktree, removeWorktree, slug, type PrFeedback } from './git'
-import { APPROVE_TOOL } from './tool-defs'
-import { log } from './log'
+import { AGENT_MARK, changedRepos, prepareWorktree, removeWorktree, slug, type PrFeedback } from './git.ts'
+import { APPROVE_TOOL } from './tool-defs.ts'
+import { log } from './log.ts'
 
 interface Paths {
   /** Built task-mcp.js next to the main bundle. */
@@ -281,7 +281,7 @@ export class Orchestrator {
     if (!['backlog', 'grooming', 'todo'].includes(task.status) || task.work) throw new Error(`${task.key} is ${task.status}; only backlog, grooming or not started todo tasks can be groomed`)
     const session = this.newSession(taskId, 'groomer')
     this.store.updateTask(taskId, { status: 'grooming', needsInput: null })
-    this.run(session, `Groom task ${task.key}. Start with get_task.`)
+    void this.run(session, `Groom task ${task.key}. Start with get_task.`)
   }
 
   /**
@@ -300,34 +300,33 @@ export class Orchestrator {
     }
     if (isLegacy(task)) {
       const last = this.lastSession(taskId, 'developer')
-      if (last && this.runs.has(last.id)) throw new Error('Developer is still working')
+      if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
       const dir = task.work?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
       this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`) })
       const session = last ?? this.newSession(taskId, 'developer')
       if (!(await this.prepareWorktrees(session))) return
-      this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
-      return
+      return this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
     }
     const step = currentStep(taskId, this.store.data.tasks)
     if (!step) throw new Error(`${task.key} has no step to develop; groom it into steps first`)
     const last = this.lastStepSession(step.id)
-    if (last && this.runs.has(last.id)) throw new Error('Developer is still working')
+    if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
     this.store.updateTask(taskId, { status: 'in_progress', needsInput: null })
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
     this.store.updateTask(step.id, { status: 'in_progress', work: this.workFor(step.work, project, dir, stepBranch(step.key)) })
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
     if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
-    this.run(session, message ?? `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`)
+    return this.run(session, message ?? `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`)
   }
 
   /** The tracker agent reads the task's ticket in a new background session and writes the brief (set_brief). */
   importTicket(taskId: string) {
     const task = this.store.task(taskId)
     if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
-    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.runs.has(s.id))) throw new Error('An agent is still working on this task')
+    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.isRunning(s.id))) throw new Error('An agent is still working on this task')
     const session = this.newSession(taskId, 'tracker')
-    this.run(session, `Import ${task.tracker.key} into ${task.key}. Start with get_import.`)
+    void this.run(session, `Import ${task.tracker.key} into ${task.key}. Start with get_import.`)
   }
 
   /** The user's Start on the task's next step (one that starts manually): it runs as develop does. */
@@ -346,11 +345,11 @@ export class Orchestrator {
   regroomRemaining(taskId: string) {
     const task = this.store.task(taskId)
     if (isLegacy(task) || task.status !== 'in_progress') throw new Error(`${task.key} is ${isLegacy(task) ? 'a legacy task' : task.status}; only the remaining steps of a task in progress are re-groomed`)
-    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.runs.has(s.id))) throw new Error('An agent is still working on this task')
+    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.isRunning(s.id))) throw new Error('An agent is still working on this task')
     const session = this.newSession(taskId, 'groomer')
     this.remainingGroomers.add(session.id)
     this.store.updateTask(taskId, { needsInput: null })
-    this.run(session, `Re-groom the remaining steps of ${task.key} (remaining mode). Start with get_task and get_doc.`)
+    void this.run(session, `Re-groom the remaining steps of ${task.key} (remaining mode). Start with get_task and get_doc.`)
   }
 
   /** mark_groomed in remaining mode: the task goes on, resuming its current step's developer if that step started. */
@@ -364,14 +363,19 @@ export class Orchestrator {
 
   /**
    * A step is done (its PRs merged, or closed by its developer without code). Its worktrees go once its developer is
-   * not running; the task is done when every step is, and the architecture refreshes.
+   * not in a turn (else at the turn's end, see afterRun), after its process; the task is done when every step is, and
+   * the architecture refreshes.
    */
   async completeStep(stepId: string) {
     const step = this.store.task(stepId)
     if (!step.parentId) throw new Error(`${step.key} is not a step`)
     this.store.updateTask(stepId, { status: 'done' })
     log.info('agent', `${step.key} done`)
-    if (!this.store.data.sessions.some((s) => s.stepId === stepId && this.runs.has(s.id))) await this.removeWork(step.work)
+    const sessions = this.store.data.sessions.filter((s) => s.stepId === stepId)
+    if (!sessions.some((s) => this.isRunning(s.id))) {
+      await Promise.all(sessions.map((s) => this.closeLive(s.id)))
+      await this.removeWork(step.work)
+    }
     const task = this.store.task(step.parentId)
     if (currentStep(task.id, this.store.data.tasks)) return
     this.store.updateTask(task.id, { status: 'done', needsInput: null })
@@ -430,7 +434,8 @@ export class Orchestrator {
     const owner = this.store.task(ownerId)
     const taskId = owner.parentId ?? owner.id
     const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
-    if (!session || this.runs.has(session.id)) return false
+    // During a turn the comments wait for the next poll; a live process between turns gets them as a message.
+    if (!session || this.isRunning(session.id)) return false
     const many = new Set(items.map((f) => f.repo)).size > 1 || (owner.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     const text =
       `New feedback on your PR${many ? 's' : ''}:\n` +
@@ -438,7 +443,7 @@ export class Orchestrator {
       `\nAddress it: change the code, run tests, push. Reply on GitHub (starting with ${AGENT_MARK}) only where a comment needs an answer. If something is unclear, set_needs_input.`
     session.items.push({ kind: 'user', text, at: Date.now() })
     this.store.updateTask(taskId, { status: 'in_progress' })
-    this.run(session, text)
+    void this.run(session, text)
     return true
   }
 
@@ -456,16 +461,12 @@ export class Orchestrator {
       : text
     if (!session.taskId) {
       this.store.changed()
-      // The agent the chat runs on next decides; a live process of the previous one goes.
-      if (liveSession({ role: session.role, agent: this.choice(session.projectId, session.role).agent })) return this.runLive(session, prompt)
-      this.closeLive(session.id)
       return this.run(session, prompt)
     }
     this.store.updateTask(session.taskId, { needsInput: null })
-    const task = this.store.task(session.taskId)
     // A worktree may have failed earlier or been removed: recreate it before resuming.
     if (session.role === 'developer' && this.ownerOf(session).work && !(await this.prepareWorktrees(session))) return
-    this.run(session, prompt)
+    return this.run(session, prompt)
   }
 
   /** Stops the current turn. A live process lives on with its background tasks. */
@@ -480,20 +481,29 @@ export class Orchestrator {
     const live = this.lives.get(sessionId)
     if (!live || live.closing) return
     await live.handle.stopTask(taskId)
+    // Stopping a task does not wake the agent: a run that waited only for its background tasks is over now.
+    const session = this.store.session(sessionId)
+    if (session.status !== 'running' && !session.background?.length) void this.afterRun(session)
   }
 
   /** On quit: live processes would outlive mag and keep waking for their background tasks. */
   shutdown() {
-    for (const live of this.lives.values()) live.handle.close(0)
+    for (const id of this.lives.keys()) void this.closeLive(id, 0)
   }
 
-  /** Cancel a task not done yet: stop its agents and remove its worktrees. Branches and open PRs stay as they are. */
+  /**
+   * Cancel a task not done yet: stop its agents, close their processes (background tasks too), then remove its
+   * worktrees. Branches and open PRs stay as they are.
+   */
   async cancel(taskId: string, reason: string | null) {
     const task = this.store.task(taskId)
     if (!canCancel(task)) throw new Error(`${task.key} is ${task.status}; it cannot be canceled`)
-    for (const s of this.store.data.sessions) if (s.taskId === taskId) this.stop(s.id)
+    const sessions = this.store.data.sessions.filter((s) => s.taskId === taskId)
+    const runs = sessions.flatMap((s) => this.runs.get(s.id) ?? [])
+    for (const r of runs) r.kill()
     this.store.updateTask(taskId, { status: 'canceled', cancelReason: reason, needsInput: null })
     log.info('agent', `${task.key} canceled`, { reason })
+    await Promise.all([...runs.map((r) => r.done), ...sessions.map((s) => this.closeLive(s.id))])
     for (const t of [task, ...subtasksOf(taskId, this.store.data.tasks)]) await this.removeWork(t.work)
   }
 
@@ -590,7 +600,16 @@ export class Orchestrator {
     }
   }
 
-  private run(session: AgentSession, prompt: string) {
+  /** A turn of the session: on its live process (see liveSession), or on a process of its own. */
+  private async run(session: AgentSession, prompt: string) {
+    // The agent the session runs on next decides; a live process of an agent without them goes first.
+    if (liveSession({ role: session.role, agent: this.choice(session.projectId, session.role).agent })) return this.runLive(session, prompt)
+    if (this.lives.has(session.id)) await this.closeLive(session.id)
+    this.runOnce(session, prompt)
+  }
+
+  /** One process for this turn; the run ends when it exits. */
+  private runOnce(session: AgentSession, prompt: string) {
     const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: session.role }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
@@ -678,14 +697,16 @@ export class Orchestrator {
     this.clearIdle(session.id)
     const c = this.choice(session.projectId, session.role)
     let live = this.lives.get(session.id)
+    // A new session is created running before its first turn: only a live process can be in a turn.
+    const inTurn = !!live && !live.closing && session.status === 'running'
     // A new model or agent applies between turns. One process at a time per native session: a closing one goes first.
-    if (live && session.status !== 'running' && (live.agent !== c.agent || live.model !== c.model)) this.closeLive(session.id)
+    if (live && !inTurn && (live.agent !== c.agent || live.model !== c.model)) void this.closeLive(session.id)
     if (live?.closing) {
       await live.handle.done
       live = this.lives.get(session.id)
     }
     if (!live) live = this.openLive(session, c)
-    if (session.status !== 'running') this.turnStarted(session)
+    if (!inTurn) this.turnStarted(session, true)
     live.handle.send(prompt)
   }
 
@@ -724,31 +745,36 @@ export class Orchestrator {
       if (this.lives.get(session.id) === live) this.lives.delete(session.id)
       this.clearIdle(session.id)
       session.live = false
-      // Exited mid-turn (a crash, or our close): the turn is over too.
-      if (session.status === 'running') this.turnEnded(session)
-      if (session.background?.length) session.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
+      const waited = !!session.background?.length
+      if (waited) session.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
       session.background = undefined
+      // Exited mid-turn (a crash, or our close): the turn is over too. A run that waited for background tasks is over
+      // with the process. Whoever closed it (cancel, a done step, quit) has dealt with the task already.
+      if (session.status === 'running') this.turnEnded(session, !live.closing)
+      else if (waited && !live.closing) void this.afterRun(session)
       log.info('agent', `${session.role} live process closed: ${session.status}`, { ...who, seconds: Math.round((Date.now() - openedAt) / 1000) })
       this.store.changed()
     })
     return live
   }
 
-  /** A turn of a live session began: our message, or a background task woke the agent. */
-  private turnStarted(session: AgentSession) {
+  /** A turn of a live session began: our message (`ours`), or a background task woke the agent. */
+  private turnStarted(session: AgentSession, ours = false) {
     this.clearIdle(session.id)
-    if (session.status === 'running') return
+    if (session.status === 'running' && !ours) return
     session.status = 'running'
     session.runStartedAt = Date.now()
     this.store.changed()
-    log.info('agent', `${session.role} turn started`, { session: session.id })
+    if (ours) this.logSessionEvent(session, 'agent_started', `${session.role} started`)
+    log.info('agent', `${session.role} turn started`, { session: session.id, by: ours ? 'message' : 'wake-up' })
   }
 
-  /** A turn of a live session ended at its result; the process stays for the next one. */
-  private turnEnded(session: AgentSession) {
+  /** A turn of a live session ended at its result; the process stays for the next one. `check`: run afterRun. */
+  private turnEnded(session: AgentSession, check = true) {
     if (session.status === 'running') session.status = 'idle'
     log.info('agent', `${session.role} turn ended: ${session.status}`, { session: session.id, seconds: Math.round((Date.now() - (session.runStartedAt ?? Date.now())) / 1000) })
     if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
+    if (check) void this.afterRun(session)
     this.nameChat(session)
     this.armIdle(session)
     this.store.changed()
@@ -760,7 +786,7 @@ export class Orchestrator {
     if (!this.lives.has(session.id) || session.status === 'running' || session.background?.length) return
     const timer = setTimeout(() => {
       this.idleTimers.delete(session.id)
-      this.closeLive(session.id)
+      void this.closeLive(session.id)
     }, LIVE_IDLE_MS)
     timer.unref()
     this.idleTimers.set(session.id, timer)
@@ -771,12 +797,16 @@ export class Orchestrator {
     this.idleTimers.delete(sessionId)
   }
 
-  private closeLive(sessionId: string) {
+  /** Closes the session's live process (if any); resolves once it has exited. */
+  private closeLive(sessionId: string, graceMs?: number): Promise<void> {
     const live = this.lives.get(sessionId)
-    if (!live || live.closing) return
-    live.closing = true
-    log.info('agent', 'live process closing', { session: sessionId })
-    live.handle.close()
+    if (!live) return Promise.resolve()
+    if (!live.closing) {
+      live.closing = true
+      log.info('agent', 'live process closing', { session: sessionId })
+      live.handle.close(graceMs)
+    }
+    return live.handle.done
   }
 
   /** After a chat's first turn: a short generated title in place of the first message. Once; a failure keeps the old title. */
@@ -815,15 +845,20 @@ export class Orchestrator {
     this.store.logEvent({ projectId: session.projectId, taskId: session.taskId, taskKey: task?.key ?? null, kind, text })
   }
 
-  /** Make sure a finished run never leaves a task silently stuck. */
+  /** Make sure a finished run (or turn of a live session) never leaves a task silently stuck. */
   private async afterRun(session: AgentSession) {
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
     const regroomed = session.role === 'groomer' && this.regroomedTasks.delete(task.id)
     if (regroomed) this.remainingGroomers.delete(session.id)
-    // A step its developer closed: its worktrees could not go while the run was on.
-    if (session.stepId && this.ownerOf(session).status === 'done') return this.removeWork(this.ownerOf(session).work)
+    // A step its developer closed: its worktrees could not go while the run was on. Its process goes first.
+    if (session.stepId && this.ownerOf(session).status === 'done') {
+      await this.closeLive(session.id)
+      return this.removeWork(this.ownerOf(session).work)
+    }
     if (task.needsInput) return
+    // A background task will wake the agent again: the run is not over yet.
+    if (session.background?.length) return
     // An import that ended without a brief failed: the inbox says so (see inbox).
     if (session.role === 'tracker' && session.status !== 'error' && task.tracker && !task.tracker.importedAt) {
       session.status = 'error'
@@ -844,7 +879,7 @@ export class Orchestrator {
       const work = this.ownerOf(session).work
       const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []
       const now = this.store.task(task.id)
-      if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id) || this.ownerOf(session).status === 'done') return
+      if (now.status !== 'in_progress' || now.needsInput || this.isRunning(session.id) || session.background?.length || this.ownerOf(session).status === 'done') return
       const outcome = devRunOutcome(work, changed, failed, !!session.stepId)
       // Every PR merged, maybe while the run was on: the step is done. A legacy task finishes on the scheduler's poll.
       if (outcome.kind === 'complete') return session.stepId ? this.completeStep(session.stepId) : undefined
