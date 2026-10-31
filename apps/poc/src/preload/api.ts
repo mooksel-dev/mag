@@ -91,8 +91,6 @@ export interface MagApi {
   develop(taskId: string): Promise<void>
   /** Start the next step of a task in progress that waits for the user's Start. */
   startStep(taskId: string): Promise<void>
-  /** Re-groom the steps not done yet of a task in progress (no agent running); done steps are locked. */
-  regroomRemaining(taskId: string): Promise<void>
   /**
    * Import a tracker ticket by URL or key into a new backlog task; the tracker agent writes its brief in the background.
    * An unknown ref or a ticket already imported comes back as `error`.

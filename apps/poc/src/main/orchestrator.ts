@@ -25,14 +25,24 @@ const GROOMER_PROMPT = `You are grooming a task in "mag", a task-centric workspa
 Your output is the task document, not chat. Work like this:
 1. Call get_task, then read the relevant code in the project repos (read-only).
 2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
-3. If something only the user can decide is unclear, list it under "Open questions" in the doc
-   and call set_needs_input with a one-line summary. Then stop and wait. Ask everything at once, at the task
-   level; subtasks never get questions of their own.
-4. When the user answers in chat, update the doc (remove answered questions, fold answers in).
-5. Describe the target change with show_diagram before splitting it into steps; the app draws the diagrams in the
-   task's Diff tab. The kind of change picks the type: links between modules, their interfaces or calls -> component;
-   a scenario between participants (mostly infra: services, databases, queues, outside APIs, CLI processes) ->
-   sequence; states of an entity -> state; an algorithm -> flowchart; a change of the data schema (collections,
+3. Problem check. Restate the problem in one or two sentences. Look for evidence that it is real: the code path, the
+   ticket, logs, a reproduction from reading the code. Call out a wrong framing ("the brief asks for X, but the cause
+   is Y"). Write the result in §Problem with the evidence. If the problem is not real, write why in §Problem,
+   recommend canceling and call set_needs_input; never cancel the task yourself.
+4. Options. List every sensible way to fix it. Don't limit the count and don't force a fast/right split: options may be
+   alike in quality and speed and differ only in trade-offs, and compromises count. Each option gets the idea, its
+   cost (size and risk) and the trade-offs that set it apart. Give a recommendation and say why. If there is only one
+   sensible way, say so.
+5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
+   everything else only the user can decide, call set_needs_input with a one-line summary, then stop and wait. Ask
+   everything at once, at the task level; subtasks never get questions of their own. Never skip this checkpoint, and
+   do not draw diagrams or create steps before the user confirms the problem and picks an option.
+6. When the user answers in chat, update the doc (remove answered questions, fold answers in). Keep §Options: mark
+   the chosen option and add one line per rejected option saying why it lost.
+7. Design the chosen option per layer. Describe the target change with show_diagram before splitting it into
+   steps; the app draws the diagrams in the task's Diff tab. The kind of change picks the type: links between
+   modules, their interfaces or calls -> component; a scenario between participants (mostly infra: services,
+   databases, queues, outside APIs, CLI processes) -> sequence; states of an entity -> state; an algorithm -> flowchart; a change of the data schema (collections,
    tables, fields, types in the core model, formats of files or API payloads) -> data. Draw as many as the change
    needs, several of one type too, each a separate named diagram. For component take the modules from
    get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls with diff
@@ -47,17 +57,15 @@ Your output is the task document, not chat. Work like this:
    Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>, with the id show_diagram
    returned; the app renders them in place. Revise a diagram by its id. UI mockups and other visuals without a type
    go through show_canvas, linked the same way.
-6. Split the work into execution steps with create_subtask, in order; at least one, or mark_groomed fails. Each step
-   runs in its own developer session from fresh base, with at most one PR per changed repository; the next step starts
-   when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
+8. Split the work into execution steps with create_subtask, in order; at least one, or the task cannot move to
+   todo. Each step runs in its own developer session from fresh base, with at most one PR per changed repository;
+   the next step starts when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
    details. A small task is one step. Use start_manually on a step that must wait for the user's Start (releases in
    parts). When re-grooming, change the existing steps with update_subtask / delete_subtask / reorder_subtasks instead
    of creating duplicates (get_task lists them).
-7. When no open questions remain and the plan is ready: set_needs_input(null), then mark_groomed. The task then is in
-   todo, ready for the user to start.
-Remaining mode (re-grooming a task in progress, usually because its developer found the plan no longer fits): done
-steps are locked; the current step can be renamed or re-noted but not deleted or moved; todo steps can change freely.
-Update the doc to match, then set_needs_input(null) and mark_groomed: the task continues with its current step.
+9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
+   approves with Approve → todo, or asks for changes in chat; after changes, ask for review again. You never move the
+   task to todo yourself.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
@@ -79,8 +87,9 @@ ${workLines(work).join('\n')}
    Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL
    and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
 5. At the end, append to §Progress in the doc (update_doc): what was done in ${step.key} and what changed against the plan.
-6. If the plan no longer fits reality, do not rewrite it: set_needs_input with a one-line reason and stop. The same for
-   a decision only the user can make.
+6. If the plan no longer fits reality, do not rewrite it on your own: call set_needs_input with a one-line reason,
+   explain it in this chat and stop. The same for a decision only the user can make. When the user has decided here,
+   update the doc (§Progress and the affected part of the plan) and continue; step titles and notes stay as they are.
 Never merge. Never push to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.`
 }
@@ -205,10 +214,6 @@ export class Orchestrator {
   /** Live processes (see liveSession), kept between turns. */
   private lives = new Map<string, { handle: LiveHandle; agent: AgentKind; model: string | null; closing: boolean }>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
-  /** Groomer sessions re-grooming the remaining steps of a task in progress. */
-  private remainingGroomers = new Set<string>()
-  /** Tasks whose remaining steps a groomer marked groomed during its current run. */
-  private regroomedTasks = new Set<string>()
 
   constructor(
     private store: Store,
@@ -354,29 +359,6 @@ export class Orchestrator {
     const step = currentStep(taskId, this.store.data.tasks)
     if (step?.status !== 'todo') throw new Error(`${task.key} has no step waiting for Start${step ? `: ${step.key} is in progress` : ''}`)
     return this.develop(taskId)
-  }
-
-  /**
-   * Re-groom what is left of a task in progress (no agent running): a groomer session in remaining mode. The task
-   * stays in progress; done steps are locked. Its mark_groomed calls regroomed.
-   */
-  regroomRemaining(taskId: string) {
-    const task = this.store.task(taskId)
-    if (isLegacy(task) || task.status !== 'in_progress') throw new Error(`${task.key} is ${isLegacy(task) ? 'a legacy task' : task.status}; only the remaining steps of a task in progress are re-groomed`)
-    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.isRunning(s.id))) throw new Error('An agent is still working on this task')
-    const session = this.newSession(taskId, 'groomer')
-    this.remainingGroomers.add(session.id)
-    this.store.updateTask(taskId, { needsInput: null })
-    void this.run(session, `Re-groom the remaining steps of ${task.key} (remaining mode). Start with get_task and get_doc.`)
-  }
-
-  /** mark_groomed in remaining mode: the task goes on, resuming its current step's developer if that step started. */
-  async regroomed(taskId: string) {
-    this.regroomedTasks.add(taskId)
-    const task = this.store.task(taskId)
-    const step = currentStep(taskId, this.store.data.tasks)
-    if (step?.status !== 'in_progress') return
-    await this.develop(taskId, `The remaining steps of ${task.key} were re-groomed. Read get_task and get_doc again, then continue step ${step.key}.`)
   }
 
   /**
@@ -867,8 +849,6 @@ export class Orchestrator {
   private async afterRun(session: AgentSession) {
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
-    const regroomed = session.role === 'groomer' && this.regroomedTasks.delete(task.id)
-    if (regroomed) this.remainingGroomers.delete(session.id)
     // A step its developer closed: its worktrees could not go while the run was on. Its process goes first.
     if (session.stepId && this.ownerOf(session).status === 'done') {
       await this.closeLive(session.id)
@@ -890,9 +870,6 @@ export class Orchestrator {
       if (failed) this.store.updateTask(task.id, { status: 'backlog' })
       else this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
     }
-    // Remaining mode: the steps continue only after mark_groomed.
-    if (this.remainingGroomers.has(session.id) && task.status === 'in_progress')
-      this.store.updateTask(task.id, { needsInput: failed ? 'Groomer failed; check the chat' : 'Groomer stopped without finishing; check the chat' })
     if (session.role === 'developer' && task.status === 'in_progress') {
       const work = this.ownerOf(session).work
       const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []

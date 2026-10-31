@@ -40,7 +40,6 @@ const api: MagApi = {
   reorderSubtasks: (parentId, ids) => ipcRenderer.invoke('task:reorderSubtasks', parentId, ids),
   develop: (taskId) => ipcRenderer.invoke('task:develop', taskId),
   startStep: (taskId) => ipcRenderer.invoke('task:startStep', taskId),
-  regroomRemaining: (taskId) => ipcRenderer.invoke('task:regroomRemaining', taskId),
   importTicket: (projectId, ref) => ipcRenderer.invoke('task:import', projectId, ref),
   retryImport: (taskId) => ipcRenderer.invoke('task:retryImport', taskId),
   linkTicket: (taskId, url) => ipcRenderer.invoke('task:linkTicket', taskId, url),

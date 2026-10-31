@@ -927,10 +927,13 @@ export function runningAgents(sessions: AgentSession[]): AgentSession[] {
 
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {
   dev: `# Problem
-One or two sentences.
+One or two sentences, plus the evidence that it is real.
 
 # Open questions
 Only if any.
+
+# Options
+Every sensible way to fix it: idea, cost, the trade-offs that set it apart. Recommendation, then the choice and why the others lost. Omit when there is only one sensible way.
 
 # Changes
 ## Infra

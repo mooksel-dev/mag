@@ -178,8 +178,9 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
   const restart = () => {
     const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer' || s.role === 'tracker')).at(-1)
     if (last?.role === 'tracker') return mag.retryImport(task.id)
-    if (last?.role !== 'groomer') return mag.develop(task.id)
-    return task.status === 'in_progress' ? mag.regroomRemaining(task.id) : mag.groom(task.id)
+    // A task in progress is never groomed again: its developer goes on.
+    if (last?.role !== 'groomer' || task.status === 'in_progress') return mag.develop(task.id)
+    return mag.groom(task.id)
   }
   const sub =
     kind === 'check_failed' && pr ? `${prName(pr)} · ${text}`
