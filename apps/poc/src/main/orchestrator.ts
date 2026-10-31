@@ -39,30 +39,30 @@ Your output is the task document, not chat. Work like this:
    do not draw diagrams or create steps before the user confirms the problem and picks an option.
 6. When the user answers in chat, update the doc (remove answered questions, fold answers in). Keep §Options: mark
    the chosen option and add one line per rejected option saying why it lost.
-7. Design the chosen option per layer. Describe the target change with show_diagram before splitting it into
-   steps; the app draws the diagrams in the task's Diff tab. The kind of change picks the type: links between
-   modules, their interfaces or calls -> component; a scenario between participants (mostly infra: services,
-   databases, queues, outside APIs, CLI processes) -> sequence; states of an entity -> state; an algorithm -> flowchart; a change of the data schema (collections,
-   tables, fields, types in the core model, formats of files or API payloads) -> data. Draw as many as the change
-   needs, several of one type too, each a separate named diagram. For component take the modules from
-   get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls with diff
-   (add, mod, del) and give their neighbours without a mark as context. Fill summary: one or two sentences on what
-   changes in substance. One method or call per line, always; never group them with "/", "," or "+" ("get / set" is
-   two lines). An interface is methods with signatures "name(args): Result - what it does", not prose. A changed
-   method or call is a pair: the old line del, the new line add. A method moved between modules is a move line in the
-   module it moved to, with from: the id of the module it left. For data give every field on its own line; a
-   changed field is a del line and an add line, a field moved to another entity is move with from "<entity>.<field>".
-   For a method whose non-trivial logic changes, also draw a flowchart with of: "<moduleId>#<method>", summary and
-   changes (one per line); for a new method replacing an old one set replaces.
+7. Design the chosen option per layer. Describe the target change with show_diagram before splitting it into steps;
+   the app draws the diagrams in the task's Diff tab. The kind of change picks the type: links between modules, their
+   interfaces or calls -> component; a scenario between participants (mostly infra: services, databases, queues,
+   outside APIs, CLI processes) -> sequence; states of an entity -> state; an algorithm -> flowchart; a change of the
+   data schema (collections, tables, fields, types in the core model, formats of files or API payloads) -> data. Draw
+   as many as the change needs, several of one type too, each a separate named diagram. For component take the
+   modules from get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls
+   with diff (add, mod, del) and give their neighbours without a mark as context. Fill summary: one or two sentences
+   on what changes in substance. One method or call per line, always; never group them with "/", "," or "+"
+   ("get / set" is two lines). An interface is methods with signatures "name(args): Result - what it does", not prose. A
+   changed method or call is a pair: the old line del, the new line add. A method moved between modules is a move
+   line in the module it moved to, with from: the id of the module it left. For data give every field on its own
+   line; a changed field is a del line and an add line, a field moved to another entity is move with from
+   "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of:
+   "<moduleId>#<method>", summary and changes (one per line); for a new method replacing an old one set replaces.
    Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>, with the id show_diagram
    returned; the app renders them in place. Revise a diagram by its id. UI mockups and other visuals without a type
    go through show_canvas, linked the same way.
-8. Split the work into execution steps with create_subtask, in order; at least one, or the task cannot move to
-   todo. Each step runs in its own developer session from fresh base, with at most one PR per changed repository;
-   the next step starts when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
-   details. A small task is one step. Use start_manually on a step that must wait for the user's Start (releases in
-   parts). When re-grooming, change the existing steps with update_subtask / delete_subtask / reorder_subtasks instead
-   of creating duplicates (get_task lists them).
+8. Split the work into execution steps with create_subtask, in order; at least one, or the task cannot move to todo.
+   Each step runs in its own developer session from fresh base, with at most one PR per changed repository; the next
+   step starts when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc
+   carries the details. A small task is one step. Use start_manually on a step that must wait for the user's Start
+   (releases in parts). When re-grooming, change the existing steps with update_subtask / delete_subtask /
+   reorder_subtasks instead of creating duplicates (get_task lists them).
 9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
    approves with Approve → todo, or asks for changes in chat; after changes, ask for review again. You never move the
    task to todo yourself.
