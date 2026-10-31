@@ -33,3 +33,11 @@ test('mdSegments: prose rewrite applies outside code only', () => {
     { kind: 'md', text: ' D' },
   ])
 })
+
+test('mdSegments: canvas:<id>#<node> links a node of a diagram', () => {
+  assert.deepEqual(mdSegments('[Store](canvas:c1#task-store) and [All](canvas:c1)'), [
+    { kind: 'canvas', id: 'c1', title: 'Store', node: 'task-store' },
+    { kind: 'md', text: ' and ' },
+    { kind: 'canvas', id: 'c1', title: 'All' },
+  ])
+})

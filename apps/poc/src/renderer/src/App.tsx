@@ -40,6 +40,7 @@ import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
+import { DiffTab, diagramsOf } from './DiffTab'
 import { prLabel } from './format'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Home } from './Home'
@@ -196,7 +197,7 @@ function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeM
   )
 }
 
-type TaskTab = 'document' | 'subtasks' | 'canvases' | 'work'
+type TaskTab = 'document' | 'subtasks' | 'diff' | 'canvases' | 'work'
 type ChatMode = 'task' | 'project'
 
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
@@ -230,10 +231,12 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   // The current step's session by default, else the latest one.
   const session = sessions.find((s) => s.id === sessionId) ?? (step && sessions.filter((s) => s.stepId === step.id).at(-1)) ?? sessions.at(-1) ?? null
   const doc = state.docs[task.id]
-  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tab lists the task's own.
+  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tabs list the task's own:
+  // Diff its diagrams, Canvases the HTML ones.
   const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === task.projectId), [state.canvases, task.projectId])
+  const diagrams = useMemo(() => diagramsOf(projectCanvases.filter((c) => c.taskId === task.id)), [projectCanvases, task.id])
   const canvases = useMemo(
-    () => projectCanvases.filter((c) => c.taskId === task.id).sort((a, b) => b.updatedAt - a.updatedAt),
+    () => projectCanvases.filter((c) => c.taskId === task.id && c.kind !== 'diagram').sort((a, b) => b.updatedAt - a.updatedAt),
     [projectCanvases, task.id],
   )
   const progress = subtaskProgress(task.id, tasks)
@@ -265,6 +268,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
     ...(stepMode && !singleStep ? [subtasksTab] : []),
     ['document', 'Document'],
     ...(legacy && children.length ? [subtasksTab] : []),
+    ['diff', `Diff · ${diagrams.length}`],
     ['canvases', `Canvases · ${canvases.length}`],
     ['work', 'Work'],
   ]
@@ -347,6 +351,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           {shownTab === 'document' &&
             (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
           {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} steps={stepMode} />}
+          {shownTab === 'diff' && <DiffTab diagrams={diagrams} />}
           {shownTab === 'canvases' &&
             (canvases.length ? (
               <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>

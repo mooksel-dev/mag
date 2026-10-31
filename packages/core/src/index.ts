@@ -2,8 +2,10 @@
 // Keep it free of runtime dependencies.
 
 import type { ArchDiagram } from './arch.ts'
+import type { Diagram } from './diagram.ts'
 
 export * from './arch.ts'
+export * from './diagram.ts'
 
 export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
@@ -820,7 +822,7 @@ New or changed service interfaces: method signatures and semantics. This is the 
 Hooks, components, pages, handlers, workers that change.
 
 # Architecture
-Mermaid diagram at the level where the change happens (infra, or app: services and clients).
+Diff diagrams are recorded with show_diagram; link them here: [title](canvas:<id>).
 
 # Plan
 Short numbered steps.
@@ -854,13 +856,20 @@ Screens and states.
 `,
 }
 
+/** html: a self-contained page (show_canvas); diagram: typed data mag renders itself (show_diagram). */
+export type CanvasKind = 'html' | 'diagram'
+
 export interface Canvas {
   id: string
   projectId: string
   taskId: string | null
   sessionId: string | null
   title: string
-  html: string
+  kind: CanvasKind
+  /** kind 'html'. */
+  html?: string
+  /** kind 'diagram'. */
+  diagram?: Diagram
   version: number
   updatedAt: number
 }

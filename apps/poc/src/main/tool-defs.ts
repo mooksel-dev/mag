@@ -31,6 +31,78 @@ const ARCH_MODULE = {
   },
 }
 
+const DIFF = { type: 'string', enum: ['add', 'mod', 'del'], description: 'Change: add, mod or del. Leave it out for unchanged context.' }
+const LINES = (what: string) => ({
+  type: 'array',
+  description: `${what}. A plain string is an unchanged line; a changed line is the old one del and the new one add.`,
+  items: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, diff: DIFF } },
+})
+
+/** The data of show_diagram; one shape per type, fields of the other types are left out. */
+const DIAGRAM = {
+  type: 'object',
+  required: ['type'],
+  properties: {
+    type: { type: 'string', enum: ['component', 'sequence', 'state', 'flowchart'] },
+    modules: {
+      type: 'array',
+      description: 'component: modules as in get_architecture (same ids), with diff marks.',
+      items: {
+        type: 'object',
+        required: ['id', 'name', 'uses'],
+        properties: {
+          id: { type: 'string', description: 'Unique in the whole diagram; the id from get_architecture for an existing module.' },
+          name: { type: 'string' },
+          kind: { type: 'string' },
+          layer: { type: 'string', enum: ['app', 'service', 'client', 'lib'] },
+          path: { type: 'string' },
+          description: { type: 'string' },
+          diff: DIFF,
+          interface: LINES('Public methods "name(args): Result - what it does"'),
+          uses: {
+            type: 'array',
+            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF } },
+          },
+          children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields.' }, description: 'Inner modules.' },
+        },
+      },
+    },
+    participants: {
+      type: 'array',
+      description: 'sequence: lifelines, left to right.',
+      items: { type: 'object', required: ['id', 'label'], properties: { id: { type: 'string' }, label: { type: 'string' }, kind: { type: 'string', description: 'service, database, queue, 3rd-party API, CLI…' }, diff: DIFF } },
+    },
+    messages: {
+      type: 'array',
+      description: 'sequence: in order. call opens an activation on `to`, reply (from the callee back) closes it, async is fire and forget.',
+      items: {
+        type: 'object',
+        required: ['from', 'to', 'text', 'kind'],
+        properties: { from: { type: 'string' }, to: { type: 'string' }, text: { type: 'string' }, kind: { type: 'string', enum: ['call', 'reply', 'async'] }, diff: DIFF },
+      },
+    },
+    entity: { type: 'string', description: 'state: whose states, e.g. "Task status".' },
+    states: {
+      type: 'array',
+      items: { type: 'object', required: ['id', 'label'], properties: { id: { type: 'string' }, label: { type: 'string' }, initial: { type: 'boolean' }, final: { type: 'boolean' }, diff: DIFF } },
+    },
+    transitions: {
+      type: 'array',
+      items: { type: 'object', required: ['from', 'to', 'event'], properties: { from: { type: 'string' }, to: { type: 'string' }, event: { type: 'string' }, guard: { type: 'string' }, diff: DIFF } },
+    },
+    nodes: {
+      type: 'array',
+      description: 'flowchart: steps.',
+      items: { type: 'object', required: ['id', 'label', 'shape'], properties: { id: { type: 'string' }, label: { type: 'string' }, shape: { type: 'string', enum: ['start', 'step', 'decision', 'end'] }, diff: DIFF } },
+    },
+    edges: {
+      type: 'array',
+      description: 'flowchart: arrows; label the branches of a decision.',
+      items: { type: 'object', required: ['from', 'to'], properties: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' }, diff: DIFF } },
+    },
+  },
+}
+
 export const TOOL_DEFS = [
   {
     name: 'get_task',
@@ -43,6 +115,12 @@ export const TOOL_DEFS = [
     name: 'get_doc',
     scope: 'task',
     description: 'Read the current task document (markdown).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_diagrams',
+    scope: 'task',
+    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart) with diff marks.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -308,7 +386,7 @@ export const TOOL_DEFS = [
     name: 'show_canvas',
     scope: 'any',
     description:
-      'Show the user a visual: UI mockup, diagram, comparison, flow. Pass one self-contained HTML document (inline CSS/SVG/JS; CDN scripts from cdn.jsdelivr.net or unpkg.com are allowed). It renders in the chat and is kept with the project (and the task, in a task run). To revise, pass the id you got back: a new version replaces the old one.',
+      'Show the user a visual: UI mockup, comparison, anything without a type of its own (diff diagrams go through show_diagram). Pass one self-contained HTML document (inline CSS/SVG/JS; CDN scripts from cdn.jsdelivr.net or unpkg.com are allowed). It renders in the chat and is kept with the project (and the task, in a task run). To revise, pass the id you got back: a new version replaces the old one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -317,6 +395,21 @@ export const TOOL_DEFS = [
         id: { type: 'string', description: 'Existing canvas id to revise.' },
       },
       required: ['title', 'html'],
+    },
+  },
+  {
+    name: 'show_diagram',
+    scope: 'any',
+    description:
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm. Mark every changed element with diff (add, mod, del); unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        diagram: DIAGRAM,
+        id: { type: 'string', description: 'Existing diagram id to revise.' },
+      },
+      required: ['title', 'diagram'],
     },
   },
   {

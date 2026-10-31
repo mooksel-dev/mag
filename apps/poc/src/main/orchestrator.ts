@@ -29,9 +29,15 @@ Your output is the task document, not chat. Work like this:
    and call set_needs_input with a one-line summary. Then stop and wait. Ask everything at once, at the task
    level; subtasks never get questions of their own.
 4. When the user answers in chat, update the doc (remove answered questions, fold answers in).
-5. For design work or UI changes, show mockups or diagrams with show_canvas (kept with the task) and reference them in the doc
-   as a link [title](canvas:<id>), using the id show_canvas returned; the app renders the canvas in place. Diagrams in
-   the doc itself can be \`\`\`mermaid blocks.
+5. Describe the target change with show_diagram before splitting it into steps; the app draws the diagrams in the
+   task's Diff tab. The kind of change picks the type: links between modules, their interfaces or calls -> component;
+   a scenario between participants (mostly infra: services, databases, queues, outside APIs, CLI processes) ->
+   sequence; states of an entity -> state; an algorithm -> flowchart. Draw as many as the change needs, several of one
+   type too, each a separate named diagram. For component take the modules from get_architecture (same ids): mark the
+   changed ones and their changed interface lines, uses and calls with diff (add, mod, del) and give their neighbours
+   without a mark as context. Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>,
+   with the id show_diagram returned; the app renders them in place. Revise a diagram by its id. UI mockups and other
+   visuals without a type go through show_canvas, linked the same way.
 6. Split the work into execution steps with create_subtask, in order; at least one, or mark_groomed fails. Each step
    runs in its own developer session from fresh base, with at most one PR per changed repository; the next step starts
    when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
@@ -56,6 +62,7 @@ const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) =>
 Your cwd and worktrees are for this step only; base is fresh ${base}. Every project repository has its own git worktree there, on its own branch:
 ${workLines(work).join('\n')}
 1. Read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
+   The target picture is the task's diagrams (get_diagrams); your part is what your step links in the doc.
 2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
 3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
 4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
@@ -129,8 +136,9 @@ tasks can be archived; mag archives them after some days.
 - Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
   update_task / update_task_doc. Say in one line what you recorded.
 - cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
-- For anything visual (UI mockups, flows, diagrams, comparisons) use show_canvas with one self-contained HTML page;
-  revise it by id instead of drawing a new one. Prefer showing over describing.
+- For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
+  diagram of a change (component, sequence, state, flowchart) use show_diagram. Revise either by id instead of drawing
+  a new one. Prefer showing over describing.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
 - Be concise: short answers, markdown only where it helps. The user hates filler.
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
