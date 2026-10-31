@@ -7,7 +7,7 @@ import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, threadTime } from './format'
 import { useAppliedTheme } from './useTheme'
 import { mdSegments } from './markdown'
-import { DiagramView } from './diagrams/DiagramView'
+import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -84,8 +84,9 @@ const fileUrl = (a: Attachment) => `mag-file://att/${encodeURIComponent(a.path.s
 /**
  * A canvas's content: an HTML page in a sandboxed frame, or a diagram drawn by mag. `height`: of the frame; a diagram
  * takes the height it needs (scrolling past a cap), or fills its box at '100%'. `focus`: a node of a diagram to show.
+ * `siblings`: the task's diagrams, for the flows of methods (see DiagramView).
  */
-export function CanvasFrame({ canvas, height = 340, focus }: { canvas: CanvasRef; height?: number | string; focus?: string }) {
+export function CanvasFrame({ canvas, height = 340, focus, siblings }: { canvas: CanvasRef; height?: number | string; focus?: string; siblings?: DiagramItem[] }) {
   const [content, setContent] = useState<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null | undefined>(undefined)
   useEffect(() => {
     mag.getCanvas(canvas.id).then(setContent)
@@ -94,7 +95,7 @@ export function CanvasFrame({ canvas, height = 340, focus }: { canvas: CanvasRef
   if (content?.kind === 'diagram' && content.diagram)
     return (
       <div className={`canvasdiagram${height === '100%' ? ' fill' : ''}`}>
-        <DiagramView diagram={content.diagram} focus={focus} />
+        <DiagramView diagram={content.diagram} focus={focus} siblings={siblings} />
       </div>
     )
   // No allow-same-origin: the page can run scripts but cannot reach window.mag.

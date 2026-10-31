@@ -67,7 +67,16 @@ const DIAGRAM = {
   required: ['type'],
   properties: {
     type: { type: 'string', enum: ['component', 'sequence', 'state', 'flowchart', 'data'] },
-    summary: { type: 'string', description: 'component, required: one or two sentences on what changes in substance; shown above the diagram.' },
+    summary: {
+      type: 'string',
+      description: 'component, required: one or two sentences on what changes in substance; shown above the diagram. flowchart with of: what changes in the logic of the method, short.',
+    },
+    of: {
+      type: 'string',
+      description: 'flowchart: "<moduleId>#<method>", the method of a module on this task\'s component diagram whose logic the flow shows (method name without arguments); opens from that method. One flowchart per method; revise it by id.',
+    },
+    replaces: { type: 'string', description: 'flowchart: "<moduleId>#<method>" for a new method, the one it replaces (usually removed, with a flow of its own).' },
+    changes: { type: 'array', items: { type: 'string' }, description: 'flowchart with of: the changes of the logic, one per item.' },
     modules: {
       type: 'array',
       description: 'component: modules as in get_architecture (same ids), with diff marks.',
@@ -481,7 +490,7 @@ export const TOOL_DEFS = [
     name: 'show_diagram',
     scope: 'any',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -45,7 +45,7 @@ export function DiffTab({ diagrams }: { diagrams: DiagramCanvas[] }) {
           <span className="muted small">v{open.version}</span>
           <OpenWindow id={open.id} />
         </div>
-        <DiagramView key={open.id + open.version} diagram={open.diagram} />
+        <DiagramView key={open.id + open.version} diagram={open.diagram} siblings={diagrams} />
       </div>
     )
   return (

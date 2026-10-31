@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AppState, WindowTarget } from '../../preload/api'
 import { Architecture } from './Architecture'
 import { CanvasFrame, Markdown } from './Chat'
+import { diagramsOf } from './DiffTab'
 import { useTheme } from './useTheme'
 
 const mag = window.mag
@@ -62,6 +63,9 @@ function ArchitectureWindow({ state, projectId }: { state: AppState; projectId: 
 function CanvasWindow({ state, canvasId }: { state: AppState; canvasId: string }) {
   // Metadata from the state, not from the opener: a new version shows up by itself.
   const canvas = state.canvases.find((c) => c.id === canvasId)
+  // The task's diagrams, so a Component diagram opens the flows of its methods here too.
+  const taskId = canvas?.taskId
+  const siblings = useMemo(() => (taskId ? diagramsOf(state.canvases.filter((c) => c.taskId === taskId)) : undefined), [state.canvases, taskId])
   useTitle(canvas ? `${canvas.title} · v${canvas.version}` : 'Canvas')
   if (!canvas) return <Missing />
   return (
@@ -70,7 +74,7 @@ function CanvasWindow({ state, canvasId }: { state: AppState; canvasId: string }
         <span className="title">{canvas.title}</span>
         <span className="muted small">v{canvas.version}</span>
       </div>
-      <CanvasFrame canvas={canvas} height="100%" />
+      <CanvasFrame canvas={canvas} height="100%" siblings={siblings} />
     </div>
   )
 }

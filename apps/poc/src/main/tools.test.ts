@@ -199,3 +199,17 @@ test('show_diagram validates, saves a diagram canvas and lists it in get_task an
   await assert.rejects(call('show_canvas', { id: c.id, title: 'X', html: '<p/>' }), /is a diagram: revise it with show_diagram/)
   assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
 })
+
+test('show_diagram: one flowchart per method of; the same one is revised by id', async () => {
+  const { store, call } = setup()
+  const flow = (of: string) => ({ type: 'flowchart', of, summary: 'Queue first.', changes: ['Queues the job'], nodes: [{ id: 's', label: 'Start', shape: 'start' }], edges: [] })
+  await call('show_diagram', { title: 'groom()', diagram: flow('tasks#groom') })
+  const [c] = Object.values(store.data.canvases)
+  assert.deepEqual(c.diagram, { type: 'flowchart', of: 'tasks#groom', summary: 'Queue first.', changes: ['Queues the job'], nodes: [{ id: 's', label: 'Start', shape: 'start' }], edges: [] })
+  await assert.rejects(call('show_diagram', { title: 'Again', diagram: flow(' tasks#groom ') }), new RegExp(`flowchart ${c.id} \\("groom\\(\\)"\\) already shows tasks#groom; revise it with id ${c.id}`))
+  await assert.rejects(call('show_diagram', { title: 'Bad', diagram: flow('tasks') }), /of must be "<moduleId>#<method>"/)
+  // Revising the flow itself, and a flow of another method, are fine; a module or method need not exist yet.
+  await call('show_diagram', { id: c.id, title: 'groom() v2', diagram: flow('tasks#groom') })
+  await call('show_diagram', { title: 'list()', diagram: flow('tasks#list') })
+  assert.deepEqual([store.data.canvases[c.id].version, Object.keys(store.data.canvases).length], [2, 2])
+})

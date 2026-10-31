@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -507,8 +507,18 @@ function sharedTool(
       const diagram = normalizeDiagram(raw)
       const errors = validateDiagram(diagram)
       if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
+      const id = args.id ? String(args.id) : undefined
+      // One flow per method: a second flowchart of the same method is revised by id instead.
+      const of = diagram.type === 'flowchart' && diagram.of ? parseFlowRef(diagram.of) : null
+      if (of && ctx.taskId) {
+        const same = taskDiagrams(store, ctx.taskId).find((c) => {
+          const ref = c.id !== id && c.diagram!.type === 'flowchart' && c.diagram!.of ? parseFlowRef(c.diagram!.of) : null
+          return ref?.module === of.module && ref.method === of.method
+        })
+        if (same) throw new Error(`Not saved: flowchart ${same.id} ("${same.title}") already shows ${of.module}#${of.method}; revise it with id ${same.id}`)
+      }
       const canvas = store.saveCanvas({
-        id: args.id ? String(args.id) : undefined,
+        id,
         projectId: project.id,
         taskId: ctx.taskId ?? null,
         sessionId: ctx.sessionId ?? null,
