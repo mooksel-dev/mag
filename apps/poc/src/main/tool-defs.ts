@@ -1,6 +1,36 @@
 // Tools the MCP server exposes to agents. Schemas only; handlers live in tools.ts.
 // scope: 'task' = runs bound to a task (groomer, developer, tracker), 'project' = project chat and architect, 'any' = both.
 // tracker: the tracker role sees only tools marked 'only' (its own) or 'also'; the other roles all but 'only'.
+
+/** One module of set_architecture. `children` items are described in words, not by $ref: not every agent follows it. */
+const ARCH_MODULE = {
+  type: 'object',
+  required: ['id', 'name', 'description', 'uses'],
+  properties: {
+    id: { type: 'string', description: 'kebab-case, unique in the whole tree, stable across runs' },
+    name: { type: 'string' },
+    kind: { type: 'string', description: 'Top level: Electron app, React web, HTTP API, worker, database, 3rd-party API, CLI…' },
+    layer: { type: 'string', enum: ['app', 'service', 'client', 'lib'], description: 'Modules inside an app.' },
+    path: { type: 'string' },
+    description: { type: 'string', description: 'One or two sentences of responsibility.' },
+    interface: { type: 'array', items: { type: 'string' }, description: 'Public methods: "name(args): Result - what it does". Key for services and clients.' },
+    uses: {
+      type: 'array',
+      description: 'Real dependencies on any module of the tree.',
+      items: {
+        type: 'object',
+        required: ['to', 'calls'],
+        properties: {
+          to: { type: 'string', description: 'Id of the module it uses.' },
+          calls: { type: 'array', items: { type: 'string' }, description: 'Methods of `to` it calls, e.g. "groom(taskId)".' },
+        },
+      },
+    },
+    concern: { type: 'string', description: 'One line if it breaks the layering or smells.' },
+    children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields, children included.' }, description: 'Inner modules of a big module.' },
+  },
+}
+
 export const TOOL_DEFS = [
   {
     name: 'get_task',
@@ -161,47 +191,20 @@ export const TOOL_DEFS = [
   {
     name: 'get_architecture',
     scope: 'any',
-    description: 'Get the recorded architecture of this project (apps, layers, modules, interfaces, dependencies), if any.',
+    description: 'Get the recorded architecture of this project, if any: a tree of modules (apps and outside runtimes on top, layered modules inside) with interfaces and the calls between them.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'set_architecture',
     scope: 'project',
-    description: 'Record the architecture of the project. Replaces the previous one. Every app lists its nodes by layer (app, service, client, lib).',
+    description:
+      'Record the architecture of the project as a tree of modules. Replaces the previous one. Top level: apps and outside runtimes (database, 3rd-party API, agent CLI…); inside an app: modules by layer (app, service, client, lib), nested as deep as it helps.',
     inputSchema: {
       type: 'object',
-      required: ['summary', 'apps'],
+      required: ['summary', 'modules'],
       properties: {
         summary: { type: 'string', description: 'Two or three sentences about the whole system.' },
-        apps: {
-          type: 'array',
-          items: {
-            type: 'object',
-            required: ['name', 'nodes'],
-            properties: {
-              name: { type: 'string' },
-              path: { type: 'string' },
-              kind: { type: 'string', description: 'e.g. Electron app, React web, HTTP API, worker, library' },
-              nodes: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['id', 'name', 'layer', 'description', 'uses'],
-                  properties: {
-                    id: { type: 'string', description: 'kebab-case, unique within the app, stable across runs' },
-                    name: { type: 'string' },
-                    layer: { type: 'string', enum: ['app', 'service', 'client', 'lib'] },
-                    path: { type: 'string' },
-                    description: { type: 'string', description: 'One or two sentences of responsibility.' },
-                    interface: { type: 'array', items: { type: 'string' }, description: 'Public methods: "name(args): Result - what it does". Key for services and clients.' },
-                    uses: { type: 'array', items: { type: 'string' }, description: 'Ids of nodes in the same app it depends on.' },
-                    concern: { type: 'string', description: 'One line if it breaks the layering or smells.' },
-                  },
-                },
-              },
-            },
-          },
-        },
+        modules: { type: 'array', items: ARCH_MODULE, description: 'Top-level modules.' },
       },
     },
   },

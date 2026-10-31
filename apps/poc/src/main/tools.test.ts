@@ -129,3 +129,28 @@ test('tracker tools: get_import and set_brief for the tracker only; get_task sho
   assert.ok(t.tracker?.importedAt)
   assert.equal(JSON.parse(await call('get_task', {}, groomer.id)).tracker.key, 'ABC-12')
 })
+
+test('set_architecture records a module tree, drops unknown and self uses, rejects repeated ids', async () => {
+  const { store, project, tools } = setup()
+  const ctx = { projectId: project.id }
+  const mod = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id, description: 'd', uses: [], ...extra })
+  const modules = [
+    mod('app', {
+      kind: 'Electron app',
+      children: [
+        mod('ui', { layer: 'app', uses: [{ to: 'tasks', calls: ['groom(id)'] }, { to: 'gone', calls: [] }, 'github', { to: 'tasks', calls: ['list()', 'groom(id)'] }] }),
+        mod('tasks', { layer: 'service', uses: [{ to: 'tasks', calls: [] }], children: [] }),
+      ],
+    }),
+    mod('github', { kind: '3rd-party API' }),
+  ]
+  const out = await tools(ctx, 'set_architecture', { summary: 's', modules })
+  assert.equal(out, 'Recorded 4 module(s), 2 on the top level. Dropped 2 use(s) of unknown ids or of the module itself.')
+  const arch = store.project(project.id).architecture!
+  const [ui, tasks] = arch.modules[0].children!
+  assert.deepEqual(ui.uses, [{ to: 'tasks', calls: ['groom(id)', 'list()'] }, { to: 'github', calls: [] }])
+  assert.deepEqual(tasks.uses, [])
+  assert.equal(tasks.children, undefined)
+  await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { children: [mod('a')] })] }), /repeated: a/)
+  await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', apps: [] }), /modules is required/)
+})

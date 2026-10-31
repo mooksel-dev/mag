@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, integrationRules, isLegacy, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, integrationRules, isLegacy, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
 import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -96,11 +96,16 @@ architecture with set_architecture. The project's preferred pattern, use it to c
 Rules of the pattern: services don't use services; clients don't use clients or services; lib doesn't use clients
 or services; nothing below app uses app; app should not use clients directly.
 How to work:
-1. Find the apps (packages, entrypoints). Skim structure first (Glob), then read the key files.
-2. Choose nodes at the granularity a human designs at: one node per real responsibility, not per file. Usually
-   5-20 per app. Classify by what the code does, not by folder names; the code may not follow the pattern.
+1. Find the apps (packages, entrypoints) and the outside runtimes they talk to (databases, 3rd-party APIs, agent
+   CLIs, files they keep state in). Skim structure first (Glob), then read the key files.
+2. Record a tree of modules. Top level: the apps and the outside runtimes, each with a kind ("Electron app",
+   "database", "3rd-party API"…). Inside an app: modules with a layer, at the granularity a human designs at, one
+   per real responsibility, not per file; usually 5-20 per app. A big module gets inner modules (children), as deep
+   as it helps. Classify by what the code does, not by folder names; the code may not follow the pattern.
 3. For services and clients, write the public interface as short lines "method(args): Result - what it does".
-4. uses = real dependencies between nodes. If something breaks the rules or mixes layers, say so in concern.
+4. uses = real dependencies, to any module of the tree (ids are unique in the whole tree), each with calls: the
+   methods of the target it calls, e.g. "groom(taskId)". Point a use at the most specific module. If something
+   breaks the rules or mixes layers, say so in concern.
 5. Keep ids stable if get_architecture shows a previous version and the module still exists.
 Call get_architecture first, then set_architecture once with the full picture. Be concise everywhere.`
 
@@ -239,7 +244,8 @@ export class Orchestrator {
       log.info('agent', `architect run ended: ${failed ? 'error' : 'done'}`, { project: project.name })
       if (failed) return
       set({ status: 'done', note: undefined })
-      const concerns = (this.store.project(projectId).architecture?.apps ?? []).flatMap((a) => a.nodes).filter((n) => n.concern).length
+      let concerns = 0
+      walkArch(this.store.project(projectId).architecture?.modules ?? [], (n) => void (n.concern && concerns++))
       this.store.logEvent({ projectId, taskId: null, taskKey: null, kind: 'architecture', text: `Architecture refreshed · ${concerns} concerns` })
     })
   }
