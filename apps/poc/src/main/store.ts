@@ -103,9 +103,12 @@ export class Store {
     this.data.ui.windows ??= {}
     this.data.ui.projectWindows ??= []
     this.data.ui.recent ??= []
-    // Runs don't survive a restart, nor do their pending approvals.
+    // Runs and live processes don't survive a restart, nor do their pending approvals and background tasks.
     for (const s of this.data.sessions) {
       if (s.status === 'running') s.status = 'idle'
+      if (s.background?.length) s.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
+      delete s.background
+      delete s.live
       for (const i of s.items) if (i.kind === 'approval' && i.status === 'pending') i.status = 'expired'
     }
     // Defaults for data written by older PoC versions.

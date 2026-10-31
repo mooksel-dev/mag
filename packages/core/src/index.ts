@@ -408,7 +408,12 @@ export interface AgentSession {
   activeModel?: string
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
   commands?: string[]
+  /** running = a turn is going on; a live process (see live) may stay between turns. */
   status: 'running' | 'idle' | 'error'
+  /** A long-lived agent process is open for this session (see liveSession). */
+  live?: boolean
+  /** Background tasks (Monitor, background Bash…) active in the live process. */
+  background?: BackgroundTask[]
   items: ChatItem[]
   createdAt: number
   /** When the current (or last) run started. */
@@ -431,6 +436,17 @@ export interface ProjectEvent {
 
 export type NewEvent = Omit<ProjectEvent, 'id' | 'at'>
 
+/** A background task in a live agent process. name = the tool that started it, e.g. Monitor. */
+export interface BackgroundTask {
+  id: string
+  name: string
+}
+
+/** Sessions that run on a long-lived process: project chats on Claude Code (T-40). Others run a process per turn. */
+export function liveSession(s: Pick<AgentSession, 'role' | 'agent'>): boolean {
+  return s.role === 'chat' && s.agent === 'claude-code'
+}
+
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
   | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }
@@ -438,6 +454,12 @@ export type AgentEvent =
   | { type: 'tool.call'; id: string; name: string; input: unknown }
   | { type: 'tool.result'; id: string; ok: boolean }
   | { type: 'turn.done'; ok: boolean; costUsd?: number; nativeSessionId?: string }
+  /** Live process: a turn began without our message (a background task woke the agent). */
+  | { type: 'turn.started' }
+  /** Live process: the set of active background tasks changed; the full list. */
+  | { type: 'background'; tasks: BackgroundTask[] }
+  /** We stopped it (interrupt, close, kill): not an error. */
+  | { type: 'stopped' }
   | { type: 'context.compacted'; preTokens?: number }
   | { type: 'error'; message: string }
   | { type: 'raw'; payload: unknown }

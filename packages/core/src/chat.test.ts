@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cleanTitle, titlePrompt, turnMeta, type ChatItem } from './index.ts'
+import { cleanTitle, liveSession, titlePrompt, turnMeta, type ChatItem } from './index.ts'
 
 test('titlePrompt caps the excerpt at 2000 characters', () => {
   const prompt = titlePrompt('hi', 'x'.repeat(5000))
@@ -34,4 +34,11 @@ test('turnMeta measures from the last user message of the same turn only', () =>
   const items = [user(0), result(5000, 0.1), reply(6000), result(9000, 0.2)]
   assert.equal(turnMeta(items, 3), '$0.20')
   assert.equal(turnMeta(items, 0), '')
+})
+
+test('liveSession: only project chats on Claude Code run on a live process', () => {
+  assert.equal(liveSession({ role: 'chat', agent: 'claude-code' }), true)
+  assert.equal(liveSession({ role: 'chat', agent: 'codex' }), false)
+  assert.equal(liveSession({ role: 'groomer', agent: 'claude-code' }), false)
+  assert.equal(liveSession({ role: 'developer', agent: 'claude-code' }), false)
 })

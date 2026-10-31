@@ -109,6 +109,7 @@ app.whenReady().then(async () => {
     attachmentsDir,
     logsDir,
   })
+  app.on('will-quit', () => orch.shutdown())
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)

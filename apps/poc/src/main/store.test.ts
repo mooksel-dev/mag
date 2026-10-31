@@ -168,3 +168,21 @@ test('T-27 migration: apps become top-level modules, uses get calls, repeated id
   assert.equal(store.project('q').architecture, null)
   assert.deepEqual(new Store(file).project('p').architecture, arch)
 })
+
+test('a restart ends live processes: running turns go idle, background tasks are cleared with a notice', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: 'n', items: [], createdAt: 0 }
+  const sessions = [
+    { ...base, id: 'bg', status: 'idle', live: true, background: [{ id: 't1', name: 'Monitor' }] },
+    { ...base, id: 'turn', status: 'running', live: true, background: [] },
+  ]
+  writeFileSync(file, JSON.stringify({ projects: [], tasks: [], sessions }))
+  const store = new Store(file)
+  const [bg, turn] = [store.session('bg'), store.session('turn')]
+  assert.equal(bg.live, undefined)
+  assert.equal(bg.background, undefined)
+  assert.deepEqual(bg.items.map((i) => i.kind === 'notice' && i.text), ['Background tasks ended with the process'])
+  assert.equal(turn.status, 'idle')
+  assert.equal(turn.live, undefined)
+  assert.deepEqual(turn.items, [])
+})

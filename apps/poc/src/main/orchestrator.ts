@@ -1,8 +1,8 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, integrationRules, isLegacy, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
-import { adapters, type RunHandle, type RunSpec } from '@mag/agents'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, integrationRules, isLegacy, liveSession, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
@@ -162,6 +162,9 @@ const ticketLine = (task: Task) =>
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
 
+/** A live process with no turn and no background task closes after this; the next message resumes the session. */
+const LIVE_IDLE_MS = 10 * 60_000
+
 function summarize(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const o = input as Record<string, unknown>
@@ -170,7 +173,11 @@ function summarize(input: unknown): string {
 }
 
 export class Orchestrator {
+  /** One process per turn. */
   private runs = new Map<string, RunHandle>()
+  /** Live processes (see liveSession), kept between turns. */
+  private lives = new Map<string, { handle: LiveHandle; agent: AgentKind; model: string | null; closing: boolean }>()
+  private idleTimers = new Map<string, NodeJS.Timeout>()
   /** Groomer sessions re-grooming the remaining steps of a task in progress. */
   private remainingGroomers = new Set<string>()
   /** Tasks whose remaining steps a groomer marked groomed during its current run. */
@@ -182,8 +189,9 @@ export class Orchestrator {
     private paths: Paths,
   ) {}
 
+  /** A turn is going on. */
   isRunning(sessionId: string) {
-    return this.runs.has(sessionId)
+    return this.runs.has(sessionId) || (this.lives.has(sessionId) && this.store.data.sessions.find((s) => s.id === sessionId)?.status === 'running')
   }
 
   /** Provider catalogue for the settings UI. */
@@ -425,6 +433,7 @@ export class Orchestrator {
     return true
   }
 
+  /** A live session takes a message during a turn too: the agent gets it in that turn. */
   async send(sessionId: string, text: string, attachments: Attachment[] = []) {
     const session = this.store.session(sessionId)
     if (this.runs.has(sessionId)) throw new Error('Agent is still working')
@@ -438,6 +447,9 @@ export class Orchestrator {
       : text
     if (!session.taskId) {
       this.store.changed()
+      // The agent the chat runs on next decides; a live process of the previous one goes.
+      if (liveSession({ role: session.role, agent: this.choice(session.projectId, session.role).agent })) return this.runLive(session, prompt)
+      this.closeLive(session.id)
       return this.run(session, prompt)
     }
     this.store.updateTask(session.taskId, { needsInput: null })
@@ -447,8 +459,16 @@ export class Orchestrator {
     this.run(session, prompt)
   }
 
-  stop(sessionId: string) {
+  /** Stops the current turn. A live process lives on with its background tasks. */
+  async stop(sessionId: string) {
+    const live = this.lives.get(sessionId)
+    if (live && !live.closing) return live.handle.interrupt()
     this.runs.get(sessionId)?.kill()
+  }
+
+  /** On quit: live processes would outlive mag and keep waking for their background tasks. */
+  shutdown() {
+    for (const live of this.lives.values()) live.handle.close(0)
   }
 
   /** Cancel a task not done yet: stop its agents and remove its worktrees. Branches and open PRs stay as they are. */
@@ -574,12 +594,34 @@ export class Orchestrator {
     const who = { session: session.id, role: session.role, task: session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId)?.key : undefined, agent: session.agent, model: c.model }
     log.info('agent', `${session.role} run started`, who)
 
+    const onEvent = this.onEvent(session)
+
+    // The tracker reads only through its ticket's integration.
+    const only = session.role === 'tracker' ? (this.store.task(session.taskId!).tracker?.integrationId ?? '') : undefined
+    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session), only)
+    const handle = adapters[session.agent].start(
+      { ...spec, prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
+      onEvent,
+    )
+    this.runs.set(session.id, handle)
+    handle.done.then(() => {
+      this.runs.delete(session.id)
+      if (session.status === 'running') session.status = 'idle'
+      log.info('agent', `${session.role} run ended: ${session.status}`, { ...who, seconds: Math.round((Date.now() - startedAt) / 1000) })
+      if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
+      void this.afterRun(session)
+      this.nameChat(session)
+      this.store.changed()
+    })
+  }
+
+  /** Session state and chat items from agent events, for both kinds of runs. */
+  private onEvent(session: AgentSession) {
     const push = (item: ChatItem) => {
       session.items.push(item)
       this.store.changed()
     }
-
-    const onEvent = (e: AgentEvent) => {
+    return (e: AgentEvent) => {
       const at = Date.now()
       switch (e.type) {
         case 'session.started':
@@ -606,26 +648,119 @@ export class Orchestrator {
           session.status = 'error'
           log.warn('agent', `${session.role} run error: ${e.message.slice(0, 300)}`, { session: session.id })
           return push({ kind: 'error', text: e.message, at })
+        case 'stopped':
+          return push({ kind: 'notice', text: 'Stopped', at })
       }
     }
+  }
 
-    // The tracker reads only through its ticket's integration.
-    const only = session.role === 'tracker' ? (this.store.task(session.taskId!).tracker?.integrationId ?? '') : undefined
-    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session), only)
-    const handle = adapters[session.agent].start(
-      { ...spec, prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
-      onEvent,
-    )
-    this.runs.set(session.id, handle)
+  /**
+   * A live session's message (T-40): opens the process if there is none (resuming the agent's session) and writes the
+   * message to it. During a turn the message joins that turn. The turn ends at its result, not at the process exit.
+   */
+  private async runLive(session: AgentSession, prompt: string) {
+    this.clearIdle(session.id)
+    const c = this.choice(session.projectId, session.role)
+    let live = this.lives.get(session.id)
+    // A new model or agent applies between turns. One process at a time per native session: a closing one goes first.
+    if (live && session.status !== 'running' && (live.agent !== c.agent || live.model !== c.model)) this.closeLive(session.id)
+    if (live?.closing) {
+      await live.handle.done
+      live = this.lives.get(session.id)
+    }
+    if (!live) live = this.openLive(session, c)
+    if (session.status !== 'running') this.turnStarted(session)
+    live.handle.send(prompt)
+  }
+
+  private openLive(session: AgentSession, c: ModelChoice) {
+    const adapter = adapters[c.agent]
+    if (!adapter.open) throw new Error(`${adapter.displayName} has no live sessions`)
+    if (c.agent !== session.agent) {
+      session.agent = c.agent
+      session.nativeSessionId = null
+    }
+    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: session.role }
+    if (session.taskId) env.MAG_TASK_ID = session.taskId
+    const mcpConfigPath = this.mcpConfig(session.id, env)
+    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
+    const who = { session: session.id, role: session.role, agent: session.agent, model: c.model }
+    const openedAt = Date.now()
+    log.info('agent', `${session.role} live process opened`, { ...who, resume: !!session.nativeSessionId })
+
+    const onEvent = this.onEvent(session)
+    const handle = adapter.open({ ...spec, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath }, (e) => {
+      if (e.type === 'stopped' && session.status !== 'running') return // an idle close says nothing in the chat
+      onEvent(e)
+      if (e.type === 'turn.started') this.turnStarted(session)
+      else if (e.type === 'background') {
+        session.background = e.tasks
+        if (e.tasks.length) this.clearIdle(session.id)
+        else this.armIdle(session)
+        this.store.changed()
+      } else if (e.type === 'turn.done') this.turnEnded(session)
+    })
+    const live = { handle, agent: c.agent, model: c.model, closing: false }
+    this.lives.set(session.id, live)
+    session.live = true
+    this.store.changed()
     handle.done.then(() => {
-      this.runs.delete(session.id)
-      if (session.status === 'running') session.status = 'idle'
-      log.info('agent', `${session.role} run ended: ${session.status}`, { ...who, seconds: Math.round((Date.now() - startedAt) / 1000) })
-      if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
-      void this.afterRun(session)
-      this.nameChat(session)
+      if (this.lives.get(session.id) === live) this.lives.delete(session.id)
+      this.clearIdle(session.id)
+      session.live = false
+      // Exited mid-turn (a crash, or our close): the turn is over too.
+      if (session.status === 'running') this.turnEnded(session)
+      if (session.background?.length) session.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
+      session.background = undefined
+      log.info('agent', `${session.role} live process closed: ${session.status}`, { ...who, seconds: Math.round((Date.now() - openedAt) / 1000) })
       this.store.changed()
     })
+    return live
+  }
+
+  /** A turn of a live session began: our message, or a background task woke the agent. */
+  private turnStarted(session: AgentSession) {
+    this.clearIdle(session.id)
+    if (session.status === 'running') return
+    session.status = 'running'
+    session.runStartedAt = Date.now()
+    this.store.changed()
+    log.info('agent', `${session.role} turn started`, { session: session.id })
+  }
+
+  /** A turn of a live session ended at its result; the process stays for the next one. */
+  private turnEnded(session: AgentSession) {
+    if (session.status === 'running') session.status = 'idle'
+    log.info('agent', `${session.role} turn ended: ${session.status}`, { session: session.id, seconds: Math.round((Date.now() - (session.runStartedAt ?? Date.now())) / 1000) })
+    if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
+    this.nameChat(session)
+    this.armIdle(session)
+    this.store.changed()
+  }
+
+  /** Close the live process after LIVE_IDLE_MS without a turn or a background task. */
+  private armIdle(session: AgentSession) {
+    this.clearIdle(session.id)
+    if (!this.lives.has(session.id) || session.status === 'running' || session.background?.length) return
+    const timer = setTimeout(() => {
+      this.idleTimers.delete(session.id)
+      this.closeLive(session.id)
+    }, LIVE_IDLE_MS)
+    timer.unref()
+    this.idleTimers.set(session.id, timer)
+  }
+
+  private clearIdle(sessionId: string) {
+    clearTimeout(this.idleTimers.get(sessionId))
+    this.idleTimers.delete(sessionId)
+  }
+
+  private closeLive(sessionId: string) {
+    const live = this.lives.get(sessionId)
+    if (!live || live.closing) return
+    live.closing = true
+    log.info('agent', 'live process closing', { session: sessionId })
+    live.handle.close()
   }
 
   /** After a chat's first turn: a short generated title in place of the first message. Once; a failure keeps the old title. */
