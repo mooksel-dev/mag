@@ -43,10 +43,79 @@ export interface Project {
   color?: string | null
   /** Done and canceled tasks are archived this many days after they finished; 0 = never. Missing = DEFAULT_AUTO_ARCHIVE_DAYS. */
   autoArchiveDays?: number
+  /** Tracker projects / teams tickets are imported from (T-10). Missing = none. */
+  trackers?: TrackerScope[]
   createdAt: number
 }
 
 export const DEFAULT_AUTO_ARCHIVE_DAYS = 14
+
+export type TrackerKind = 'jira' | 'linear'
+
+/** A tracker project (Jira) or team (Linear) mag imports tickets from, read through a T-13 integration. */
+export interface TrackerScope {
+  /** The integration (Integration.id) the tracker agent reads through. */
+  integrationId: string
+  kind: TrackerKind
+  /** Jira project key or Linear team key, e.g. "ABC": the prefix of its ticket keys. */
+  scope: string
+}
+
+/** The ticket a top-level task was imported from. Read-only context: mag never writes to the tracker. */
+export interface TrackerLink {
+  integrationId: string
+  kind: TrackerKind
+  /** Ticket key, e.g. "ABC-12". */
+  key: string
+  /** null when imported by bare key until the tracker agent reports the link. */
+  url: string | null
+  /** When the tracker agent wrote the brief; null while the import runs or after it failed. */
+  importedAt: number | null
+}
+
+const TICKET_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
+
+/** The scope of a ticket key: the first one of `kind` (any kind if omitted) whose key is the ticket's prefix. */
+function scopeOf(key: string, scopes: TrackerScope[], kind?: TrackerKind): TrackerScope | undefined {
+  const prefix = key.slice(0, key.lastIndexOf('-')).toUpperCase()
+  return scopes.find((s) => (!kind || s.kind === kind) && s.scope.trim().toUpperCase() === prefix)
+}
+
+/**
+ * The ticket a pasted link or key names, within the project's tracker scopes: a Jira URL (…/browse/ABC-12 or
+ * ?selectedIssue=ABC-12), a Linear URL (linear.app/<ws>/issue/ENG-12/…) or a bare key whose prefix is a scope.
+ * The url is canonical; null for a bare key. null when nothing matches a scope.
+ */
+export function parseTrackerRef(text: string, scopes: TrackerScope[]): { scope: TrackerScope; key: string; url: string | null } | null {
+  const ref = text.trim()
+  if (TICKET_KEY.test(ref)) {
+    const key = ref.toUpperCase()
+    const scope = scopeOf(key, scopes)
+    return scope ? { scope, key, url: null } : null
+  }
+  // Core has no URL global: origin, path and query by hand.
+  const url = /^(https?:\/\/[^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(#\S*)?$/i.exec(ref)
+  if (!url) return null
+  const [, origin, path = '', query = ''] = url
+  const found = (kind: TrackerKind, raw: string | undefined, link: (key: string) => string) => {
+    if (!raw || !TICKET_KEY.test(raw)) return null
+    const key = raw.toUpperCase()
+    const scope = scopeOf(key, scopes, kind)
+    return scope ? { scope, key, url: link(key) } : null
+  }
+  if (/^https?:\/\/linear\.app$/i.test(origin)) {
+    const m = /^\/([^/]+)\/issue\/([^/]+)/.exec(path)
+    return found('linear', m?.[2], (key) => `https://linear.app/${m![1]}/issue/${key}`)
+  }
+  const raw = /\/browse\/([^/]+)/.exec(path)?.[1] ?? /[?&]selectedIssue=([^&]+)/.exec(query)?.[1]
+  return found('jira', raw, (key) => `${origin}/browse/${key}`)
+}
+
+/** The project's top-level task already linked to this ticket, if any. */
+export function linkedTask(tasks: Task[], key: string): Task | null {
+  const k = key.trim().toUpperCase()
+  return tasks.find((t) => !t.parentId && t.tracker?.key.toUpperCase() === k) ?? null
+}
 
 /** Project colors, readable on light and dark backgrounds. */
 export const PROJECT_COLORS: string[] = ['#e5484d', '#f76b15', '#d6a000', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#7d7d86']
@@ -247,12 +316,14 @@ export interface Task {
   archivedAt: number | null
   /** Why the user canceled the task, if they said. */
   cancelReason?: string | null
+  /** Top-level tasks imported from a tracker: the ticket (T-10). */
+  tracker?: TrackerLink | null
   createdAt: number
   updatedAt: number
 }
 
-/** chat = project-level conversation, not tied to a task. */
-export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
+/** chat = project-level conversation, not tied to a task. tracker = reads a ticket into a task (import). */
+export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect' | 'tracker'
 export type AgentKind = 'claude-code' | 'codex'
 
 /** Which provider runs a role and on which model. */
@@ -276,8 +347,8 @@ export interface AgentInfo {
   models: AgentModel[]
 }
 
-/** Roles the user can configure; reviewer follows developer. */
-export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect']
+/** Roles the user can configure; reviewer follows developer. tracker defaults to the provider's cheap model (see orchestrator). */
+export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect', 'tracker']
 
 export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null }
 
@@ -682,7 +753,7 @@ export interface InboxItem {
   task: Task | null
   kind: InboxKind
   text: string
-  /** Session the item comes from: the approval's session, or the task's latest groomer/developer one. */
+  /** Session the item comes from: the approval's session, or the task's latest groomer/developer/tracker one. */
   session?: AgentSession
   /** Approval chat item id in `session`. */
   approvalId?: string
@@ -693,9 +764,10 @@ const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'q
 /** One item for a top-level task; its steps' PRs and Start count for it. */
 function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
   if (task.parentId || task.archivedAt || task.status === 'canceled') return null
-  const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer')).at(-1)
+  const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer' || s.role === 'tracker')).at(-1)
   const base = { task, session: last }
-  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
+  if (last?.status === 'error')
+    return { ...base, kind: 'agent_failed', text: last.role === 'tracker' ? 'Import failed' : `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }

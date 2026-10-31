@@ -122,6 +122,12 @@ test('inbox: agent_failed only from the latest groomer/developer session', () =>
   assert.deepEqual(inbox('p', [t], [session('t', 'reviewer', 'error')]), [], 'other roles do not count')
 })
 
+test('inbox: a failed import is agent_failed until a later groomer runs', () => {
+  const t = task('t', 'backlog')
+  assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error')]).map((i) => [i.kind, i.text]), [['agent_failed', 'Import failed']])
+  assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error'), session('t', 'groomer', 'idle')]), [])
+})
+
 test('inbox: pending approvals from task sessions and chats come first, one per item', () => {
   const approval = (id: string, status: 'pending' | 'allowed' | 'denied' | 'expired') =>
     ({ kind: 'approval', id, tool: 'execute', server: 'Cloudflare', input: {}, status, at: 0 }) as const
