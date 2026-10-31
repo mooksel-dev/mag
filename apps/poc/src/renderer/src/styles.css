@@ -328,6 +328,29 @@ code.diff-add, .archcalls li.diff-add > button { box-shadow: inset 0 -2px 0 var(
 code.diff-mod, .archcalls li.diff-mod > button { box-shadow: inset 0 -2px 0 var(--diff-mod); }
 code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(--diff-del); text-decoration: line-through; }
 code.diff-move { box-shadow: inset 0 -2px 0 var(--diff-move); }
+code.diff-move.out { text-decoration: line-through; }
+.archarrows path.d-move { stroke: var(--diff-move); stroke-width: 2; stroke-dasharray: 6 4; }
+.archarrows marker path.d-move { stroke: none; fill: var(--diff-move); }
+.archbadge.d-move { border-color: var(--diff-move); }
+/* a changed arrow names its changed calls instead of a count */
+.archbadge.names { height: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 2px 6px; border-radius: 6px; white-space: nowrap; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 500; }
+.struck { text-decoration: line-through; }
+/* changed interface lines on a diff box */
+.archbox.withlines { width: 240px; }
+.archbox .lines { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; font-size: 11px; color: var(--text); }
+.archbox .bline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+.archbox .bline b { display: inline-block; width: 1em; }
+.archbox .more { font-size: 11px; }
+/* the "Без змін" row: unchanged modules of a diff as chips */
+.archlane.unchanged { background: none; border: 1px dashed var(--line); padding: 12px 14px; }
+.archlane.unchanged .archboxes { gap: 6px; }
+.archchip { padding: 3px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 12px; cursor: pointer; transition: opacity .12s; }
+.archchip:hover { color: var(--text); }
+.archchip.on { color: var(--text); border-color: var(--text); }
+.archchip.dim { opacity: .3; }
+.diffsummary { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.diffsummary p { margin: 0; max-width: 900px; }
+.diffchip { display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--line); font-size: 12px; }
 .diffpill { margin-left: 8px; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 600; vertical-align: middle; border: 1px solid; }
 .diffpill.diff-add { color: var(--diff-add); }
 .diffpill.diff-mod { color: var(--diff-mod); }
