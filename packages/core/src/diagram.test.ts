@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt } from './arch.ts'
-import { archToDNodes, boxLines, callsCount, componentSummary, dominantDiff, diagramSummary, fieldMoves, formatDiffCount, innerSummary, looksGrouped, moves, normalizeDiagram, sequenceActivations, validateDiagram, type ComponentDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
+import { archToDNodes, boxLines, callsCount, componentSummary, dominantDiff, diagramSummary, fieldMoves, flowchartAs, flowDiff, flowsSummary, formatDiffCount, methodFlows, parseFlowRef, innerSummary, looksGrouped, moves, normalizeDiagram, sequenceActivations, validateDiagram, type ComponentDiagram, type DataDiagram, type DNode, type Diagram, type FlowchartDiagram, type SequenceDiagram } from './diagram.ts'
 
 // app (mod) holds ui and tasks; tasks gets a new client "queue" (add), drops "store" (del); github is context.
 const component = normalizeDiagram({
@@ -419,4 +419,86 @@ test('dominantDiff: the largest count; on a tie mod, then add, then del', () => 
   assert.equal(dominantDiff(c(1, 1, 1)), 'mod')
   assert.equal(dominantDiff(c(2, 0, 2)), 'add')
   assert.equal(dominantDiff(c(0, 0, 0)), undefined)
+})
+
+const flow = (extra: Record<string, unknown> = {}) =>
+  normalizeDiagram({
+    type: 'flowchart',
+    nodes: [
+      { id: 's', label: 'Start', shape: 'start' },
+      { id: 'old', label: 'Old check', shape: 'step', diff: 'del' },
+      { id: 'new', label: 'New check', shape: 'decision', diff: 'add' },
+      { id: 'e', label: 'End', shape: 'end', diff: 'mod' },
+    ],
+    edges: [
+      { from: 's', to: 'old', diff: 'del' },
+      { from: 's', to: 'new', diff: 'add' },
+      { from: 'old', to: 'e' },
+      { from: 'new', to: 'e', label: 'yes', diff: 'add' },
+      { from: 's', to: 'e', diff: 'mod' },
+    ],
+    ...extra,
+  }) as FlowchartDiagram
+
+test('flowchart of / replaces / summary / changes: kept by normalizeDiagram, checked by validateDiagram', () => {
+  const d = flow({ of: ' tasks#groom ', replaces: 'tasks#plan', summary: ' Queue first. ', changes: ['Queues the job', ' ', 'Drops the store'] })
+  assert.equal(d.of, 'tasks#groom')
+  assert.equal(d.replaces, 'tasks#plan')
+  assert.equal(d.summary, 'Queue first.')
+  assert.deepEqual(d.changes, ['Queues the job', 'Drops the store'])
+  assert.deepEqual(validateDiagram(d), [])
+  assert.deepEqual((flow({ changes: 'one\n\ntwo' })).changes, ['one', 'two'])
+  const plain = flow({ of: '', summary: '' })
+  assert.ok(!('of' in plain) && !('summary' in plain) && !('changes' in plain))
+
+  assert.deepEqual(validateDiagram(flow({ of: 'tasks' })), ['of must be "<moduleId>#<method>", the method name without arguments; got "tasks"'])
+  assert.deepEqual(validateDiagram(flow({ replaces: '#groom' })), ['replaces must be "<moduleId>#<method>", the method name without arguments; got "#groom"'])
+  assert.deepEqual(validateDiagram(flow({ of: 'tasks#groom(id)' })), ['of must be "<moduleId>#<method>", the method name without arguments; got "tasks#groom(id)"'])
+  assert.deepEqual(validateDiagram(flow({ changes: ['ok', 3] })), ['changes must be a list of strings, one change per item'])
+})
+
+test('parseFlowRef: module and method; the method is after the last "#"', () => {
+  assert.deepEqual(parseFlowRef('core-model#flowchartAs'), { module: 'core-model', method: 'flowchartAs' })
+  assert.deepEqual(parseFlowRef('a#b#run'), { module: 'a#b', method: 'run' })
+  assert.equal(parseFlowRef('core-model#'), null)
+  assert.equal(parseFlowRef('#run'), null)
+  assert.equal(parseFlowRef('run'), null)
+})
+
+test('methodFlows, flowDiff, flowsSummary: flows of a module by method, counted by the mark of their interface line', () => {
+  const items = [
+    { id: 'c', diagram: component },
+    { id: 'f1', diagram: flow({ of: 'tasks#groom' }) },
+    { id: 'f2', diagram: flow({ of: 'tasks#list' }) },
+    { id: 'f3', diagram: flow({ of: 'store#save' }) },
+    { id: 'f4', diagram: flow({ of: 'nowhere#run' }) },
+    { id: 'f5', diagram: flow() },
+  ]
+  assert.deepEqual(methodFlows(items, 'tasks').map((f) => [f.method, f.item.id]), [['groom', 'f1'], ['list', 'f2']])
+  assert.deepEqual(methodFlows(items, 'app'), [])
+  const n: DNode = {
+    id: 'm',
+    name: 'M',
+    uses: [],
+    interface: [{ text: 'a()', diff: 'add' }, { text: 'b()', diff: 'del' }, { text: 'c(x)', diff: 'del' }, { text: 'c(x, y)', diff: 'add' }, { text: 'd()' }],
+  }
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e'].map((m) => flowDiff(n, m)), ['add', 'del', 'mod', 'mod', 'mod'])
+  assert.equal(flowDiff({ id: 'q', name: 'Q', diff: 'add', uses: [] }, 'push'), 'add')
+  // groom is added on tasks, list unchanged (mod), store is removed; nowhere is not a module.
+  assert.deepEqual(flowsSummary(items, component.modules), { add: 1, mod: 1, del: 1, move: 0 })
+})
+
+test('flowchartAs: before drops added elements, after removed ones, both without marks; an edge goes with its node', () => {
+  const d = flow({ of: 'tasks#groom' })
+  assert.equal(flowchartAs(d, 'diff'), d)
+  const before = flowchartAs(d, 'before')
+  assert.equal(before.of, 'tasks#groom')
+  assert.deepEqual(before.nodes.map((n) => n.id), ['s', 'old', 'e'])
+  assert.deepEqual(before.edges.map((e) => `${e.from}>${e.to}`), ['s>old', 'old>e', 's>e'])
+  const after = flowchartAs(d, 'after')
+  assert.deepEqual(after.nodes.map((n) => n.id), ['s', 'new', 'e'])
+  // old>e has no mark of its own but goes with old.
+  assert.deepEqual(after.edges.map((e) => `${e.from}>${e.to}`), ['s>new', 'new>e', 's>e'])
+  assert.ok([...before.nodes, ...before.edges, ...after.nodes, ...after.edges].every((x) => !('diff' in x)))
+  assert.equal(d.nodes[1].diff, 'del', 'the source is left as is')
 })

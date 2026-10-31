@@ -1,6 +1,6 @@
 // What a Component diff shows on the diagram itself (T-43, T-48): which modules fold into the "Без змін" row, the call
-// count pills on changed arrows, the calls of the side panel and the move arrows of one level.
-import { callsCount, dominantDiff, methodName, moves, nodeDiff, pathTo, useDiff, walkArch, type ArchEdge, type ComponentDiagram, type DiffCount, type DiffMark, type DNode, type DUse, type Line } from '@mag/core'
+// count pills on changed arrows, the calls of the side panel, the move arrows of one level and the flows of methods.
+import { callsCount, dominantDiff, methodFlows, methodName, moves, nodeDiff, parseFlowRef, pathTo, useDiff, walkArch, type ArchEdge, type ComponentDiagram, type DiffCount, type DiffMark, type Diagram, type DLine, type DNode, type DUse, type FlowchartDiagram, type Line, type MethodFlow } from '@mag/core'
 
 /** Ids of the modules something moved out of. */
 export function movedOut(d: ComponentDiagram): Set<string> {
@@ -9,11 +9,12 @@ export function movedOut(d: ComponentDiagram): Set<string> {
 
 /**
  * Whether a module changes and keeps its box in a diff: it is marked, one of its interface lines changes or moves
- * out, one of its own uses or calls is marked, or the same holds for one of its inner modules.
+ * out, one of its own uses or calls is marked, one of its methods has a flow (`flowed`: ids of such modules), or the
+ * same holds for one of its inner modules.
  */
-export function changedModule(n: DNode, out: Set<string>): boolean {
-  const own = !!nodeDiff(n) || out.has(n.id) || n.uses.some((u) => u.diff || u.calls.some((c) => c.diff))
-  return own || !!n.children?.some((c) => changedModule(c, out))
+export function changedModule(n: DNode, out: Set<string>, flowed: Set<string> = new Set()): boolean {
+  const own = !!nodeDiff(n) || out.has(n.id) || flowed.has(n.id) || n.uses.some((u) => u.diff || u.calls.some((c) => c.diff))
+  return own || !!n.children?.some((c) => changedModule(c, out, flowed))
 }
 
 /**
@@ -84,10 +85,73 @@ export function moveEdges(d: ComponentDiagram, parentId: string | null): MoveEdg
   return [...out.values()]
 }
 
-/** The modules of one level that fold into the "Без змін" row of a diff. */
-export function unchangedAt(d: ComponentDiagram, nodes: DNode[]): Set<string> {
+/** The modules of one level that fold into the "Без змін" row of a diff; a module with a flow of a method keeps its box. */
+export function unchangedAt(d: ComponentDiagram, nodes: DNode[], flows: FlowItem[] = []): Set<string> {
   const out = movedOut(d)
+  const flowed = new Set(flows.map((f) => parseFlowRef(f.diagram.of)!.module))
   const ids = new Set<string>()
-  for (const n of nodes) if (!changedModule(n, out)) ids.add(n.id)
+  for (const n of nodes) if (!changedModule(n, out, flowed)) ids.add(n.id)
   return ids
+}
+
+/** A flowchart of the task that shows the logic of a module's method (its of). */
+export interface FlowItem {
+  id: string
+  title: string
+  diagram: FlowchartDiagram & { of: string }
+}
+
+/** The flows of methods among a task's diagrams. */
+export function flowItems(diagrams: { id: string; title: string; diagram: Diagram }[]): FlowItem[] {
+  return diagrams.filter((d): d is FlowItem => d.diagram.type === 'flowchart' && !!d.diagram.of && !!parseFlowRef(d.diagram.of))
+}
+
+/** The flow of `method` of `moduleId`, when the task has one. */
+export function flowOf(flows: FlowItem[], moduleId: string, method: string): FlowItem | undefined {
+  return methodFlows(flows, moduleId).find((f) => f.method === method)?.item
+}
+
+/**
+ * Lines of a module with a flow that its changed lines leave out: an unchanged interface line, or a bare
+ * "method()" for a method not in the interface. They go after the changed lines on the box and in the panel.
+ */
+export function flowLines(n: DNode, flows: FlowItem[]): DLine[] {
+  const changed = new Set((n.interface ?? []).filter((l) => l.diff).map((l) => methodName(l.text)))
+  return methodFlows(flows, n.id)
+    .filter((f) => !changed.has(f.method))
+    .map((f) => (n.interface ?? []).find((l) => methodName(l.text) === f.method) ?? { text: `${f.method}()` })
+}
+
+/** The callers of one method of `node`, with only their calls of it. */
+export function methodCallers(modules: DNode[], node: DNode, method: string): CallGroup[] {
+  return callGroups(modules, node)
+    .callers.map((g) => ({ ...g, calls: g.calls.filter((c) => methodName(c.text) === method) }))
+    .filter((g) => g.calls.length)
+}
+
+/** A method another flow is linked to by replaces, and its flow when the task has one. */
+export interface FlowLink {
+  module: string
+  method: string
+  flow?: FlowItem
+}
+
+/**
+ * The flows around an open one: the other flows of its module, the method it replaces and the methods that replace
+ * it (replaces on their flows).
+ */
+export function relatedFlows(flows: FlowItem[], item: FlowItem): { others: MethodFlow<FlowItem>[]; replaces?: FlowLink; replacedBy: FlowLink[] } {
+  const of = parseFlowRef(item.diagram.of)!
+  const same = (a: { module: string; method: string }, b: { module: string; method: string }) => a.module === b.module && a.method === b.method
+  const r = item.diagram.replaces ? parseFlowRef(item.diagram.replaces) : null
+  const replacedBy: FlowLink[] = []
+  for (const f of flows) {
+    const by = f.diagram.replaces ? parseFlowRef(f.diagram.replaces) : null
+    if (f.id !== item.id && by && same(by, of)) replacedBy.push({ ...parseFlowRef(f.diagram.of)!, flow: f })
+  }
+  return {
+    others: methodFlows(flows, of.module).filter((f) => f.item.id !== item.id),
+    replaces: r ? { ...r, flow: flowOf(flows, r.module, r.method) } : undefined,
+    replacedBy,
+  }
 }

@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
-import { boxLines, callersOf, componentSummary, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type LineMark } from '@mag/core'
+import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
-import { callGroups, edgePill, moveEdges, unchangedAt, type CallGroup } from '../componentDiff'
+import { callGroups, edgePill, flowLines, flowOf, methodCallers, moveEdges, relatedFlows, unchangedAt, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
 import { DiffLegend } from './DiffLegend'
+import { FlowchartView } from './Graph'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'app', label: 'App layer', hint: 'UI, handlers, workers' },
@@ -51,12 +52,18 @@ const laneKey = (n: DNode, top: boolean) => n.layer ?? (top ? 'top' : 'other')
 /** A box gets the "!" mark when the agent flagged it or one of its uses breaks the layering rules. */
 const flagged = (all: DNode[], n: DNode) => !!n.concern || n.uses.some((u) => ruleOf(all, n, u.to)?.severity === 'error')
 
+const NO_FLOWS: FlowItem[] = []
+
+/** Opens the flow of a method: the module's id and the method. */
+type OpenFlow = (module: string, method: string) => void
+
 /**
  * One level of a module tree: click a module with inner modules to go inside, breadcrumbs lead back. Arrows carry
  * the number of calls; modules outside the level that it calls or is called by show as ports. `diff`: a task diagram,
  * colored by its diff marks instead of layering. `focus`: a module to show on its level and select (a #node link).
+ * `flows`: the task's flows of methods; a method with one gets "flow ›", which opens the flow in place.
  */
-export function ComponentView({ modules, diff = false, summary, focus }: { modules: DNode[]; diff?: boolean; summary?: string; focus?: string }) {
+export function ComponentView({ modules, diff = false, summary, focus, flows = NO_FLOWS }: { modules: DNode[]; diff?: boolean; summary?: string; focus?: string; flows?: FlowItem[] }) {
   const at = (id: string | undefined) => (id ? pathTo(modules, id) : [])
   const [level, setLevel] = useState<string | null>(() => at(focus).at(-2)?.id ?? null)
   const [selected, setSelected] = useState<string | null>(() => (at(focus).length ? focus! : null))
@@ -67,13 +74,28 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
   const parentId = level && crumbs.length ? level : null
   const sel = selected ? findNode(modules, selected) : undefined
   const shown = (diff && hover ? findNode(modules, hover) : undefined) ?? sel
+  // The open flow of a method, in place of the modules; gone with its diagram or module.
+  const [flowId, setFlowId] = useState<string | null>(null)
+  const flow = diff ? flows.find((f) => f.id === flowId) : undefined
+  const flowNode = flow ? findNode(modules, parseFlowRef(flow.diagram.of)!.module) : undefined
 
   useEffect(() => {
-    if (!sel) return
+    if (!sel || flowNode) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setSelected(null)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sel])
+  }, [sel, flowNode])
+  // Esc leaves a flow for the modules, unless it only cleared a node of the flow.
+  useEffect(() => {
+    if (!flowNode) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setFlowId(null)
+      setSelected(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [flowNode])
 
   const go = (id: string | null) => {
     setLevel(id)
@@ -84,15 +106,34 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
   const reveal = (id: string) => {
     setLevel(pathTo(modules, id).at(-2)?.id ?? null)
     setSelected(id)
+    setFlowId(null)
   }
+  /** Opens the flow of a method in place; its module stays selected on its level for the way back. */
+  const openFlow: OpenFlow | undefined = diff && flows.length
+    ? (module, method) => {
+        const f = flowOf(flows, module, method)
+        if (!f || !pathTo(modules, module).length) return
+        reveal(module)
+        setHover(null)
+        setFlowId(f.id)
+      }
+    : undefined
   // A new anchor on the same view (another #node link to it).
   useEffect(() => {
     if (focus && pathTo(modules, focus).length) reveal(focus)
   }, [focus])
 
+  if (flow && flowNode)
+    return (
+      <>
+        <SummaryHeader modules={modules} summary={summary} flows={flows} />
+        <FlowLevel key={flow.id} all={modules} flows={flows} item={flow} node={flowNode} onTop={() => (setFlowId(null), go(null))} onModule={reveal} onFlow={openFlow!} />
+      </>
+    )
+
   return (
     <>
-      {diff && <SummaryHeader modules={modules} summary={summary} />}
+      {diff && <SummaryHeader modules={modules} summary={summary} flows={flows} />}
       <nav className="archcrumbs">
         <button className="link" disabled={!parentId} onClick={() => go(null)}>All modules</button>
         {crumbs.map((n) => (
@@ -118,14 +159,14 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
         )}
       </div>
       <div className="archbody">
-        <Level key={parentId ?? ''} all={modules} diff={diff} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} />
+        <Level key={parentId ?? ''} all={modules} diff={diff} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
         {diff ? (
           // A diff keeps the panel in place, so hovering a box does not reflow the diagram under the pointer.
           <aside className="archside">
             {shown ? (
               <>
                 {shown === sel && <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>}
-                <DiffDetails all={modules} node={shown} onReveal={reveal} onOpen={go} />
+                <DiffDetails all={modules} flows={flows} node={shown} onReveal={reveal} onOpen={go} onFlow={openFlow} />
               </>
             ) : (
               <p className="muted small">Hover or click a module to see what it calls and who calls it.</p>
@@ -144,9 +185,10 @@ export function ComponentView({ modules, diff = false, summary, focus }: { modul
   )
 }
 
-function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal }: {
+function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal, onFlow }: {
   all: DNode[]
   diff: boolean
+  flows: FlowItem[]
   parentId: string | null
   selected: string | null
   hover: string | null
@@ -154,6 +196,7 @@ function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSele
   onSelect: (id: string) => void
   onOpen: (id: string) => void
   onReveal: (id: string) => void
+  onFlow?: OpenFlow
 }) {
   const [boxes, setBoxes] = useState<Map<string, Box>>(new Map())
   // Unchanged modules of a diff the user unfolded back into their lanes.
@@ -169,7 +212,7 @@ function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSele
     return ids.map((id) => findNode(all, id)).filter((n): n is DNode => !!n)
   }, [all, edges])
   const diagram = useMemo((): ComponentDiagram => ({ type: 'component', modules: all }), [all])
-  const folded = useMemo(() => (diff ? unchangedAt(diagram, nodes) : new Set<string>()), [diff, diagram, nodes])
+  const folded = useMemo(() => (diff ? unchangedAt(diagram, nodes, flows) : new Set<string>()), [diff, diagram, nodes, flows])
   const collapsed = (id: string) => folded.has(id) && !unfolded.has(id)
   const top = !parentId
   // A lane whose modules all fold into "Без змін" goes away; one that was empty anyway stays.
@@ -257,7 +300,7 @@ function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSele
               const inner = n.children?.length ?? 0
               const changes = diff && inner ? formatDiffCount(innerSummary(n, all)) : ''
               const mark = diff ? nodeDiff(n) : undefined
-              const changed = diff ? boxLines(n, diagram) : null
+              const changed = diff ? cardLines(n, diagram, flows) : null
               return (
                 <div
                   key={n.id}
@@ -275,7 +318,7 @@ function Level({ all, diff, parentId, selected, hover, onHover: setHover, onSele
                   {!diff && <span className="desc">{n.description}</span>}
                   {changed && changed.shown.length > 0 && (
                     <span className="lines">
-                      {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} />)}
+                      {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} onFlow={flowFor(flows, n.id, l, onFlow)} />)}
                       {changed.more > 0 && <span className="more muted">+{changed.more} ще</span>}
                     </span>
                   )}
@@ -441,10 +484,18 @@ function NodeDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
  * The side panel of a diff: the module, its whole interface diff, then every call it makes by target ("Викликає →")
  * and every call made to it by caller ("← Хто викликає"), one per line with its mark.
  */
-function DiffDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNode; onReveal: (id: string) => void; onOpen: (id: string) => void }) {
+function DiffDetails({ all, flows, node, onReveal, onOpen, onFlow }: {
+  all: DNode[]
+  flows: FlowItem[]
+  node: DNode
+  onReveal: (id: string) => void
+  onOpen: (id: string) => void
+  onFlow?: OpenFlow
+}) {
   const path = pathTo(all, node.id).slice(0, -1)
   const mark = nodeDiff(node)
   const lines = node.interface ?? []
+  const withFlow = flowLines(node, flows)
   const movedOut = moves({ type: 'component', modules: all }).filter((m) => m.from === node.id)
   const { calls, callers } = callGroups(all, node)
   const link = (id: string) => {
@@ -457,7 +508,11 @@ function DiffDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
       list.map((g) => (
         <div key={g.id} className={`callgroup${diffCls(true, g.diff)}`}>
           <div className="callhead">{arrow === 'out' ? <>→ {link(g.id)}</> : <>← {link(g.id)}</>}</div>
-          {g.calls.length ? g.calls.map((c, i) => <CallLine key={i} text={c.text} mark={c.diff} />) : <span className="muted small">no calls recorded</span>}
+          {g.calls.length ? (
+            g.calls.map((c, i) => <CallLine key={i} text={c.text} mark={c.diff} onFlow={flowFor(flows, arrow === 'out' ? g.id : node.id, c, onFlow)} />)
+          ) : (
+            <span className="muted small">no calls recorded</span>
+          )}
         </div>
       ))
     ) : (
@@ -479,11 +534,14 @@ function DiffDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
           <div className="chips">{node.children.map((c) => <Fragment key={c.id}>{link(c.id)}</Fragment>)}</div>
         </>
       )}
-      {(lines.some((l) => l.diff) || movedOut.length > 0) && (
+      {(lines.some((l) => l.diff) || movedOut.length > 0 || withFlow.length > 0) && (
         <>
           <div className="label">Інтерфейс</div>
-          {lines.filter((l) => l.diff).map((l, i) => <CallLine key={i} text={l.text} mark={l.diff} note={l.diff === 'move' && l.from ? <>← {link(l.from)}</> : undefined} />)}
+          {lines.filter((l) => l.diff).map((l, i) => (
+            <CallLine key={i} text={l.text} mark={l.diff} note={l.diff === 'move' && l.from ? <>← {link(l.from)}</> : undefined} onFlow={flowFor(flows, node.id, l, onFlow)} />
+          ))}
           {movedOut.map((m, i) => <CallLine key={`out${i}`} text={m.line.text} mark="move" note={<>→ {link(m.to)}</>} />)}
+          {withFlow.map((l, i) => <CallLine key={`flow${i}`} text={l.text} onFlow={flowFor(flows, node.id, l, onFlow)} />)}
         </>
       )}
       <div className="label">Викликає → Ціль</div>
@@ -494,37 +552,159 @@ function DiffDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
   )
 }
 
-/** One interface line or call of the side panel: its sign (none when unchanged) and full text. */
-function CallLine({ text, mark, note }: { text: string; mark?: LineMark; note?: ReactNode }) {
+/**
+ * The lines on a diff box: its changed lines (boxLines), then the lines of methods with a flow, at most BOX_LINES;
+ * `more` counts the rest.
+ */
+function cardLines(n: DNode, d: ComponentDiagram, flows: FlowItem[]): { shown: BoxLine[]; more: number } {
+  const changed = boxLines(n, d)
+  const all = [...changed.shown, ...flowLines(n, flows)]
+  return { shown: all.slice(0, BOX_LINES), more: changed.more + Math.max(0, all.length - BOX_LINES) }
+}
+
+/** Opens the flow of the method on a line of `module`, when it has one; a line that moved out has none here. */
+function flowFor(flows: FlowItem[], module: string, line: { text: string; to?: string }, onFlow?: OpenFlow): (() => void) | undefined {
+  const method = methodName(line.text)
+  return onFlow && !line.to && flowOf(flows, module, method) ? () => onFlow(module, method) : undefined
+}
+
+/** "flow ›": opens the flow of a method, without selecting or opening the box it sits in. */
+function FlowLink({ onFlow }: { onFlow: () => void }) {
   return (
-    <div className={`bline d-${mark ?? 'none'}${mark === 'del' ? ' struck' : ''}`} title={mark ? `${mark === 'move' ? 'moved' : DIFF_NAMES[mark]}: ${text}` : text}>
+    <button className="link flowlink" title="Show the logic of this method" onClick={(e) => (e.stopPropagation(), onFlow())} onKeyDown={(e) => e.stopPropagation()}>
+      flow ›
+    </button>
+  )
+}
+
+/** One interface line or call of the side panel: its sign (none when unchanged) and full text. */
+function CallLine({ text, mark, note, onFlow }: { text: string; mark?: LineMark; note?: ReactNode; onFlow?: () => void }) {
+  return (
+    <div className={`bline d-${mark ?? 'none'}`} title={mark ? `${mark === 'move' ? 'moved' : DIFF_NAMES[mark]}: ${text}` : text}>
       <b>{mark ? SIGNS[mark] : ''}</b>
-      <code>{text}</code>
+      <code className={mark === 'del' ? 'struck' : undefined}>{text}</code>
       {note && <span className="muted small"> {note}</span>}
+      {onFlow && <FlowLink onFlow={onFlow} />}
     </div>
   )
 }
 
-/** One changed interface line on a box: its sign and signature; a moved line names the other module. */
-function BoxLineView({ all, line }: { all: DNode[]; line: BoxLine }) {
+/** One line on a box: its sign and signature (none when unchanged, a line shown for its flow); a moved line names the other module. */
+function BoxLineView({ all, line, onFlow }: { all: DNode[]; line: BoxLine; onFlow?: () => void }) {
   const name = (id: string) => findNode(all, id)?.name ?? id
   const out = !!line.to
-  const mark: LineMark = out ? 'move' : line.diff!
+  const mark: LineMark | undefined = out ? 'move' : line.diff
   const text = out ? `${methodName(line.text)} → ${name(line.to!)}` : `${signature(line.text)}${mark === 'move' && line.from ? ` ← ${name(line.from)}` : ''}`
-  const title = out ? `moved to ${name(line.to!)}: ${line.text}` : `${line.diff === 'move' ? `moved from ${name(line.from ?? '')}` : DIFF_NAMES[line.diff as DiffMark]}: ${line.text}`
+  const what = out ? `moved to ${name(line.to!)}` : mark === 'move' ? `moved from ${name(line.from ?? '')}` : mark ? DIFF_NAMES[mark] : 'logic changes'
   return (
-    <span className={`bline d-${mark}${mark === 'del' ? ' struck' : ''}`} title={title}>
-      <b>{SIGNS[mark]}</b> {text}
+    <span className={`bline d-${mark ?? 'none'}`} title={`${what}: ${line.text}`}>
+      <span className={`text${mark === 'del' ? ' struck' : ''}`}><b>{mark ? SIGNS[mark] : ''}</b> {text}</span>
+      {onFlow && <FlowLink onFlow={onFlow} />}
     </span>
   )
 }
 
+const VIEWS: { view: FlowView; label: string; hint: string }[] = [
+  { view: 'diff', label: 'Diff', hint: 'what changes, marked' },
+  { view: 'before', label: 'Було', hint: 'the logic before the change' },
+  { view: 'after', label: 'Стало', hint: 'the logic after the change' },
+]
+
+/**
+ * The flow of one method in place of the modules: breadcrumbs back to its module and to the top, Diff / Було / Стало
+ * above the flowchart, and a panel with what changes in the logic, the module's other flows and who calls the method.
+ */
+function FlowLevel({ all, flows, item, node, onTop, onModule, onFlow }: {
+  all: DNode[]
+  flows: FlowItem[]
+  item: FlowItem
+  node: DNode
+  onTop: () => void
+  onModule: (id: string) => void
+  onFlow: OpenFlow
+}) {
+  const [view, setView] = useState<FlowView>('diff')
+  const { method } = parseFlowRef(item.diagram.of)!
+  const mark = flowDiff(node, method)
+  const { others, replaces, replacedBy } = relatedFlows(flows, item)
+  const callers = methodCallers(all, node, method)
+  const { summary, changes = [] } = item.diagram
+  const toFlow = (l: FlowLink) =>
+    l.flow ? <button className="link" onClick={() => onFlow(l.module, l.method)}>{methodLabel(all, l, node.id)}</button> : <code>{methodLabel(all, l, node.id)}</code>
+
+  return (
+    <>
+      <nav className="archcrumbs">
+        <button className="link" onClick={onTop}>All modules</button>
+        <span className="muted">›</span>
+        <button className="link" onClick={() => onModule(node.id)}>{node.name}</button>
+        <span className="muted">›</span>
+        <button className="link" disabled>{method}()</button>
+      </nav>
+      <div className="archlegend muted small">
+        <div className="seg views" role="tablist">
+          {VIEWS.map((v) => (
+            <button key={v.view} role="tab" aria-selected={view === v.view} className={view === v.view ? 'on' : ''} title={v.hint} onClick={() => setView(v.view)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <span>{item.title}</span>
+        <span>Esc goes back to the modules.</span>
+      </div>
+      <div className="archbody">
+        <div className="flowmain">
+          <FlowchartView diagram={item.diagram} view={view} />
+        </div>
+        <aside className="archside">
+          <div className="moddetails">
+            <div className="muted small">{node.name}</div>
+            <h2>
+              {method}()
+              <span className={`diffpill${diffCls(true, mark)}`}>{DIFF_NAMES[mark]}</span>
+            </h2>
+            <div className="label">Що змінилось у логіці</div>
+            {summary && <p>{summary}</p>}
+            {changes.length > 0 && <ul className="flowchanges">{changes.map((c, i) => <li key={i}>{c}</li>)}</ul>}
+            {!summary && !changes.length && <span className="muted small">not described</span>}
+            <div className="label">Інші flow цього модуля</div>
+            {replaces && <div className="small">замінює {toFlow(replaces)}</div>}
+            {replacedBy.map((l, i) => <div key={i} className="small">замінено на {toFlow(l)}</div>)}
+            {others.length ? (
+              others.map((f) => <CallLine key={f.item.id} text={`${f.method}()`} mark={flowDiff(node, f.method)} onFlow={() => onFlow(node.id, f.method)} />)
+            ) : (
+              !replaces && !replacedBy.length && <span className="muted small">none</span>
+            )}
+            <div className="label">Хто викликає</div>
+            {callers.length ? (
+              callers.map((g) => (
+                <div key={g.id} className={`callgroup${diffCls(true, g.diff)}`}>
+                  <div className="callhead">← <button className="link" onClick={() => onModule(g.id)}>{findNode(all, g.id)?.name ?? g.id}</button></div>
+                  {g.calls.map((c, i) => <CallLine key={i} text={c.text} mark={c.diff} />)}
+                </div>
+              ))
+            ) : (
+              <span className="muted small">nobody on the diagram</span>
+            )}
+          </div>
+        </aside>
+      </div>
+    </>
+  )
+}
+
+/** "method()", with its module's name when it is another module than `here`. */
+function methodLabel(all: DNode[], l: { module: string; method: string }, here: string) {
+  return l.module === here ? `${l.method}()` : `${findNode(all, l.module)?.name ?? l.module}.${l.method}()`
+}
+
 const COUNT_KEYS: (keyof DiffCount)[] = ['add', 'mod', 'del', 'move']
 
-/** Above a diff: what changes by kind (modules, methods, calls), then the groomer's summary. */
-function SummaryHeader({ modules, summary }: { modules: DNode[]; summary?: string }) {
+/** Above a diff: what changes by kind (modules, methods, calls, flows of methods), then the groomer's summary. */
+function SummaryHeader({ modules, summary, flows }: { modules: DNode[]; summary?: string; flows: FlowItem[] }) {
   const s = useMemo(() => componentSummary({ type: 'component', modules }), [modules])
-  const groups = ([['modules', s.modules], ['methods', s.methods], ['calls', s.calls]] as const).filter(([, c]) => COUNT_KEYS.some((k) => c[k]))
+  const f = useMemo(() => flowsSummary(flows, modules), [flows, modules])
+  const groups = ([['modules', s.modules], ['methods', s.methods], ['calls', s.calls], ['flows', f]] as const).filter(([, c]) => COUNT_KEYS.some((k) => c[k]))
   if (!groups.length && !summary) return null
   return (
     <div className="diffsummary">

@@ -1,22 +1,23 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { DiffMark, FlowchartDiagram, StateDiagram } from '@mag/core'
+import { flowchartAs, type DiffMark, type FlowchartDiagram, type FlowView, type StateDiagram } from '@mag/core'
 import { DiffLegend } from './DiffLegend'
 import { FONT, LABEL_LINE, LINE, layoutGraph, pathOf, type GraphEdge, type GraphLayout, type GraphNode, type PlacedNode } from '../graphLayout'
 
 type Marked<T> = T & { diff?: DiffMark }
 
 const DIFF_NAMES: Record<DiffMark, string> = { add: 'added', mod: 'changed', del: 'removed' }
-const SEVS = ['d-add', 'd-mod', 'd-del', 'd-none'] as const
+const SEVS = ['d-add', 'd-mod', 'd-del', 'd-none', 'd-plain'] as const
 
 // Pseudo-states of a state machine; agent ids are kebab-case, so these cannot clash.
 const INITIAL = '@initial'
 const FINAL = '@final'
 
-/** Steps, branches and loops of a flow, top-down. */
-export function FlowchartView({ diagram, focus }: { diagram: FlowchartDiagram; focus?: string }) {
-  const nodes = diagram.nodes.map((n): Marked<GraphNode> => ({ id: n.id, label: n.label, shape: n.shape, diff: n.diff }))
-  const edges = diagram.edges.map((e, i): Marked<GraphEdge> => ({ id: `e${i}`, from: e.from, to: e.to, label: e.label, diff: e.diff }))
-  return <GraphView nodes={nodes} edges={edges} direction="DOWN" focus={focus} />
+/** Steps, branches and loops of a flow, top-down. `view`: before or after the change, without diff colors (flowchartAs). */
+export function FlowchartView({ diagram, focus, view = 'diff' }: { diagram: FlowchartDiagram; focus?: string; view?: FlowView }) {
+  const d = flowchartAs(diagram, view)
+  const nodes = d.nodes.map((n): Marked<GraphNode> => ({ id: n.id, label: n.label, shape: n.shape, diff: n.diff }))
+  const edges = d.edges.map((e, i): Marked<GraphEdge> => ({ id: `e${i}`, from: e.from, to: e.to, label: e.label, diff: e.diff }))
+  return <GraphView nodes={nodes} edges={edges} direction="DOWN" focus={focus} plain={view !== 'diff'} />
 }
 
 /**
@@ -52,14 +53,15 @@ export function StateView({ diagram, focus }: { diagram: StateDiagram; focus?: s
 
 /**
  * A node-and-arrow diagram laid out by elkjs. Hover or click a node to see its arrows; `focus` (a #node link) selects
- * a node and scrolls to it. `finals`: states drawn with a double border.
+ * a node and scrolls to it. `finals`: states drawn with a double border. `plain`: no diff colors, unmarked is not context.
  */
-function GraphView({ nodes, edges, direction, focus, finals }: {
+function GraphView({ nodes, edges, direction, focus, finals, plain = false }: {
   nodes: Marked<GraphNode>[]
   edges: Marked<GraphEdge>[]
   direction: 'DOWN' | 'RIGHT'
   focus?: string
   finals?: Set<string>
+  plain?: boolean
 }) {
   const [layout, setLayout] = useState<GraphLayout | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -88,22 +90,28 @@ function GraphView({ nodes, edges, direction, focus, finals }: {
   useEffect(() => {
     if (!selected || !layout) return
     svg.current?.querySelector(`[data-id="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setSelected(null)
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Captured and marked handled, so an Esc that clears the node does not also leave the view around it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setSelected(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [selected, layout])
 
   const on = hover ?? selected
   const touches = (e: GraphEdge) => !on || e.from === on || e.to === on
   const near = (id: string) => !on || id === on || edges.some((e) => (e.from === on && e.to === id) || (e.to === on && e.from === id))
-  const sev = (id: string) => `d-${diffs.get(id) ?? 'none'}`
+  const none = plain ? 'plain' : 'none'
+  const sev = (id: string) => `d-${diffs.get(id) ?? none}`
   const marker = (s: string) => `${uid}-${s}`
 
   return (
     <div className="graphview">
       <div className="archlegend muted small">
         <span>Hover or click a node to see its arrows.</span>
-        <DiffLegend />
+        {!plain && <DiffLegend />}
       </div>
       {error && <div className="violation error">Layout failed: {error}</div>}
       {!layout && !error && <p className="muted small">Laying out…</p>}
@@ -136,7 +144,7 @@ function GraphView({ nodes, edges, direction, focus, finals }: {
               <g
                 key={n.id}
                 data-id={n.id}
-                className={`gnode ${n.shape} diff-${mark ?? 'none'}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`}
+                className={`gnode ${n.shape} diff-${mark ?? none}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`}
                 onMouseEnter={() => setHover(n.id)}
                 onMouseLeave={() => setHover((h) => (h === n.id ? null : h))}
                 onClick={(ev) => (ev.stopPropagation(), setSelected((s) => (s === n.id ? null : n.id)))}

@@ -50,6 +50,14 @@ export interface StateDiagram {
 }
 export interface FlowchartDiagram {
   type: 'flowchart'
+  /** "<moduleId>#<method>": the method of a module on the task's Component diagram whose logic the flow shows. */
+  of?: string
+  /** "<moduleId>#<method>": for a new method, the one it replaces (usually removed). */
+  replaces?: string
+  /** What changes in the logic, short. */
+  summary?: string
+  /** The changes of the logic, one per item. */
+  changes?: string[]
   nodes: { id: string; label: string; shape: FlowShape; diff?: DiffMark }[]
   edges: { from: string; to: string; label?: string; diff?: DiffMark }[]
 }
@@ -147,12 +155,18 @@ export function normalizeDiagram(raw: unknown): Diagram {
         states: arr(d.states).map((s) => ({ ...s, id: str(s.id), label: str(s.label ?? s.id) })),
         transitions: arr(d.transitions).map((t) => ({ ...t, from: str(t.from), to: str(t.to), event: str(t.event) })),
       }
-    case 'flowchart':
-      return {
+    case 'flowchart': {
+      const out: FlowchartDiagram = {
         type: 'flowchart',
         nodes: arr(d.nodes).map((n) => ({ ...n, id: str(n.id), label: str(n.label ?? n.id), shape: (n.shape ?? 'step') as FlowShape })),
         edges: arr(d.edges).map((e) => ({ ...e, from: str(e.from), to: str(e.to) })),
       }
+      for (const k of ['of', 'replaces', 'summary'] as const) if (str(d[k]).trim()) out[k] = str(d[k]).trim()
+      // A string of changes is one change per line; a non-string item is kept for validateDiagram to reject.
+      if (typeof d.changes === 'string') out.changes = d.changes.split('\n').map((x) => x.trim()).filter(Boolean)
+      else if (Array.isArray(d.changes)) out.changes = d.changes.map((x) => (typeof x === 'string' ? x.trim() : x)).filter((x) => x !== '')
+      return out
+    }
     case 'data':
       return {
         type: 'data',
@@ -340,6 +354,10 @@ export function validateDiagram(d: Diagram): string[] {
         link('Edge', ids, e.from, e.to)
         mark(`Edge ${e.from} → ${e.to}`, e.diff)
       }
+      for (const k of ['of', 'replaces'] as const)
+        if (d[k] !== undefined && !parseFlowRef(d[k]!)) errors.push(`${k} must be "<moduleId>#<method>", the method name without arguments; got "${d[k]}"`)
+      if (d.changes !== undefined && (!Array.isArray(d.changes) || d.changes.some((x) => typeof x !== 'string')))
+        errors.push('changes must be a list of strings, one change per item')
       break
     }
     case 'data': {
@@ -394,6 +412,65 @@ export function validateDiagram(d: Diagram): string[] {
     }
   }
   return errors
+}
+
+/** The module and method of a flowchart's of or replaces ("<moduleId>#<method>"); null when either part is missing. */
+export function parseFlowRef(ref: string): { module: string; method: string } | null {
+  const at = ref.lastIndexOf('#')
+  const module = ref.slice(0, at).trim()
+  const method = ref.slice(at + 1).trim()
+  return at > 0 && module && method && !/[\s(]/.test(method) ? { module, method } : null
+}
+
+/** A flow of a module's method, among the task's diagrams. */
+export interface MethodFlow<T> {
+  method: string
+  item: T
+}
+
+/** The flowcharts among `diagrams` that show a method of `moduleId` (their of), in order. */
+export function methodFlows<T extends { diagram: Diagram }>(diagrams: T[], moduleId: string): MethodFlow<T>[] {
+  const out: MethodFlow<T>[] = []
+  for (const item of diagrams) {
+    const ref = item.diagram.type === 'flowchart' && item.diagram.of ? parseFlowRef(item.diagram.of) : null
+    if (ref?.module === moduleId) out.push({ method: ref.method, item })
+  }
+  return out
+}
+
+/**
+ * The change of a method with a flow: added or removed when its interface lines are only so, else changed; a method
+ * not in the interface takes an added or removed module's mark.
+ */
+export function flowDiff(n: DNode, method: string): DiffMark {
+  const lines = (n.interface ?? []).filter((l) => methodName(l.text) === method)
+  const marks = new Set(lines.map((l) => l.diff))
+  if (!lines.length && (n.diff === 'add' || n.diff === 'del')) return n.diff
+  return marks.has('add') && !marks.has('del') ? 'add' : marks.has('del') && !marks.has('add') ? 'del' : 'mod'
+}
+
+/** The flows of methods for the "flows" chip of a Component diff: each flow whose module is among `modules`, by flowDiff. */
+export function flowsSummary(diagrams: { diagram: Diagram }[], modules: DNode[]): DiffCount {
+  const c = zero()
+  walkArch(modules, (n) => {
+    for (const f of methodFlows(diagrams, n.id)) c[flowDiff(n, f.method)]++
+  })
+  return c
+}
+
+export type FlowView = 'diff' | 'before' | 'after'
+
+/**
+ * A flowchart as it was (before: without added elements) or as it becomes (after: without removed ones), both with
+ * no marks; an edge goes away with its node. diff: as is.
+ */
+export function flowchartAs(d: FlowchartDiagram, view: FlowView): FlowchartDiagram {
+  if (view === 'diff') return d
+  const gone = view === 'before' ? 'add' : 'del'
+  const nodes = d.nodes.filter((n) => n.diff !== gone).map(({ diff: _, ...n }) => n)
+  const ids = new Set(nodes.map((n) => n.id))
+  const edges = d.edges.filter((e) => e.diff !== gone && ids.has(e.from) && ids.has(e.to)).map(({ diff: _, ...e }) => e)
+  return { ...d, nodes, edges }
 }
 
 /** An activation bar on a lifeline: from the call at row `from` to its reply at row `to` (messages.length: never answered). */

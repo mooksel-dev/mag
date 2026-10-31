@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { edgesAt, normalizeDiagram, type ComponentDiagram } from '@mag/core'
-import { callGroups, changedModule, edgePill, moveEdges, movedOut, unchangedAt } from './componentDiff.ts'
+import { edgesAt, normalizeDiagram, type ComponentDiagram, type DNode } from '@mag/core'
+import { callGroups, changedModule, edgePill, flowItems, flowLines, flowOf, methodCallers, moveEdges, movedOut, relatedFlows, unchangedAt } from './componentDiff.ts'
 
 const diagram = normalizeDiagram({
   type: 'component',
@@ -82,4 +82,48 @@ test('move arrows link the modules that stand for both ends on a level', () => {
   assert.deepEqual(moveEdges(diagram, null), [{ from: 'svc', to: 'app', names: ['load'] }])
   // Inside app, svc is outside the level: only old → store.
   assert.deepEqual(moveEdges(diagram, 'app'), [{ from: 'old', to: 'store', names: ['save'] }])
+})
+
+const flow = (id: string, of: string, replaces?: string) => ({
+  id,
+  title: id,
+  diagram: normalizeDiagram({ type: 'flowchart', of, replaces, nodes: [{ id: 's', label: 'Start', shape: 'start' }], edges: [] }),
+})
+
+test('flowItems and flowOf: flowcharts with of, found by module and method', () => {
+  const flows = flowItems([{ id: 'c', title: 'c', diagram }, flow('f1', 'svc#get'), { id: 'f2', title: 'f2', diagram: normalizeDiagram({ type: 'flowchart', nodes: [], edges: [] }) }])
+  assert.deepEqual(flows.map((f) => f.id), ['f1'])
+  assert.equal(flowOf(flows, 'svc', 'get')?.id, 'f1')
+  assert.equal(flowOf(flows, 'svc', 'list'), undefined)
+})
+
+test('flowLines: lines with a flow that are not changed lines, a bare method() when not in the interface', () => {
+  const svc = { ...diagram.modules[1], interface: [{ text: 'list(): User[]' }, { text: 'get(id): User' }, { text: 'put(u)', diff: 'add' as const }] }
+  const flows = flowItems([flow('f1', 'svc#get'), flow('f2', 'svc#put'), flow('f3', 'svc#sync'), flow('f4', 'db#find')])
+  assert.deepEqual(flowLines(svc, flows), [{ text: 'get(id): User' }, { text: 'sync()' }])
+})
+
+test('methodCallers: callers of one method with only their calls of it', () => {
+  const svc = diagram.modules[1]
+  assert.deepEqual(methodCallers(diagram.modules, svc, 'get'), [{ id: 'ui', diff: 'mod', calls: [{ text: 'get(id)', diff: 'del' }, { text: 'get(id, opts)', diff: 'add' }] }])
+  assert.deepEqual(methodCallers(diagram.modules, svc, 'save'), [])
+})
+
+test('relatedFlows: other flows of the module, what it replaces and what replaces it', () => {
+  const flows = flowItems([flow('old', 'svc#get'), flow('new', 'svc#fetch', 'svc#get'), flow('list', 'svc#list'), flow('db', 'db#find')])
+  const [old, neu] = flows
+  const r = relatedFlows(flows, old)
+  assert.deepEqual(r.others.map((f) => f.item.id), ['new', 'list'])
+  assert.equal(r.replaces, undefined)
+  assert.deepEqual(r.replacedBy.map((l) => [l.module, l.method, l.flow?.id]), [['svc', 'fetch', 'new']])
+  const n = relatedFlows(flows, neu)
+  assert.deepEqual([n.replaces?.method, n.replaces?.flow?.id, n.replacedBy.length], ['get', 'old', 0])
+  assert.deepEqual(relatedFlows(flowItems([flow('x', 'svc#a', 'gone#b')]), flowItems([flow('x', 'svc#a', 'gone#b')])[0]).replaces, { module: 'gone', method: 'b', flow: undefined })
+})
+
+test('a module with a flow of a method keeps its box, and so does its parent', () => {
+  assert.deepEqual([...unchangedAt(diagram, diagram.modules, flowItems([flow('f', 'db#find')]))], ['idle'])
+  const app: DNode = { id: 'app', name: 'App', description: '', uses: [], children: [{ id: 'inner', name: 'Inner', description: '', uses: [] }] }
+  assert.equal(changedModule(app, new Set()), false)
+  assert.equal(changedModule(app, new Set(), new Set(['inner'])), true)
 })
