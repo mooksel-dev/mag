@@ -84,6 +84,19 @@ export function PrBadges({ task }: { task: Task }) {
   )
 }
 
+/** The tracker ticket a task was imported from (T-10): its key; opens the ticket when its link is known. */
+export function TicketChip({ task }: { task: Task }) {
+  const t = task.tracker
+  if (!t) return null
+  const kind = t.kind === 'jira' ? 'Jira' : 'Linear'
+  if (!t.url) return <span className="pill ticket" title={`${kind} ticket ${t.key}; its link is not known yet`}>{t.key}</span>
+  return (
+    <button className="pill ticket" title={`Open ${t.key} in ${kind}: ${t.url}`} onClick={(e) => { e.stopPropagation(); void mag.open(t.url!) }}>
+      {t.key} ↗
+    </button>
+  )
+}
+
 /** Moves a backlog or grooming task to todo; disabled, with the reason, while it has no steps. */
 export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
   const can = canMoveToTodo(task, tasks)
@@ -96,6 +109,8 @@ export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task;
   )
 }
 
+export type NewTaskFocus = 'task' | 'import' | null
+
 const VIEWS: [TasksView, string][] = [['active', 'Active'], ['backlog', 'Backlog'], ['archive', 'Archive']]
 
 /** The Tasks tab: Active · Backlog · Archive. */
@@ -106,7 +121,8 @@ export function TasksPage({ project, tasks, sessions, view, onView, onOpen, focu
   view: TasksView
   onView: (v: TasksView) => void
   onOpen: (id: string) => void
-  focusNewTask: boolean
+  /** Focus the new-task title or the import field (from Home). */
+  focusNewTask: NewTaskFocus
 }) {
   const counts = viewCounts(tasks)
   const now = useNow(15_000)
@@ -289,6 +305,7 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
           {order !== undefined && <span className="ordno muted small">{order}</span>}
           <span className="key">{task.key}</span>
           <span className="title grow">{task.title}</span>
+          <TicketChip task={task} />
           <AgentDot state={agentState(task, sessions, tasks)} now={now} />
           {prs.length > 0 && <span className="pill green" title={prs.map((r) => r.prUrl).join('\n')}>PR open</span>}
           {extra}
@@ -317,11 +334,11 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
 
 const canDragRow = (task: Task, tasks: Task[]) => canMoveInPlan(task, tasks, 'up') || canMoveInPlan(task, tasks, 'down')
 
-function BacklogView({ project, tasks, sessions, now, onOpen, focusNewTask }: { project: Project; focusNewTask: boolean } & RowProps) {
+function BacklogView({ project, tasks, sessions, now, onOpen, focusNewTask }: { project: Project; focusNewTask: NewTaskFocus } & RowProps) {
   const list = backlogTasks(tasks)
   return (
     <>
-      <NewTask projectId={project.id} autoFocus={focusNewTask} />
+      <NewTask projectId={project.id} focus={focusNewTask} onOpen={onOpen} />
       {list.length ? (
         <div className="tree">
           {list.map((t) => (
@@ -393,18 +410,57 @@ function ArchiveView({ tasks, sessions, now, onOpen }: RowProps) {
   )
 }
 
-function NewTask({ projectId, autoFocus }: { projectId: string; autoFocus?: boolean }) {
+/** A new backlog task: typed in, or imported from a tracker ticket (T-10). */
+function NewTask({ projectId, focus, onOpen }: { projectId: string; focus: NewTaskFocus; onOpen: (id: string) => void }) {
+  const [importing, setImporting] = useState(focus === 'import')
   const [title, setTitle] = useState('')
   const [type, setType] = useState<TaskType>('dev')
   const [description, setDescription] = useState('')
+  if (importing) return <ImportTicket projectId={projectId} onOpen={onOpen} onClose={() => setImporting(false)} />
   return (
     <form className="newtask" onSubmit={async (e) => { e.preventDefault(); if (!title.trim()) return; await mag.createTask({ projectId, title: title.trim(), type, description }); setTitle(''); setDescription('') }}>
-      <input autoFocus={autoFocus} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
+      <input autoFocus={focus === 'task'} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
       <select value={type} onChange={(e) => setType(e.target.value as TaskType)} aria-label="Task type">
         {TYPES.map((t) => <option key={t}>{t}</option>)}
       </select>
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What and why, as briefly as you like" aria-label="Task description" rows={2} />
-      <button type="submit">Add to backlog</button>
+      <span className="newtaskactions">
+        <button type="submit">Add to backlog</button>
+        <button type="button" title="Import a Jira or Linear ticket by its URL or key" onClick={() => setImporting(true)}>Import from tracker</button>
+      </span>
+    </form>
+  )
+}
+
+/** A ticket URL or key → a new backlog task, which opens; the tracker agent writes its brief in the background. */
+function ImportTicket({ projectId, onOpen, onClose }: { projectId: string; onOpen: (id: string) => void; onClose: () => void }) {
+  const [ref, setRef] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!ref.trim() || busy) return
+    setBusy(true)
+    const r = await mag.importTicket(projectId, ref.trim()).finally(() => setBusy(false))
+    if ('error' in r) return setError(r.error)
+    onOpen(r.taskId)
+  }
+  return (
+    <form className="newtask importtask" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      <input
+        autoFocus
+        value={ref}
+        onChange={(e) => { setRef(e.target.value); setError(null) }}
+        placeholder="Ticket URL or key, e.g. https://acme.atlassian.net/browse/ABC-12 or ENG-7"
+        aria-label="Ticket URL or key"
+        aria-invalid={!!error}
+      />
+      <span className="newtaskactions">
+        <button type="submit" className="primary" disabled={!ref.trim() || busy}>Import</button>
+        <button type="button" onClick={onClose}>New task instead</button>
+      </span>
+      {error ? <span className="err small" role="alert">{error}</span>
+        : <span className="muted small">mag only reads the ticket: the tracker agent writes its description, comments, sub-tickets and linked pages into the brief. Trackers are set up in Settings → Trackers.</span>}
     </form>
   )
 }

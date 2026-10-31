@@ -169,6 +169,7 @@ app.whenReady().then(async () => {
       return { error: (e as Error).message }
     }
   })
+  handle('task:retryImport', (_, id: string) => tracker.retryImport(id))
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:regroomRemaining', (_, id: string) => orch.regroomRemaining(id))

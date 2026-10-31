@@ -42,6 +42,7 @@ const api: MagApi = {
   startStep: (taskId) => ipcRenderer.invoke('task:startStep', taskId),
   regroomRemaining: (taskId) => ipcRenderer.invoke('task:regroomRemaining', taskId),
   importTicket: (projectId, ref) => ipcRenderer.invoke('task:import', projectId, ref),
+  retryImport: (taskId) => ipcRenderer.invoke('task:retryImport', taskId),
   moveToTodo: (taskId) => ipcRenderer.invoke('task:moveToTodo', taskId),
   checkPrs: () => ipcRenderer.invoke('pr:checkNow'),
   open: (target) => ipcRenderer.invoke('shell:open', target),

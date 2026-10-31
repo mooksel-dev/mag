@@ -33,3 +33,14 @@ test('import: an unknown ref creates nothing', async () => {
   assert.equal(store.data.tasks.length, 0)
   assert.deepEqual(started, [])
 })
+
+test('retryImport: runs the import again on a linked task only', async () => {
+  const { store, project, tracker, started } = setup()
+  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
+  const task = await tracker.import(project.id, 'ABC-3')
+  tracker.retryImport(task.id)
+  assert.deepEqual(started, ['T-1', 'T-1'])
+  const plain = store.createTask({ projectId: project.id, title: 'x', type: 'dev', description: '' })
+  assert.throws(() => tracker.retryImport(plain.id), /T-2 is not linked to a ticket/)
+  assert.deepEqual(started, ['T-1', 'T-1'])
+})

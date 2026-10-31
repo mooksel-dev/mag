@@ -6,6 +6,7 @@ import { linkedTask, parseTrackerRef, type Project, type Task, type TaskType, ty
 export interface TrackerStore {
   project(projectId: string): Project
   data: { tasks: Task[] }
+  task(taskId: string): Task
   createTask(n: { projectId: string; title: string; type: TaskType; description: string; tracker?: TrackerLink }): Task
 }
 
@@ -21,6 +22,11 @@ export interface TrackerService {
    * Throws when `ref` matches none of the project's tracker scopes, or the ticket is already linked to a task.
    */
   import(projectId: string, ref: string): Promise<Task>
+  /**
+   * Runs the import again on a linked task whose import failed or must be redone (e.g. Restart in Home); the brief is
+   * replaced when the agent calls set_brief. Throws when the task is not linked to a ticket.
+   */
+  retryImport(taskId: string): void
 }
 
 export function createTrackerService(store: TrackerStore, runner: ImportRunner): TrackerService {
@@ -36,6 +42,11 @@ export function createTrackerService(store: TrackerStore, runner: ImportRunner):
       const task = store.createTask({ projectId, title: found.key, type: 'dev', description: '', tracker })
       runner.startImport(task.id)
       return task
+    },
+    retryImport(taskId) {
+      const task = store.task(taskId)
+      if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
+      runner.startImport(taskId)
     },
   }
 }

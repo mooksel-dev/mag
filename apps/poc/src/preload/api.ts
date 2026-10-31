@@ -98,6 +98,8 @@ export interface MagApi {
    * An unknown ref or a ticket already imported comes back as `error`.
    */
   importTicket(projectId: string, ref: string): Promise<{ taskId: string } | { error: string }>
+  /** Run the tracker agent's import again on a linked task (no agent running), e.g. after it failed. */
+  retryImport(taskId: string): Promise<void>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */
