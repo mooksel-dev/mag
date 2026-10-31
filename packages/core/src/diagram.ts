@@ -1,13 +1,24 @@
 // Task diagrams (T-27): typed data an agent records with show_diagram; mag renders them. Every element may carry a
 // diff mark; an element without one is unchanged context.
-import { useDiff, walkArch, type ArchNode, type ArchUse, type DiffMark, type Line } from './arch.ts'
+import { methodName, useDiff, walkArch, type ArchNode, type ArchUse, type DiffMark, type Line } from './arch.ts'
 
 export const DIFF_MARKS: DiffMark[] = ['add', 'mod', 'del']
+
+/** The change of an interface line of a Component diagram: the diff marks plus move, a method that moved here. */
+export type LineMark = DiffMark | 'move'
+export const LINE_MARKS: LineMark[] = [...DIFF_MARKS, 'move']
+
+/** An interface line of a Component diagram. A moved line sits in the module it moved to. */
+export interface DLine extends Omit<Line, 'diff'> {
+  diff?: LineMark
+  /** With move: the id of the module it moved from. */
+  from?: string
+}
 
 /** A module of a Component diagram: an ArchNode with diff marks. */
 export interface DNode extends Omit<ArchNode, 'interface' | 'uses' | 'children'> {
   diff?: DiffMark
-  interface?: Line[]
+  interface?: DLine[]
   uses: DUse[]
   children?: DNode[]
 }
@@ -22,6 +33,8 @@ export type FlowShape = 'start' | 'step' | 'decision' | 'end'
 
 export interface ComponentDiagram {
   type: 'component'
+  /** One or two sentences on what changes in substance; required on save, missing on diagrams saved before T-43. */
+  summary?: string
   modules: DNode[]
 }
 export interface SequenceDiagram {
@@ -92,7 +105,7 @@ export interface DiffCount {
   add: number
   mod: number
   del: number
-  /** Moved entities and fields; only the Data diagram has them. */
+  /** Moved entities, fields and interface lines. */
   move: number
 }
 
@@ -119,7 +132,7 @@ export function normalizeDiagram(raw: unknown): Diagram {
         else delete out.children
         return out
       }
-      return { type: 'component', modules: arr(d.modules).map(node) }
+      return { type: 'component', summary: str(d.summary).trim(), modules: arr(d.modules).map(node) }
     }
     case 'sequence':
       return {
@@ -195,6 +208,39 @@ export function fieldMoves(d: DataDiagram): FieldMove[] {
 /** A field name that lists several fields ("a / b", "a, b", "old new"). */
 const FIELD_GROUP = /[/,;\s]/
 
+const OPEN = '([{<'
+const CLOSE = ')]}>'
+/** Where the description of a line starts: "name(args): Result - what it does". */
+const DESCRIPTION = /^\s[-–—]\s/
+
+/**
+ * An interface line or a call that holds several methods ("get / ensureActive", "Get/EnsureActive/SetAgent") or prose
+ * instead of a signature ("Users: DBR fields + their acquire/set methods"): its signature has names joined by "/", ","
+ * or " + ". Arguments, generics, quoted text and the description after " - " may hold anything.
+ */
+export function looksGrouped(text: string): boolean {
+  let sig = ''
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (quote) {
+      if (ch === quote) quote = ''
+    } else if (`'"\``.includes(ch)) quote = ch
+    else if (OPEN.includes(ch)) depth++
+    else if (CLOSE.includes(ch)) depth = Math.max(0, depth - 1)
+    else if (depth === 0) {
+      if (DESCRIPTION.test(text.slice(i, i + 3))) break
+      sig += ch
+    }
+  }
+  // An HTTP route ("GET /users/:id") is one line, not names joined by "/".
+  return /[/,]|\s\+\s/.test(sig.replace(/(^|\s)\/[\w:{.-]\S*/g, ' '))
+}
+
+const grouped = (what: string, signature: string) =>
+  `one ${what} per line with its signature "${signature}", never several joined by "/", "," or "+"; a changed ${what} is a del line and an add line`
+
 /** Problems an agent must fix before the diagram is saved; [] when it is fine. */
 export function validateDiagram(d: Diagram): string[] {
   const errors: string[] = []
@@ -218,18 +264,32 @@ export function validateDiagram(d: Diagram): string[] {
 
   switch (d.type) {
     case 'component': {
+      if (!d.summary?.trim()) errors.push('summary is required: one or two sentences on what changes in substance')
       if (!d.modules.length) errors.push('modules is empty')
       const all: DNode[] = []
       walkArch(d.modules, (n) => all.push(n))
       const ids = idsOf('module', all)
       for (const n of all) {
         mark(`Module ${n.id}`, n.diff)
-        for (const l of n.interface ?? []) mark(`Interface line "${l.text}" of ${n.id}`, l.diff)
+        for (const l of n.interface ?? []) {
+          const what = `Interface line "${l.text}" of ${n.id}`
+          if (l.diff !== undefined && !LINE_MARKS.includes(l.diff)) errors.push(`${what}: diff must be one of ${LINE_MARKS.join(', ')}`)
+          if (looksGrouped(l.text)) errors.push(`${what}: ${grouped('method', 'name(args): Result - what it does')}`)
+          if (l.diff === 'move') {
+            if (!l.from) errors.push(`${what}: move needs from, the id of the module it moved from`)
+            else if (l.from === n.id) errors.push(`${what}: moved from ${n.id} itself; a changed method is a del line and an add line`)
+            else if (!ids.has(l.from)) errors.push(`${what}: moved from "${l.from}", no such module`)
+          } else if (l.from) errors.push(`${what}: from is only for diff move`)
+        }
         for (const u of n.uses) {
           if (u.to === n.id) errors.push(`Module ${n.id} uses itself`)
           else if (!ids.has(u.to)) errors.push(`Module ${n.id} uses "${u.to}": no such module`)
           mark(`Use ${n.id} → ${u.to}`, u.diff)
-          for (const c of u.calls) mark(`Call "${c.text}" of ${n.id} → ${u.to}`, c.diff)
+          for (const c of u.calls) {
+            const what = `Call "${c.text}" of ${n.id} → ${u.to}`
+            mark(what, c.diff)
+            if (looksGrouped(c.text)) errors.push(`${what}: ${grouped('call', 'name(args)')}`)
+          }
         }
       }
       break
@@ -396,6 +456,86 @@ export function sequenceActivations(d: SequenceDiagram): SequenceActivations {
 
 const zero = (): DiffCount => ({ add: 0, mod: 0, del: 0, move: 0 })
 const count = (c: DiffCount, m: DataMark | undefined) => m && c[m]++
+
+/** Counts changed lines of one list; a del and an add of the same method in it count once as mod. */
+function countLines(c: DiffCount, list: { text: string; diff?: LineMark }[]) {
+  const dels = new Map<string, number>()
+  const adds = new Map<string, number>()
+  for (const l of list) {
+    const tally = l.diff === 'del' ? dels : l.diff === 'add' ? adds : null
+    if (tally) tally.set(methodName(l.text), (tally.get(methodName(l.text)) ?? 0) + 1)
+    else count(c, l.diff)
+  }
+  for (const [name, n] of dels) {
+    const paired = Math.min(n, adds.get(name) ?? 0)
+    c.mod += paired
+    c.del += n - paired
+    adds.set(name, (adds.get(name) ?? 0) - paired)
+  }
+  for (const n of adds.values()) c.add += n
+}
+
+/** The counts behind the chips of a Component diff: modules, interface methods and calls. */
+export interface ComponentSummary {
+  modules: DiffCount
+  methods: DiffCount
+  calls: DiffCount
+}
+
+/**
+ * What changes on a Component diagram, by kind. A module counts its own change (nodeDiff). A del line and an add line
+ * of the same method in one module (calls: in one use) count once as mod; a moved line counts once as move. Calls of
+ * an added or removed use take its mark.
+ */
+export function componentSummary(d: ComponentDiagram): ComponentSummary {
+  const out: ComponentSummary = { modules: zero(), methods: zero(), calls: zero() }
+  const byId = new Map<string, DNode>()
+  walkArch(d.modules, (n) => byId.set(n.id, n))
+  walkArch(d.modules, (n) => {
+    count(out.modules, nodeDiff(n))
+    countLines(out.methods, n.interface ?? [])
+    for (const u of n.uses) {
+      const m = useDiff(n, u, byId.get(u.to))
+      const whole = m === 'add' || m === 'del' ? m : undefined
+      countLines(out.calls, u.calls.map((c) => ({ text: c.text, diff: c.diff ?? whole })))
+    }
+  })
+  return out
+}
+
+/** An interface line moved between two modules of a Component diagram. */
+export interface Move {
+  line: DLine
+  from: string
+  to: string
+}
+
+/** The moved interface lines of a Component diagram whose source is another module of it; validateDiagram reports the others. */
+export function moves(d: ComponentDiagram): Move[] {
+  const ids = new Set<string>()
+  walkArch(d.modules, (n) => ids.add(n.id))
+  const out: Move[] = []
+  walkArch(d.modules, (n) => {
+    for (const l of n.interface ?? []) if (l.diff === 'move' && l.from && l.from !== n.id && ids.has(l.from)) out.push({ line: l, from: l.from, to: n.id })
+  })
+  return out
+}
+
+/** A changed line on a box; `to` marks a line that moved out of the box to that module. */
+export type BoxLine = DLine & { to?: string }
+
+/** How many changed lines a box shows; the rest is "+N" and the details panel. */
+export const BOX_LINES = 3
+
+/**
+ * The changed interface lines of a module for its box, in order: its own (add, del, mod, move in), then, given the
+ * whole diagram, the lines that moved out of it. At most BOX_LINES; `more` is how many are left out.
+ */
+export function boxLines(n: DNode, d?: ComponentDiagram): { shown: BoxLine[]; more: number } {
+  const all: BoxLine[] = (n.interface ?? []).filter((l) => l.diff)
+  if (d) for (const m of moves(d)) if (m.from === n.id) all.push({ ...m.line, to: m.to })
+  return { shown: all.slice(0, BOX_LINES), more: Math.max(0, all.length - BOX_LINES) }
+}
 
 /** A module's own change: its mark, else 'mod' when one of its interface lines changes. */
 export function nodeDiff(n: DNode): DiffMark | undefined {

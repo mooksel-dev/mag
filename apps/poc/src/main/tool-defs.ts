@@ -13,7 +13,11 @@ const ARCH_MODULE = {
     layer: { type: 'string', enum: ['app', 'service', 'client', 'lib'], description: 'Modules inside an app.' },
     path: { type: 'string' },
     description: { type: 'string', description: 'One or two sentences of responsibility.' },
-    interface: { type: 'array', items: { type: 'string' }, description: 'Public methods: "name(args): Result - what it does". Key for services and clients.' },
+    interface: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Public methods, one per line: "name(args): Result - what it does". Never several in one line ("get / set", "a, b") and no prose. Key for services and clients.',
+    },
     uses: {
       type: 'array',
       description: 'Real dependencies on any module of the tree.',
@@ -22,7 +26,7 @@ const ARCH_MODULE = {
         required: ['to', 'calls'],
         properties: {
           to: { type: 'string', description: 'Id of the module it uses.' },
-          calls: { type: 'array', items: { type: 'string' }, description: 'Methods of `to` it calls, e.g. "groom(taskId)".' },
+          calls: { type: 'array', items: { type: 'string' }, description: 'Methods of `to` it calls, one per item, e.g. "groom(taskId)".' },
         },
       },
     },
@@ -37,11 +41,25 @@ const DATA_DIFF = {
   enum: ['add', 'mod', 'del', 'move'],
   description: 'Change: add, mod, del, or move (it moved here; from says where from). Leave it out for unchanged context.',
 }
+const ONE_PER_LINE = 'One per line, never several joined by "/", "," or "+"; a plain string is an unchanged line; a changed one is the old line del and the new line add.'
 const LINES = (what: string) => ({
   type: 'array',
-  description: `${what}. A plain string is an unchanged line; a changed line is the old one del and the new one add.`,
+  description: `${what}. ${ONE_PER_LINE}`,
   items: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, diff: DIFF } },
 })
+const INTERFACE = {
+  type: 'array',
+  description: `Public methods with signatures "name(args): Result - what it does", not prose. ${ONE_PER_LINE} A method moved here from another module is move with from.`,
+  items: {
+    type: 'object',
+    required: ['text'],
+    properties: {
+      text: { type: 'string' },
+      diff: { ...DATA_DIFF, description: 'Change: add, mod, del, or move (it moved here; from says from which module). Leave it out for unchanged context.' },
+      from: { type: 'string', description: 'With move: the id of the module it moved from, another module of this diagram.' },
+    },
+  },
+}
 
 /** The data of show_diagram; one shape per type, fields of the other types are left out. */
 const DIAGRAM = {
@@ -49,6 +67,7 @@ const DIAGRAM = {
   required: ['type'],
   properties: {
     type: { type: 'string', enum: ['component', 'sequence', 'state', 'flowchart', 'data'] },
+    summary: { type: 'string', description: 'component, required: one or two sentences on what changes in substance; shown above the diagram.' },
     modules: {
       type: 'array',
       description: 'component: modules as in get_architecture (same ids), with diff marks.',
@@ -63,7 +82,7 @@ const DIAGRAM = {
           path: { type: 'string' },
           description: { type: 'string' },
           diff: DIFF,
-          interface: LINES('Public methods "name(args): Result - what it does"'),
+          interface: INTERFACE,
           uses: {
             type: 'array',
             items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF } },
@@ -172,7 +191,7 @@ export const TOOL_DEFS = [
   {
     name: 'get_diagrams',
     scope: 'task',
-    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; data marks moved entities and fields with move and from.',
+    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; component marks moved interface methods, data moved entities and fields, with move and from.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -462,7 +481,7 @@ export const TOOL_DEFS = [
     name: 'show_diagram',
     scope: 'any',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); on data also move, with from, for an entity or field that moved. Methods, calls and fields go one per line, never grouped with "/" or ","; a changed one is a del line and an add line. Unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
     inputSchema: {
       type: 'object',
       properties: {
