@@ -33,6 +33,8 @@ import {
   type TaskType,
   type TasksView,
   type TaskWork,
+  type TrackerKind,
+  type TrackerScope,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
@@ -43,7 +45,8 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, useNow } from './Tasks'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, TicketChip, useNow, type NewTaskFocus } from './Tasks'
+import { scopeKey, scopeWarning } from './trackers'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -68,7 +71,7 @@ export function App({ projectId }: { projectId: string }) {
   const [picker, setPicker] = useState<PickerMode | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [view, setView] = useState<TasksView>('active')
-  const [focusNewTask, setFocusNewTask] = useState(false)
+  const [focusNewTask, setFocusNewTask] = useState<NewTaskFocus>(null)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
   const [theme, setTheme] = useTheme()
   const toggleChat = (v: boolean) => {
@@ -105,7 +108,7 @@ export function App({ projectId }: { projectId: string }) {
   const inboxCount = inbox(project.id, tasks, state.sessions).length
   const activeCount = viewCounts(tasks).active
   /** Leaving a tab drops the new-task focus. */
-  const go = (t: Tab) => { setTab(t); setTaskId(null); setFocusNewTask(false) }
+  const go = (t: Tab) => { setTab(t); setTaskId(null); setFocusNewTask(null) }
   const showView = (v: TasksView) => { go('tasks'); setView(v) }
   const openStage = (s: PipelineStage) => showView(s === 'backlog' ? 'backlog' : 'active')
   const openKey = (key: string) => setTaskId(tasks.find((t) => t.key === key)?.id ?? null)
@@ -145,7 +148,7 @@ export function App({ projectId }: { projectId: string }) {
             {task ? (
               <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={showView} onOpenKey={openKey} />
             ) : tab === 'home' ? (
-              <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask(true) }} />
+              <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onImport={() => { showView('backlog'); setFocusNewTask('import') }} />
             ) : tab === 'tasks' ? (
               <TasksPage project={project} tasks={tasks} sessions={state.sessions} view={view} onView={setView} onOpen={setTaskId} focusNewTask={focusNewTask} />
             ) : tab === 'architecture' ? (
@@ -241,6 +244,9 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
   const canRegroomRemaining = !anyRunning && !legacy && task.status === 'in_progress'
+  // An import that ended without a brief (T-10); the inbox shows it as Import failed.
+  const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
+  const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
   const view = taskView(task)
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
@@ -271,6 +277,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           <div className="taskrow">
             <button className="crumb" onClick={() => onNav(view)}>Tasks · {VIEW_NAMES[view]} ›</button>
             <span className="key">{task.key}</span>
+            <TicketChip task={task} />
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
@@ -300,6 +307,12 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
             <div className="banner">
               Agent needs you: {task.needsInput}
               {canRegroomRemaining && <button className="small" onClick={() => mag.regroomRemaining(task.id)}>Re-groom remaining</button>}
+            </div>
+          )}
+          {importFailed && (
+            <div className="banner">
+              Import of {task.tracker!.key} failed: the tracker agent wrote no brief. See its session in the chat panel.
+              <button className="primary small" onClick={() => mag.retryImport(task.id)}>Retry import</button>
             </div>
           )}
           {!task.needsInput && !anyRunning && manualNext && step && (
@@ -629,6 +642,64 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
   )
 }
 
+const KINDS: [TrackerKind, string, string][] = [['jira', 'Jira', 'Project key'], ['linear', 'Linear', 'Team key']]
+
+/** Tracker projects / teams tickets are imported from, each read through a T-13 integration (T-10). */
+function TrackerSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
+  const scopes = project.trackers ?? []
+  const [integrationId, setIntegrationId] = useState('')
+  const [kind, setKind] = useState<TrackerKind>('jira')
+  const [scope, setScope] = useState('')
+  const key = scopeKey(scope)
+  const chosen = integrations.some((i) => i.id === integrationId) ? integrationId : (integrations[0]?.id ?? '')
+  const taken = !!key && scopes.some((s) => s.scope.toUpperCase() === key)
+  const save = (list: TrackerScope[]) => mag.updateProject(project.id, { trackers: list })
+  const nameOf = (id: string) => integrations.find((i) => i.id === id)?.name ?? id
+  return (
+    <div className="field">
+      Trackers
+      {scopes.length > 0 && (
+        <div className="trackerlist">
+          {scopes.map((s, i) => {
+            const warning = scopeWarning(project, s, integrations)
+            return (
+              <div key={`${s.kind}:${s.scope}:${i}`} className="trackerrow">
+                <code>{s.scope}</code>
+                <span>{KINDS.find(([k]) => k === s.kind)?.[1]}</span>
+                <span className="muted small" title={s.integrationId}>via {nameOf(s.integrationId)}</span>
+                {warning && <span className="pill amber">{warning}</span>}
+                <button className="link" onClick={() => save(scopes.filter((_, j) => j !== i))}>remove</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {integrations.length ? (
+        <form
+          className="trackeradd"
+          onSubmit={(e) => { e.preventDefault(); if (!key || taken || !chosen) return; void save([...scopes, { integrationId: chosen, kind, scope: key }]); setScope('') }}
+        >
+          <select value={chosen} onChange={(e) => setIntegrationId(e.target.value)} aria-label="Tracker integration">
+            {integrations.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          </select>
+          <select value={kind} onChange={(e) => setKind(e.target.value as TrackerKind)} aria-label="Tracker kind">
+            {KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder={KINDS.find(([k]) => k === kind)![2]} aria-label="Project or team key" aria-invalid={!!scope.trim() && !key} />
+          <button type="submit" disabled={!key || taken}>+ Add tracker</button>
+          {taken && <span className="muted small">{key} is already added.</span>}
+        </form>
+      ) : (
+        <span className="muted small">Run any Claude Code agent to detect integrations, then pick the Jira (Atlassian) or Linear one here.</span>
+      )}
+      <span className="muted small">
+        Import a ticket from Tasks by its URL, or by its key when its prefix is a key here (ABC-12 for ABC). The tracker agent reads it through the
+        integration: turn that integration on for Tracker in Integrations above (Ask or Auto). mag never writes to the tracker.
+      </span>
+    </div>
+  )
+}
+
 function Settings({ project, integrations }: { project: Project; integrations: Integration[] }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   return (
@@ -677,6 +748,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />
+      <TrackerSettings project={project} integrations={integrations} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (

@@ -302,6 +302,7 @@ export class Orchestrator {
   importTicket(taskId: string) {
     const task = this.store.task(taskId)
     if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
+    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.runs.has(s.id))) throw new Error('An agent is still working on this task')
     const session = this.newSession(taskId, 'tracker')
     this.run(session, `Import ${task.tracker.key} into ${task.key}. Start with get_import.`)
   }
