@@ -10,7 +10,7 @@ export const DIAGRAM_NAMES: Record<Diagram['type'], string> = { component: 'Comp
 export function DiagramView({ diagram, focus }: { diagram: Diagram; focus?: string }) {
   switch (diagram.type) {
     case 'component':
-      return <div className="diagramview"><ComponentView modules={diagram.modules} diff focus={focus} /></div>
+      return <div className="diagramview"><ComponentView modules={diagram.modules} diff summary={diagram.summary} focus={focus} /></div>
     case 'sequence':
       return <div className="diagramview"><SequenceView diagram={diagram} focus={focus} /></div>
     case 'flowchart':

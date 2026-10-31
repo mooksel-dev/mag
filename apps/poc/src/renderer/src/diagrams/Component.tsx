@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { callersOf, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, nodeDiff, pathTo, type ArchLayer, type DNode, type DiffMark, type LineMark } from '@mag/core'
+import { boxLines, callersOf, componentSummary, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
+import { edgeCalls, moveEdges, unchangedAt } from '../componentDiff'
 import { DiffLegend } from './DiffLegend'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
@@ -39,6 +40,13 @@ function ruleOf(all: DNode[], from: DNode, to: string) {
 const diffCls = (on: boolean, m: LineMark | undefined) => (on ? ` diff-${m ?? 'none'}` : '')
 
 const DIFF_NAMES: Record<DiffMark, string> = { add: 'added', mod: 'changed', del: 'removed' }
+const SIGNS: Record<LineMark, string> = { add: '+', mod: '~', del: '−', move: '↷' }
+
+/** The signature of an interface line, without its description: "name(args): Result - what it does" → "name(args): Result". */
+const signature = (text: string) => text.split(/\s[-–—]\s/)[0]
+
+/** The lane a module goes in, as lanesFor places it. */
+const laneKey = (n: DNode, top: boolean) => n.layer ?? (top ? 'top' : 'other')
 
 /** A box gets the "!" mark when the agent flagged it or one of its uses breaks the layering rules. */
 const flagged = (all: DNode[], n: DNode) => !!n.concern || n.uses.some((u) => ruleOf(all, n, u.to)?.severity === 'error')
@@ -48,7 +56,7 @@ const flagged = (all: DNode[], n: DNode) => !!n.concern || n.uses.some((u) => ru
  * the number of calls; modules outside the level that it calls or is called by show as ports. `diff`: a task diagram,
  * colored by its diff marks instead of layering. `focus`: a module to show on its level and select (a #node link).
  */
-export function ComponentView({ modules, diff = false, focus }: { modules: DNode[]; diff?: boolean; focus?: string }) {
+export function ComponentView({ modules, diff = false, summary, focus }: { modules: DNode[]; diff?: boolean; summary?: string; focus?: string }) {
   const at = (id: string | undefined) => (id ? pathTo(modules, id) : [])
   const [level, setLevel] = useState<string | null>(() => at(focus).at(-2)?.id ?? null)
   const [selected, setSelected] = useState<string | null>(() => (at(focus).length ? focus! : null))
@@ -80,6 +88,7 @@ export function ComponentView({ modules, diff = false, focus }: { modules: DNode
 
   return (
     <>
+      {diff && <SummaryHeader modules={modules} summary={summary} />}
       <nav className="archcrumbs">
         <button className="link" disabled={!parentId} onClick={() => go(null)}>All modules</button>
         {crumbs.map((n) => (
@@ -90,9 +99,9 @@ export function ComponentView({ modules, diff = false, focus }: { modules: DNode
         ))}
       </nav>
       <div className="archlegend muted small">
-        <span>Click a module with ▸ to go inside. Hover or select a box to see its links; hover a number for the calls.</span>
+        <span>Click a module with ▸ to go inside. Hover or select a box to see its links; hover an arrow label for the calls.</span>
         {diff ? (
-          <DiffLegend />
+          <DiffLegend move />
         ) : (
           <>
             <span><i className="sw error" /> breaks layering</span>
@@ -124,6 +133,8 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
 }) {
   const [hover, setHover] = useState<string | null>(null)
   const [boxes, setBoxes] = useState<Map<string, Box>>(new Map())
+  // Unchanged modules of a diff the user unfolded back into their lanes.
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set())
   const wrap = useRef<HTMLDivElement>(null)
   const els = useRef(new Map<string, HTMLElement>())
   const uid = useId()
@@ -134,7 +145,22 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
     const ids = [...new Set(edges.flatMap((e) => (e.port === 'in' ? [e.from] : e.port === 'out' ? [e.to] : [])))]
     return ids.map((id) => findNode(all, id)).filter((n): n is DNode => !!n)
   }, [all, edges])
-  const lanes = lanesFor(nodes, ports, !parentId)
+  const diagram = useMemo((): ComponentDiagram => ({ type: 'component', modules: all }), [all])
+  const folded = useMemo(() => (diff ? unchangedAt(diagram, nodes) : new Set<string>()), [diff, diagram, nodes])
+  const collapsed = (id: string) => folded.has(id) && !unfolded.has(id)
+  const top = !parentId
+  // A lane whose modules all fold into "Без змін" goes away; one that was empty anyway stays.
+  const lanes = lanesFor(nodes.filter((n) => !collapsed(n.id)), ports, top).filter(
+    (l) => l.ports || l.nodes.length || !nodes.some((n) => laneKey(n, top) === l.key),
+  )
+  const unchanged = nodes.filter((n) => folded.has(n.id))
+  const toggle = (id: string) =>
+    setUnfolded((s) => {
+      const next = new Set(s)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const moved = useMemo(() => (diff ? moveEdges(diagram, parentId) : []), [diff, diagram, parentId])
 
   // Box positions drive the arrows; they change whenever the diagram reflows (window resize, drawer open, new data).
   useLayoutEffect(() => {
@@ -153,10 +179,11 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
     const ro = new ResizeObserver(measure)
     ro.observe(root)
     return () => ro.disconnect()
-  }, [nodes, ports])
+  }, [nodes, ports, folded, unfolded])
 
   const focus = hover ?? (selected && boxes.has(selected) ? selected : null)
-  const near = (id: string) => !focus || id === focus || edges.some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id))
+  const near = (id: string) =>
+    !focus || id === focus || [...edges, ...moved].some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id))
 
   const routes = useMemo(() => {
     const shown = edges
@@ -165,10 +192,13 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
         const from = findNode(all, e.from)
         // In a diff diagram arrows are colored by their change, not by layering.
         const sev = diff ? `d-${e.diff ?? 'none'}` : from?.layer ? (ruleOf(all, from, e.to)?.severity ?? 'ok') : 'ok'
-        return { ...e, sev }
+        return { ...e, sev } as ArchEdge & { sev: string; moved?: string[] }
       })
-    return routeEdges(shown, boxes)
-  }, [all, diff, edges, focus, boxes])
+    const shownMoves = moved
+      .filter((m) => !focus || m.from === focus || m.to === focus)
+      .map((m): ArchEdge & { sev: string; moved?: string[] } => ({ from: m.from, to: m.to, calls: [], sev: 'd-move', moved: m.names }))
+    return routeEdges([...shown, ...shownMoves], boxes)
+  }, [all, diff, edges, moved, focus, boxes])
 
   const marker = (sev: string) => `${uid}-${sev}`
   const ref = (id: string) => (el: HTMLElement | null) => {
@@ -204,13 +234,14 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
               const inner = n.children?.length ?? 0
               const changes = diff && inner ? formatDiffCount(innerSummary(n, all)) : ''
               const mark = diff ? nodeDiff(n) : undefined
+              const changed = diff ? boxLines(n, diagram) : null
               return (
                 <div
                   key={n.id}
                   ref={ref(n.id)}
                   role="button"
                   tabIndex={0}
-                  className={`${cls}${inner ? ' nested' : ''}`}
+                  className={`${cls}${inner ? ' nested' : ''}${changed?.shown.length ? ' withlines' : ''}`}
                   title={`${mark ? `${DIFF_NAMES[mark]} · ` : ''}${n.name}\n${n.description}`}
                   onClick={() => (inner ? onOpen(n.id) : onSelect(n.id))}
                   onKeyDown={(e) => e.key === 'Enter' && (inner ? onOpen(n.id) : onSelect(n.id))}
@@ -219,6 +250,12 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
                   <span className="name">{n.name}</span>
                   {n.kind && <span className="kind">{n.kind}</span>}
                   <span className="desc">{n.description}</span>
+                  {changed && changed.shown.length > 0 && (
+                    <span className="lines">
+                      {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} />)}
+                      {changed.more > 0 && <span className="more muted">+{changed.more} ще</span>}
+                    </span>
+                  )}
                   {inner > 0 && (
                     <span className="inside">
                       ▸ {inner} inside
@@ -233,28 +270,74 @@ function Level({ all, diff, parentId, selected, onSelect, onOpen, onReveal }: {
           </div>
         </div>
       ))}
+      {unchanged.length > 0 && (
+        <div className="archlane unchanged">
+          <div className="archlanehead">
+            <div>Без змін</div>
+            <div className="muted small">click to show the box</div>
+          </div>
+          <div className="archboxes">
+            {unchanged.map((n) => {
+              const shut = collapsed(n.id)
+              return (
+                <button
+                  key={n.id}
+                  ref={shut ? ref(n.id) : undefined}
+                  className={`archchip${shut ? '' : ' on'}${near(n.id) ? '' : ' dim'}`}
+                  title={`${shut ? 'Show' : 'Hide'} the box\n${n.description}`}
+                  onClick={() => toggle(n.id)}
+                  {...(shut ? hoverProps(n.id) : {})}
+                >
+                  {n.name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
       <svg className="archarrows" aria-hidden="true">
         <defs>
-          {(diff ? ['d-add', 'd-mod', 'd-del', 'd-none'] : ['ok', 'warning', 'error']).map((sev) => (
+          {(diff ? ['d-add', 'd-mod', 'd-del', 'd-none', 'd-move'] : ['ok', 'warning', 'error']).map((sev) => (
             <marker key={sev} id={marker(sev)} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0 1 L9 5 L0 9 Z" className={sev} />
             </marker>
           ))}
         </defs>
         {routes.map((r) => (
-          <path key={r.from + '>' + r.to} d={r.d} className={r.sev} markerEnd={`url(#${marker(r.sev)})`} />
+          <path key={`${r.moved ? 'move:' : ''}${r.from}>${r.to}`} d={r.d} className={r.sev} markerEnd={`url(#${marker(r.sev)})`} />
         ))}
       </svg>
       <div className="archbadges">
-        {routes.filter((r) => r.calls.length).map((r) => (
-          <span key={r.from + '>' + r.to} className={`archbadge ${r.sev}`} style={{ left: r.mid.x, top: r.mid.y }}>
-            {r.calls.length}
+        {routes.filter((r) => r.moved).map((r) => (
+          <span key={`move:${r.from}>${r.to}`} className="archbadge names d-move" style={{ left: r.mid.x, top: r.mid.y }}>
+            {r.moved!.slice(0, 3).map((name) => <span key={name} className="d-move">↷ {name}</span>)}
+            {r.moved!.length > 3 && <span className="muted">+{r.moved!.length - 3}</span>}
             <span className="calls">
-              <span className="muted">{findNode(all, r.from)?.name} → {findNode(all, r.to)?.name}</span>
-              {r.calls.map((c) => <code key={c} className={diffCls(diff && !!r.callDiff?.[c], r.callDiff?.[c])}>{c}</code>)}
+              <span className="muted">moved {findNode(all, r.from)?.name} → {findNode(all, r.to)?.name}</span>
+              {r.moved!.map((name) => <code key={name} className="diff-move">{name}</code>)}
             </span>
           </span>
         ))}
+        {routes.filter((r) => r.calls.length).map((r) => {
+          // A changed arrow names its changed calls; an unchanged one keeps the count.
+          const named = diff ? edgeCalls(r) : null
+          return (
+            <span key={r.from + '>' + r.to} className={`archbadge ${r.sev}${named ? ' names' : ''}`} style={{ left: r.mid.x, top: r.mid.y }}>
+              {named ? (
+                <>
+                  {named.calls.map((c) => <span key={c.name} className={`d-${c.mark}${c.mark === 'del' ? ' struck' : ''}`}>{SIGNS[c.mark]} {c.name}</span>)}
+                  {named.more > 0 && <span className="muted">+{named.more}</span>}
+                </>
+              ) : (
+                r.calls.length
+              )}
+              <span className="calls">
+                <span className="muted">{findNode(all, r.from)?.name} → {findNode(all, r.to)?.name}</span>
+                {r.calls.map((c) => <code key={c} className={diffCls(diff && !!r.callDiff?.[c], r.callDiff?.[c])}>{c}</code>)}
+              </span>
+            </span>
+          )
+        })}
       </div>
     </div>
   )
@@ -268,6 +351,7 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
   const mark = diff ? nodeDiff(node) : undefined
   // With an interface: callers of a method not in it or with no calls recorded; without one: every caller.
   const others = lines.length ? callers.filter((c) => !c.calls.length || c.calls.some((x) => !names.has(methodName(x)))) : callers
+  const movedOut = diff ? moves({ type: 'component', modules: all }).filter((m) => m.from === node.id) : []
   const issues = node.uses.map((u) => ({ to: u.to, r: ruleOf(all, node, u.to) })).filter((x) => x.r)
   const link = (id: string, title?: string) => {
     const n = findNode(all, id)
@@ -303,7 +387,7 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
       ) : (
         <span className="muted small">nothing</span>
       )}
-      {lines.length > 0 && (
+      {(lines.length > 0 || movedOut.length > 0) && (
         <>
           <div className="label">Interface · who calls</div>
           <ul className="archcalls">
@@ -312,10 +396,17 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
               return (
                 <li key={i}>
                   <code className={diffCls(diff && !!line.diff, line.diff)}>{line.text}</code>
-                  {by.length ? <span className="chips">{by.map((c) => link(c.node.id))}</span> : <span className="muted small">no recorded callers</span>}
+                  {diff && line.diff === 'move' && line.from && <span className="muted small">moved from {link(line.from)}</span>}
+                  {by.length > 0 && <span className="chips">{by.map((c) => link(c.node.id))}</span>}
                 </li>
               )
             })}
+            {movedOut.map((m, i) => (
+              <li key={`out${i}`}>
+                <code className="diff-move out">{m.line.text}</code>
+                <span className="muted small">moved to {link(m.to)}</span>
+              </li>
+            ))}
           </ul>
         </>
       )}
@@ -335,6 +426,44 @@ function NodeDetails({ all, diff, node, onReveal, onOpen }: { all: DNode[]; diff
           ))}
         </>
       )}
+    </div>
+  )
+}
+
+/** One changed interface line on a box: its sign and signature; a moved line names the other module. */
+function BoxLineView({ all, line }: { all: DNode[]; line: BoxLine }) {
+  const name = (id: string) => findNode(all, id)?.name ?? id
+  const out = !!line.to
+  const mark: LineMark = out ? 'move' : line.diff!
+  const text = out ? `${methodName(line.text)} → ${name(line.to!)}` : `${signature(line.text)}${mark === 'move' && line.from ? ` ← ${name(line.from)}` : ''}`
+  const title = out ? `moved to ${name(line.to!)}: ${line.text}` : `${line.diff === 'move' ? `moved from ${name(line.from ?? '')}` : DIFF_NAMES[line.diff as DiffMark]}: ${line.text}`
+  return (
+    <span className={`bline d-${mark}${mark === 'del' ? ' struck' : ''}`} title={title}>
+      <b>{SIGNS[mark]}</b> {text}
+    </span>
+  )
+}
+
+const COUNT_KEYS: (keyof DiffCount)[] = ['add', 'mod', 'del', 'move']
+
+/** Above a diff: what changes by kind (modules, methods, calls), then the groomer's summary. */
+function SummaryHeader({ modules, summary }: { modules: DNode[]; summary?: string }) {
+  const s = useMemo(() => componentSummary({ type: 'component', modules }), [modules])
+  const groups = ([['modules', s.modules], ['methods', s.methods], ['calls', s.calls]] as const).filter(([, c]) => COUNT_KEYS.some((k) => c[k]))
+  if (!groups.length && !summary) return null
+  return (
+    <div className="diffsummary">
+      {groups.length > 0 && (
+        <div className="chips">
+          {groups.map(([label, c]) => (
+            <span key={label} className="diffchip">
+              <span className="muted">{label}</span>
+              {COUNT_KEYS.filter((k) => c[k]).map((k) => <b key={k} className={`d-${k}`}>{SIGNS[k]}{c[k]}</b>)}
+            </span>
+          ))}
+        </div>
+      )}
+      {summary && <p>{summary}</p>}
     </div>
   )
 }
