@@ -100,6 +100,13 @@ export interface MagApi {
   importTicket(projectId: string, ref: string): Promise<{ taskId: string } | { error: string }>
   /** Run the tracker agent's import again on a linked task (no agent running), e.g. after it failed. */
   retryImport(taskId: string): Promise<void>
+  /**
+   * Link a top-level task to the Jira or Linear ticket a URL names (replacing its link), no import and no settings.
+   * A URL that names no ticket, or a ticket linked to another task, comes back as `error`.
+   */
+  linkTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
+  /** Drop the task's ticket link. */
+  unlinkTicket(taskId: string): Promise<void>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */

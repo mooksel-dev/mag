@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -391,12 +391,16 @@ function sharedTool(
       const steps = stepsArg(args.steps)
       if (plan && !md.trim()) throw new Error('plan: true needs the full doc')
       if (plan && !steps.length) throw new Error('plan: true needs steps: at least one { title, note?, start_manually? }')
+      // The link is checked first: a bad URL or a ticket linked elsewhere creates nothing.
+      const ticketUrl = typeof args.ticket_url === 'string' && args.ticket_url.trim() ? args.ticket_url : null
+      const tracker = ticketUrl ? ticketLink(tasks, null, ticketUrl, project.trackers ?? []) : undefined
       const t = store.createTask({
         projectId: project.id,
         title: String(args.title),
         type: taskType(args.type),
         description: String(args.description ?? ''),
         status: plan ? 'todo' : undefined,
+        tracker,
       })
       // `tasks` was read before the new task existed, so it is the plan ahead of it.
       if (md.trim()) store.data.docs[t.id] = md
@@ -404,6 +408,14 @@ function sharedTool(
       else if (md.trim()) store.changed()
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
       return plan ? `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.` : `Created ${t.key} in the backlog.`
+    }
+
+    case 'link_ticket': {
+      const t = byKey(args.key)
+      if (t.parentId) throw new Error(`${t.key} is a step; link its task ${keyOf(t.parentId)} instead`)
+      const tracker = ticketLink(tasks, t, String(args.url ?? ''), project.trackers ?? [])
+      store.updateTask(t.id, { tracker })
+      return `Linked ${t.key} to ${tracker.key}.`
     }
 
     case 'update_task': {
