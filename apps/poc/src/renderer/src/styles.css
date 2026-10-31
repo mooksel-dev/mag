@@ -350,16 +350,34 @@ code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(
 .gnode.diff-del text { text-decoration: line-through; }
 .gnode.diff-none:not(.dim):not(.on):not(.initial):not(.final) { opacity: .6; }
 .gnode.on .shape:not(.solid):not(.inner) { stroke: var(--text); stroke-width: 2.5; }
+/* Sequence: participants × messages */
+.seqsample { vertical-align: middle; margin-right: 2px; overflow: visible; }
+.seqsample path { fill: none; stroke: var(--arch-edge); stroke-width: 1.5; }
+.seqsample path.dashed { stroke-dasharray: 4 3; }
+.seqsample path.solid { fill: var(--arch-edge); stroke: none; }
+.lifeline { stroke: var(--arch-edge); stroke-width: 1; stroke-dasharray: 3 3; opacity: .6; transition: opacity .12s; }
+.lifeline.d-add { stroke: var(--diff-add); opacity: 1; }
+.lifeline.d-mod { stroke: var(--diff-mod); opacity: 1; }
+.lifeline.d-del { stroke: var(--diff-del); opacity: 1; stroke-dasharray: 6 4; }
+.seqbar { fill: var(--surface); stroke: var(--arch-edge); stroke-width: 1.2; transition: opacity .12s; }
+.seqbar.d-add { stroke: var(--diff-add); stroke-width: 2; }
+.seqbar.d-mod { stroke: var(--diff-mod); stroke-width: 2; }
+.seqbar.d-del { stroke: var(--diff-del); stroke-width: 2; stroke-dasharray: 4 3; }
+.seqmsg { transition: opacity .12s; }
+.seq .gedge.d-del { stroke-dasharray: none; }
+.seq .seqmsg.reply .gedge { stroke-dasharray: 6 4; }
+.seq marker path.open { fill: none; stroke: var(--arch-edge); stroke-width: 1.5; }
+.seq marker path.open.d-add { fill: none; stroke: var(--diff-add); }
+.seq marker path.open.d-mod { fill: none; stroke: var(--diff-mod); }
+.seq marker path.open.d-del { fill: none; stroke: var(--diff-del); }
+.seqlabel { font-size: 11px; fill: var(--text); }
+.seqmsg.d-none:not(.dim) .seqlabel { fill: var(--muted); }
+.seqmsg.d-add .seqlabel { fill: var(--diff-add); }
+.seqmsg.d-mod .seqlabel { fill: var(--diff-mod); }
+.seqmsg.d-del .seqlabel { fill: var(--diff-del); text-decoration: line-through; }
+.seqhead text.kind { font-size: 11px; fill: var(--muted); }
 .canvasdiagram { max-height: 560px; overflow: auto; }
 .canvasdiagram.fill { flex: 1; min-height: 0; max-height: none; }
-.difflist ul { list-style: none; padding: 0; margin: 0 0 14px; font-size: 13px; }
-.difflist li { padding: 2px 6px; border-radius: 4px; }
-.difflist li .sign { display: inline-block; width: 14px; font-weight: 700; }
-.difflist li.diff-add { color: var(--diff-add); }
-.difflist li.diff-mod { color: var(--diff-mod); }
-.difflist li.diff-del { color: var(--diff-del); text-decoration: line-through; }
-.difflist li.diff-none { color: var(--muted); }
-.difflist li.on { box-shadow: 0 0 0 2px var(--text); }
 .difflistrows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-width: 900px; }
 .diffrow { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .diffrow:last-child { border-bottom: none; }

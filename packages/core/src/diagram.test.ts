@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt } from './arch.ts'
-import { archToDNodes, diagramSummary, formatDiffCount, innerSummary, normalizeDiagram, validateDiagram, type DNode, type Diagram } from './diagram.ts'
+import { archToDNodes, diagramSummary, formatDiffCount, innerSummary, normalizeDiagram, sequenceActivations, validateDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
 
 // app (mod) holds ui and tasks; tasks gets a new client "queue" (add), drops "store" (del); github is context.
 const component = normalizeDiagram({
@@ -119,4 +119,60 @@ test('edgesAt marks arrows and calls of a diagram', () => {
 test('archToDNodes turns the architecture into an unmarked tree', () => {
   const nodes: DNode[] = archToDNodes([{ id: 'a', name: 'A', description: 'd', interface: ['f()'], uses: [{ to: 'b', calls: ['f()'] }], children: [{ id: 'b', name: 'B', description: '', uses: [] }] }])
   assert.deepEqual(nodes, [{ id: 'a', name: 'A', description: 'd', interface: [{ text: 'f()' }], uses: [{ to: 'b', calls: [{ text: 'f()' }] }], children: [{ id: 'b', name: 'B', description: '', uses: [] }] }])
+})
+
+test('sequenceActivations: a call opens a bar on its target, the reply closes it; nested calls stack', () => {
+  const d = normalizeDiagram({
+    type: 'sequence',
+    participants: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    messages: [
+      { from: 'a', to: 'b', text: 'run()', kind: 'call' },
+      { from: 'b', to: 'b', text: 'check()', kind: 'call' },
+      { from: 'b', to: 'b', text: 'ok', kind: 'reply' },
+      { from: 'b', to: 'c', text: 'notify', kind: 'async' },
+      { from: 'b', to: 'a', text: 'done', kind: 'reply' },
+      { from: 'a', to: 'c', text: 'log()', kind: 'call' },
+    ],
+  }) as SequenceDiagram
+  const { bars, ends } = sequenceActivations(d)
+  assert.deepEqual(bars, [
+    { on: 'b', from: 0, to: 4, depth: 0, diff: undefined },
+    { on: 'b', from: 1, to: 2, depth: 1, diff: undefined },
+    { on: 'c', from: 5, to: 6, depth: 0, diff: undefined },
+  ])
+  assert.deepEqual(ends, [
+    { from: -1, to: 0 },
+    { from: 0, to: 1 },
+    { from: 1, to: 0 },
+    { from: 0, to: -1 },
+    { from: 0, to: -1 },
+    { from: -1, to: 0 },
+  ])
+})
+
+test('sequenceActivations: a swapped call ends at the shared reply; a reply closes the calls opened after its own', () => {
+  const swapped = normalizeDiagram({
+    type: 'sequence',
+    participants: [{ id: 'a' }, { id: 'b' }],
+    messages: [
+      { from: 'a', to: 'b', text: 'old()', kind: 'call', diff: 'del' },
+      { from: 'a', to: 'b', text: 'new()', kind: 'call', diff: 'add' },
+      { from: 'b', to: 'a', text: 'ok', kind: 'reply' },
+    ],
+  }) as SequenceDiagram
+  assert.deepEqual(
+    sequenceActivations(swapped).bars.map((b) => [b.from, b.to, b.depth, b.diff]),
+    [[0, 2, 0, 'del'], [1, 2, 1, 'add']],
+  )
+  const unanswered = normalizeDiagram({
+    type: 'sequence',
+    participants: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    messages: [
+      { from: 'a', to: 'b', text: 'x', kind: 'call' },
+      { from: 'b', to: 'c', text: 'y', kind: 'call' },
+      { from: 'b', to: 'a', text: 'ok', kind: 'reply' },
+      { from: 'a', to: 'c', text: 'z', kind: 'call' },
+    ],
+  }) as SequenceDiagram
+  assert.deepEqual(sequenceActivations(unanswered).bars.map((b) => [b.on, b.from, b.to]), [['b', 0, 2], ['c', 1, 2], ['c', 3, 4]])
 })

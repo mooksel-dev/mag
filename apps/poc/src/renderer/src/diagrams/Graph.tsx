@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { DiffMark, FlowchartDiagram, StateDiagram } from '@mag/core'
+import { DiffLegend } from './DiffLegend'
 import { FONT, LABEL_LINE, LINE, layoutGraph, pathOf, type GraphEdge, type GraphLayout, type GraphNode, type PlacedNode } from '../graphLayout'
 
 type Marked<T> = T & { diff?: DiffMark }
@@ -102,10 +103,7 @@ function GraphView({ nodes, edges, direction, focus, finals }: {
     <div className="graphview">
       <div className="archlegend muted small">
         <span>Hover or click a node to see its arrows.</span>
-        <span><i className="sw d-add" /> added</span>
-        <span><i className="sw d-mod" /> changed</span>
-        <span><i className="sw d-del" /> removed</span>
-        <span><i className="sw d-none" /> unchanged</span>
+        <DiffLegend />
       </div>
       {error && <div className="violation error">Layout failed: {error}</div>}
       {!layout && !error && <p className="muted small">Laying out…</p>}

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { callersOf, edgesAt, findNode, formatDiffCount, innerSummary, layerRule, methodName, nodeDiff, pathTo, type ArchLayer, type DNode, type DiffMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
+import { DiffLegend } from './DiffLegend'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'app', label: 'App layer', hint: 'UI, handlers, workers' },
@@ -91,12 +92,7 @@ export function ComponentView({ modules, diff = false, focus }: { modules: DNode
       <div className="archlegend muted small">
         <span>Click a module with ▸ to go inside. Hover or select a box to see its links; hover a number for the calls.</span>
         {diff ? (
-          <>
-            <span><i className="sw d-add" /> added</span>
-            <span><i className="sw d-mod" /> changed</span>
-            <span><i className="sw d-del" /> removed</span>
-            <span><i className="sw d-none" /> unchanged</span>
-          </>
+          <DiffLegend />
         ) : (
           <>
             <span><i className="sw error" /> breaks layering</span>
