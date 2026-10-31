@@ -31,7 +31,7 @@
   --arch-lib-bg: #edf6ef; --arch-lib-line: #1d8a4b; --arch-lib-fg: #1d6b3a;
   --arch-lane: #fafafb;
   --arch-edge: #9aa0ad; --arch-error: #c0392b; --arch-warning: #d68910;
-  --diff-add: #2fa463; --diff-mod: #d6a23a; --diff-del: #d64545;
+  --diff-add: #2fa463; --diff-mod: #d6a23a; --diff-del: #d64545; --diff-move: #7c5ce0;
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'Inter Tight', system-ui, sans-serif;
   font-size: 14px;
@@ -71,7 +71,7 @@
   --arch-lib-bg: #172a1f; --arch-lib-line: #3fbf73; --arch-lib-fg: #8fdcae;
   --arch-lane: #1b1e23;
   --arch-edge: #6b7180; --arch-error: #f06a5a; --arch-warning: #f0a83a;
-  --diff-add: #4cc27f; --diff-mod: #e8b54e; --diff-del: #f06a6a;
+  --diff-add: #4cc27f; --diff-mod: #e8b54e; --diff-del: #f06a6a; --diff-move: #a58bff;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); }
@@ -312,6 +312,7 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archlegend .sw.d-add { border-top: 2px solid var(--diff-add); }
 .archlegend .sw.d-mod { border-top: 2px solid var(--diff-mod); }
 .archlegend .sw.d-del { border-top: 2px dashed var(--diff-del); }
+.archlegend .sw.d-move { border-top: 2px dashed var(--diff-move); }
 .archlegend .sw.d-none { border-top: 2px solid var(--arch-edge); opacity: .6; }
 .archarrows path.d-add { stroke: var(--diff-add); stroke-width: 2.2; }
 .archarrows path.d-mod { stroke: var(--diff-mod); stroke-width: 2.2; }
@@ -331,7 +332,7 @@ code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(
 .diffpill.diff-mod { color: var(--diff-mod); }
 .diffpill.diff-del { color: var(--diff-del); }
 .diffcount { font-size: 12px; font-weight: 600; white-space: nowrap; }
-.d-add { color: var(--diff-add); } .d-mod { color: var(--diff-mod); } .d-del { color: var(--diff-del); }
+.d-add { color: var(--diff-add); } .d-mod { color: var(--diff-mod); } .d-del { color: var(--diff-del); } .d-move { color: var(--diff-move); }
 .diagramview { padding: 10px 12px; }
 /* Flowchart and State: SVG laid out by elkjs */
 .graphentity { margin-bottom: 6px; }
@@ -365,6 +366,32 @@ code.diff-del, .archcalls li.diff-del > button { box-shadow: inset 0 -2px 0 var(
 .gnode.diff-del text { text-decoration: line-through; }
 .gnode.diff-none:not(.dim):not(.on):not(.initial):not(.final) { opacity: .6; }
 .gnode.on .shape:not(.solid):not(.inner) { stroke: var(--text); stroke-width: 2.5; }
+/* Data: entities with a row per field; a move is purple at both ends with a dashed line between */
+.graph marker path.d-move { fill: var(--diff-move); }
+.dentity { cursor: pointer; transition: opacity .12s; }
+.dentity .shape { fill: var(--surface); stroke: var(--arch-edge); stroke-width: 1.5; }
+.dentity.diff-add .shape { stroke: var(--diff-add); stroke-width: 2.2; }
+.dentity.diff-mod .shape { stroke: var(--diff-mod); stroke-width: 2.2; }
+.dentity.diff-del .shape { stroke: var(--diff-del); stroke-width: 2.2; stroke-dasharray: 5 4; }
+.dentity.diff-del .dname { text-decoration: line-through; }
+.dentity.diff-move .shape { stroke: var(--diff-move); stroke-width: 2.2; }
+.dentity.diff-none:not(.dim):not(.on) { opacity: .6; }
+.dentity.on .shape { stroke: var(--text); stroke-width: 2.5; }
+.dentity text { dominant-baseline: central; }
+.dentity .dname { fill: var(--text); font-weight: 600; }
+.dentity .dsub { fill: var(--muted); font-size: 10.5px; }
+.dentity .dsep { stroke: var(--arch-edge); stroke-width: 1; opacity: .6; }
+.dfield text { font: 12px ui-monospace, Menlo, monospace; fill: var(--text); }
+.dfield .ftype { fill: var(--muted); text-anchor: end; }
+.dfield .fnote { font: 10.5px -apple-system, system-ui, sans-serif; fill: var(--muted); }
+.dfield .band { opacity: .14; stroke: none; }
+.dfield.f-add .band { fill: var(--diff-add); } .dfield.f-add .fname, .dfield.f-add .fsign { fill: var(--diff-add); }
+.dfield.f-mod .band { fill: var(--diff-mod); } .dfield.f-mod .fname, .dfield.f-mod .fsign { fill: var(--diff-mod); }
+.dfield.f-del .band { fill: var(--diff-del); } .dfield.f-del .fname, .dfield.f-del .fsign { fill: var(--diff-del); }
+.dfield.f-del .fname, .dfield.f-del .ftype { text-decoration: line-through; }
+.dfield.f-move .band { fill: var(--diff-move); } .dfield.f-move .fname, .dfield.f-move .fsign, .dfield.f-move .fnote { fill: var(--diff-move); }
+.dfield.out .fname, .dfield.out .ftype { text-decoration: line-through; }
+.dmove { fill: none; stroke: var(--diff-move); stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; transition: opacity .12s; }
 /* Sequence: participants × messages */
 .seqsample { vertical-align: middle; margin-right: 2px; overflow: visible; }
 .seqsample path { fill: none; stroke: var(--arch-edge); stroke-width: 1.5; }

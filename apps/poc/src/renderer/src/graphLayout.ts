@@ -1,7 +1,8 @@
-// Layout of node-and-arrow diagrams (Flowchart, State) with elkjs. Text is measured by estimate, so the layout runs
-// without a DOM and the same wrapped lines are drawn as SVG text.
+// Layout of node-and-arrow diagrams (Flowchart, State, Data) with elkjs. Text is measured by estimate, so the layout
+// runs without a DOM and the same wrapped lines are drawn as SVG text.
 import ELK from 'elkjs/lib/elk.bundled.js'
 import type { ElkExtendedEdge, ElkNode } from 'elkjs/lib/elk-api'
+import { fieldMoves, type DataDiagram } from '@mag/core'
 
 /** start/end: pill; step/state: rounded box; decision: diamond; initial: filled dot; final: bullseye. */
 export type GraphShape = 'start' | 'step' | 'decision' | 'end' | 'state' | 'initial' | 'final'
@@ -141,6 +142,23 @@ export function pathOf(points: Point[], radius = 6): string {
 
 let elk: InstanceType<typeof ELK> | null = null
 
+const LAYERED = {
+  'elk.algorithm': 'layered',
+  'elk.edgeRouting': 'ORTHOGONAL',
+  'elk.spacing.nodeNode': '36',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '44',
+  'elk.spacing.edgeLabel': '4',
+  'elk.spacing.edgeNode': '16',
+  'elk.layered.spacing.edgeNodeBetweenLayers': '16',
+  'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+  'elk.layered.cycleBreaking.strategy': 'MODEL_ORDER',
+  'elk.edgeLabels.placement': 'CENTER',
+  'elk.padding': '[top=12,left=12,bottom=12,right=12]',
+}
+
+/** Route of an ELK edge as one list of points. */
+const routeOf = (e: ElkExtendedEdge): Point[] => (e.sections ?? []).flatMap((s, i) => [...(i ? [] : [s.startPoint]), ...(s.bendPoints ?? []), s.endPoint])
+
 /**
  * Layered layout, top-down or left-to-right. The input order of nodes and edges is kept where the algorithm allows,
  * so the diagram reads in the order the agent wrote it.
@@ -151,20 +169,7 @@ export async function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], direct
   const labels = new Map(edges.filter((e) => e.label).map((e) => [e.id, measureLabel(e.label!)]))
   const graph: ElkNode = {
     id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': direction,
-      'elk.edgeRouting': 'ORTHOGONAL',
-      'elk.spacing.nodeNode': '36',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '44',
-      'elk.spacing.edgeLabel': '4',
-      'elk.spacing.edgeNode': '16',
-      'elk.layered.spacing.edgeNodeBetweenLayers': '16',
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-      'elk.layered.cycleBreaking.strategy': 'MODEL_ORDER',
-      'elk.edgeLabels.placement': 'CENTER',
-      'elk.padding': '[top=12,left=12,bottom=12,right=12]',
-    },
+    layoutOptions: { ...LAYERED, 'elk.direction': direction },
     children: nodes.map((n) => ({ id: n.id, width: sized.get(n.id)!.w, height: sized.get(n.id)!.h })),
     edges: edges.map((e) => {
       const l = labels.get(e.id)
@@ -181,7 +186,7 @@ export async function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], direct
   const byId = new Map(edges.map((e) => [e.id, e]))
   const placedEdges = ((out.edges ?? []) as ElkExtendedEdge[]).map((oe): PlacedEdge => {
     const e = byId.get(oe.id)!
-    const points = (oe.sections ?? []).flatMap((s, i) => [...(i ? [] : [s.startPoint]), ...(s.bendPoints ?? []), s.endPoint])
+    const points = routeOf(oe)
     if (points.length >= 2) {
       const from = placed.get(e.from)!
       const to = placed.get(e.to)!
@@ -193,4 +198,144 @@ export async function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], direct
     return { ...e, points, labelAt: ol && l ? { x: ol.x ?? 0, y: ol.y ?? 0, w: l.w, h: l.h, lines: l.lines } : undefined }
   })
   return { w: out.width ?? 0, h: out.height ?? 0, nodes: [...placed.values()], edges: placedEdges }
+}
+
+// Data diagram: an entity is a box with a header (its name, then a line each for kind, old id, note) and one row per
+// field.
+export const DATA_HEAD = 22
+export const DATA_SUB = 14
+export const DATA_ROW = 18
+export const DATA_NOTE = 13
+const MONO = 12 // field rows, ui-monospace
+const MONO_CHAR = 0.62
+const NOTE_FONT = 10.5
+
+/** A field row: its top and height (a row with a note is taller), and the note, wrapped. */
+export interface PlacedRow {
+  y: number
+  h: number
+  notes: string[]
+}
+
+export interface PlacedEntity {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Lines under the name: the kind, "was <old id>" for a moved entity, the note. */
+  sub: string[]
+  rows: PlacedRow[]
+}
+
+export interface PlacedRelation {
+  /** Index in diagram.relations. */
+  index: number
+  points: Point[]
+  labelAt?: Point & { w: number; h: number; lines: string[] }
+}
+
+export interface DataLayout {
+  w: number
+  h: number
+  entities: PlacedEntity[]
+  relations: PlacedRelation[]
+}
+
+/** Key of a field in fieldNotes. */
+export const fieldKey = (entity: string, field: string) => `${entity}\u0000${field}`
+
+/** The note line of a field: its own note, where a moved field came from, where a field moved to. */
+export function fieldNotes(d: DataDiagram): Map<string, string> {
+  const notes = new Map<string, string>()
+  const add = (k: string, text: string) => notes.set(k, notes.has(k) ? `${notes.get(k)} · ${text}` : text)
+  for (const e of d.entities) for (const f of e.fields) if (f.note) add(fieldKey(e.id, f.name), f.note)
+  for (const m of fieldMoves(d)) {
+    add(fieldKey(m.to.entity, m.to.field), `moved from ${m.from.entity}.${m.from.field}`)
+    add(fieldKey(m.from.entity, m.from.field), `moved to ${m.to.entity}.${m.to.field}`)
+  }
+  return notes
+}
+
+/** The relation label: its kind, the field holding it and the label. */
+export const relationText = (r: DataDiagram['relations'][number]) => [r.kind, r.field, r.label].filter(Boolean).join(' · ')
+
+/**
+ * Entities left to right with elkjs. Each field row has its own height, so relations leave from the row of their
+ * field. A field move pulls its two entities next to each other with an edge that is laid out but not drawn; the
+ * renderer draws the move between the two rows.
+ */
+export async function layoutData(d: DataDiagram): Promise<DataLayout> {
+  elk ??= new ELK()
+  const notes = fieldNotes(d)
+  const sized = d.entities.map((e) => {
+    const sub = [e.kind, ...(e.diff === 'move' && e.from ? [`was ${e.from}`] : []), ...(e.note ? wrap(e.note, 40) : [])]
+    let y = DATA_HEAD + sub.length * DATA_SUB + 6
+    let wide = Math.max(e.name.length * FONT * CHAR, textWidth(sub, NOTE_FONT))
+    const rows = e.fields.map((f): PlacedRow => {
+      const n = notes.get(fieldKey(e.id, f.name))
+      const lines = n ? wrap(n, 44) : []
+      // "+ name  type": the sign, a gap between name and type.
+      wide = Math.max(wide, (f.name.length + f.type.length + 5) * MONO * MONO_CHAR, lines.length ? textWidth(lines, NOTE_FONT) + 12 : 0)
+      const row = { y, h: DATA_ROW + lines.length * DATA_NOTE, notes: lines }
+      y += row.h
+      return row
+    })
+    return { id: e.id, w: Math.max(180, Math.round(wide + PAD.x * 2)), h: y + 6, sub, rows }
+  })
+  const byId = new Map(sized.map((s) => [s.id, s]))
+  const ports = new Map<number, string>()
+  const labels = d.relations.map((r) => measureLabel(relationText(r)))
+  const graph: ElkNode = {
+    id: 'root',
+    layoutOptions: { ...LAYERED, 'elk.direction': 'RIGHT', 'elk.layered.spacing.nodeNodeBetweenLayers': '70' },
+    children: sized.map((s) => {
+      const e = d.entities.find((x) => x.id === s.id)!
+      const own = d.relations.flatMap((r, i) => {
+        const at = r.field && r.from === s.id ? e.fields.findIndex((f) => f.name === r.field) : -1
+        if (at < 0) return []
+        const id = `p${i}`
+        ports.set(i, id)
+        return [{ id, width: 0, height: 0, x: s.w, y: s.rows[at].y + DATA_ROW / 2, layoutOptions: { 'elk.port.side': 'EAST' } }]
+      })
+      return { id: s.id, width: s.w, height: s.h, ports: own, layoutOptions: { 'elk.portConstraints': own.length ? 'FIXED_POS' : 'UNDEFINED' } }
+    }),
+    edges: [
+      ...d.relations.flatMap((r, i) =>
+        byId.has(r.from) && byId.has(r.to)
+          ? [{ id: `r${i}`, sources: [ports.get(i) ?? r.from], targets: [r.to], labels: [{ text: relationText(r), width: labels[i].w, height: labels[i].h }] }]
+          : [],
+      ),
+      ...fieldMoves(d).map((m, i) => ({ id: `m${i}`, sources: [m.from.entity], targets: [m.to.entity] })),
+    ],
+  }
+  const out = await elk.layout(graph)
+  const entities = (out.children ?? []).map((c): PlacedEntity => {
+    const s = byId.get(c.id)!
+    return { id: s.id, x: c.x ?? 0, y: c.y ?? 0, w: s.w, h: s.h, sub: s.sub, rows: s.rows.map((r) => ({ ...r, y: (c.y ?? 0) + r.y })) }
+  })
+  const relations = ((out.edges ?? []) as ElkExtendedEdge[])
+    .filter((oe) => oe.id.startsWith('r'))
+    .map((oe): PlacedRelation => {
+      const index = Number(oe.id.slice(1))
+      const ol = oe.labels?.[0]
+      const l = labels[index]
+      return { index, points: routeOf(oe), labelAt: ol ? { x: ol.x ?? 0, y: ol.y ?? 0, w: l.w, h: l.h, lines: l.lines } : undefined }
+    })
+  return { w: out.width ?? 0, h: out.height ?? 0, entities, relations }
+}
+
+/**
+ * The dashed line of a field move, from the side of the source row facing the target to the facing side of the
+ * target row, as a cubic curve.
+ */
+export function movePath(from: PlacedEntity, fromRow: PlacedRow, to: PlacedEntity, toRow: PlacedRow): string {
+  const y1 = fromRow.y + DATA_ROW / 2
+  const y2 = toRow.y + DATA_ROW / 2
+  const right = from.x + from.w / 2 <= to.x + to.w / 2
+  const x1 = right ? from.x + from.w : from.x
+  const x2 = right ? to.x : to.x + to.w
+  const bend = Math.max(30, Math.abs(x2 - x1) / 2) * (right ? 1 : -1)
+  const r = (n: number) => Math.round(n * 10) / 10
+  return `M${r(x1)} ${r(y1)} C${r(x1 + bend)} ${r(y1)} ${r(x2 - bend)} ${r(y2)} ${r(x2)} ${r(y2)}`
 }

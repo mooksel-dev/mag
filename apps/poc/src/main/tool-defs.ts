@@ -32,6 +32,11 @@ const ARCH_MODULE = {
 }
 
 const DIFF = { type: 'string', enum: ['add', 'mod', 'del'], description: 'Change: add, mod or del. Leave it out for unchanged context.' }
+const DATA_DIFF = {
+  type: 'string',
+  enum: ['add', 'mod', 'del', 'move'],
+  description: 'Change: add, mod, del, or move (it moved here; from says where from). Leave it out for unchanged context.',
+}
 const LINES = (what: string) => ({
   type: 'array',
   description: `${what}. A plain string is an unchanged line; a changed line is the old one del and the new one add.`,
@@ -43,7 +48,7 @@ const DIAGRAM = {
   type: 'object',
   required: ['type'],
   properties: {
-    type: { type: 'string', enum: ['component', 'sequence', 'state', 'flowchart'] },
+    type: { type: 'string', enum: ['component', 'sequence', 'state', 'flowchart', 'data'] },
     modules: {
       type: 'array',
       description: 'component: modules as in get_architecture (same ids), with diff marks.',
@@ -100,6 +105,53 @@ const DIAGRAM = {
       description: 'flowchart: arrows; label the branches of a decision.',
       items: { type: 'object', required: ['from', 'to'], properties: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' }, diff: DIFF } },
     },
+    entities: {
+      type: 'array',
+      description: 'data: collections, tables, structs or types with their fields; unchanged neighbours without a mark give context.',
+      items: {
+        type: 'object',
+        required: ['id', 'name', 'fields'],
+        properties: {
+          id: { type: 'string', description: 'Unique in the diagram, e.g. the collection name.' },
+          name: { type: 'string' },
+          kind: { type: 'string', enum: ['collection', 'table', 'struct', 'type'], description: 'Default collection.' },
+          note: { type: 'string' },
+          diff: DATA_DIFF,
+          from: { type: 'string', description: 'With move: the old id of a renamed or moved entity.' },
+          fields: {
+            type: 'array',
+            description: 'One field per item, never several in one name ("a / b", "a, b"). A changed field (name or type) is the old one del and the new one add; a field moved from another entity is move with from.',
+            items: {
+              type: 'object',
+              required: ['name', 'type'],
+              properties: {
+                name: { type: 'string' },
+                type: { type: 'string' },
+                note: { type: 'string' },
+                diff: DATA_DIFF,
+                from: { type: 'string', description: 'With move: "<entity id>.<field>" it moved from, a field of another entity of this diagram.' },
+              },
+            },
+          },
+        },
+      },
+    },
+    relations: {
+      type: 'array',
+      description: 'data: links between entities. A relation pointed elsewhere is the old one del and the new one add.',
+      items: {
+        type: 'object',
+        required: ['from', 'to', 'kind'],
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+          kind: { type: 'string', enum: ['1:1', '1:N', 'N:1', 'N:M', 'ref'] },
+          field: { type: 'string', description: 'The field of `from` that holds the link.' },
+          label: { type: 'string' },
+          diff: DIFF,
+        },
+      },
+    },
   },
 }
 
@@ -120,7 +172,7 @@ export const TOOL_DEFS = [
   {
     name: 'get_diagrams',
     scope: 'task',
-    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart) with diff marks.',
+    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; data marks moved entities and fields with move and from.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -410,7 +462,7 @@ export const TOOL_DEFS = [
     name: 'show_diagram',
     scope: 'any',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm. Mark every changed element with diff (add, mod, del); unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); on data also move, with from, for an entity or field that moved. Methods, calls and fields go one per line, never grouped with "/" or ","; a changed one is a del line and an add line. Unchanged neighbours without a mark give context. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { clipToShape, layoutGraph, measureNode, pathOf, wrap } from './graphLayout.ts'
+import { normalizeDiagram, type DataDiagram } from '@mag/core'
+import { DATA_ROW, clipToShape, fieldNotes, fieldKey, layoutData, layoutGraph, measureNode, movePath, pathOf, wrap } from './graphLayout.ts'
 
 test('wrap: breaks on words, keeps a long word whole', () => {
   assert.deepEqual(wrap('check the open pull request', 10), ['check the', 'open pull', 'request'])
@@ -76,4 +77,50 @@ test('layoutGraph: a cycle breaks against the input order, so the first node sta
   )
   const x = new Map(g.nodes.map((n) => [n.id, n.x]))
   assert.ok(x.get('@initial')! < x.get('todo')! && x.get('todo')! < x.get('prog')!)
+})
+
+const dbr = normalizeDiagram({
+  type: 'data',
+  entities: [
+    { id: 'agents', fields: [{ name: 'id', type: 'string' }] },
+    { id: 'users', fields: [{ name: '_id', type: 'ObjectId' }, { name: 'email', type: 'string', note: 'unique' }, { name: 'dbrState', type: 'object' }] },
+    {
+      id: 'dbr_user_states',
+      diff: 'add',
+      fields: [
+        { name: 'userId', type: 'ObjectId', diff: 'add' },
+        { name: 'agentId', type: 'string', diff: 'add' },
+        { name: 'state', type: 'object', diff: 'move', from: 'users.dbrState' },
+      ],
+    },
+  ],
+  relations: [
+    { from: 'dbr_user_states', to: 'users', kind: 'N:1', field: 'userId' },
+    { from: 'dbr_user_states', to: 'agents', kind: 'N:1', field: 'agentId' },
+  ],
+}) as DataDiagram
+
+test('fieldNotes: own notes and both ends of a move', () => {
+  const n = fieldNotes(dbr)
+  assert.equal(n.get(fieldKey('users', 'email')), 'unique')
+  assert.equal(n.get(fieldKey('users', 'dbrState')), 'moved to dbr_user_states.state')
+  assert.equal(n.get(fieldKey('dbr_user_states', 'state')), 'moved from users.dbrState')
+})
+
+test('layoutData: a row per field, relations leave from their field, a move keeps its entities apart in order', async () => {
+  const l = await layoutData(dbr)
+  const at = new Map(l.entities.map((e) => [e.id, e]))
+  const users = at.get('users')!
+  const states = at.get('dbr_user_states')!
+  assert.equal(users.rows.length, 3)
+  assert.ok(users.rows[1].h > users.rows[0].h, 'a row with a note is taller')
+  assert.ok(users.rows.every((r, i) => !i || r.y === users.rows[i - 1].y + users.rows[i - 1].h), 'rows stack')
+  assert.ok(users.rows[2].y + users.rows[2].h <= users.y + users.h)
+  // The move edge is laid out, not returned: the source stands left of the target.
+  assert.ok(users.x + users.w <= states.x, 'users left of dbr_user_states')
+  assert.deepEqual(l.relations.map((r) => r.index), [0, 1])
+  for (const r of l.relations) assert.ok(r.points.length >= 2 && r.labelAt?.lines[0].startsWith('N:1'))
+  const userId = l.relations[0].points[0]
+  assert.ok(Math.abs(userId.y - (states.rows[0].y + DATA_ROW / 2)) < 1, 'relation leaves from the userId row')
+  assert.match(movePath(users, users.rows[2], states, states.rows[2]), /^M[\d.]+ [\d.]+ C/)
 })

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt } from './arch.ts'
-import { archToDNodes, diagramSummary, formatDiffCount, innerSummary, normalizeDiagram, sequenceActivations, validateDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
+import { archToDNodes, diagramSummary, fieldMoves, formatDiffCount, innerSummary, normalizeDiagram, sequenceActivations, validateDiagram, type DataDiagram, type DNode, type Diagram, type SequenceDiagram } from './diagram.ts'
 
 // app (mod) holds ui and tasks; tasks gets a new client "queue" (add), drops "store" (del); github is context.
 const component = normalizeDiagram({
@@ -91,16 +91,16 @@ test('validateDiagram: state and flowchart links and fields', () => {
 
 test('diagramSummary counts modules and uses; a use of an added or removed module takes its mark', () => {
   // mod: tasks (interface line), ui → tasks (call line); add: queue, tasks → queue, cli → ui; del: store, tasks → store.
-  assert.deepEqual(diagramSummary(component), { add: 3, mod: 2, del: 2 })
+  assert.deepEqual(diagramSummary(component), { add: 3, mod: 2, del: 2, move: 0 })
   assert.equal(formatDiffCount(diagramSummary(component)), '+3 ~2 −2')
-  assert.equal(formatDiffCount({ add: 0, mod: 0, del: 0 }), '')
+  assert.equal(formatDiffCount({ add: 0, mod: 0, del: 0, move: 0 }), '')
   const seq = normalizeDiagram({ type: 'sequence', participants: [{ id: 'a', diff: 'add' }], messages: [{ from: 'a', to: 'a', text: 'x', kind: 'async', diff: 'del' }] })
-  assert.deepEqual(diagramSummary(seq), { add: 1, mod: 0, del: 1 })
+  assert.deepEqual(diagramSummary(seq), { add: 1, mod: 0, del: 1, move: 0 })
 })
 
 test('innerSummary counts what changes inside a module', () => {
-  assert.deepEqual(innerSummary(component.modules[0], component.modules), { add: 2, mod: 2, del: 2 })
-  assert.deepEqual(innerSummary(component.modules[1], component.modules), { add: 0, mod: 0, del: 0 })
+  assert.deepEqual(innerSummary(component.modules[0], component.modules), { add: 2, mod: 2, del: 2, move: 0 })
+  assert.deepEqual(innerSummary(component.modules[1], component.modules), { add: 0, mod: 0, del: 0, move: 0 })
 })
 
 test('edgesAt marks arrows and calls of a diagram', () => {
@@ -175,4 +175,101 @@ test('sequenceActivations: a swapped call ends at the shared reply; a reply clos
     ],
   }) as SequenceDiagram
   assert.deepEqual(sequenceActivations(unanswered).bars.map((b) => [b.on, b.from, b.to]), [['b', 0, 2], ['c', 1, 2], ['c', 3, 4]])
+})
+
+// DBR state moves out of users into dbr_user_states; both new collections link back to users.
+const data = (patch: (d: DataDiagram) => void = () => {}) => {
+  const d = normalizeDiagram({
+    type: 'data',
+    entities: [
+      {
+        id: 'users',
+        fields: [
+          { name: '_id', type: 'ObjectId' },
+          { name: 'dbrState', type: 'object' },
+          { name: 'dataRemovalState', type: 'object', diff: 'del' },
+        ],
+      },
+      {
+        id: 'dbr_user_states',
+        diff: 'add',
+        fields: [
+          { name: 'userId', type: 'ObjectId', diff: 'add' },
+          { name: 'state', type: 'object', diff: 'move', from: 'users.dbrState' },
+          { name: 'optOutPriority', type: 'number', note: 'lower runs first', diff: 'add' },
+        ],
+      },
+      { id: 'agents', name: 'Agents', kind: 'table', fields: [{ name: 'id', type: 'string' }] },
+    ],
+    relations: [
+      { from: 'dbr_user_states', to: 'users', kind: 'N:1', field: 'userId', diff: 'add' },
+      { from: 'dbr_user_states', to: 'agents' },
+    ],
+  }) as DataDiagram
+  patch(d)
+  return d
+}
+
+test('normalizeDiagram data: kind defaults to collection, name to id, relation kind to ref', () => {
+  const d = data()
+  assert.equal(d.entities[0].kind, 'collection')
+  assert.equal(d.entities[0].name, 'users')
+  assert.equal(d.entities[2].kind, 'table')
+  assert.equal(d.relations[1].kind, 'ref')
+  assert.deepEqual(normalizeDiagram({ type: 'data', entities: [{ id: 'x' }] }), { type: 'data', entities: [{ id: 'x', name: 'x', kind: 'collection', fields: [] }], relations: [] })
+})
+
+test('validateDiagram data: a valid diagram with a moved field', () => {
+  assert.deepEqual(validateDiagram(data()), [])
+  assert.deepEqual(fieldMoves(data()), [{ from: { entity: 'users', field: 'dbrState' }, to: { entity: 'dbr_user_states', field: 'state' } }])
+  assert.deepEqual(validateDiagram(normalizeDiagram({ type: 'data', entities: [] })), ['entities is empty'])
+})
+
+test('validateDiagram data: a move needs a source field of another entity that is not added', () => {
+  const at = (f: Partial<DataDiagram['entities'][number]['fields'][number]>) => validateDiagram(data((d) => Object.assign(d.entities[1].fields[1], f)))
+  assert.deepEqual(at({ from: undefined }), ['Field "state" of dbr_user_states: move needs from, "<entity>.<field>" it moved from'])
+  assert.deepEqual(at({ from: 'users.nope' }), ['Field "state" of dbr_user_states: moved from "users.nope", no such field; give "<entity>.<field>" of this diagram'])
+  assert.deepEqual(at({ from: 'dbr_user_states.userId' }), ['Field "state" of dbr_user_states: moved within dbr_user_states; a renamed field is a del line and an add line'])
+  assert.deepEqual(validateDiagram(data((d) => (d.entities[0].fields[1].diff = 'add'))), ['Field "state" of dbr_user_states: moved from "users.dbrState", which is added; mark the source as it was'])
+  assert.deepEqual(at({ diff: 'add' }), ['Field "state" of dbr_user_states: from is only for diff move'])
+})
+
+test('validateDiagram data: a moved entity names its old id, not one of the diagram', () => {
+  assert.deepEqual(validateDiagram(data((d) => Object.assign(d.entities[2], { diff: 'move', from: 'workers' }))), [])
+  assert.deepEqual(validateDiagram(data((d) => Object.assign(d.entities[2], { diff: 'move', from: 'users' }))), [
+    'Entity agents: moved from "users", which is an entity of this diagram; mark its fields with move instead',
+  ])
+  assert.deepEqual(validateDiagram(data((d) => Object.assign(d.entities[2], { diff: 'move' }))), ['Entity agents: move needs from, the old id of the entity'])
+  assert.deepEqual(validateDiagram(data((d) => (d.relations[0].diff = 'move' as never))), ['Relation dbr_user_states → users: diff must be one of add, mod, del'])
+})
+
+test('validateDiagram data: one field per line', () => {
+  const grouped = (name: string) => validateDiagram(data((d) => (d.entities[0].fields[2].name = name)))
+  const err = (name: string) => [`Field "${name}" of users: one field per line; a changed field is a del line and an add line`]
+  assert.deepEqual(grouped('a / b'), err('a / b'))
+  assert.deepEqual(grouped('email,phone'), err('email,phone'))
+  assert.deepEqual(grouped('old new'), err('old new'))
+  // A type may hold separators.
+  assert.deepEqual(validateDiagram(data((d) => (d.entities[0].fields[2].type = 'Map<string, number> | null'))), [])
+  assert.deepEqual(validateDiagram(normalizeDiagram({ type: 'data', entities: [{ id: 'u', fields: ['email: string'] }] })), [
+    'Entity u: field "email: string" must be an object { name, type }; one field per line',
+  ])
+  assert.deepEqual(validateDiagram(normalizeDiagram({ type: 'data', entities: [{ id: 'u', fields: [{ name: 'a', type: 'x' }, { name: 'a', type: 'y' }, { name: 'b' }] }] })), [
+    'Entity u: repeated field "a"',
+    'Field "b" of u has no type',
+  ])
+})
+
+test('validateDiagram data: relations link existing entities by a field of the source', () => {
+  assert.deepEqual(validateDiagram(data((d) => (d.relations[0].to = 'nope'))), ['Relation dbr_user_states → nope: no "nope"'])
+  assert.deepEqual(validateDiagram(data((d) => (d.relations[0].field = 'nope'))), ['Relation dbr_user_states → users: no field "nope" in dbr_user_states'])
+  assert.deepEqual(validateDiagram(data((d) => (d.relations[0].kind = '2:2' as never))), ['Relation dbr_user_states → users: kind must be one of 1:1, 1:N, N:1, N:M, ref'])
+  assert.deepEqual(validateDiagram(data((d) => (d.entities[0].kind = 'view' as never))), ['Entity users: kind must be one of collection, table, struct, type'])
+})
+
+test('diagramSummary data: entities, fields and relations, moves apart', () => {
+  // add: dbr_user_states, userId, optOutPriority, the users relation; del: dataRemovalState; move: state.
+  assert.deepEqual(diagramSummary(data()), { add: 4, mod: 0, del: 1, move: 1 })
+  assert.equal(formatDiffCount(diagramSummary(data())), '+4 ~0 −1 ↷1')
+  assert.equal(formatDiffCount({ add: 0, mod: 0, del: 0, move: 2 }), '+0 ~0 −0 ↷2')
 })
