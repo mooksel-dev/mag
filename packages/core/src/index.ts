@@ -242,6 +242,34 @@ export function prRollup(work: TaskWork, changed: string[]): 'done' | 'review' |
   return changed.every((c) => live.has(c)) ? 'review' : null
 }
 
+/**
+ * Whether a step's (or legacy task's) PRs finish it: there is a PR, every PR is merged and every changed repo has a
+ * merged one (the developer may have opened the first PR before finishing the others). `changed` as for prRollup.
+ */
+export function prsMerged(work: TaskWork, changed: string[]): boolean {
+  if (prRollup(work, []) !== 'done') return false
+  return changed.every((c) => work.repos.some((r) => r.repo === c && r.prState === 'merged'))
+}
+
+export type DevRunOutcome = { kind: 'complete' } | { kind: 'review' } | { kind: 'needsInput'; reason: string }
+
+/**
+ * What a finished developer run leaves its step (`step`) or legacy task in: merged PRs (even if merged during the run)
+ * complete it, a PR on every changed repo waits for the user to merge, anything else needs the user.
+ */
+export function devRunOutcome(work: TaskWork | null, changed: string[], failed: boolean, step: boolean): DevRunOutcome {
+  if (work && prsMerged(work, changed)) return { kind: 'complete' }
+  if (failed) return { kind: 'needsInput', reason: 'Developer agent failed; check the chat' }
+  if (!work?.repos.some((r) => r.prUrl))
+    return { kind: 'needsInput', reason: step ? 'Developer stopped without opening a PR or completing the step' : 'Developer stopped without opening a PR' }
+  if (prRollup(work, changed) === 'review') return { kind: 'review' }
+  const missing = work.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed'))
+  return {
+    kind: 'needsInput',
+    reason: missing.length ? `Developer stopped without a PR for ${missing.map((r) => repoWorkName(work, r)).join(', ')}` : 'Developer stopped without opening a PR',
+  }
+}
+
 /** PRs of a task that are open: the "PR open" badge. With `tasks`, its steps' PRs count too. */
 export function openPrs(task: Pick<Task, 'id' | 'work'>, tasks: Task[] = []): RepoWork[] {
   return taskPrs(task, tasks).filter((r) => r.prState === 'open')
