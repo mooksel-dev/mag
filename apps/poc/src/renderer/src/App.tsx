@@ -42,11 +42,12 @@ import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
 import { DiffTab, diagramsOf } from './DiffTab'
 import { prLabel } from './format'
+import { PrPill, PrPills } from './LinkPill'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
 import { scopeKey, scopeWarning } from './trackers'
 import { useTheme, type ThemeMode } from './useTheme'
 
@@ -285,7 +286,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
-            {task.status === 'in_progress' && prs.length > 0 && <span className="pill green">PR open</span>}
+            {task.status === 'in_progress' && <PrPills prs={prs} />}
             {task.archivedAt && <span className="pill">archived</span>}
             <AgentDot state={agentState(task, sessions, tasks)} now={now} />
             <div className="grow" />
@@ -484,7 +485,7 @@ function SubtaskRow({ sub, steps, canMove, onMove }: { sub: Task; steps: boolean
           </div>
           <span className="subextra">
             {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
-            {steps && <PrBadges task={sub} />}
+            {steps && <PrPills prs={taskPrs(sub)} />}
             {/* Sub-ticket of a tracker (T-10) goes here. */}
             {steps && <span className="subticket" />}
             {editable && <button className="link small" onClick={edit}>Edit</button>}
@@ -504,8 +505,7 @@ function RepoList({ work }: { work: TaskWork }) {
           <span className="reponame">{repoWorkName(work, r)}</span>
           <code className="grow">{r.branch}</code>
           <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
-          {r.prUrl ? <button className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl)}</button> : <span className="muted">no PR</span>}
-          {r.prState && <span className={`status ${r.prState === 'merged' ? 's-done' : r.prState === 'open' ? 's-in_progress' : ''}`}>{r.prState}</span>}
+          {r.prUrl ? <PrPill pr={r} /> : <span className="muted">no PR</span>}
           {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
         </div>
       ))}

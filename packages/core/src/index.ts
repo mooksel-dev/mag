@@ -176,6 +176,8 @@ export interface RepoWork {
   prUrl: string | null
   /** null until the PR has been recorded or checked. */
   prState: PrState | null
+  /** An open PR that is a draft; it still counts as open everywhere else. */
+  prDraft?: boolean
   /** Last PR check problem, shown on the task; null when the last check worked. */
   checkError?: string | null
 }
