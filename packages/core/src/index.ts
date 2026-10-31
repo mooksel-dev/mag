@@ -58,26 +58,46 @@ export const DEFAULT_AUTO_ARCHIVE_DAYS = 14
 
 export type TrackerKind = 'jira' | 'linear'
 
-/** A tracker project (Jira) or team (Linear) mag imports tickets from, read through a T-13 integration. */
+/**
+ * A tracker project (Jira) or team (Linear) whose bare ticket keys become links (T-10, T-37). How the agent reads the
+ * ticket (MCP, acli, …) is up to the agent; mag only knows the link.
+ */
 export interface TrackerScope {
-  /** The integration (Integration.id) the tracker agent reads through. */
-  integrationId: string
   kind: TrackerKind
   /** Jira project key or Linear team key, e.g. "ABC": the prefix of its ticket keys. */
   scope: string
+  /** Jira site (https://acme.atlassian.net) or Linear workspace (acme); see trackerBase. */
+  base: string
 }
 
 /** The ticket a top-level task is linked to: imported (T-10) or linked by URL (T-36). Read-only context: mag never writes to the tracker. */
 export interface TrackerLink {
-  /** The integration of the scope the ticket was imported through; null when linked by a URL outside the scopes. */
-  integrationId: string | null
   kind: TrackerKind
   /** Ticket key, e.g. "ABC-12". */
   key: string
-  /** null when imported by bare key until the tracker agent reports the link. */
+  /** null only for tickets imported by bare key before T-37, until the tracker agent reports the link. */
   url: string | null
   /** When the tracker agent wrote the brief; null while the import runs, after it failed, or for a plain link. */
   importedAt: number | null
+}
+
+/**
+ * The base of a tracker as typed in Settings → Trackers: the origin of any Jira site URL (a bare host gets https://),
+ * the workspace of a Linear slug or linear.app/<ws>/… URL. null when it is neither.
+ */
+export function trackerBase(kind: TrackerKind, text: string): string | null {
+  const t = text.trim()
+  if (kind === 'linear') {
+    const ws = /^(?:(?:https?:\/\/)?linear\.app\/)?([A-Za-z0-9][A-Za-z0-9_-]*)(?:[/?#]\S*)?$/i.exec(t)?.[1]
+    return ws ? ws.toLowerCase() : null
+  }
+  const host = /^(?:(https?):\/\/)?([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)(?:[/?#]\S*)?$/i.exec(t)
+  return host ? `${(host[1] ?? 'https').toLowerCase()}://${host[2].toLowerCase()}` : null
+}
+
+/** The web link of a ticket: <site>/browse/KEY on Jira, linear.app/<workspace>/issue/KEY on Linear. */
+export function ticketUrl(kind: TrackerKind, base: string, key: string): string {
+  return kind === 'jira' ? `${base.replace(/\/+$/, '')}/browse/${key}` : `https://linear.app/${base}/issue/${key}`
 }
 
 const TICKET_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
@@ -112,14 +132,14 @@ export function parseTicketUrl(text: string): { kind: TrackerKind; key: string; 
 
 /**
  * The ticket a pasted link or key names, within the project's tracker scopes: a ticket URL (see parseTicketUrl) or a
- * bare key whose prefix is a scope. The url is canonical; null for a bare key. null when nothing matches a scope.
+ * bare key whose prefix is a scope, linked through the scope's base. The url is canonical. null when nothing matches a scope.
  */
-export function parseTrackerRef(text: string, scopes: TrackerScope[]): { scope: TrackerScope; key: string; url: string | null } | null {
+export function parseTrackerRef(text: string, scopes: TrackerScope[]): { scope: TrackerScope; key: string; url: string } | null {
   const ref = text.trim()
   if (TICKET_KEY.test(ref)) {
     const key = ref.toUpperCase()
     const scope = scopeOf(key, scopes)
-    return scope ? { scope, key, url: null } : null
+    return scope ? { scope, key, url: ticketUrl(scope.kind, scope.base, key) } : null
   }
   const ticket = parseTicketUrl(ref)
   const scope = ticket && scopeOf(ticket.key, scopes, ticket.kind)
@@ -133,17 +153,16 @@ export function linkedTask(tasks: Task[], key: string): Task | null {
 }
 
 /**
- * The link a ticket URL gives `task` (null = a task about to be created) among the project's `tasks`, no import: the
- * integration of the matching scope if there is one, else none. Throws when the text is not a Jira or Linear ticket
- * URL, or the ticket is already linked to another task (one ticket, one task).
+ * The link a ticket URL gives `task` (null = a task about to be created) among the project's `tasks`, no import, no
+ * tracker settings needed. Throws when the text is not a Jira or Linear ticket URL, or the ticket is already linked to
+ * another task (one ticket, one task).
  */
-export function ticketLink(tasks: Task[], task: Task | null, text: string, scopes: TrackerScope[]): TrackerLink {
+export function ticketLink(tasks: Task[], task: Task | null, text: string): TrackerLink {
   const ticket = parseTicketUrl(text)
   if (!ticket) throw new Error('Not a Jira or Linear ticket link')
   const linked = linkedTask(tasks, ticket.key)
   if (linked && linked.id !== task?.id) throw new Error(`${ticket.key} is already linked to ${linked.key}`)
-  const scope = scopeOf(ticket.key, scopes, ticket.kind)
-  return { integrationId: scope?.integrationId ?? null, kind: ticket.kind, key: ticket.key, url: ticket.url, importedAt: null }
+  return { kind: ticket.kind, key: ticket.key, url: ticket.url, importedAt: null }
 }
 
 /** Project colors, readable on light and dark backgrounds. */
@@ -831,8 +850,8 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   if (task.parentId || task.archivedAt || task.status === 'canceled') return null
   const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer' || s.role === 'tracker')).at(-1)
   const base = { task, session: last }
-  // A failed import is moot once the task is unlinked or linked without an integration: nothing to retry it through.
-  if (last?.status === 'error' && (last.role !== 'tracker' || !!task.tracker?.integrationId))
+  // A failed import is moot once the task is unlinked: nothing to retry.
+  if (last?.status === 'error' && (last.role !== 'tracker' || !!task.tracker))
     return { ...base, kind: 'agent_failed', text: last.role === 'tracker' ? 'Import failed' : `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)

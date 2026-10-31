@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEvent } from '@mag/core'
-import { adapters, type AgentAdapter, type LiveHandle } from '@mag/agents'
+import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 
@@ -41,13 +41,15 @@ class FakeLive implements LiveHandle {
 }
 
 const opened: FakeLive[] = []
+const specs: Omit<RunSpec, 'prompt'>[] = []
 const real = adapters['claude-code']
 const fake: AgentAdapter = {
   ...real,
   start: () => {
     throw new Error('groomers and developers on Claude Code run on a live process')
   },
-  open: (_spec, onEvent) => {
+  open: (spec, onEvent) => {
+    specs.push(spec)
     const live = new FakeLive()
     live.emit = onEvent
     opened.push(live)
@@ -204,4 +206,43 @@ test('cancel closes the live process before removing worktrees, without end-of-r
   assert.equal(existsSync(workDir), false)
   assert.equal(store.task(task.id).status, 'canceled')
   assert.equal(store.task(task.id).needsInput, null)
+})
+
+test('tracker: Bash and every detected integration whatever the modes, no file edits (T-37)', async () => {
+  const { store, orch, project, task } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Atlassian', name: 'Atlassian' }, { id: 'linear', name: 'Linear' }])
+  store.updateProject(project.id, { integrations: { tracker: { linear: 'off' } } })
+  store.updateTask(task.id, { tracker: { kind: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1', importedAt: null } })
+  let spec: RunSpec | undefined
+  fake.start = (s) => {
+    spec = s
+    return { kill() {}, done: new Promise<void>(() => {}) }
+  }
+  try {
+    orch.importTicket(task.id)
+    await tick()
+  } finally {
+    fake.start = () => {
+      throw new Error('groomers and developers on Claude Code run on a live process')
+    }
+  }
+  assert.deepEqual(spec?.allowedTools, ['mcp__mag', 'Bash', 'mcp__claude_ai_Atlassian', 'mcp__linear'])
+  assert.deepEqual(spec?.disallowedTools, ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+  assert.equal(spec?.permissionPromptTool, undefined)
+  assert.match(spec?.appendSystemPrompt ?? '', /any way you have/)
+  assert.match(spec?.prompt ?? '', /Import ABC-1/)
+})
+
+test('project chat: Bash allowed, integrations by the chat modes (T-37)', async () => {
+  const { store, orch, project } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Atlassian', name: 'Atlassian' }])
+  store.updateProject(project.id, { integrations: { chat: { claude_ai_Atlassian: 'auto' } } })
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'create a task from https://acme.atlassian.net/browse/ABC-1')
+  const spec = specs.at(-1)!
+  assert.ok(spec.allowedTools?.includes('Bash'))
+  assert.ok(spec.allowedTools?.includes('mcp__claude_ai_Atlassian'))
+  assert.ok(!spec.disallowedTools?.includes('Bash'))
+  assert.ok(spec.disallowedTools?.includes('Edit'))
+  assert.match(spec.appendSystemPrompt ?? '', /ticket_url/)
 })

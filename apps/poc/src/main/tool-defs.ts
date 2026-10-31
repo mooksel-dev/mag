@@ -241,7 +241,7 @@ export const TOOL_DEFS = [
     name: 'get_import',
     scope: 'task',
     tracker: 'only',
-    description: 'Tracker only: the ticket to import into this task: key, url (null when imported by key), kind (jira or linear) and scope (Jira project or Linear team key).',
+    description: 'Tracker only: the ticket to import into this task: key, url (null only for an old import by key) and kind (jira or linear).',
     inputSchema: { type: 'object', properties: {} },
   },
   {

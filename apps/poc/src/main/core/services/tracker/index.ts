@@ -26,14 +26,12 @@ export interface TrackerService {
   import(projectId: string, ref: string): Promise<Task>
   /**
    * Runs the import again on a linked task whose import failed or must be redone (e.g. Restart in Home); the brief is
-   * replaced when the agent calls set_brief. Throws when the task is not linked to a ticket, or linked without an
-   * integration (by a URL outside the tracker scopes).
+   * replaced when the agent calls set_brief. Throws when the task is not linked to a ticket.
    */
   retryImport(taskId: string): void
   /**
    * Links a top-level task to the ticket a Jira or Linear URL names, replacing its link if any (Change link); no import,
-   * the brief stays. The integration is the matching scope's, if any. Throws when the URL names no ticket, or the
-   * ticket is linked to another task.
+   * the brief stays. Throws when the URL names no ticket, or the ticket is linked to another task.
    */
   link(taskId: string, url: string): Task
   /** Drops the task's ticket link. */
@@ -49,7 +47,7 @@ export function createTrackerService(store: TrackerStore, runner: ImportRunner):
       if (!found) throw new Error(scopes.length ? 'Unknown tracker link or key' : 'Unknown tracker link or key: add a tracker in Settings → Trackers first')
       const linked = linkedTask(store.data.tasks.filter((t) => t.projectId === projectId), found.key)
       if (linked) throw new Error(`${found.key} is already imported as ${linked.key}`)
-      const tracker: TrackerLink = { integrationId: found.scope.integrationId, kind: found.scope.kind, key: found.key, url: found.url, importedAt: null }
+      const tracker: TrackerLink = { kind: found.scope.kind, key: found.key, url: found.url, importedAt: null }
       const task = store.createTask({ projectId, title: found.key, type: 'dev', description: '', tracker })
       runner.startImport(task.id)
       return task
@@ -57,14 +55,12 @@ export function createTrackerService(store: TrackerStore, runner: ImportRunner):
     retryImport(taskId) {
       const task = store.task(taskId)
       if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
-      if (!task.tracker.integrationId) throw new Error(`${task.key} is linked without an integration: nothing to import through`)
       runner.startImport(taskId)
     },
     link(taskId, url) {
       const task = store.task(taskId)
       if (task.parentId) throw new Error(`${task.key} is a step; link its task instead`)
-      const scopes = store.project(task.projectId).trackers ?? []
-      const tracker = ticketLink(store.data.tasks.filter((t) => t.projectId === task.projectId), task, url, scopes)
+      const tracker = ticketLink(store.data.tasks.filter((t) => t.projectId === task.projectId), task, url)
       store.updateTask(taskId, { tracker })
       return store.task(taskId)
     },

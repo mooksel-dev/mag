@@ -21,6 +21,7 @@ import {
   subtasksOf,
   taskPrs,
   taskView,
+  trackerBase,
   viewCounts,
   type AgentRole,
   type AgentSession,
@@ -48,7 +49,7 @@ import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
 import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
-import { scopeKey, scopeWarning } from './trackers'
+import { scopeKey } from './trackers'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -248,9 +249,9 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
   const canRegroomRemaining = !anyRunning && !legacy && task.status === 'in_progress'
-  // An import that ended without a brief (T-10); the inbox shows it as Import failed. A plain link has nothing to import.
+  // An import that ended without a brief (T-10); the inbox shows it as Import failed.
   const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
-  const importFailed = !!task.tracker?.integrationId && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
+  const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
   const view = taskView(task)
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
@@ -611,6 +612,9 @@ function AgentSettings({ project }: { project: Project }) {
 
 const MODES: [IntegrationMode, string][] = [['off', 'Off'], ['ask', 'Ask'], ['auto', 'Auto']]
 
+/** Roles integration modes apply to: the tracker gets every integration whatever the modes (T-37). */
+const INTEGRATION_ROLES = SETTABLE_ROLES.filter((r) => r !== 'tracker')
+
 /** Off / Ask / Auto per integration and role. Codex has no integrations; the architect has no chat to ask in. */
 function IntegrationSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
   const set = (role: AgentRole, id: string, mode: IntegrationMode) =>
@@ -619,13 +623,13 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
     <div className="field">
       Integrations
       {integrations.length ? (
-        <div className="integrations" style={{ gridTemplateColumns: `minmax(0, max-content) repeat(${SETTABLE_ROLES.length}, max-content)` }}>
+        <div className="integrations" style={{ gridTemplateColumns: `minmax(0, max-content) repeat(${INTEGRATION_ROLES.length}, max-content)` }}>
           <span />
-          {SETTABLE_ROLES.map((role) => <span key={role} className="muted small">{ROLE_LABELS[role] ?? role}</span>)}
+          {INTEGRATION_ROLES.map((role) => <span key={role} className="muted small">{ROLE_LABELS[role] ?? role}</span>)}
           {integrations.map((i) => (
             <div key={i.id} style={{ display: 'contents' }}>
               <span title={i.id}>{i.name}</span>
-              {SETTABLE_ROLES.map((role) =>
+              {INTEGRATION_ROLES.map((role) =>
                 resolveChoice(project, role).agent !== 'claude-code' ? (
                   <span key={role} className="muted small" title="Only Claude Code agents use integrations">n/a</span>
                 ) : (
@@ -642,64 +646,56 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
       ) : (
         <span className="muted small">Run any Claude Code agent to detect integrations.</span>
       )}
-      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
+      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask. The Tracker agent gets every integration.</span>
     </div>
   )
 }
 
-const KINDS: [TrackerKind, string, string][] = [['jira', 'Jira', 'Project key'], ['linear', 'Linear', 'Team key']]
+const KINDS: [TrackerKind, string, string, string][] = [
+  ['jira', 'Jira', 'Jira site URL', 'Project key'],
+  ['linear', 'Linear', 'Linear workspace', 'Team key'],
+]
 
-/** Tracker projects / teams tickets are imported from, each read through a T-13 integration (T-10). */
-function TrackerSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
+/** Tracker projects / teams whose bare ticket keys become links (T-10, T-37). How the agent reads them is up to it. */
+function TrackerSettings({ project }: { project: Project }) {
   const scopes = project.trackers ?? []
-  const [integrationId, setIntegrationId] = useState('')
   const [kind, setKind] = useState<TrackerKind>('jira')
+  const [baseText, setBaseText] = useState('')
   const [scope, setScope] = useState('')
+  const [, , basePlaceholder, keyPlaceholder] = KINDS.find(([k]) => k === kind)!
+  const base = trackerBase(kind, baseText)
   const key = scopeKey(scope)
-  const chosen = integrations.some((i) => i.id === integrationId) ? integrationId : (integrations[0]?.id ?? '')
   const taken = !!key && scopes.some((s) => s.scope.toUpperCase() === key)
   const save = (list: TrackerScope[]) => mag.updateProject(project.id, { trackers: list })
-  const nameOf = (id: string) => integrations.find((i) => i.id === id)?.name ?? id
   return (
     <div className="field">
       Trackers
       {scopes.length > 0 && (
         <div className="trackerlist">
-          {scopes.map((s, i) => {
-            const warning = scopeWarning(project, s, integrations)
-            return (
-              <div key={`${s.kind}:${s.scope}:${i}`} className="trackerrow">
-                <code>{s.scope}</code>
-                <span>{KINDS.find(([k]) => k === s.kind)?.[1]}</span>
-                <span className="muted small" title={s.integrationId}>via {nameOf(s.integrationId)}</span>
-                {warning && <span className="pill amber">{warning}</span>}
-                <button className="link" onClick={() => save(scopes.filter((_, j) => j !== i))}>remove</button>
-              </div>
-            )
-          })}
+          {scopes.map((s, i) => (
+            <div key={`${s.kind}:${s.scope}:${i}`} className="trackerrow">
+              <code>{s.scope}</code>
+              <span className="muted small">· {KINDS.find(([k]) => k === s.kind)?.[1]} · {s.base.replace(/^https?:\/\//, '')} ·</span>
+              <button className="link" onClick={() => save(scopes.filter((_, j) => j !== i))}>remove</button>
+            </div>
+          ))}
         </div>
       )}
-      {integrations.length ? (
-        <form
-          className="trackeradd"
-          onSubmit={(e) => { e.preventDefault(); if (!key || taken || !chosen) return; void save([...scopes, { integrationId: chosen, kind, scope: key }]); setScope('') }}
-        >
-          <select value={chosen} onChange={(e) => setIntegrationId(e.target.value)} aria-label="Tracker integration">
-            {integrations.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-          </select>
-          <select value={kind} onChange={(e) => setKind(e.target.value as TrackerKind)} aria-label="Tracker kind">
-            {KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-          </select>
-          <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder={KINDS.find(([k]) => k === kind)![2]} aria-label="Project or team key" aria-invalid={!!scope.trim() && !key} />
-          <button type="submit" disabled={!key || taken}>+ Add tracker</button>
-          {taken && <span className="muted small">{key} is already added.</span>}
-        </form>
-      ) : (
-        <span className="muted small">Run any Claude Code agent to detect integrations, then pick the Jira (Atlassian) or Linear one here.</span>
-      )}
+      <form
+        className="trackeradd"
+        onSubmit={(e) => { e.preventDefault(); if (!key || taken || !base) return; void save([...scopes, { kind, scope: key, base }]); setScope('') }}
+      >
+        <select value={kind} onChange={(e) => setKind(e.target.value as TrackerKind)} aria-label="Tracker kind">
+          {KINDS.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
+        </select>
+        <input className="trackerbase" value={baseText} onChange={(e) => setBaseText(e.target.value)} placeholder={basePlaceholder} aria-label={basePlaceholder} aria-invalid={!!baseText.trim() && !base} />
+        <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder={keyPlaceholder} aria-label="Project or team key" aria-invalid={!!scope.trim() && !key} />
+        <button type="submit" disabled={!key || taken || !base}>+ Add tracker</button>
+        {taken && <span className="muted small">{key} is already added.</span>}
+        {!!baseText.trim() && !base && <span className="muted small">Not a {basePlaceholder}.</span>}
+      </form>
       <span className="muted small">
-        Import a ticket from Tasks by its URL, or by its key when its prefix is a key here (ABC-12 for ABC). The tracker agent reads it through the
-        integration: turn that integration on for Tracker in Integrations above (Ask or Auto). mag never writes to the tracker.
+        A bare key like ABC-12 becomes a link. The agent reads tickets any way it has (MCP, acli…); mag never writes to the tracker.
       </span>
     </div>
   )
@@ -753,7 +749,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />
-      <TrackerSettings project={project} integrations={integrations} />
+      <TrackerSettings project={project} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (
