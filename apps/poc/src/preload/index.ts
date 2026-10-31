@@ -57,6 +57,7 @@ const api: MagApi = {
   saveAttachment: (f) => ipcRenderer.invoke('attach:save', f),
   pathForFile: (file) => webUtils.getPathForFile(file),
   stop: (sessionId) => ipcRenderer.invoke('session:stop', sessionId),
+  stopBackground: (sessionId, taskId) => ipcRenderer.invoke('session:stopBackground', sessionId, taskId),
   decideApproval: (sessionId, approvalId, allow) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow),
   openWindow: (target) => ipcRenderer.invoke('window:open', target),
   windowProjectId: () => windowProject,

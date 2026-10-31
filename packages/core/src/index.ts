@@ -474,6 +474,14 @@ export function liveSession(s: Pick<AgentSession, 'role' | 'agent'>): boolean {
   return s.role === 'chat' && s.agent === 'claude-code'
 }
 
+/** "1 background task · Monitor", "3 background tasks · Monitor ×2, Bash". */
+export function backgroundLabel(tasks: BackgroundTask[]): string {
+  const counts = new Map<string, number>()
+  for (const t of tasks) counts.set(t.name, (counts.get(t.name) ?? 0) + 1)
+  const names = [...counts].map(([name, k]) => (k > 1 ? `${name} ×${k}` : name)).join(', ')
+  return `${tasks.length} background ${tasks.length === 1 ? 'task' : 'tasks'} · ${names}`
+}
+
 /** Normalized events every agent adapter emits. */
 export type AgentEvent =
   | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }

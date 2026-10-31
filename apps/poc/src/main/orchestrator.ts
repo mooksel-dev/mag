@@ -475,6 +475,13 @@ export class Orchestrator {
     this.runs.get(sessionId)?.kill()
   }
 
+  /** Stops one background task of a live process; the agent is not woken. The list updates via a `background` event. */
+  async stopBackground(sessionId: string, taskId: string) {
+    const live = this.lives.get(sessionId)
+    if (!live || live.closing) return
+    await live.handle.stopTask(taskId)
+  }
+
   /** On quit: live processes would outlive mag and keep waking for their background tasks. */
   shutdown() {
     for (const live of this.lives.values()) live.handle.close(0)
