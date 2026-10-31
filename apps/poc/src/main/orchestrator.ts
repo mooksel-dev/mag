@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, integrationRules, isLegacy, liveSession, prRollup, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -842,22 +842,15 @@ export class Orchestrator {
       this.store.updateTask(task.id, { needsInput: failed ? 'Groomer failed; check the chat' : 'Groomer stopped without finishing; check the chat' })
     if (session.role === 'developer' && task.status === 'in_progress') {
       const work = this.ownerOf(session).work
-      if (failed || !work?.repos.some((r) => r.prUrl)) {
-        const stopped = session.stepId ? 'Developer stopped without opening a PR or completing the step' : 'Developer stopped without opening a PR'
-        this.store.updateTask(task.id, { needsInput: failed ? 'Developer agent failed; check the chat' : stopped })
-        return
-      }
-      const changed = await changedRepos(work, this.store.project(task.projectId).baseBranch)
+      const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []
       const now = this.store.task(task.id)
       if (now.status !== 'in_progress' || now.needsInput || this.runs.has(session.id) || this.ownerOf(session).status === 'done') return
+      const outcome = devRunOutcome(work, changed, failed, !!session.stepId)
+      // Every PR merged, maybe while the run was on: the step is done. A legacy task finishes on the scheduler's poll.
+      if (outcome.kind === 'complete') return session.stepId ? this.completeStep(session.stepId) : undefined
       // Every changed repo has a PR: the task waits for the user to merge.
-      if (prRollup(work, changed) === 'review') return
-      const missing = work.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed'))
-      this.store.updateTask(task.id, {
-        needsInput: missing.length
-          ? `Developer stopped without a PR for ${missing.map((r) => repoWorkName(work, r)).join(', ')}`
-          : 'Developer stopped without opening a PR',
-      })
+      if (outcome.kind === 'review') return
+      this.store.updateTask(task.id, { needsInput: outcome.reason })
     }
   }
 }

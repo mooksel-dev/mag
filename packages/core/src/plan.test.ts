@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMoveInPlan, canMoveSubtask, findRepoWork, nextPlanRank, planQueue, prRollup, repoDirNames, repoWorkName, subtaskProgress, subtaskStatusChanges, todoTasks, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { canMoveInPlan, canMoveSubtask, devRunOutcome, findRepoWork, nextPlanRank, planQueue, prRollup, prsMerged, repoDirNames, repoWorkName, subtaskProgress, subtaskStatusChanges, todoTasks, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
   id,
@@ -84,6 +84,35 @@ test('prRollup', () => {
   assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'open')), ['a', 'b']), 'review', 'waits for every PR')
   assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'merged')), []), 'done')
   assert.equal(prRollup(w(pr(a, 'merged'), pr(b, 'closed')), []), 'closed', 'closed without merge')
+})
+
+test('prsMerged', () => {
+  const w = (...repos: RepoWork[]): TaskWork => ({ dir: 'd', feedbackSeenAt: 0, repos })
+  const a = repo('a', 'd/a')
+  const b = repo('b', 'd/b')
+  const pr = (r: RepoWork, prState: RepoWork['prState']) => ({ ...r, prUrl: `https://github.com/o/${r.repo}/pull/1`, prState })
+  assert.equal(prsMerged(w(a, b), []), false, 'no PR')
+  assert.equal(prsMerged(w(pr(a, 'merged'), b), ['a']), true)
+  assert.equal(prsMerged(w(pr(a, 'merged'), b), ['a', 'b']), false, 'b has commits but no PR')
+  assert.equal(prsMerged(w(pr(a, 'merged'), pr(b, 'open')), ['a', 'b']), false, 'waits for every PR')
+  assert.equal(prsMerged(w(pr(a, 'merged'), pr(b, 'closed')), ['a']), false, 'closed without merge')
+})
+
+test('devRunOutcome', () => {
+  const w = (...repos: RepoWork[]): TaskWork => ({ dir: 'd', feedbackSeenAt: 0, repos })
+  const a = repo('a', 'd/a')
+  const b = repo('b', 'd/b')
+  const pr = (r: RepoWork, prState: RepoWork['prState']) => ({ ...r, prUrl: `https://github.com/o/${r.repo}/pull/1`, prState })
+  const needs = (reason: string) => ({ kind: 'needsInput', reason })
+  // changedRepos counts a merged repo as changed even with nothing left on the branch.
+  assert.deepEqual(devRunOutcome(w(pr(a, 'merged'), b), ['a'], false, true), { kind: 'complete' }, 'PR merged during the run')
+  assert.deepEqual(devRunOutcome(w(pr(a, 'merged'), b), ['a'], true, true), { kind: 'complete' }, 'merged wins over a failed run')
+  assert.deepEqual(devRunOutcome(w(pr(a, 'open'), pr(b, 'open')), ['a', 'b'], false, true), { kind: 'review' })
+  assert.deepEqual(devRunOutcome(w(pr(a, 'merged'), b), ['a', 'b'], false, true), needs('Developer stopped without a PR for b'))
+  assert.deepEqual(devRunOutcome(w(pr(a, 'open'), b), ['a'], true, true), needs('Developer agent failed; check the chat'))
+  assert.deepEqual(devRunOutcome(w(a, b), ['a'], false, true), needs('Developer stopped without opening a PR or completing the step'))
+  assert.deepEqual(devRunOutcome(null, [], false, false), needs('Developer stopped without opening a PR'))
+  assert.deepEqual(devRunOutcome(w(pr(a, 'closed'), b), [], false, true), needs('Developer stopped without opening a PR'))
 })
 
 test('canMoveInPlan: only between not-started todo tasks', () => {

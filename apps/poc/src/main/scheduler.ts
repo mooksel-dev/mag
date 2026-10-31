@@ -1,5 +1,5 @@
 import { rmdir } from 'node:fs'
-import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, currentStep, isLegacy, prRollup, repoWorkName, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, currentStep, isLegacy, prRollup, prsMerged, repoWorkName, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
@@ -26,8 +26,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
    */
   const finished = async (owner: Task, work: TaskWork) => {
     if (anyRunning((s) => (owner.parentId ? s.stepId === owner.id : s.taskId === owner.id))) return false
-    const changed = await changedRepos(work, store.project(owner.projectId).baseBranch)
-    return changed.every((c) => work.repos.some((r) => r.repo === c && r.prState === 'merged'))
+    return prsMerged(work, await changedRepos(work, store.project(owner.projectId).baseBranch))
   }
 
   // A PR closed without merge is not polled again; the developer opens a new one (set_pr) if needed.
@@ -73,6 +72,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     if (prRollup(next, []) === 'done' && (await finished(owner, next))) {
       log.info('scheduler', `${owner.key} done: every PR merged`)
       if (owner !== task) {
+        // Its developer's afterRun may have closed it while we checked.
+        if (store.task(owner.id).status === 'done') return
         store.updateTask(owner.id, { work: next })
         return orch.completeStep(owner.id)
       }
@@ -104,7 +105,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     try {
       for (const task of store.data.tasks.filter((t) => !t.parentId && t.status === 'in_progress')) {
         const owner = isLegacy(task) ? task : currentStep(task.id, store.data.tasks)
-        if (owner?.work?.repos.some(live)) await pollWork(owner, task)
+        // Fully merged but not done: merged while its developer ran, so pollWork skipped it then.
+        if (owner?.work && (owner.work.repos.some(live) || prRollup(owner.work, []) === 'done')) await pollWork(owner, task)
       }
     } finally {
       polling = false
