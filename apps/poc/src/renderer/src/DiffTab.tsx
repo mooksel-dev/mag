@@ -13,10 +13,11 @@ export function diagramsOf(canvases: AppState['canvases']): DiagramCanvas[] {
 }
 
 function Changes({ count }: { count: DiffCount }) {
-  if (!count.add && !count.mod && !count.del) return <span className="muted small">no changes</span>
+  if (!count.add && !count.mod && !count.del && !count.move) return <span className="muted small">no changes</span>
   return (
     <span className="diffcount">
       <span className="d-add">+{count.add}</span> <span className="d-mod">~{count.mod}</span> <span className="d-del">−{count.del}</span>
+      {count.move > 0 && <> <span className="d-move">↷{count.move}</span></>}
     </span>
   )
 }
@@ -31,7 +32,7 @@ const OpenWindow = ({ id }: { id: string }) => (
 export function DiffTab({ diagrams }: { diagrams: DiagramCanvas[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const open = diagrams.find((d) => d.id === openId)
-  if (!diagrams.length) return <p className="muted">No diagrams yet. The groomer draws the change here: modules, scenarios, states and algorithms.</p>
+  if (!diagrams.length) return <p className="muted">No diagrams yet. The groomer draws the change here: modules, scenarios, states, algorithms and data.</p>
   if (open)
     return (
       <div className="diffopen">

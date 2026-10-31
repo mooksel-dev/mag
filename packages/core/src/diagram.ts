@@ -41,14 +41,59 @@ export interface FlowchartDiagram {
   edges: { from: string; to: string; label?: string; diff?: DiffMark }[]
 }
 
-export type Diagram = ComponentDiagram | SequenceDiagram | StateDiagram | FlowchartDiagram
+
+/** A change on the Data diagram: the diff marks plus move, an entity or field that moved here from elsewhere. */
+export type DataMark = DiffMark | 'move'
+export const DATA_MARKS: DataMark[] = [...DIFF_MARKS, 'move']
+export type EntityKind = 'collection' | 'table' | 'struct' | 'type'
+export const ENTITY_KINDS: EntityKind[] = ['collection', 'table', 'struct', 'type']
+export type Cardinality = '1:1' | '1:N' | 'N:1' | 'N:M' | 'ref'
+export const CARDINALITIES: Cardinality[] = ['1:1', '1:N', 'N:1', 'N:M', 'ref']
+
+/** One field, one line. A changed field is its old line del and its new line add. */
+export interface DField {
+  name: string
+  type: string
+  note?: string
+  diff?: DataMark
+  /** With move: the field it moved from, "<entity id>.<field name>" of another entity of the diagram. */
+  from?: string
+}
+export interface DEntity {
+  id: string
+  name: string
+  kind: EntityKind
+  note?: string
+  diff?: DataMark
+  /** With move: the old id of the entity (renamed or moved), not an entity of the diagram. */
+  from?: string
+  fields: DField[]
+}
+export interface DRelation {
+  from: string
+  to: string
+  kind: Cardinality
+  /** The field of `from` that holds the link. */
+  field?: string
+  label?: string
+  diff?: DiffMark
+}
+export interface DataDiagram {
+  type: 'data'
+  entities: DEntity[]
+  relations: DRelation[]
+}
+
+export type Diagram = ComponentDiagram | SequenceDiagram | StateDiagram | FlowchartDiagram | DataDiagram
 export type DiagramType = Diagram['type']
-export const DIAGRAM_TYPES: DiagramType[] = ['component', 'sequence', 'state', 'flowchart']
+export const DIAGRAM_TYPES: DiagramType[] = ['component', 'sequence', 'state', 'flowchart', 'data']
 
 export interface DiffCount {
   add: number
   mod: number
   del: number
+  /** Moved entities and fields; only the Data diagram has them. */
+  move: number
 }
 
 type Raw = Record<string, unknown>
@@ -95,10 +140,60 @@ export function normalizeDiagram(raw: unknown): Diagram {
         nodes: arr(d.nodes).map((n) => ({ ...n, id: str(n.id), label: str(n.label ?? n.id), shape: (n.shape ?? 'step') as FlowShape })),
         edges: arr(d.edges).map((e) => ({ ...e, from: str(e.from), to: str(e.to) })),
       }
+    case 'data':
+      return {
+        type: 'data',
+        entities: arr(d.entities).map((e) => ({
+          ...e,
+          id: str(e.id),
+          name: str(e.name ?? e.id),
+          kind: (e.kind ?? 'collection') as EntityKind,
+          // A field is always an object; a string one is kept as is for validateDiagram to reject.
+          fields: (Array.isArray(e.fields) ? e.fields : []).map((f: unknown) =>
+            f && typeof f === 'object' ? { ...(f as DField), name: str((f as Raw).name), type: str((f as Raw).type) } : (f as DField),
+          ),
+        })),
+        relations: arr(d.relations).map((r) => ({ ...r, from: str(r.from), to: str(r.to), kind: (r.kind ?? 'ref') as Cardinality })),
+      }
     default:
       return d as unknown as Diagram
   }
 }
+
+/** A field moved between two entities of a Data diagram. */
+export interface FieldMove {
+  from: { entity: string; field: string }
+  to: { entity: string; field: string }
+}
+
+/**
+ * Splits a "<entity id>.<field name>" reference on the entity it names; an entity id may hold dots itself
+ * ("public.users.id"), the longest matching id wins. null when no entity has that field.
+ */
+export function fieldRef(entities: DEntity[], ref: string): { entity: string; field: string } | null {
+  let best: { entity: string; field: string } | null = null
+  for (const e of entities) {
+    if (!ref.startsWith(`${e.id}.`) || (best && best.entity.length >= e.id.length)) continue
+    const field = ref.slice(e.id.length + 1)
+    if (e.fields.some((f) => f?.name === field)) best = { entity: e.id, field }
+  }
+  return best
+}
+
+/** The field moves of a Data diagram whose source resolves; validateDiagram reports the others. */
+export function fieldMoves(d: DataDiagram): FieldMove[] {
+  const out: FieldMove[] = []
+  for (const e of d.entities)
+    for (const f of e.fields) {
+      if (f?.diff !== 'move' || !f.from) continue
+      const from = fieldRef(d.entities, f.from)
+      if (from && from.entity !== e.id) out.push({ from, to: { entity: e.id, field: f.name } })
+    }
+  return out
+}
+
+/** A field name that lists several fields ("a / b", "a, b", "old new"). */
+const FIELD_GROUP = /[/,;\s]/
 
 /** Problems an agent must fix before the diagram is saved; [] when it is fine. */
 export function validateDiagram(d: Diagram): string[] {
@@ -187,6 +282,56 @@ export function validateDiagram(d: Diagram): string[] {
       }
       break
     }
+    case 'data': {
+      if (!d.entities.length) errors.push('entities is empty')
+      const ids = idsOf('entity', d.entities)
+      const dataMark = (what: string, m: unknown) => {
+        if (m !== undefined && !DATA_MARKS.includes(m as DataMark)) errors.push(`${what}: diff must be one of ${DATA_MARKS.join(', ')}`)
+      }
+      for (const e of d.entities) {
+        const what = `Entity ${e.id}`
+        dataMark(what, e.diff)
+        if (!ENTITY_KINDS.includes(e.kind)) errors.push(`${what}: kind must be one of ${ENTITY_KINDS.join(', ')}`)
+        if (e.diff === 'move') {
+          if (!e.from) errors.push(`${what}: move needs from, the old id of the entity`)
+          else if (ids.has(e.from)) errors.push(`${what}: moved from "${e.from}", which is an entity of this diagram; mark its fields with move instead`)
+        } else if (e.from) errors.push(`${what}: from is only for diff move`)
+        const names = new Set<string>()
+        for (const f of e.fields) {
+          if (!f || typeof f !== 'object') {
+            errors.push(`${what}: field ${JSON.stringify(f)} must be an object { name, type }; one field per line`)
+            continue
+          }
+          const fw = `Field "${f.name}" of ${e.id}`
+          if (!f.name) errors.push(`${what}: a field has no name`)
+          else if (FIELD_GROUP.test(f.name.trim())) errors.push(`${fw}: one field per line; a changed field is a del line and an add line`)
+          else if (names.has(f.name)) errors.push(`${what}: repeated field "${f.name}"`)
+          names.add(f.name)
+          if (!f.type) errors.push(`${fw} has no type`)
+          dataMark(fw, f.diff)
+          if (f.diff === 'move') {
+            if (!f.from) {
+              errors.push(`${fw}: move needs from, "<entity>.<field>" it moved from`)
+              continue
+            }
+            const src = fieldRef(d.entities, f.from)
+            if (!src) errors.push(`${fw}: moved from "${f.from}", no such field; give "<entity>.<field>" of this diagram`)
+            else if (src.entity === e.id) errors.push(`${fw}: moved within ${e.id}; a renamed field is a del line and an add line`)
+            else if (d.entities.find((x) => x.id === src.entity)!.fields.find((x) => x?.name === src.field)!.diff === 'add')
+              errors.push(`${fw}: moved from "${f.from}", which is added; mark the source as it was`)
+          } else if (f.from) errors.push(`${fw}: from is only for diff move`)
+        }
+      }
+      for (const r of d.relations) {
+        const what = `Relation ${r.from} → ${r.to}`
+        link('Relation', ids, r.from, r.to)
+        mark(what, r.diff)
+        if (!CARDINALITIES.includes(r.kind)) errors.push(`${what}: kind must be one of ${CARDINALITIES.join(', ')}`)
+        const src = d.entities.find((e) => e.id === r.from)
+        if (r.field && src && !src.fields.some((f) => f?.name === r.field)) errors.push(`${what}: no field "${r.field}" in ${r.from}`)
+      }
+      break
+    }
   }
   return errors
 }
@@ -249,8 +394,8 @@ export function sequenceActivations(d: SequenceDiagram): SequenceActivations {
   return { bars, ends }
 }
 
-const zero = (): DiffCount => ({ add: 0, mod: 0, del: 0 })
-const count = (c: DiffCount, m: DiffMark | undefined) => m && c[m]++
+const zero = (): DiffCount => ({ add: 0, mod: 0, del: 0, move: 0 })
+const count = (c: DiffCount, m: DataMark | undefined) => m && c[m]++
 
 /** A module's own change: its mark, else 'mod' when one of its interface lines changes. */
 export function nodeDiff(n: DNode): DiffMark | undefined {
@@ -268,7 +413,7 @@ function countNodes(nodes: DNode[], all: DNode[], c: DiffCount) {
   return c
 }
 
-/** Changed elements of a diagram: Component counts modules and uses, the others their nodes and links. */
+/** Changed elements of a diagram: Component counts modules and uses, Data its entities, fields and relations, the others their nodes and links. */
 export function diagramSummary(d: Diagram): DiffCount {
   const c = zero()
   switch (d.type) {
@@ -283,6 +428,9 @@ export function diagramSummary(d: Diagram): DiffCount {
     case 'flowchart':
       for (const x of [...d.nodes, ...d.edges]) count(c, x.diff)
       return c
+    case 'data':
+      for (const x of [...d.entities, ...d.entities.flatMap((e) => e.fields), ...d.relations]) count(c, x?.diff)
+      return c
   }
   return c
 }
@@ -292,9 +440,10 @@ export function innerSummary(node: DNode, all: DNode[]): DiffCount {
   return countNodes(node.children ?? [], all, zero())
 }
 
-/** "+2 ~1 −0"; '' when nothing changes. */
+/** "+2 ~1 −0", with " ↷1" when something moved; '' when nothing changes. */
 export function formatDiffCount(c: DiffCount): string {
-  return c.add || c.mod || c.del ? `+${c.add} ~${c.mod} −${c.del}` : ''
+  if (!c.add && !c.mod && !c.del && !c.move) return ''
+  return `+${c.add} ~${c.mod} −${c.del}${c.move ? ` ↷${c.move}` : ''}`
 }
 
 /** The project architecture as an unmarked Component tree, for the shared renderer. */

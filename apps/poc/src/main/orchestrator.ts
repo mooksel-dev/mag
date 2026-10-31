@@ -32,12 +32,15 @@ Your output is the task document, not chat. Work like this:
 5. Describe the target change with show_diagram before splitting it into steps; the app draws the diagrams in the
    task's Diff tab. The kind of change picks the type: links between modules, their interfaces or calls -> component;
    a scenario between participants (mostly infra: services, databases, queues, outside APIs, CLI processes) ->
-   sequence; states of an entity -> state; an algorithm -> flowchart. Draw as many as the change needs, several of one
-   type too, each a separate named diagram. For component take the modules from get_architecture (same ids): mark the
-   changed ones and their changed interface lines, uses and calls with diff (add, mod, del) and give their neighbours
-   without a mark as context. Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>,
-   with the id show_diagram returned; the app renders them in place. Revise a diagram by its id. UI mockups and other
-   visuals without a type go through show_canvas, linked the same way.
+   sequence; states of an entity -> state; an algorithm -> flowchart; a change of the data schema (collections,
+   tables, fields, types in the core model, formats of files or API payloads) -> data. Draw as many as the change
+   needs, several of one type too, each a separate named diagram. For component take the modules from
+   get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls with diff
+   (add, mod, del) and give their neighbours without a mark as context. For data give every field on its own line; a
+   changed field is a del line and an add line, a field moved to another entity is move with from "<entity>.<field>".
+   Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>, with the id show_diagram
+   returned; the app renders them in place. Revise a diagram by its id. UI mockups and other visuals without a type
+   go through show_canvas, linked the same way.
 6. Split the work into execution steps with create_subtask, in order; at least one, or mark_groomed fails. Each step
    runs in its own developer session from fresh base, with at most one PR per changed repository; the next step starts
    when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc carries the
@@ -139,7 +142,7 @@ tasks can be archived; mag archives them after some days.
   again after it; say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
 - For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
-  diagram of a change (component, sequence, state, flowchart) use show_diagram. Revise either by id instead of drawing
+  diagram of a change (component, sequence, state, flowchart, data) use show_diagram. Revise either by id instead of drawing
   a new one. Prefer showing over describing.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
 - Be concise: short answers, markdown only where it helps. The user hates filler.
