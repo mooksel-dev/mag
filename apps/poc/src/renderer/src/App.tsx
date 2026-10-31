@@ -46,7 +46,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, TicketChip, useNow, type NewTaskFocus } from './Tasks'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
 import { scopeKey, scopeWarning } from './trackers'
 import { useTheme, type ThemeMode } from './useTheme'
 
@@ -247,9 +247,9 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
   const canRegroomRemaining = !anyRunning && !legacy && task.status === 'in_progress'
-  // An import that ended without a brief (T-10); the inbox shows it as Import failed.
+  // An import that ended without a brief (T-10); the inbox shows it as Import failed. A plain link has nothing to import.
   const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
-  const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
+  const importFailed = !!task.tracker?.integrationId && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
   const view = taskView(task)
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
@@ -281,7 +281,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           <div className="taskrow">
             <button className="crumb" onClick={() => onNav(view)}>Tasks · {VIEW_NAMES[view]} ›</button>
             <span className="key">{task.key}</span>
-            <TicketChip task={task} />
+            <TicketLink task={task} />
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}

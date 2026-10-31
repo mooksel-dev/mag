@@ -314,6 +314,7 @@ export const TOOL_DEFS = [
         description: { type: 'string' },
         doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
         plan: { type: 'boolean', description: 'Skip grooming and put the task in todo; the user starts it.' },
+        ticket_url: { type: 'string', description: 'Jira or Linear ticket URL to link the task to (no import). Fails, creating nothing, when the ticket is linked to another task.' },
         steps: {
           type: 'array',
           description: 'Execution steps in order; at least one with plan: true. Each runs in its own developer session with at most one PR per repo.',
@@ -326,6 +327,14 @@ export const TOOL_DEFS = [
       },
       required: ['title', 'type', 'description'],
     },
+  },
+  {
+    name: 'link_ticket',
+    scope: 'project',
+    description:
+      'Link a top-level task to a Jira or Linear ticket by its URL, replacing its link if any. Only a link: nothing is imported and the brief stays. ' +
+      'Fails when the URL is not a ticket link or the ticket is linked to another task.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, url: { type: 'string' } }, required: ['key', 'url'] },
   },
   {
     name: 'update_task',

@@ -97,6 +97,60 @@ export function TicketChip({ task }: { task: Task }) {
   )
 }
 
+/**
+ * The task header's ticket: the chip with a ⋯ menu (Change link, Unlink), or a quiet "Link ticket" without one. Both
+ * open a URL field: Enter links, Esc cancels, an unknown URL or a ticket linked elsewhere shows under it.
+ */
+export function TicketLink({ task }: { task: Task }) {
+  const [editing, setEditing] = useState(false)
+  const [menu, setMenu] = useState(false)
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const edit = () => { setUrl(task.tracker?.url ?? ''); setError(null); setMenu(false); setEditing(true) }
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!url.trim() || busy) return
+    setBusy(true)
+    const r = await mag.linkTicket(task.id, url.trim()).finally(() => setBusy(false))
+    if ('error' in r) return setError(r.error)
+    setEditing(false)
+  }
+  if (editing)
+    return (
+      <form className="ticketlink" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+        <input
+          autoFocus
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setError(null) }}
+          onBlur={() => !url.trim() && setEditing(false)}
+          placeholder="Jira or Linear ticket URL"
+          aria-label="Ticket URL"
+          aria-invalid={!!error}
+        />
+        {error && <span className="err small" role="alert">{error}</span>}
+      </form>
+    )
+  if (!task.tracker) return <button className="link small" title="Link a Jira or Linear ticket by its URL" onClick={edit}>Link ticket</button>
+  return (
+    <span className="ticketlink">
+      <TicketChip task={task} />
+      <span className="menu">
+        <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu} title="Ticket link" onClick={() => setMenu((m) => !m)}>⋯</button>
+        {menu && (
+          <>
+            <div className="menuscrim" onClick={() => setMenu(false)} />
+            <div className="menulist small" role="menu">
+              <button role="menuitem" onClick={edit}>Change link</button>
+              <button role="menuitem" onClick={() => { setMenu(false); void mag.unlinkTicket(task.id) }}>Unlink</button>
+            </div>
+          </>
+        )}
+      </span>
+    </span>
+  )
+}
+
 /** Moves a backlog or grooming task to todo; disabled, with the reason, while it has no steps. */
 export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
   const can = canMoveToTodo(task, tasks)

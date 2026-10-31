@@ -170,6 +170,16 @@ app.whenReady().then(async () => {
     }
   })
   handle('task:retryImport', (_, id: string) => tracker.retryImport(id))
+  // Same for a pasted link: the error is shown under the field.
+  handle('task:linkTicket', (_, id: string, url: string) => {
+    try {
+      tracker.link(id, url)
+      return { ok: true }
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
+  })
+  handle('task:unlinkTicket', (_, id: string) => void tracker.unlink(id))
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:regroomRemaining', (_, id: string) => orch.regroomRemaining(id))
