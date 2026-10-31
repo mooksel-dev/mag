@@ -47,7 +47,7 @@ export interface GraphLayout {
 
 export const FONT = 13
 export const LINE = 17
-const LABEL_FONT = 11
+export const LABEL_FONT = 11
 export const LABEL_LINE = 14
 const CHAR = 0.6 // average glyph width, in ems
 const PAD = { x: 14, y: 10 }
@@ -66,7 +66,7 @@ export function wrap(text: string, max: number): string[] {
   return lines
 }
 
-const textWidth = (lines: string[], font: number) => Math.max(...lines.map((l) => l.length)) * font * CHAR
+export const textWidth = (lines: string[], font: number) => Math.max(...lines.map((l) => l.length)) * font * CHAR
 
 /** Size of a node and its wrapped label. A diamond needs about twice the text box to hold it inside. */
 export function measureNode(n: GraphNode): { w: number; h: number; lines: string[] } {

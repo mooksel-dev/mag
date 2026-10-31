@@ -191,6 +191,64 @@ export function validateDiagram(d: Diagram): string[] {
   return errors
 }
 
+/** An activation bar on a lifeline: from the call at row `from` to its reply at row `to` (messages.length: never answered). */
+export interface Activation {
+  on: string
+  from: number
+  to: number
+  /** Nesting on the lifeline: 0 the outermost bar; a call into a busy participant stacks on top. */
+  depth: number
+  diff?: DiffMark
+}
+
+export interface SequenceActivations {
+  bars: Activation[]
+  /** Per message: the depth of the bar it leaves from and arrives at; -1 on a bare lifeline. */
+  ends: { from: number; to: number }[]
+}
+
+/**
+ * Activation bars of a sequence: a call opens a bar on its target, the reply closes it (and the calls opened after
+ * it, as validateDiagram allows). Replies are matched in the scenario before the change and after it, so a call
+ * swapped for another (del + add) ends at the shared reply; a call left open in either scenario runs to the end.
+ */
+export function sequenceActivations(d: SequenceDiagram): SequenceActivations {
+  const n = d.messages.length
+  const end = d.messages.map(() => -1)
+  for (const skip of ['del', 'add'] as const) {
+    const open: number[] = []
+    d.messages.forEach((m, i) => {
+      if (m.diff === skip) return
+      if (m.kind === 'call') open.push(i)
+      if (m.kind !== 'reply') return
+      let at = open.length - 1
+      while (at >= 0 && !(d.messages[open[at]].from === m.to && d.messages[open[at]].to === m.from)) at--
+      if (at >= 0) for (const c of open.splice(at)) end[c] = Math.max(end[c], i)
+    })
+    for (const c of open) end[c] = n
+  }
+
+  const bars: Activation[] = []
+  /** The depth of the deepest bar on `p` opened before row `i` and still open at it; `closing`: one closed at `i` counts. */
+  const deepest = (p: string, i: number, closing: boolean) =>
+    bars.filter((b) => b.on === p && b.from < i && (closing ? b.to >= i : b.to > i)).reduce((top, b) => Math.max(top, b.depth), -1)
+  const byMessage = new Map<number, Activation>()
+  d.messages.forEach((m, i) => {
+    if (m.kind !== 'call') return
+    const bar: Activation = { on: m.to, from: i, to: end[i], depth: deepest(m.to, i, false) + 1, diff: m.diff }
+    bars.push(bar)
+    byMessage.set(i, bar)
+  })
+
+  const ends = d.messages.map((m, i) => {
+    const from = deepest(m.from, i, true)
+    if (m.kind === 'call') return { from, to: byMessage.get(i)!.depth }
+    // A reply arrives at the caller's bar, not at one it closes (a self-reply closes its inner bar).
+    return { from, to: deepest(m.to, i, m.kind !== 'reply') }
+  })
+  return { bars, ends }
+}
+
 const zero = (): DiffCount => ({ add: 0, mod: 0, del: 0 })
 const count = (c: DiffCount, m: DiffMark | undefined) => m && c[m]++
 
