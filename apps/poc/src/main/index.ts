@@ -11,6 +11,7 @@ import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
+import { createTrackerService } from './core/services/tracker'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
@@ -113,6 +114,7 @@ app.whenReady().then(async () => {
   actions.cancel = (id, reason) => orch.cancel(id, reason)
   actions.completeStep = (id) => orch.completeStep(id)
   actions.regroomed = (id) => orch.regroomed(id)
+  const tracker = createTrackerService(store, { startImport: (id) => orch.importTicket(id) })
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -158,6 +160,14 @@ app.whenReady().then(async () => {
     const todo = canMoveToTodo(task, tasks)
     if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
     store.updateTask(id, { status: 'todo', needsInput: null, rank: nextPlanRank(tasks) })
+  })
+  // A ref that names no ticket, or one already imported, is an answer for the import field, not a failure to log.
+  handle('task:import', async (_, projectId: string, ref: string) => {
+    try {
+      return { taskId: (await tracker.import(projectId, ref)).id }
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
   })
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))

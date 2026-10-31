@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "test": "node --experimental-transform-types --no-warnings --test src/main/*.test.ts src/renderer/src/*.test.ts"
+    "test": "node --experimental-transform-types --no-warnings --test src/main/*.test.ts src/main/core/services/*/*.test.ts src/renderer/src/*.test.ts"
   },
   "dependencies": {
     "@mag/agents": "workspace:*",

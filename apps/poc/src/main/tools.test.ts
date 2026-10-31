@@ -108,3 +108,24 @@ test('set_pr writes to the step; a second live PR for a repo is an error', async
   assert.deepEqual(info.subtasks[0], { key: 'T-1.1', title: 'a', status: 'in_progress', startManually: false, prs: ['https://github.com/o/app/pull/1 (open)'], current: true })
   assert.equal(info.work.dir, '/nowhere/w')
 })
+
+test('tracker tools: get_import and set_brief for the tracker only; get_task shows the ticket', async () => {
+  const { store, project, tools } = setup()
+  const link = { integrationId: 'atl', kind: 'jira' as const, key: 'ABC-12', url: null, importedAt: null }
+  const task = store.createTask({ projectId: project.id, title: 'ABC-12', type: 'dev', description: '', tracker: link })
+  const tracker = store.createSession({ projectId: project.id, taskId: task.id, role: 'tracker', agent: 'claude-code', status: 'running' })
+  const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
+  const call = (name: string, args: Record<string, unknown> = {}, sessionId = tracker.id) => tools({ taskId: task.id, sessionId }, name, args)
+
+  assert.deepEqual(JSON.parse(await call('get_import')), { key: 'ABC-12', url: null, kind: 'jira', scope: 'ABC' })
+  await assert.rejects(call('update_doc', { markdown: 'x' }), /not available to the tracker agent/)
+  await assert.rejects(call('set_brief', { title: 'T', brief: 'B' }, groomer.id), /not available to the groomer agent/)
+  await assert.rejects(call('set_brief', { title: 'T', brief: ' ' }), /required/)
+  await assert.rejects(call('set_brief', { title: 'T', brief: 'B', url: 'javascript:alert(1)' }), /https/)
+
+  await call('set_brief', { title: ' Fix  login ', brief: '# Login\nbroken', url: 'https://acme.atlassian.net/browse/ABC-12' })
+  const t = store.task(task.id)
+  assert.deepEqual([t.title, t.description, t.tracker?.url], ['Fix login', '# Login\nbroken', 'https://acme.atlassian.net/browse/ABC-12'])
+  assert.ok(t.tracker?.importedAt)
+  assert.equal(JSON.parse(await call('get_task', {}, groomer.id)).tracker.key, 'ABC-12')
+})

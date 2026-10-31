@@ -566,7 +566,7 @@ function RepoStatus({ path }: { path: string }) {
   return <span className="muted small">{info.origin}</span>
 }
 
-const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect' }
+const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect', tracker: 'Tracker' }
 
 function AgentSettings({ project }: { project: Project }) {
   const agents = useAgents()

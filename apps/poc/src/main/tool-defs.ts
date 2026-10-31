@@ -1,5 +1,6 @@
 // Tools the MCP server exposes to agents. Schemas only; handlers live in tools.ts.
-// scope: 'task' = runs bound to a task (groomer, developer), 'project' = project chat and architect, 'any' = both.
+// scope: 'task' = runs bound to a task (groomer, developer, tracker), 'project' = project chat and architect, 'any' = both.
+// tracker: the tracker role sees only tools marked 'only' (its own) or 'also'; the other roles all but 'only'.
 export const TOOL_DEFS = [
   {
     name: 'get_task',
@@ -126,6 +127,29 @@ export const TOOL_DEFS = [
         repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Optional when the task has one repo.' },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'get_import',
+    scope: 'task',
+    tracker: 'only',
+    description: 'Tracker only: the ticket to import into this task: key, url (null when imported by key), kind (jira or linear) and scope (Jira project or Linear team key).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_brief',
+    scope: 'task',
+    tracker: 'only',
+    description:
+      'Tracker only: write what you read from the ticket into the task: its title and the brief (markdown) the groomer starts from. Call it once, at the end. Pass url when get_import had none.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: "The ticket's summary." },
+        brief: { type: 'string', description: 'Markdown brief: description, comments, attachments, subtasks, linked tickets and pages.' },
+        url: { type: 'string', description: "The ticket's web link; only when get_import returned url: null." },
+      },
+      required: ['title', 'brief'],
     },
   },
   {
@@ -295,6 +319,7 @@ export const TOOL_DEFS = [
   {
     name: 'approve_tool',
     scope: 'any',
+    tracker: 'also',
     description: 'Internal: mag uses this to ask the user before an integration call. Do not call it yourself.',
     inputSchema: {
       type: 'object',
@@ -308,4 +333,10 @@ export const TOOL_DEFS = [
 export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 
 export type ToolScope = 'task' | 'project' | 'any'
+
+/** Whether a run of `role` (undefined: unknown, as before roles were passed) gets the tool. */
+export function toolForRole(def: { name: string; tracker?: 'only' | 'also' }, role: string | undefined): boolean {
+  const tracker = 'tracker' in def ? def.tracker : undefined
+  return role === 'tracker' ? !!tracker : tracker !== 'only'
+}
 export type ToolName = (typeof TOOL_DEFS)[number]['name']

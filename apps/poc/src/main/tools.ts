@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
 import { changedRepos } from './git.ts'
+import { TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
   taskId?: string
@@ -62,6 +63,9 @@ export type ToolHandler = (ctx: ToolContext, name: string, args: Record<string, 
 
 export function createTools(store: Store, actions: ToolActions): ToolHandler {
   return async (ctx, name, args) => {
+    const role = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.role : undefined
+    const def = TOOL_DEFS.find((d) => d.name === name)
+    if (def && role && !toolForRole(def, role)) throw new Error(`${name} is not available to the ${role} agent`)
     const projectId = ctx.taskId ? store.task(ctx.taskId).projectId : (ctx.projectId ?? '')
     const shared = sharedTool(store, actions, store.project(projectId), ctx, name, args)
     if (shared !== undefined) return shared
@@ -123,6 +127,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
               repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, prUrl: r.prUrl, prState: r.prState })),
             },
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
+            tracker: task.tracker ?? undefined,
           },
           null,
           2,
@@ -248,6 +253,25 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         return review
           ? `PR recorded. Every changed repo has a PR: the user merges${step ? `, and ${step.key} is done once every PR is merged` : ''}; you will be resumed if they leave comments.`
           : `PR recorded for ${repoWorkName(next, target)}. Still without a PR: ${missing.join(', ') || 'none'}; open one per changed repo.`
+      }
+
+      case 'get_import': {
+        if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
+        // The scope is the key's prefix (see parseTrackerRef).
+        const { key, url, kind } = task.tracker
+        return JSON.stringify({ key, url, kind, scope: key.slice(0, key.lastIndexOf('-')) }, null, 2)
+      }
+
+      case 'set_brief': {
+        const link = task.tracker
+        if (!link) throw new Error(`${task.key} is not linked to a ticket`)
+        const title = String(args.title ?? '').replace(/\s+/g, ' ').trim()
+        const brief = String(args.brief ?? '').trim()
+        if (!title || !brief) throw new Error('title and brief are required')
+        const url = typeof args.url === 'string' && args.url.trim() ? args.url.trim() : null
+        if (url && !/^https:\/\/\S+$/.test(url)) throw new Error('url must be an https link')
+        store.updateTask(task.id, { title, description: brief, tracker: { ...link, url: link.url ?? url, importedAt: Date.now() } })
+        return `Brief of ${task.key} written. Stop here.`
       }
 
       default:

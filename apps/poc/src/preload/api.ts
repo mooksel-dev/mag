@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TrackerLink } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -53,6 +53,8 @@ export interface NewTask {
   status?: TaskStatus
   /** Steps: wait for the user's Start (see Task.startManually). */
   startManually?: boolean
+  /** Top-level tasks: the ticket it is imported from. */
+  tracker?: TrackerLink
 }
 
 /** A kind of pop-out window; each kind remembers its own size and position. */
@@ -91,6 +93,11 @@ export interface MagApi {
   startStep(taskId: string): Promise<void>
   /** Re-groom the steps not done yet of a task in progress (no agent running); done steps are locked. */
   regroomRemaining(taskId: string): Promise<void>
+  /**
+   * Import a tracker ticket by URL or key into a new backlog task; the tracker agent writes its brief in the background.
+   * An unknown ref or a ticket already imported comes back as `error`.
+   */
+  importTicket(projectId: string, ref: string): Promise<{ taskId: string } | { error: string }>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */

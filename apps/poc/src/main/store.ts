@@ -85,6 +85,7 @@ export class Store {
       p.archRun ??= null
       p.agents ??= {}
       p.integrations ??= {}
+      p.trackers ??= []
       if (p.archRun?.status === 'running') p.archRun.status = 'error'
     }
     for (const t of this.data.tasks) {
@@ -334,7 +335,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, trackers: [], createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
@@ -380,6 +381,7 @@ export class Store {
       needsInput: null,
       work: null,
       ...(parent && { startManually: n.startManually ?? false }),
+      ...(!parent && n.tracker && { tracker: n.tracker }),
       nextSubNo: 1,
       archivedAt: null,
       createdAt: now,
