@@ -224,11 +224,10 @@ button.pill.ticket { cursor: pointer; }
 .archsummary p { flex: 1; min-width: 0; margin: 0; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .archsummary.open p { display: block; }
 .archsummary button.link { flex: none; padding: 0; }
-.archtabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
-.archtabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); }
-.archtabs button.on { border-bottom-color: var(--accent); color: var(--text); font-weight: 500; }
+.archcrumbs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.archcrumbs button.link { padding: 0; }
+.archcrumbs button.link:disabled { color: var(--text); font-weight: 600; opacity: 1; cursor: default; }
 .archlegend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin: 10px 0 14px; }
-.archkind { color: var(--text); font-weight: 500; }
 .archlegend .sw { display: inline-block; width: 18px; vertical-align: middle; border-top: 2px solid var(--arch-error); margin-right: 4px; }
 .archlegend .sw.warning { border-top: 2px dashed var(--arch-warning); }
 .archbody { display: flex; gap: 20px; align-items: flex-start; }
@@ -237,13 +236,19 @@ button.pill.ticket { cursor: pointer; }
 .archlanehead { font-weight: 600; font-size: 13px; }
 .archlanehead .small { font-weight: 400; margin-top: 2px; }
 .archboxes { display: flex; flex-wrap: wrap; gap: 18px 16px; align-items: flex-start; }
-.archbox { position: relative; width: 190px; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 9px 12px; border-radius: 8px; transition: opacity .12s; }
+.archbox { position: relative; width: 190px; border: 1px solid; cursor: pointer; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 9px 12px; border-radius: 8px; transition: opacity .12s; }
 .archbox .name { font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .archbox .desc { font-size: 11px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .archbox.layer-app { background: var(--arch-app-bg); border-color: var(--arch-app-line); color: var(--arch-app-fg); }
 .archbox.layer-service { background: var(--arch-service-bg); border-color: var(--arch-service-line); color: var(--arch-service-fg); }
 .archbox.layer-client { background: var(--arch-client-bg); border-color: var(--arch-client-line); color: var(--arch-client-fg); }
 .archbox.layer-lib { background: var(--arch-lib-bg); border-color: var(--arch-lib-line); color: var(--arch-lib-fg); }
+.archbox.nolayer { background: var(--surface); border-color: var(--line); color: var(--text); }
+.archbox.nested { box-shadow: 3px 3px 0 -1px var(--arch-lane), 3px 3px 0 0 currentColor; }
+.archbox.port { border-style: dashed; background: none; }
+.archbox .inside { display: flex; gap: 8px; align-items: baseline; font-size: 11px; font-weight: 500; }
+.archbox .inside .link { padding: 0; font-size: 11px; }
+.archlane.ports { background: none; border: 1px dashed var(--line); }
 .archbox.on { box-shadow: 0 0 0 2px var(--text); }
 .archbox.dim { opacity: .3; }
 .archbox .flag { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; background: var(--arch-error); color: #fff; font-size: 11px; font-weight: 700; }
@@ -254,6 +259,15 @@ button.pill.ticket { cursor: pointer; }
 .archarrows marker path { stroke: none; fill: var(--arch-edge); }
 .archarrows marker path.error { stroke: none; fill: var(--arch-error); }
 .archarrows marker path.warning { stroke: none; fill: var(--arch-warning); }
+.archbadges { position: absolute; inset: 0; pointer-events: none; }
+.archbadge { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--arch-edge); font-size: 11px; font-weight: 600; cursor: default; }
+.archbadge.error { border-color: var(--arch-error); }
+.archbadge.warning { border-color: var(--arch-warning); }
+.archbadge .calls { display: none; position: absolute; z-index: 5; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 4px 14px rgba(0, 0, 0, .12); white-space: nowrap; font-weight: 400; text-align: left; }
+.archbadge:hover .calls { display: flex; }
+.archcalls { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.archcalls li { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
+.archcalls code, .archbadge code { font-size: 12px; }
 .archside { position: sticky; top: 0; width: 300px; flex: none; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); max-height: calc(100vh - 140px); overflow: auto; }
 .archside .close { float: right; width: 26px; height: 26px; font-size: 13px; border: none; background: none; color: var(--muted); }
 .archside .close:hover { color: var(--text); }

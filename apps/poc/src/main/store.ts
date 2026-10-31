@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type ChatItem, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -55,6 +55,40 @@ const EVENTS_PER_PROJECT = 300
 
 const id = () => randomUUID().slice(0, 8)
 
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'app'
+
+type LegacyArch = { summary: string; apps: { name: string; path?: string; kind?: string; nodes: (Omit<ArchNode, 'uses'> & { uses: string[] })[] }[]; updatedAt: number }
+
+/**
+ * Apps of an architecture before T-27 become top-level modules with their nodes as children; `uses: string[]` become
+ * `{ to, calls: [] }`. Node ids were unique per app only, so a repeated id gets its app's id as a prefix.
+ */
+export function migrateArch(a: ArchDiagram | LegacyArch | null | undefined): ArchDiagram | null {
+  if (!a) return null
+  if (!('apps' in a)) return a
+  const taken = new Set<string>()
+  const unique = (want: string) => {
+    let s = want
+    for (let i = 2; taken.has(s); i++) s = `${want}-${i}`
+    taken.add(s)
+    return s
+  }
+  const modules = a.apps.map((app): ArchNode => {
+    const appId = unique(slug(app.name))
+    const ids = new Map(app.nodes.map((n) => [n.id, taken.has(n.id) ? unique(`${appId}-${n.id}`) : unique(n.id)]))
+    return {
+      id: appId,
+      name: app.name,
+      ...(app.kind ? { kind: app.kind } : {}),
+      ...(app.path ? { path: app.path } : {}),
+      description: '',
+      uses: [],
+      children: app.nodes.map((n) => ({ ...n, id: ids.get(n.id)!, uses: n.uses.filter((u) => ids.has(u)).map((u) => ({ to: ids.get(u)!, calls: [] })) })),
+    }
+  })
+  return { summary: a.summary, modules, updatedAt: a.updatedAt }
+}
+
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
   data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
@@ -81,7 +115,7 @@ export class Store {
       delete (p.templates as Record<string, string>).story
       p.baseBranch ??= 'main'
       p.enforceArchitecture ??= false
-      p.architecture ??= null
+      p.architecture = migrateArch(p.architecture)
       p.archRun ??= null
       p.agents ??= {}
       p.integrations ??= {}

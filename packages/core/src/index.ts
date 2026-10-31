@@ -1,6 +1,10 @@
 // Domain model shared by every mag app (PoC, desktop, web, backend).
 // Keep it free of runtime dependencies.
 
+import type { ArchDiagram } from './arch.ts'
+
+export * from './arch.ts'
+
 export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
 /**
@@ -128,55 +132,12 @@ export function projectColor(p: Pick<Project, 'id' | 'color'>): string {
   return PROJECT_COLORS[h % PROJECT_COLORS.length]
 }
 
-export type ArchLayer = 'app' | 'service' | 'client' | 'lib'
-
-export interface ArchNode {
-  /** Stable id, unique within its app (kebab-case). */
-  id: string
-  name: string
-  layer: ArchLayer
-  /** Folder or file, relative to the repo. */
-  path?: string
-  /** One or two sentences: what it is responsible for. */
-  description: string
-  /** Public interface lines, e.g. "chargePlan(userId, plan): Charge  - charges and records the plan". */
-  interface?: string[]
-  /** Ids of nodes in the same app this one depends on. */
-  uses: string[]
-  /** Anything that breaks the layering or smells, in one line. */
-  concern?: string
-}
-
-export interface ArchApp {
-  name: string
-  path?: string
-  /** e.g. "Electron app", "React web", "HTTP API", "worker". */
-  kind?: string
-  nodes: ArchNode[]
-}
-
-export interface ArchDiagram {
-  summary: string
-  apps: ArchApp[]
-  updatedAt: number
-}
-
 export interface ArchRun {
   status: 'running' | 'done' | 'error'
   startedAt: number
   /** Last thing the architect said or did, for the progress line. */
   note?: string
   costUsd?: number
-}
-
-/** Layering rules of the mag pattern. null = allowed. */
-export function layerRule(from: ArchLayer, to: ArchLayer): { severity: 'error' | 'warning'; rule: string } | null {
-  if (from === 'service' && to === 'service') return { severity: 'error', rule: 'Services must not use other services' }
-  if (from === 'client' && (to === 'client' || to === 'service')) return { severity: 'error', rule: `Clients must not use ${to}s` }
-  if (from === 'lib' && (to === 'client' || to === 'service')) return { severity: 'error', rule: `Lib must not use ${to}s` }
-  if (from !== 'app' && to === 'app') return { severity: 'error', rule: 'Core layers must not depend on the app layer' }
-  if (from === 'app' && to === 'client') return { severity: 'warning', rule: 'App layer uses a client directly; go through a service' }
-  return null
 }
 
 export type PrState = 'open' | 'merged' | 'closed'

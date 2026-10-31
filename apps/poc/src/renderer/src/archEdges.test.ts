@@ -17,6 +17,7 @@ const boxes = new Map<string, Box>([
 test('a downward arrow leaves the bottom of the source and enters the top of the target', () => {
   const [r] = routeEdges([{ from: 'ui', to: 'svc' }], boxes)
   assert.deepEqual(ends(r.d), { sx: 100, sy: 60, tx: 100, ty: 120 })
+  assert.deepEqual(r.mid, { x: 100, y: 90 })
 })
 
 test('an upward arrow leaves the top and enters the bottom', () => {
@@ -24,11 +25,26 @@ test('an upward arrow leaves the top and enters the bottom', () => {
   assert.deepEqual(ends(r.d), { sx: 100, sy: 120, tx: 100, ty: 60 })
 })
 
-test('boxes on the same row are linked bottom to bottom', () => {
+test('neighbours on one row are linked side to side by a straight arrow', () => {
   const [r] = routeEdges([{ from: 'svc', to: 'svc2' }], boxes)
+  assert.equal(r.d, 'M 200 150 L 220 150')
+  assert.deepEqual(r.mid, { x: 210, y: 150 })
+  const [back] = routeEdges([{ from: 'svc2', to: 'svc' }], boxes)
+  assert.equal(back.d, 'M 220 150 L 200 150')
+})
+
+test('arrows both ways between neighbours keep apart', () => {
+  const rs = routeEdges([{ from: 'svc', to: 'svc2' }, { from: 'svc2', to: 'svc' }], boxes)
+  assert.deepEqual(rs.map((r) => r.d), ['M 200 144 L 220 144', 'M 220 156 L 200 156'])
+})
+
+test('boxes on the same row with one between are linked bottom to bottom', () => {
+  const row = new Map(boxes).set('svc3', { x: 440, y: 120, w: 200, h: 60 })
+  const [r] = routeEdges([{ from: 'svc', to: 'svc3' }], row)
   const e = ends(r.d)
   assert.equal(e.sy, 180)
   assert.equal(e.ty, 180)
+  assert.equal(r.mid.y, 207)
 })
 
 test('several arrows into one box get separate entry points, ordered by their source', () => {

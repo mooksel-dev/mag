@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, findRepoWork, isLegacy, nextPlanRank, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, type ArchApp, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, findRepoWork, isLegacy, nextPlanRank, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, todoTasks, walkArch, type ArchNode, type ArchUse, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -280,18 +280,42 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
   }
 }
 
+/**
+ * Records the module tree. Ids must be unique in the whole tree; uses of unknown ids or of the module itself are
+ * dropped, repeats of one target merged. A plain string in `uses` counts as `{ to, calls: [] }`.
+ */
 function setArchitecture(store: Store, projectId: string, args: Record<string, unknown>) {
-  const apps = Array.isArray(args.apps) ? (args.apps as ArchApp[]) : null
-  if (!apps?.length) throw new Error('apps is required')
-  for (const app of apps) {
-    const ids = new Set(app.nodes.map((n) => n.id))
-    for (const n of app.nodes) n.uses = (n.uses ?? []).filter((u) => ids.has(u) && u !== n.id)
-  }
-  store.updateProject(projectId, {
-    architecture: { summary: String(args.summary ?? ''), apps, updatedAt: Date.now() },
+  const modules = Array.isArray(args.modules) ? (args.modules as ArchNode[]) : null
+  if (!modules?.length) throw new Error('modules is required')
+  const ids = new Set<string>()
+  const dupes = new Set<string>()
+  walkArch(modules, (n) => {
+    if (typeof n.id !== 'string' || !n.id) throw new Error(`Module "${n.name ?? '?'}" has no id`)
+    if (ids.has(n.id)) dupes.add(n.id)
+    ids.add(n.id)
   })
-  const nodes = apps.reduce((n, a) => n + a.nodes.length, 0)
-  return `Recorded ${apps.length} app(s), ${nodes} node(s).`
+  if (dupes.size) throw new Error(`Ids must be unique in the whole tree; repeated: ${[...dupes].join(', ')}`)
+  let dropped = 0
+  walkArch(modules, (n) => {
+    const uses = (Array.isArray(n.uses) ? n.uses : []).map((u: ArchUse | string) =>
+      typeof u === 'string' ? { to: u, calls: [] } : { to: u.to, calls: Array.isArray(u.calls) ? u.calls.map(String) : [] },
+    )
+    const kept = uses.filter((u) => ids.has(u.to) && u.to !== n.id)
+    dropped += uses.length - kept.length
+    // One use per target, with the calls of all its repeats.
+    const byTo = new Map<string, ArchUse>()
+    for (const u of kept) {
+      const seen = byTo.get(u.to)
+      if (seen) seen.calls.push(...u.calls.filter((c) => !seen.calls.includes(c)))
+      else byTo.set(u.to, u)
+    }
+    n.uses = [...byTo.values()]
+    if (n.children && !n.children.length) delete n.children
+  })
+  store.updateProject(projectId, {
+    architecture: { summary: String(args.summary ?? ''), modules, updatedAt: Date.now() },
+  })
+  return `Recorded ${ids.size} module(s), ${modules.length} on the top level.${dropped ? ` Dropped ${dropped} use(s) of unknown ids or of the module itself.` : ''}`
 }
 
 /** Tools that work in task runs and project chats alike. Returns undefined when `name` is not one of them. */

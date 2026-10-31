@@ -140,3 +140,31 @@ test('T-28 migration: steps for todo and in-progress tasks, legacy tasks untouch
   const again = new Store(file)
   assert.equal(again.data.tasks.filter((t) => t.parentId === 'T-1').length, 0)
 })
+
+test('T-27 migration: apps become top-level modules, uses get calls, repeated ids get the app prefix', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const node = (id: string, uses: string[]) => ({ id, name: id, layer: 'service', description: 'd', uses })
+  const architecture = {
+    summary: 's',
+    updatedAt: 7,
+    apps: [
+      { name: 'Desktop App', kind: 'Electron app', nodes: [node('store', []), node('tasks', ['store', 'gone'])] },
+      { name: 'Web', nodes: [node('store', []), node('ui', ['store'])] },
+    ],
+  }
+  const project = { id: 'p', name: 'p', repos: [], notes: '', templates: {}, nextTaskNo: 1, architecture }
+  writeFileSync(file, JSON.stringify({ projects: [project, { ...project, id: 'q', architecture: null }], tasks: [], sessions: [], canvases: {} }))
+  const store = new Store(file)
+  const arch = store.project('p').architecture!
+  assert.deepEqual(
+    arch.modules.map((m) => ({ id: m.id, kind: m.kind, children: m.children!.map((c) => [c.id, c.uses]) })),
+    [
+      { id: 'desktop-app', kind: 'Electron app', children: [['store', []], ['tasks', [{ to: 'store', calls: [] }]]] },
+      { id: 'web', kind: undefined, children: [['web-store', []], ['ui', [{ to: 'web-store', calls: [] }]]] },
+    ],
+  )
+  assert.equal(arch.summary, 's')
+  assert.equal(arch.updatedAt, 7)
+  assert.equal(store.project('q').architecture, null)
+  assert.deepEqual(new Store(file).project('p').architecture, arch)
+})
