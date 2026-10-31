@@ -55,6 +55,25 @@ test('create_task with plan: true needs steps', async () => {
   assert.deepEqual(store.data.tasks.filter((t) => t.parentId === x.id).map((t) => [t.title, t.startManually]), [['One', false], ['Two', true]])
 })
 
+test('create_task ticket_url and link_ticket: one ticket, one task', async () => {
+  const { store, project, tools } = setup()
+  store.updateProject(project.id, { trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'ABC' }] })
+  const ctx = { projectId: project.id }
+  assert.equal(await tools(ctx, 'create_task', { title: 'X', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/abc-12' }), 'Created T-2 in the backlog.')
+  const x = store.data.tasks.find((t) => t.key === 'T-2')!
+  assert.deepEqual(x.tracker, { integrationId: 'atl', kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
+  const count = store.data.tasks.length
+  await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
+  await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'ABC-13' }), /Not a Jira or Linear ticket link/)
+  assert.equal(store.data.tasks.length, count, 'nothing created')
+
+  assert.equal(await tools(ctx, 'link_ticket', { key: 't-1', url: 'https://linear.app/acme/issue/ENG-7/slug' }), 'Linked T-1 to ENG-7.')
+  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-1')!.tracker, { integrationId: null, kind: 'linear', key: 'ENG-7', url: 'https://linear.app/acme/issue/ENG-7', importedAt: null })
+  await assert.rejects(tools(ctx, 'link_ticket', { key: 'T-1', url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
+  const step = store.createTask({ projectId: project.id, parentId: x.id, title: 's', type: 'dev', description: '' })
+  await assert.rejects(tools(ctx, 'link_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; link its task T-2 instead/)
+})
+
 test('remaining mode: done steps locked, the current one renamed only, todo ones free', async () => {
   const { store, task, call, calls } = setup()
   for (const title of ['a', 'b', 'c', 'd']) await call('create_subtask', { title })
@@ -153,4 +172,31 @@ test('set_architecture records a module tree, drops unknown and self uses, rejec
   assert.equal(tasks.children, undefined)
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { children: [mod('a')] })] }), /repeated: a/)
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', apps: [] }), /modules is required/)
+})
+
+test('show_diagram validates, saves a diagram canvas and lists it in get_task and get_diagrams', async () => {
+  const { store, task, call } = setup()
+  const diagram = { type: 'component', modules: [{ id: 'tasks', name: 'Tasks', interface: ['list()', { text: 'groom(id)', diff: 'add' }], uses: ['queue'] }, { id: 'queue', name: 'Queue', diff: 'add' }] }
+  await assert.rejects(call('show_diagram', { title: 'Bad', diagram: { type: 'component', modules: [{ id: 'a', name: 'A', uses: ['nope'] }] } }), /Not saved[\s\S]*uses "nope": no such module/)
+  assert.equal(Object.keys(store.data.canvases).length, 0)
+  assert.equal(await call('get_diagrams'), 'This task has no diagrams.')
+
+  const out = await call('show_diagram', { title: 'Queue', diagram })
+  const [c] = Object.values(store.data.canvases)
+  assert.equal(out, `Diagram ${c.id} (v1): +2 ~1 −0. Link it as [Queue](canvas:${c.id}), a node as canvas:${c.id}#<node-id>.`)
+  assert.deepEqual([c.kind, c.taskId, c.html], ['diagram', task.id, undefined])
+  assert.deepEqual(c.diagram!.type === 'component' && c.diagram!.modules[0].uses, [{ to: 'queue', calls: [] }])
+  assert.equal(store.data.sessions[0].items.at(-1)?.kind, 'canvas')
+
+  assert.deepEqual(JSON.parse(await call('get_task')).diagrams, [{ id: c.id, type: 'component', title: 'Queue', changes: '+2 ~1 −0' }])
+  assert.equal(JSON.parse(await call('get_diagrams'))[0].diagram.modules[1].id, 'queue')
+
+  await call('show_diagram', { id: c.id, title: 'Queue v2', diagram: { type: 'state', entity: 'Job', states: [{ id: 'a' }], transitions: [] } })
+  assert.deepEqual([store.data.canvases[c.id].version, store.data.canvases[c.id].diagram!.type], [2, 'state'])
+  // An HTML canvas is not revised as a diagram, nor the other way round; neither is listed as a diagram.
+  await call('show_canvas', { title: 'Mock', html: '<p>hi</p>' })
+  const html = Object.values(store.data.canvases).find((x) => x.kind === 'html')!
+  await assert.rejects(call('show_diagram', { id: html.id, title: 'X', diagram }), /is HTML: revise it with show_canvas/)
+  await assert.rejects(call('show_canvas', { id: c.id, title: 'X', html: '<p/>' }), /is a diagram: revise it with show_diagram/)
+  assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
 })

@@ -123,9 +123,16 @@ test('inbox: agent_failed only from the latest groomer/developer session', () =>
 })
 
 test('inbox: a failed import is agent_failed until a later groomer runs', () => {
-  const t = task('t', 'backlog')
+  const t: Task = { ...task('t', 'backlog'), tracker: { integrationId: 'atl', kind: 'jira', key: 'ABC-1', url: null, importedAt: null } }
   assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error')]).map((i) => [i.kind, i.text]), [['agent_failed', 'Import failed']])
   assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error'), session('t', 'groomer', 'idle')]), [])
+})
+
+test('inbox: a failed import is moot once unlinked or linked without an integration', () => {
+  const t = task('t', 'backlog')
+  const plain: Task = { ...t, tracker: { integrationId: null, kind: 'jira', key: 'ABC-1', url: 'https://x.atlassian.net/browse/ABC-1', importedAt: null } }
+  assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error')]), [])
+  assert.deepEqual(inbox('p', [plain], [session('t', 'tracker', 'error')]), [])
 })
 
 test('inbox: pending approvals from task sessions and chats come first, one per item', () => {

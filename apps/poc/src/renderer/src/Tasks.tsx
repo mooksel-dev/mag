@@ -25,7 +25,8 @@ import {
   type TaskType,
   type TasksView,
 } from '@mag/core'
-import { ago, prLabel } from './format'
+import { ago } from './format'
+import { PrPills, TicketPill } from './LinkPill'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -66,34 +67,57 @@ export function SubtaskIcon({ status }: { status: TaskStatus }) {
   return <span className={`subicon sub-${s}`} title={STATUS_LABELS[s]} aria-label={STATUS_LABELS[s]}>{SUBTASK_ICONS[s] ?? '○'}</span>
 }
 
-/** A step's PRs as small badges that open the PR: its number and state. */
-export function PrBadges({ task }: { task: Task }) {
+/**
+ * The task header's ticket: its pill with a ⋯ menu (Change link, Unlink), or a quiet "Link ticket" without one. Both
+ * open a URL field: Enter links, Esc cancels, an unknown URL or a ticket linked elsewhere shows under it.
+ */
+export function TicketLink({ task }: { task: Task }) {
+  const [editing, setEditing] = useState(false)
+  const [menu, setMenu] = useState(false)
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const edit = () => { setUrl(task.tracker?.url ?? ''); setError(null); setMenu(false); setEditing(true) }
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!url.trim() || busy) return
+    setBusy(true)
+    const r = await mag.linkTicket(task.id, url.trim()).finally(() => setBusy(false))
+    if ('error' in r) return setError(r.error)
+    setEditing(false)
+  }
+  if (editing)
+    return (
+      <form className="ticketlink" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+        <input
+          autoFocus
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setError(null) }}
+          onBlur={() => !url.trim() && setEditing(false)}
+          placeholder="Jira or Linear ticket URL"
+          aria-label="Ticket URL"
+          aria-invalid={!!error}
+        />
+        {error && <span className="err small" role="alert">{error}</span>}
+      </form>
+    )
+  if (!task.tracker) return <button className="link small" title="Link a Jira or Linear ticket by its URL" onClick={edit}>Link ticket</button>
   return (
-    <>
-      {taskPrs(task).map((r) => (
-        <button
-          key={r.prUrl}
-          className={`pill prbadge ${r.prState === 'merged' ? 'violet' : r.prState === 'open' ? 'green' : ''}`}
-          title={`${r.prUrl} (${r.prState ?? 'unknown'})`}
-          onClick={(e) => { e.stopPropagation(); void mag.open(r.prUrl!) }}
-        >
-          {prLabel(r.prUrl!)}{r.prState && r.prState !== 'open' ? ` · ${r.prState}` : ''}
-        </button>
-      ))}
-    </>
-  )
-}
-
-/** The tracker ticket a task was imported from (T-10): its key; opens the ticket when its link is known. */
-export function TicketChip({ task }: { task: Task }) {
-  const t = task.tracker
-  if (!t) return null
-  const kind = t.kind === 'jira' ? 'Jira' : 'Linear'
-  if (!t.url) return <span className="pill ticket" title={`${kind} ticket ${t.key}; its link is not known yet`}>{t.key}</span>
-  return (
-    <button className="pill ticket" title={`Open ${t.key} in ${kind}: ${t.url}`} onClick={(e) => { e.stopPropagation(); void mag.open(t.url!) }}>
-      {t.key} ↗
-    </button>
+    <span className="ticketlink">
+      <TicketPill task={task} />
+      <span className="menu">
+        <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu} title="Ticket link" onClick={() => setMenu((m) => !m)}>⋯</button>
+        {menu && (
+          <>
+            <div className="menuscrim" onClick={() => setMenu(false)} />
+            <div className="menulist small" role="menu">
+              <button role="menuitem" onClick={edit}>Change link</button>
+              <button role="menuitem" onClick={() => { setMenu(false); void mag.unlinkTicket(task.id) }}>Unlink</button>
+            </div>
+          </>
+        )}
+      </span>
+    </span>
   )
 }
 
@@ -305,9 +329,9 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
           {order !== undefined && <span className="ordno muted small">{order}</span>}
           <span className="key">{task.key}</span>
           <span className="title grow">{task.title}</span>
-          <TicketChip task={task} />
+          <TicketPill task={task} compact />
           <AgentDot state={agentState(task, sessions, tasks)} now={now} />
-          {prs.length > 0 && <span className="pill green" title={prs.map((r) => r.prUrl).join('\n')}>PR open</span>}
+          <PrPills prs={prs} />
           {extra}
           {progress.total > 0 && <span className="muted small" title="Subtasks done">{progress.done}/{progress.total}</span>}
           <span className="type">{task.type}</span>
@@ -323,7 +347,7 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
               <span className="key">{s.key}</span>
               <span className="grow">{s.title}</span>
               {s.startManually && <span className="muted small" title="Waits for your Start">start manually</span>}
-              <PrBadges task={s} />
+              <PrPills prs={taskPrs(s)} />
             </div>
           ))}
         </div>
@@ -384,24 +408,21 @@ function ArchiveView({ tasks, sessions, now, onOpen }: RowProps) {
       </div>
       {list.length ? (
         <div className="tree">
-          {list.map((t) => {
-            const pr = taskPrs(t, tasks)[0]?.prUrl
-            return (
-              <TaskRow
-                key={t.id}
-                task={t}
-                tasks={tasks}
-                sessions={sessions}
-                now={now}
-                onOpen={onOpen}
-                extra={
-                  t.status === 'canceled' ? (t.cancelReason && <span className="muted small reason" title={t.cancelReason}>{t.cancelReason}</span>)
-                  : pr && <span className="link small" role="link" onClick={(e) => { e.stopPropagation(); void mag.open(pr) }}>{prLabel(pr)}</span>
-                }
-                actions={<span className="rowactions"><button className="small" onClick={() => mag.restore(t.id)}>Restore</button></span>}
-              />
-            )
-          })}
+          {list.map((t) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              tasks={tasks}
+              sessions={sessions}
+              now={now}
+              onOpen={onOpen}
+              extra={
+                t.status === 'canceled' ? (t.cancelReason && <span className="muted small reason" title={t.cancelReason}>{t.cancelReason}</span>)
+                : <PrPills prs={taskPrs(t, tasks)} />
+              }
+              actions={<span className="rowactions"><button className="small" onClick={() => mag.restore(t.id)}>Restore</button></span>}
+            />
+          ))}
         </div>
       ) : (
         <p className="muted">{query || filter !== 'all' ? 'No archived tasks match.' : 'The archive is empty.'}</p>

@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import type { Project } from '@mag/core'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { archToDNodes, type Project } from '@mag/core'
 import { ComponentView } from './diagrams/Component'
 
 const mag = window.mag
@@ -9,6 +9,7 @@ export function Architecture({ project, inWindow = false }: { project: Project; 
   const arch = project.architecture
   const run = project.archRun
   const running = run?.status === 'running'
+  const modules = useMemo(() => (arch ? archToDNodes(arch.modules) : []), [arch])
 
   const start = () => mag.runArchitect(project.id).catch((e: Error) => alert(e.message))
 
@@ -42,7 +43,7 @@ export function Architecture({ project, inWindow = false }: { project: Project; 
       {arch && (
         <>
           <Summary text={arch.summary} />
-          <ComponentView key={project.id} modules={arch.modules} />
+          <ComponentView key={project.id} modules={modules} />
         </>
       )}
     </section>

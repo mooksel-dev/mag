@@ -66,9 +66,9 @@ export interface PrStatus {
 /** Agents prefix their GitHub comments with this so we don't react to ourselves. */
 export const AGENT_MARK = '[mag]'
 
-export async function prState(url: string): Promise<PrStatus['state']> {
-  const view = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'state']))
-  return view.state
+export async function prState(url: string): Promise<{ state: PrStatus['state']; draft: boolean }> {
+  const view = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'state,isDraft']))
+  return { state: view.state, draft: !!view.isDraft }
 }
 
 export async function prFeedback(url: string): Promise<PrFeedback[]> {

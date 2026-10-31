@@ -7,7 +7,7 @@ export interface AppState {
   sessions: AgentSession[]
   /** Agent-written markdown document per task id. */
   docs: Record<string, string>
-  /** Canvas metadata; fetch the HTML with getCanvas. */
+  /** Canvas metadata and diagram data; fetch the HTML with getCanvas. */
   canvases: Omit<Canvas, 'html'>[]
   /** Project activity log, oldest first. */
   events: ProjectEvent[]
@@ -100,6 +100,13 @@ export interface MagApi {
   importTicket(projectId: string, ref: string): Promise<{ taskId: string } | { error: string }>
   /** Run the tracker agent's import again on a linked task (no agent running), e.g. after it failed. */
   retryImport(taskId: string): Promise<void>
+  /**
+   * Link a top-level task to the Jira or Linear ticket a URL names (replacing its link), no import and no settings.
+   * A URL that names no ticket, or a ticket linked to another task, comes back as `error`.
+   */
+  linkTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
+  /** Drop the task's ticket link. */
+  unlinkTicket(taskId: string): Promise<void>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */
@@ -114,7 +121,8 @@ export interface MagApi {
   send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
   /** New project chat; returns its session id. */
   newChat(projectId: string): Promise<string>
-  getCanvas(id: string): Promise<string | null>
+  /** A canvas's content: the HTML page or the diagram. */
+  getCanvas(id: string): Promise<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null>
   /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */
   saveAttachment(f: { name: string; bytes?: Uint8Array; path?: string }): Promise<Attachment>
   /** Absolute path of a dropped File, if it has one. */

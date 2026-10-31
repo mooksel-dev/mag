@@ -40,12 +40,14 @@ import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { Architecture } from './Architecture'
 import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
+import { DiffTab, diagramsOf } from './DiffTab'
 import { prLabel } from './format'
+import { PrPill, PrPills } from './LinkPill'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, PrBadges, StatusPill, SubtaskIcon, TasksPage, TicketChip, useNow, type NewTaskFocus } from './Tasks'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
 import { scopeKey, scopeWarning } from './trackers'
 import { useTheme, type ThemeMode } from './useTheme'
 
@@ -196,7 +198,7 @@ function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeM
   )
 }
 
-type TaskTab = 'document' | 'subtasks' | 'canvases' | 'work'
+type TaskTab = 'document' | 'subtasks' | 'diff' | 'canvases' | 'work'
 type ChatMode = 'task' | 'project'
 
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
@@ -230,10 +232,12 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   // The current step's session by default, else the latest one.
   const session = sessions.find((s) => s.id === sessionId) ?? (step && sessions.filter((s) => s.stepId === step.id).at(-1)) ?? sessions.at(-1) ?? null
   const doc = state.docs[task.id]
-  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tab lists the task's own.
+  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tabs list the task's own:
+  // Diff its diagrams, Canvases the HTML ones.
   const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === task.projectId), [state.canvases, task.projectId])
+  const diagrams = useMemo(() => diagramsOf(projectCanvases.filter((c) => c.taskId === task.id)), [projectCanvases, task.id])
   const canvases = useMemo(
-    () => projectCanvases.filter((c) => c.taskId === task.id).sort((a, b) => b.updatedAt - a.updatedAt),
+    () => projectCanvases.filter((c) => c.taskId === task.id && c.kind !== 'diagram').sort((a, b) => b.updatedAt - a.updatedAt),
     [projectCanvases, task.id],
   )
   const progress = subtaskProgress(task.id, tasks)
@@ -244,9 +248,9 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
   const canRegroomRemaining = !anyRunning && !legacy && task.status === 'in_progress'
-  // An import that ended without a brief (T-10); the inbox shows it as Import failed.
+  // An import that ended without a brief (T-10); the inbox shows it as Import failed. A plain link has nothing to import.
   const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
-  const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
+  const importFailed = !!task.tracker?.integrationId && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
   const view = taskView(task)
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
@@ -265,6 +269,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
     ...(stepMode && !singleStep ? [subtasksTab] : []),
     ['document', 'Document'],
     ...(legacy && children.length ? [subtasksTab] : []),
+    ['diff', `Diff · ${diagrams.length}`],
     ['canvases', `Canvases · ${canvases.length}`],
     ['work', 'Work'],
   ]
@@ -277,11 +282,11 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           <div className="taskrow">
             <button className="crumb" onClick={() => onNav(view)}>Tasks · {VIEW_NAMES[view]} ›</button>
             <span className="key">{task.key}</span>
-            <TicketChip task={task} />
+            <TicketLink task={task} />
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
-            {task.status === 'in_progress' && prs.length > 0 && <span className="pill green">PR open</span>}
+            {task.status === 'in_progress' && <PrPills prs={prs} />}
             {task.archivedAt && <span className="pill">archived</span>}
             <AgentDot state={agentState(task, sessions, tasks)} now={now} />
             <div className="grow" />
@@ -347,6 +352,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           {shownTab === 'document' &&
             (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
           {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} steps={stepMode} />}
+          {shownTab === 'diff' && <DiffTab diagrams={diagrams} />}
           {shownTab === 'canvases' &&
             (canvases.length ? (
               <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
@@ -479,7 +485,7 @@ function SubtaskRow({ sub, steps, canMove, onMove }: { sub: Task; steps: boolean
           </div>
           <span className="subextra">
             {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
-            {steps && <PrBadges task={sub} />}
+            {steps && <PrPills prs={taskPrs(sub)} />}
             {/* Sub-ticket of a tracker (T-10) goes here. */}
             {steps && <span className="subticket" />}
             {editable && <button className="link small" onClick={edit}>Edit</button>}
@@ -499,8 +505,7 @@ function RepoList({ work }: { work: TaskWork }) {
           <span className="reponame">{repoWorkName(work, r)}</span>
           <code className="grow">{r.branch}</code>
           <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
-          {r.prUrl ? <button className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl)}</button> : <span className="muted">no PR</span>}
-          {r.prState && <span className={`status ${r.prState === 'merged' ? 's-done' : r.prState === 'open' ? 's-in_progress' : ''}`}>{r.prState}</span>}
+          {r.prUrl ? <PrPill pr={r} /> : <span className="muted">no PR</span>}
           {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
         </div>
       ))}

@@ -50,6 +50,7 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   assert.equal(store.session('s').taskId, 'run')
   assert.equal(store.session('s').nativeSessionId, null)
   assert.equal(store.data.canvases.c.taskId, 'run')
+  assert.equal(store.data.canvases.c.kind, 'html', 'canvases before T-27 are HTML')
 
   // Idempotent: loading the migrated file again changes nothing.
   store.flush()
