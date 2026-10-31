@@ -497,9 +497,12 @@ export interface BackgroundTask {
   name: string
 }
 
-/** Sessions that run on a long-lived process: project chats on Claude Code (T-40). Others run a process per turn. */
+/**
+ * Sessions that run on a long-lived process (T-40): project chats, groomers and developers on Claude Code. Others
+ * (Codex, the tracker) run a process per turn.
+ */
 export function liveSession(s: Pick<AgentSession, 'role' | 'agent'>): boolean {
-  return s.role === 'chat' && s.agent === 'claude-code'
+  return s.agent === 'claude-code' && (s.role === 'chat' || s.role === 'groomer' || s.role === 'developer')
 }
 
 /** "1 background task · Monitor", "3 background tasks · Monitor ×2, Bash". */

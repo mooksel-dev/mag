@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentKind, AgentModel } from '@mag/core'
-import { claudeCode } from './claude-code'
-import { codex } from './codex'
+import { claudeCode } from './claude-code.ts'
+import { codex } from './codex.ts'
 
 export interface RunSpec {
   cwd: string
@@ -61,5 +61,5 @@ export const adapters: Record<AgentKind, AgentAdapter> = {
   codex,
 }
 
-export { buildArgs, buildLiveArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code'
-export { buildArgs as buildCodexArgs, codex, parseCodexLine } from './codex'
+export { buildArgs, buildLiveArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code.ts'
+export { buildArgs as buildCodexArgs, codex, parseCodexLine } from './codex.ts'
