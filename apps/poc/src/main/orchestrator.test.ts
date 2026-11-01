@@ -248,6 +248,18 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.match(spec.appendSystemPrompt ?? '', /ticket_url/)
 })
 
+test('groomer prompt: diagrams sketched per option before the checkpoint, plan per step and repo (T-54)', async () => {
+  const { orch, task } = setup()
+  orch.groom(task.id)
+  await tick()
+  const prompt = specs.at(-1)!.appendSystemPrompt!
+  assert.match(prompt, /Sketch every option that changes code with show_diagram/)
+  assert.match(prompt, /do not create steps before the user confirms/)
+  assert.doesNotMatch(prompt, /do not draw diagrams/)
+  assert.match(prompt, /revise its sketches by their ids \(never redraw copies\)/)
+  assert.match(prompt, /for every repository in\n   a step's repos, what changes there and links to the diagrams/)
+})
+
 test('renameChat: project topics only, a non-empty title, kept over the first message and the generated title', async () => {
   const { store, orch, project, task } = setup()
   const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
