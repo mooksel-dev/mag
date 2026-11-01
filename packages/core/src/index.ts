@@ -199,6 +199,8 @@ export interface RepoWork {
   prDraft?: boolean
   /** Last PR check problem, shown on the task; null when the last check worked. */
   checkError?: string | null
+  /** Head commit of the open PR at the last check: a new one asks for another agent review (T-55.1). */
+  prHead?: string | null
   /** Local mode (T-50): the step works in the repository's main checkout (worktree === repo), on its branch. */
   local?: boolean
   /** Local mode: the user's uncommitted files the step works on top of (their Ignore); never the agent's to commit. */
@@ -422,6 +424,73 @@ export function stepRollup(step: Pick<Task, 'work'>, changed: string[]): ReturnT
   return step.work ? prRollup(step.work, changed) : null
 }
 
+/** changes: back to the developer, without the user; merge: ready to merge; look: the user should check something. */
+export type ReviewVerdict = 'changes' | 'merge' | 'look'
+
+export const REVIEW_VERDICTS: ReviewVerdict[] = ['changes', 'merge', 'look']
+
+export interface ReviewFinding {
+  text: string
+  /** file:line, a module or a PR, when it applies. */
+  where?: string
+}
+
+/** The first review of a step's PRs, by an agent (T-55.1): a fork of the work's owner session, else a fresh reviewer. */
+export interface AgentReview {
+  verdict: ReviewVerdict
+  findings: ReviewFinding[]
+  /** Reviews in a row that asked for changes, this one included; 1 after a merge or look. */
+  round: number
+  /** The PR heads it covered: repository path → head commit. */
+  heads: Record<string, string>
+  /** By a fork of the owner session, which planned the work; false: a fresh reviewer that only read the doc. */
+  withContext: boolean
+  at: number
+}
+
+/** How many reviews in a row may send changes to the developer; after that the user decides. */
+export const DEFAULT_REVIEW_ROUNDS = 2
+
+/** Heads of a step's open PRs: repository path → head commit. Open PRs whose head is not known yet are left out. */
+export function prHeads(work: TaskWork | null): Record<string, string> {
+  return Object.fromEntries((work?.repos ?? []).flatMap((r) => (r.prUrl && r.prState === 'open' && r.prHead ? [[r.repo, r.prHead]] : [])))
+}
+
+function sameHeads(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k])
+}
+
+/** Whether the step's PRs at `heads` need an agent review: there are some and the last review did not cover them. */
+export function reviewDue(step: Pick<Task, 'review'>, heads: Record<string, string>): boolean {
+  return Object.keys(heads).length > 0 && !(step.review && sameHeads(step.review.heads, heads))
+}
+
+/** Whether the step's review covers its open PRs as they are now (see prHeads). */
+export function reviewCurrent(step: Pick<Task, 'review' | 'work'>): boolean {
+  return !!step.review && !reviewDue(step, prHeads(step.work))
+}
+
+/** The round of the next review: one more after changes, else a new run of rounds. */
+export function nextReviewRound(prev: AgentReview | null | undefined): number {
+  return prev?.verdict === 'changes' ? prev.round + 1 : 1
+}
+
+/** Where a review goes: changes go to the developer while the rounds last; everything else goes to the user. */
+export function reviewOutcome(review: Pick<AgentReview, 'verdict' | 'round'>, maxRounds = DEFAULT_REVIEW_ROUNDS): 'developer' | 'human' {
+  return review.verdict === 'changes' && review.round <= maxRounds ? 'developer' : 'human'
+}
+
+/** One line for the user about a review that came to them. */
+export function reviewText(review: AgentReview): string {
+  const who = review.withContext ? 'Owner' : 'Reviewer'
+  const first = review.findings[0]
+  const finding = first ? `: ${first.where ? `${first.where} — ` : ''}${first.text}${review.findings.length > 1 ? ` (+${review.findings.length - 1})` : ''}` : ''
+  if (review.verdict === 'merge') return `${who} review: can merge${finding}`
+  if (review.verdict === 'look') return `${who} review: look${finding}`
+  return `${who} review asks for changes${finding}`
+}
+
 export interface Task {
   id: string
   projectId: string
@@ -461,6 +530,13 @@ export interface Task {
   cancelReason?: string | null
   /** Top-level tasks imported from a tracker: the ticket (T-10). */
   tracker?: TrackerLink | null
+  /**
+   * Top-level tasks: the session where the work was discussed and planned (the chat topic that created it, or its
+   * groomer). Its fork reviews the steps' PRs first (T-55.1). Missing or gone: a fresh reviewer reads the doc.
+   */
+  ownerSessionId?: string | null
+  /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
+  review?: AgentReview | null
   createdAt: number
   updatedAt: number
 }
@@ -586,6 +662,8 @@ export interface AgentSession {
   agent: AgentKind
   /** The agent's own session id, used to resume. */
   nativeSessionId: string | null
+  /** Reviewer: the owner's native session its first run forks (T-55.1); later runs resume the fork. */
+  forkOf?: string | null
   /** Model the agent reported when its session started. */
   activeModel?: string
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
@@ -602,7 +680,7 @@ export interface AgentSession {
   runStartedAt?: number
 }
 
-export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval'
+export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review'
 
 /** One line of the project's activity log. */
 export interface ProjectEvent {
@@ -933,6 +1011,7 @@ export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]):
   const step = task.parentId || isLegacy(task) ? null : currentStep(task.id, tasks)
   if (step?.waitingFor) return { kind: 'waiting', reason: `Waiting for ${step.waitingFor.key} (${baseName(step.waitingFor.repo)})` }
   if (wait?.kind === 'start') return { kind: 'waiting', reason: `${wait.step.key} waits for Start` }
+  if (wait && reviewCurrent(wait.step)) return { kind: 'waiting', reason: `${wait.step.key}: ${reviewText(wait.step.review!)}` }
   if (wait) return { kind: 'waiting', reason: `${wait.step.key}: ${wait.prs.length > 1 ? `${wait.prs.length} PRs wait` : 'PR waits'} for merge` }
   // A legacy task's own PRs; new tasks have none.
   const prs = openPrs(task)
@@ -940,29 +1019,40 @@ export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]):
   return null
 }
 
-export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'ready_to_merge' | 'ready_to_start'
+/** review_look: the agent review of the step's PRs wants the user to look (its verdict look, or changes past the rounds). */
+export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'review_look' | 'ready_to_merge' | 'ready_to_start'
 
 export interface InboxItem {
   /** null for an approval in a project chat. */
   task: Task | null
   kind: InboxKind
   text: string
-  /** Session the item comes from: the approval's session, or the task's latest groomer/developer/tracker one. */
+  /** Session the item comes from: the approval's session, or the task's groomer/developer/tracker/reviewer that ran last. */
   session?: AgentSession
+  /** review_look and ready_to_merge: the agent review of the current step, when it covers its PRs as they are. */
+  review?: AgentReview
   /** Approval chat item id in `session`. */
   approvalId?: string
 }
 
-const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'ready_to_merge', 'ready_to_start']
+const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'ready_to_start']
+
+const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'tracker', 'reviewer']
+const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', tracker: 'Import failed', reviewer: 'Review failed' }
+
+/** The task's agent session that ran last (a step's reviewer runs again after its developer). */
+export function lastTaskSession(taskId: string, sessions: AgentSession[]): AgentSession | undefined {
+  const at = (s: AgentSession) => s.runStartedAt ?? s.createdAt
+  return sessions.filter((s) => s.taskId === taskId && TASK_AGENTS.includes(s.role)).reduce<AgentSession | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
+}
 
 /** One item for a top-level task; its steps' PRs and Start count for it. */
 function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
   if (task.parentId || task.archivedAt || task.status === 'canceled') return null
-  const last = sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer' || s.role === 'tracker')).at(-1)
+  const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
   // A failed import is moot once the task is unlinked: nothing to retry.
-  if (last?.status === 'error' && (last.role !== 'tracker' || !!task.tracker))
-    return { ...base, kind: 'agent_failed', text: last.role === 'tracker' ? 'Import failed' : `${last.role === 'groomer' ? 'Groomer' : 'Developer'} failed` }
+  if (last?.status === 'error' && (last.role !== 'tracker' || !!task.tracker)) return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }
@@ -970,6 +1060,11 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   if (last?.status === 'running') return null
   const wait = stepWait(task, tasks)
   if (wait?.kind === 'start') return { ...base, kind: 'ready_to_start', text: `${wait.step.key} waits for Start` }
+  if (wait && reviewCurrent(wait.step)) {
+    const review = wait.step.review!
+    const text = `${wait.step.key}: ${reviewText(review)}`
+    return { ...base, kind: review.verdict === 'merge' ? 'ready_to_merge' : 'review_look', text, review }
+  }
   const prs = wait ? wait.prs : openPrs(task)
   const ready = prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge'
   if (task.status === 'in_progress' && prs.length) return { ...base, kind: 'ready_to_merge', text: wait ? `${wait.step.key}: ${ready}` : ready }

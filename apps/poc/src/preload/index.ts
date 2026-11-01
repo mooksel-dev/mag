@@ -41,6 +41,7 @@ const api: MagApi = {
   develop: (taskId, localRepos) => ipcRenderer.invoke('task:develop', taskId, localRepos),
   resolveLocal: (stepId, repo, choice) => ipcRenderer.invoke('task:resolveLocal', stepId, repo, choice),
   startStep: (taskId) => ipcRenderer.invoke('task:startStep', taskId),
+  review: (taskId) => ipcRenderer.invoke('task:review', taskId),
   importTicket: (projectId, ref) => ipcRenderer.invoke('task:import', projectId, ref),
   retryImport: (taskId) => ipcRenderer.invoke('task:retryImport', taskId),
   linkTicket: (taskId, url) => ipcRenderer.invoke('task:linkTicket', taskId, url),

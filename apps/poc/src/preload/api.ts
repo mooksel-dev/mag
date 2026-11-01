@@ -57,6 +57,8 @@ export interface NewTask {
   repos?: string[]
   /** Top-level tasks: the ticket it is imported from. */
   tracker?: TrackerLink
+  /** Top-level tasks: the session that discussed and planned it (see Task.ownerSessionId). */
+  ownerSessionId?: string
 }
 
 /** A kind of pop-out window; each kind remembers its own size and position. */
@@ -98,6 +100,8 @@ export interface MagApi {
   resolveLocal(stepId: string, repo: string, choice: LocalChoice): Promise<void>
   /** Start the next step of a task in progress that waits for the user's Start. */
   startStep(taskId: string): Promise<void>
+  /** Runs the agent review of the current step's PRs again (after a failed one). */
+  review(taskId: string): Promise<void>
   /**
    * Import a tracker ticket by URL or key into a new backlog task; the tracker agent writes its brief in the background.
    * An unknown ref or a ticket already imported comes back as `error`.

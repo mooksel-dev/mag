@@ -8,6 +8,13 @@ test('buildArgs passes --model when set', () => {
   assert.ok(args.includes('--resume'))
 })
 
+test('buildArgs forks the resumed session only when asked', () => {
+  const fork = buildArgs({ cwd: '/tmp', prompt: 'hi', resumeId: 'abc', forkSession: true })
+  assert.deepEqual(fork.slice(fork.indexOf('--resume'), fork.indexOf('--resume') + 3), ['--resume', 'abc', '--fork-session'])
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi', resumeId: 'abc' }).includes('--fork-session'))
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi', forkSession: true }).includes('--fork-session'))
+})
+
 test('buildArgs omits --model by default', () => {
   assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--model'))
 })

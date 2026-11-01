@@ -1,12 +1,12 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type TrackerLink } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { log } from './log.ts'
 
@@ -169,7 +169,9 @@ How mag works: backlog task -> grooming: the groomer agent writes the task doc, 
 steps (subtasks; at least one) -> todo: groomed and ready to work; the order of todo tasks is only the user's
 priority -> in progress: the user starts a todo task with Start, and its steps run one after another. Each step gets a
 new developer session from fresh base, its own branch and a worktree per repository it changes, and at most one PR per
-changed repository; a step is done when its PRs are merged (or, without code, when its developer closes it), and the next one
+changed repository. Before the user sees a step's PRs, the session that planned the task (this topic if you created it
+with create_task, else its groomer) reviews them in a fork of itself: changes go back to the developer, merge or look go
+to the user. A step is done when its PRs are merged (or, without code, when its developer closes it), and the next one
 starts on its own unless it is marked start manually (then it waits for the user's Start) -> done when every step is
 done. Any number of tasks can be in progress in parallel. Any task not done yet can be canceled. Done and canceled
 tasks can be archived; mag archives them after some days.
@@ -216,6 +218,32 @@ If the ticket cannot be read, say in one line what is missing (e.g. "no Atlassia
 not found) and stop without set_brief.
 Keep chat replies to one line.`
 
+/**
+ * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
+ * so the whole job is said here, every round.
+ */
+const reviewPrompt = (task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean) => {
+  const prs = work.repos.filter((r) => heads[r.repo]).map((r) => `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, code in ${r.worktree}`)
+  const prev = step.review
+  const again =
+    prev?.verdict === 'changes'
+      ? `\nYour last review asked for changes and the developer has pushed since. Check that these were addressed:\n${findingLines(prev.findings)}`
+      : ''
+  return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
+${prs.join('\n')}
+${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
+1. Read get_task, get_doc and get_diagrams; this step's part is what the doc links for it. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
+2. Check the PRs against the decisions and this step's plan: does it do what was agreed, and nothing outside the step? Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
+3. Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
+Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.`
+}
+
+const findingLines = (findings: ReviewFinding[]) => findings.map((f) => `- ${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
+
+/** What the developer is told when the agent review asks for changes. */
+const reviewFeedback = (review: AgentReview, many: boolean) =>
+  `The agent review of your PR${many ? 's' : ''} (round ${review.round}) asks for changes:\n${findingLines(review.findings)}\nAddress them: change the code, run tests, push; the review runs again on the new commits. Nothing about them goes to GitHub. If a finding is wrong, say why here and call set_needs_input.`
+
 /** Groomers and developers of a task imported from a tracker: the ticket is context, not a place to write. */
 const ticketLine = (task: Task) =>
   task.tracker
@@ -241,6 +269,10 @@ export class Orchestrator {
   /** Live processes (see liveSession), kept between turns. */
   private lives = new Map<string, { handle: LiveHandle; agent: AgentKind; model: string | null; closing: boolean }>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
+  /** Agent reviews going on, by step: what set_review records (null while the PR heads are fetched). */
+  private reviewing = new Map<string, { round: number; heads: Record<string, string>; withContext: boolean; startedAt: number } | null>()
+  /** The PR heads each step's review last started on: a failed review is not retried on its own (see review). */
+  private reviewTried = new Map<string, string>()
 
   constructor(
     private store: Store,
@@ -358,7 +390,8 @@ export class Orchestrator {
     // A todo task leaves todo while it is groomed again; started work is past grooming.
     if (!['backlog', 'grooming', 'todo'].includes(task.status) || task.work) throw new Error(`${task.key} is ${task.status}; only backlog, grooming or not started todo tasks can be groomed`)
     const session = this.newSession(taskId, 'groomer')
-    this.store.updateTask(taskId, { status: 'grooming', needsInput: null })
+    // The groomer discusses the options and plans: it owns the work from now on (T-55.1).
+    this.store.updateTask(taskId, { status: 'grooming', needsInput: null, ownerSessionId: session.id })
     void this.run(session, `Groom task ${task.key}. Start with get_task.`)
   }
 
@@ -676,18 +709,128 @@ export class Orchestrator {
   feedback(ownerId: string, items: (PrFeedback & { repo: string })[]) {
     const owner = this.store.task(ownerId)
     const taskId = owner.parentId ?? owner.id
-    const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
-    // During a turn the comments wait for the next poll; a live process between turns gets them as a message.
-    if (!session || this.isRunning(session.id)) return false
     const many = new Set(items.map((f) => f.repo)).size > 1 || (owner.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     const text =
       `New feedback on your PR${many ? 's' : ''}:\n` +
       items.map((f) => `- ${many ? `[${f.repo}] ` : ''}@${f.author}${f.where ? ` on ${f.where}` : ''}: ${f.body}`).join('\n') +
       `\nAddress it: change the code, run tests, push. Reply on GitHub (starting with ${AGENT_MARK}) only where a comment needs an answer. If something is unclear, set_needs_input.`
+    return this.resumeDeveloper(owner, text)
+  }
+
+  /** Resumes the developer session of a step (or a legacy task) with `text`; false while it is in a turn or has none. */
+  private resumeDeveloper(owner: Task, text: string) {
+    const taskId = owner.parentId ?? owner.id
+    const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
+    // During a turn the comments wait for the next poll; a live process between turns gets them as a message.
+    if (!session || this.isRunning(session.id)) return false
     session.items.push({ kind: 'user', text, at: Date.now() })
     this.store.updateTask(taskId, { status: 'in_progress' })
     void this.run(session, text)
     return true
+  }
+
+  /**
+   * The agent review of a step's open PRs (T-55.1), before the user sees them: once per set of PR heads (`heads`, else
+   * fetched), never while an agent of the step runs. The step's reviewer session goes on from round to round; its first
+   * run forks the work's owner session (Claude Code), which discussed and planned the work, else it starts fresh and
+   * reads the doc. The verdict comes back through set_review (see setReview); the end of the run routes it. A review
+   * that started on the same heads before and gave no verdict runs again only on `retry` (the user's Restart).
+   */
+  async review(stepId: string, heads?: Record<string, string>, retry = false) {
+    const step = this.store.task(stepId)
+    if (!step.parentId || step.status !== 'in_progress' || !step.work) return
+    const task = this.store.task(step.parentId)
+    if (task.status !== 'in_progress' || task.needsInput) return
+    if (this.reviewing.has(stepId) || this.store.data.sessions.some((s) => s.stepId === stepId && this.isRunning(s.id))) return
+    // Taken before the first await: the scheduler and the developer's end may both ask.
+    this.reviewing.set(stepId, null)
+    let now: Record<string, string>
+    try {
+      now = heads ?? (await this.prHeads(stepId))
+    } catch (e) {
+      this.reviewing.delete(stepId)
+      log.warn('agent', `${step.key}: PR heads for the review failed: ${(e as Error).message}`)
+      return
+    }
+    const fresh = this.store.task(stepId)
+    const key = JSON.stringify(now)
+    if (!reviewDue(fresh, now) || (!retry && this.reviewTried.get(stepId) === key) || fresh.status !== 'in_progress' || this.store.data.sessions.some((s) => s.stepId === stepId && this.isRunning(s.id))) {
+      this.reviewing.delete(stepId)
+      return
+    }
+    let session = this.store.data.sessions.filter((s) => s.stepId === stepId && s.role === 'reviewer').at(-1)
+    if (!session) {
+      const owner = task.ownerSessionId ? this.store.data.sessions.find((s) => s.id === task.ownerSessionId) : undefined
+      session = this.newSession(task.id, 'reviewer', stepId)
+      // Only Claude Code forks a session; Codex's resume would write into the owner's own.
+      session.forkOf = owner?.agent === 'claude-code' && owner.nativeSessionId ? owner.nativeSessionId : null
+    }
+    const withContext = !!session.forkOf
+    const round = nextReviewRound(fresh.review)
+    this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now() })
+    this.reviewTried.set(stepId, key)
+    log.info('agent', `${step.key}: agent review round ${round}`, { withContext })
+    const text = reviewPrompt(task, fresh, fresh.work!, now, round, withContext)
+    session.items.push({ kind: 'user', text, at: Date.now() })
+    return this.run(session, text)
+  }
+
+  /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */
+  reviewTask(taskId: string) {
+    const step = currentStep(taskId, this.store.data.tasks)
+    if (step?.status !== 'in_progress' || !step.work?.repos.some((r) => r.prState === 'open')) throw new Error('No step of this task has an open PR to review')
+    return this.review(step.id, undefined, true)
+  }
+
+  /** Heads of the step's open PRs from GitHub; recorded on its work too. */
+  private async prHeads(stepId: string): Promise<Record<string, string>> {
+    const work = this.store.task(stepId).work
+    const heads: Record<string, string> = {}
+    for (const r of work?.repos ?? []) {
+      if (!r.prUrl || r.prState !== 'open') continue
+      const pr = await prState(r.prUrl)
+      if (pr.state === 'OPEN' && pr.head) heads[r.repo] = pr.head
+    }
+    const now = this.store.task(stepId).work
+    if (now) this.store.updateTask(stepId, { work: { ...now, repos: now.repos.map((r) => (heads[r.repo] ? { ...r, prHead: heads[r.repo] } : r)) } })
+    return heads
+  }
+
+  /** The reviewer's set_review: records the verdict of the review going on. Where it goes is decided when the run ends. */
+  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string {
+    const pending = this.reviewing.get(stepId)
+    const step = this.store.task(stepId)
+    if (!pending) throw new Error(`No agent review of ${step.key} is going on`)
+    const review: AgentReview = { verdict, findings, round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
+    this.store.updateTask(stepId, { review })
+    this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })
+    return reviewOutcome(review) === 'developer'
+      ? 'Recorded: the findings go to the developer, and you review again once they push. Stop here.'
+      : 'Recorded: the user gets your verdict. Stop here.'
+  }
+
+  /** The end of a review run: changes go to the developer while the rounds last; a run without a verdict failed. */
+  private afterReview(session: AgentSession) {
+    const stepId = session.stepId!
+    const pending = this.reviewing.get(stepId)
+    this.reviewing.delete(stepId)
+    const step = this.store.task(stepId)
+    // Canceled during the review: nothing to route.
+    if (step.status !== 'in_progress') return
+    const review = step.review
+    if (!pending || !review || review.at < pending.startedAt) {
+      if (session.status !== 'error') {
+        session.status = 'error'
+        session.items.push({ kind: 'error', text: 'Review ended without a verdict (set_review); check the chat', at: Date.now() })
+        this.logSessionEvent(session, 'agent_failed', 'reviewer failed')
+        this.store.changed()
+      }
+      return
+    }
+    if (reviewOutcome(review) !== 'developer') return
+    const many = (step.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
+    // A developer in a turn (the user talks to it) keeps it; the user sees the verdict instead.
+    if (!this.resumeDeveloper(step, reviewFeedback(review, many))) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
   }
 
   /** A live session takes a message during a turn too: the agent gets it in that turn. */
@@ -800,6 +943,21 @@ export class Orchestrator {
       }
     }
     const owner = this.ownerOf(session)
+    if (session.role === 'reviewer') {
+      const work = owner.work
+      return {
+        cwd: work?.dir ?? first,
+        addDirs: work ? project.repos : rest,
+        // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job itself is in the message.
+        appendSystemPrompt:
+          `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` +
+          (project.notes ? `\n\nProject notes:\n${project.notes}` : '') +
+          arch,
+        // Bash for gh pr view / diff and git; read only by the prompt.
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+      }
+    }
     if (session.role === 'developer' && owner.work) {
       const work = owner.work
       return {
@@ -881,8 +1039,11 @@ export class Orchestrator {
     const onEvent = this.onEvent(session)
 
     const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
+    // A reviewer's first run forks the owner session; later runs resume the fork.
+    const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
+    const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
     const handle = adapters[session.agent].start(
-      { ...spec, prompt, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath },
+      { ...spec, prompt, model: c.model ?? undefined, resumeId, forkSession: fork, mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)
@@ -1096,11 +1257,13 @@ export class Orchestrator {
   private async afterRun(session: AgentSession) {
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
-    // A step its developer closed: its worktrees could not go while the run was on. Its process goes first.
+    // A step closed or merged during the run: its worktrees could not go while the run was on. Its process goes first.
     if (session.stepId && this.ownerOf(session).status === 'done') {
+      this.reviewing.delete(session.stepId)
       await this.closeLive(session.id)
       return this.removeWork(this.ownerOf(session).work)
     }
+    if (session.role === 'reviewer') return this.afterReview(session)
     if (task.needsInput) return
     // A background task will wake the agent again: the run is not over yet.
     if (session.background?.length) return
@@ -1125,8 +1288,8 @@ export class Orchestrator {
       const outcome = devRunOutcome(work, changed, failed, !!session.stepId)
       // Every PR merged, maybe while the run was on: the step is done. A legacy task finishes on the scheduler's poll.
       if (outcome.kind === 'complete') return session.stepId ? this.completeStep(session.stepId) : undefined
-      // Every changed repo has a PR: the task waits for the user to merge.
-      if (outcome.kind === 'review') return
+      // Every changed repo has a PR: the agent review comes first, then the user merges.
+      if (outcome.kind === 'review') return session.stepId ? this.review(session.stepId) : undefined
       this.store.updateTask(task.id, { needsInput: outcome.reason })
     }
   }

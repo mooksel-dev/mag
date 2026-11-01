@@ -1,5 +1,5 @@
 import { rmdir } from 'node:fs'
-import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, currentStep, isLegacy, prRollup, prsMerged, repoWorkName, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, currentStep, isLegacy, prHeads, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
@@ -55,7 +55,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
             continue
           }
         }
-        repos.push({ ...r, prState: state, prDraft, checkError: null })
+        repos.push({ ...r, prState: state, prDraft, prHead: pr.head, checkError: null })
       } catch (e) {
         repos.push({ ...r, checkError: checkError(owner.key, e) })
       }
@@ -92,10 +92,16 @@ export function startScheduler(store: Store, orch: Orchestrator) {
       return
     }
     store.updateTask(owner.id, { work: next })
-    if (!feedback.length) return
-    // PR states are saved first: the resumed run reads them. Feedback counts as seen only once the developer has it.
-    log.info('scheduler', `${owner.key}: ${feedback.length} new PR comment(s)`)
-    if (orch.feedback(owner.id, feedback)) store.updateTask(owner.id, { work: { ...next, feedbackSeenAt: Math.max(...feedback.map((f) => f.at)) } })
+    if (feedback.length) {
+      // PR states are saved first: the resumed run reads them. Feedback counts as seen only once the developer has it.
+      log.info('scheduler', `${owner.key}: ${feedback.length} new PR comment(s)`)
+      if (orch.feedback(owner.id, feedback)) store.updateTask(owner.id, { work: { ...next, feedbackSeenAt: Math.max(...feedback.map((f) => f.at)) } })
+      return
+    }
+    // New commits on a step's PRs (pushed after the user's comments, or by hand) get the agent review again (T-55.1).
+    const heads = prHeads(next)
+    if (owner === task || !reviewDue(owner, heads) || anyRunning((s) => s.stepId === owner.id)) return
+    if (prRollup(next, await changedRepos(next, store.project(owner.projectId).baseBranch)) === 'review') await orch.review(owner.id, heads)
   }
 
   let polling = false

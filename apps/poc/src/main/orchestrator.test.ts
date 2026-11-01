@@ -43,12 +43,18 @@ class FakeLive implements LiveHandle {
 
 const opened: FakeLive[] = []
 const specs: Omit<RunSpec, 'prompt'>[] = []
+/** One-off runs (reviewers, chat titles): the test emits their events and ends them. */
+const runs: { spec: RunSpec; emit: (e: AgentEvent) => void; end: () => void }[] = []
 const real = adapters['claude-code']
+const recordRun: AgentAdapter['start'] = (spec, onEvent) => {
+  let end!: () => void
+  const done = new Promise<void>((r) => (end = r))
+  runs.push({ spec, emit: onEvent, end })
+  return { kill: end, done }
+}
 const fake: AgentAdapter = {
   ...real,
-  start: () => {
-    throw new Error('groomers and developers on Claude Code run on a live process')
-  },
+  start: recordRun,
   open: (spec, onEvent) => {
     specs.push(spec)
     const live = new FakeLive()
@@ -223,9 +229,7 @@ test('tracker: Bash and every detected integration whatever the modes, no file e
     orch.importTicket(task.id)
     await tick()
   } finally {
-    fake.start = () => {
-      throw new Error('groomers and developers on Claude Code run on a live process')
-    }
+    fake.start = recordRun
   }
   assert.deepEqual(spec?.allowedTools, ['mcp__mag', 'Bash', 'mcp__claude_ai_Atlassian', 'mcp__linear'])
   assert.deepEqual(spec?.disallowedTools, ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
@@ -282,9 +286,7 @@ test('renameChat: project topics only, a non-empty title, kept over the first me
     live.emit({ type: 'turn.done', ok: true })
     await tick()
   } finally {
-    fake.start = () => {
-      throw new Error('groomers and developers on Claude Code run on a live process')
-    }
+    fake.start = recordRun
   }
   assert.equal(titleRuns, 0)
   assert.equal(store.session(id).title, 'Pricing ideas')
@@ -499,3 +501,108 @@ test('addRepo: a local repository goes on the step branch in its main checkout, 
 function localHolderKey(store: Store, repo: string) {
   return store.data.tasks.find((t) => t.parentId && t.work?.repos.some((r) => r.local && r.repo === repo))?.key
 }
+
+/** A step whose developer is between turns, with an open PR in one repository; the owner topic forks if `owner`. */
+async function inReview(owner: boolean) {
+  const s = await developing()
+  s.live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  // Its run ended without a PR; the PR comes next.
+  s.store.updateTask(s.task.id, { needsInput: null })
+  if (owner) {
+    const topic = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+    topic.nativeSessionId = 'owner-native'
+    s.store.updateTask(s.task.id, { ownerSessionId: topic.id })
+  }
+  const repo = { repo: s.dir, branch: 'mag/t-1-1', worktree: join(s.workDir, 'app'), prUrl: 'https://github.com/o/app/pull/7', prState: 'open' as const }
+  s.store.updateTask(s.step.id, { work: { dir: s.workDir, repos: [repo], feedbackSeenAt: 0 } })
+  return s
+}
+
+test('review: the first round forks the owner session; changes go to the developer, the next round resumes the fork (T-55.1)', async () => {
+  const { store, orch, step, dir, live } = await inReview(true)
+  await orch.review(step.id, { [dir]: 'a1a1a1' })
+  const first = runs.at(-1)!
+  assert.equal(first.spec.resumeId, 'owner-native')
+  assert.equal(first.spec.forkSession, true)
+  assert.match(first.spec.prompt, /round 1\)[\s\S]*pull\/7 at a1a1a1[\s\S]*You discussed and planned this work/)
+  assert.ok(first.spec.disallowedTools?.includes('Edit'))
+  const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
+  assert.equal(reviewer.stepId, step.id)
+  first.emit({ type: 'session.started', nativeSessionId: 'fork-1' })
+
+  // A second ask while it runs starts nothing.
+  await orch.review(step.id, { [dir]: 'a1a1a1' })
+  assert.equal(runs.at(-1), first)
+
+  assert.match(orch.setReview(step.id, 'changes', [{ text: 'no test', where: 'a.ts:3' }]), /go to the developer/)
+  assert.deepEqual(store.task(step.id).review, { ...store.task(step.id).review, verdict: 'changes', round: 1, heads: { [dir]: 'a1a1a1' }, withContext: true })
+  first.end()
+  await tick()
+  assert.match(live.sent.at(-1)!, /asks for changes:\n- a\.ts:3: no test/)
+
+  // The developer pushed: the end of its run asks for the next round, on the heads GitHub has now.
+  ;(orch as unknown as { prHeads: () => Promise<Record<string, string>> }).prHeads = async () => ({ [dir]: 'b2b2b2' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await tick()
+  const second = runs.at(-1)!
+  assert.notEqual(second, first)
+  assert.equal(second.spec.resumeId, 'fork-1')
+  assert.equal(second.spec.forkSession, false)
+  assert.match(second.spec.prompt, /round 2\)[\s\S]*addressed:\n- a\.ts:3: no test/)
+  orch.setReview(step.id, 'merge', [])
+  const sent = live.sent.length
+  second.end()
+  await tick()
+  assert.equal(live.sent.length, sent, 'a merge goes to the user')
+  assert.equal(store.task(step.id).review?.round, 2)
+  assert.equal(store.data.sessions.filter((s) => s.role === 'reviewer').length, 1)
+
+  // The same heads are not reviewed again.
+  await orch.review(step.id, { [dir]: 'b2b2b2' })
+  assert.equal(runs.at(-1), second)
+})
+
+test('review: without an owner a fresh reviewer reads the doc; no verdict fails, retried only by the user (T-55.1)', async () => {
+  const { store, orch, step, task, dir } = await inReview(false)
+  await orch.review(step.id, { [dir]: 'a1' })
+  const run = runs.at(-1)!
+  assert.equal(run.spec.resumeId, undefined)
+  assert.equal(run.spec.forkSession, false)
+  assert.match(run.spec.prompt, /did not take part in planning/)
+  assert.match(run.spec.appendSystemPrompt!, /first reviewer/)
+  assert.throws(() => orch.setReview('nope', 'merge', []))
+  run.end()
+  await tick()
+  const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
+  assert.equal(reviewer.status, 'error')
+  assert.equal(store.task(step.id).review, undefined)
+  assert.throws(() => orch.setReview(step.id, 'merge', []), /No agent review/)
+
+  await orch.review(step.id, { [dir]: 'a1' })
+  assert.equal(runs.at(-1), run, 'the scheduler does not retry it')
+  store.updateTask(step.id, { work: { ...store.task(step.id).work!, repos: store.task(step.id).work!.repos.map((r) => ({ ...r, prHead: 'a1' })) } })
+  await orch.review(step.id, { [dir]: 'a1' }, true)
+  assert.notEqual(runs.at(-1), run, 'Restart')
+  assert.equal(store.task(task.id).needsInput, null)
+})
+
+test('review: changes past the rounds go to the user (T-55.1)', async () => {
+  const { store, orch, step, dir, live } = await inReview(true)
+  store.updateTask(step.id, { review: { verdict: 'changes', findings: [{ text: 'x' }], round: 2, heads: { [dir]: 'old' }, withContext: true, at: 1 } })
+  await orch.review(step.id, { [dir]: 'new' })
+  orch.setReview(step.id, 'changes', [{ text: 'still no test' }])
+  const sent = live.sent.length
+  runs.at(-1)!.end()
+  await tick()
+  assert.equal(store.task(step.id).review?.round, 3)
+  assert.equal(live.sent.length, sent)
+})
+
+test('groom makes the groomer the owner of the work (T-55.1)', async () => {
+  const { store, orch, task } = setup()
+  orch.groom(task.id)
+  await tick()
+  assert.equal(store.task(task.id).ownerSessionId, store.data.sessions.find((s) => s.role === 'groomer')!.id)
+})

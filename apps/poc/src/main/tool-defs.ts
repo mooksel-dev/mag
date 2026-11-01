@@ -1,6 +1,6 @@
 // Tools the MCP server exposes to agents. Schemas only; handlers live in tools.ts.
 // scope: 'task' = runs bound to a task (groomer, developer, tracker), 'project' = project chat and architect, 'any' = both.
-// tracker: the tracker role sees only tools marked 'only' (its own) or 'also'; the other roles all but 'only'.
+// tracker, reviewer: such a role sees only tools marked 'only' (its own) or 'also' for it; the other roles all but 'only'.
 
 /** One module of set_architecture. `children` items are described in words, not by $ref: not every agent follows it. */
 const ARCH_MODULE = {
@@ -193,6 +193,7 @@ const DIAGRAM = {
 export const TOOL_DEFS = [
   {
     name: 'get_task',
+    reviewer: 'also',
     scope: 'task',
     description:
       'Get the current task: title, type, status, description, subtasks (its steps in order, with status, startManually, repos (missing = every repository), PRs and current: true on the step being worked on), project repos, the work (your step\'s dir and per repo: worktree, branch, PR) and the doc template for this task type.',
@@ -200,12 +201,14 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_doc',
+    reviewer: 'also',
     scope: 'task',
     description: 'Read the current task document (markdown).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'get_diagrams',
+    reviewer: 'also',
     scope: 'task',
     description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; component marks moved interface methods, data moved entities and fields, with move and from.',
     inputSchema: { type: 'object', properties: {} },
@@ -334,6 +337,29 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'set_review',
+    scope: 'task',
+    reviewer: 'only',
+    description:
+      'Reviewer only: your verdict on the PRs of the step under review, once per review. changes: the developer must fix the findings first (they go to the developer, not GitHub); merge: ready, nothing for the user to check; look: the user should decide or check what the findings say.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verdict: { type: 'string', enum: ['changes', 'merge', 'look'] },
+        findings: {
+          type: 'array',
+          description: 'One finding per item; none for a clean merge.',
+          items: {
+            type: 'object',
+            required: ['text'],
+            properties: { text: { type: 'string' }, where: { type: 'string', description: 'file:line, a module or a PR, when it applies.' } },
+          },
+        },
+      },
+      required: ['verdict', 'findings'],
+    },
+  },
+  {
     name: 'get_import',
     scope: 'task',
     tracker: 'only',
@@ -358,12 +384,14 @@ export const TOOL_DEFS = [
   },
   {
     name: 'check_architecture',
+    reviewer: 'also',
     scope: 'any',
     description: 'Analyze the code in your working copy: layers (app, services, clients, lib), service/client interfaces and import rule violations. Developers must have zero violations before opening a PR.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'get_architecture',
+    reviewer: 'also',
     scope: 'any',
     description: 'Get the recorded architecture of this project, if any: a tree of modules (apps and outside runtimes on top, layered modules inside) with interfaces and the calls between them.',
     inputSchema: { type: 'object', properties: {} },
@@ -521,6 +549,7 @@ export const TOOL_DEFS = [
     name: 'approve_tool',
     scope: 'any',
     tracker: 'also',
+    reviewer: 'also',
     description: 'Internal: mag uses this to ask the user before an integration call. Do not call it yourself.',
     inputSchema: {
       type: 'object',
@@ -536,8 +565,11 @@ export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 export type ToolScope = 'task' | 'project' | 'any'
 
 /** Whether a run of `role` (undefined: unknown, as before roles were passed) gets the tool. */
-export function toolForRole(def: { name: string; tracker?: 'only' | 'also' }, role: string | undefined): boolean {
+export function toolForRole(def: { name: string; tracker?: 'only' | 'also'; reviewer?: 'only' | 'also' }, role: string | undefined): boolean {
   const tracker = 'tracker' in def ? def.tracker : undefined
-  return role === 'tracker' ? !!tracker : tracker !== 'only'
+  const reviewer = 'reviewer' in def ? def.reviewer : undefined
+  if (role === 'tracker') return !!tracker
+  if (role === 'reviewer') return !!reviewer
+  return tracker !== 'only' && reviewer !== 'only'
 }
 export type ToolName = (typeof TOOL_DEFS)[number]['name']

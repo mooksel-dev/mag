@@ -115,11 +115,12 @@ test('inbox: ready to merge counts the PRs still open', () => {
   assert.equal(inbox('p', [one], [])[0]?.text, 'PR is ready to merge')
 })
 
-test('inbox: agent_failed only from the latest groomer/developer session', () => {
+test('inbox: agent_failed only from the task agent that ran last', () => {
   const t = task('t', 'backlog')
   assert.deepEqual(inbox('p', [t], [session('t', 'groomer', 'error'), session('t', 'groomer', 'idle')]), [])
   assert.equal(inbox('p', [t], [session('t', 'groomer', 'idle'), session('t', 'groomer', 'error')])[0]?.kind, 'agent_failed')
-  assert.deepEqual(inbox('p', [t], [session('t', 'reviewer', 'error')]), [], 'other roles do not count')
+  assert.deepEqual(inbox('p', [t], [session('t', 'reviewer', 'error')]).map((i) => i.text), ['Review failed'], 'the agent review of a step (T-55.1)')
+  assert.deepEqual(inbox('p', [t], [session('t', 'chat', 'error')]), [], 'other roles do not count')
 })
 
 test('inbox: a failed import is agent_failed until a later groomer runs', () => {

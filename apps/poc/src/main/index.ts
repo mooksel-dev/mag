@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -115,6 +115,7 @@ app.whenReady().then(async () => {
   actions.cancel = (id, reason) => orch.cancel(id, reason)
   actions.completeStep = (id) => orch.completeStep(id)
   actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
+  actions.setReview = (id, verdict, findings) => orch.setReview(id, verdict, findings)
   const tracker = createTrackerService(store, { startImport: (id) => orch.importTicket(id) })
 
   protocol.handle('mag-file', (req) => {
@@ -183,6 +184,7 @@ app.whenReady().then(async () => {
   handle('task:unlinkTicket', (_, id: string) => void tracker.unlink(id))
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
+  handle('task:review', (_, id: string) => orch.reviewTask(id))
   handle('task:cancel', (_, id: string, reason: string | null) => orch.cancel(id, reason))
   handle('task:archive', (_, ids: string[]) => {
     const now = Date.now()

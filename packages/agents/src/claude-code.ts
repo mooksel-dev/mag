@@ -159,7 +159,7 @@ export function liveParser(onControl: (requestId: string, ok: boolean, error?: s
 /** Everything but the prompt, shared by one-off and live runs. */
 function specArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   const args: string[] = []
-  if (spec.resumeId) args.push('--resume', spec.resumeId)
+  if (spec.resumeId) args.push('--resume', spec.resumeId, ...(spec.forkSession ? ['--fork-session'] : []))
   if (spec.model) args.push('--model', spec.model)
   if (spec.appendSystemPrompt) args.push('--append-system-prompt', spec.appendSystemPrompt)
   if (spec.mcpConfigPath) args.push('--mcp-config', spec.mcpConfigPath)

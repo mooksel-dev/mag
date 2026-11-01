@@ -27,6 +27,10 @@ const setup = () => {
       store.updateTask(id, { work: { ...w, repos: [...w.repos, r] } })
       return r
     },
+    setReview: (id, verdict, findings) => {
+      calls.push(`review ${store.task(id).key}: ${verdict} ${findings.map((f) => `${f.where ?? ''}|${f.text}`).join(';')}`)
+      return 'Recorded.'
+    },
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
@@ -241,4 +245,35 @@ test('add_repo: the developer of a step in progress only', async () => {
   assert.match(await call('add_repo', { repo: 'web' }, dev.id), /^web: the main checkout \/nowhere\/web, on branch mag\/t-1-1 \(the task works there locally\)/)
   await call('add_repo', { repo: 'db', worktree: true }, dev.id)
   assert.deepEqual(calls, ['add api to T-1.1', 'add web to T-1.1', 'add db to T-1.1 as a worktree'])
+})
+
+test('set_review is the reviewer\'s alone and records the verdict of its step', async () => {
+  const { store, project, task, call, calls } = setup()
+  const step = store.createTask({ projectId: project.id, parentId: task.id, title: 'One', type: 'dev', description: '', status: 'in_progress' })
+  const reviewer = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'reviewer', agent: 'claude-code', status: 'running' })
+  await assert.rejects(call('set_review', { verdict: 'merge', findings: [] }), /not available to the groomer/)
+  await assert.rejects(call('set_review', { verdict: 'ok', findings: [] }, reviewer.id), /verdict must be one of/)
+  await assert.rejects(call('set_review', { verdict: 'look', findings: [] }, reviewer.id), /needs findings/)
+  await assert.rejects(call('set_review', { verdict: 'changes', findings: [{ where: 'a.ts' }] }, reviewer.id), /needs a text/)
+  await call('set_review', { verdict: 'changes', findings: JSON.stringify([{ text: ' no test ', where: 'a.ts:3' }, { text: 'scope' }]) }, reviewer.id)
+  await call('set_review', { verdict: 'merge', findings: [] }, reviewer.id)
+  assert.deepEqual(calls, ['review T-1.1: changes a.ts:3|no test;|scope', 'review T-1.1: merge '])
+})
+
+test('the reviewer reads the task but changes nothing', async () => {
+  const { store, project, task, call } = setup()
+  const step = store.createTask({ projectId: project.id, parentId: task.id, title: 'One', type: 'dev', description: '', status: 'in_progress' })
+  const reviewer = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'reviewer', agent: 'claude-code', status: 'running' })
+  assert.match(await call('get_doc', {}, reviewer.id), /empty/)
+  for (const name of ['update_doc', 'set_pr', 'set_needs_input', 'complete_step', 'create_subtask'])
+    await assert.rejects(call(name, { markdown: 'x', url: 'https://github.com/o/r/pull/1', reason: 'x', title: 'x' }, reviewer.id), /not available to the reviewer/)
+})
+
+test('create_task from a topic makes the topic the owner of the work', async () => {
+  const { store, project, tools } = setup()
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  await tools({ projectId: project.id, sessionId: topic.id }, 'create_task', { title: 'Owned', type: 'dev', description: 'd' })
+  await tools({ projectId: project.id }, 'create_task', { title: 'Orphan', type: 'dev', description: 'd' })
+  assert.equal(store.data.tasks.find((t) => t.title === 'Owned')!.ownerSessionId, topic.id)
+  assert.equal(store.data.tasks.find((t) => t.title === 'Orphan')!.ownerSessionId, undefined)
 })
