@@ -215,27 +215,17 @@ test('cancel closes the live process before removing worktrees, without end-of-r
   assert.equal(store.task(task.id).needsInput, null)
 })
 
-test('tracker: Bash and every detected integration whatever the modes, no file edits (T-37)', async () => {
-  const { store, orch, project, task } = setup()
-  store.saveIntegrations([{ id: 'claude_ai_Atlassian', name: 'Atlassian' }, { id: 'linear', name: 'Linear' }])
-  store.updateProject(project.id, { integrations: { tracker: { linear: 'off' } } })
-  store.updateTask(task.id, { tracker: { kind: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1', importedAt: null } })
-  let spec: RunSpec | undefined
-  fake.start = (s) => {
-    spec = s
-    return { kill() {}, done: new Promise<void>(() => {}) }
-  }
-  try {
-    orch.importTicket(task.id)
-    await tick()
-  } finally {
-    fake.start = recordRun
-  }
-  assert.deepEqual(spec?.allowedTools, ['mcp__mag', 'Bash', 'mcp__claude_ai_Atlassian', 'mcp__linear'])
-  assert.deepEqual(spec?.disallowedTools, ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-  assert.equal(spec?.permissionPromptTool, undefined)
-  assert.match(spec?.appendSystemPrompt ?? '', /any way you have/)
-  assert.match(spec?.prompt ?? '', /Import ABC-1/)
+test('groomer: Bash, WebSearch and WebFetch to read tickets and docs; no edits, merge or push; the tickets in its prompt (T-55.5)', async () => {
+  const { store, orch, task } = setup()
+  store.updateTask(task.id, { tickets: [{ url: 'https://acme.atlassian.net/browse/ABC-1', key: 'ABC-1' }, { url: 'https://github.com/o/r/issues/2' }] })
+  orch.groom(task.id)
+  await tick()
+  const spec = specs.at(-1)!
+  for (const t of ['Bash', 'WebSearch', 'WebFetch']) assert.ok(spec.allowedTools?.includes(t), t)
+  for (const t of ['Edit', 'Write', 'Bash(gh pr merge:*)', 'Bash(git push:*)']) assert.ok(spec.disallowedTools?.includes(t), t)
+  assert.ok(!spec.disallowedTools?.includes('Bash'))
+  assert.match(spec.appendSystemPrompt ?? '', /these tickets: ABC-1 \(https:\/\/acme\.atlassian\.net\/browse\/ABC-1\), https:\/\/github\.com\/o\/r\/issues\/2\./)
+  assert.match(spec.appendSystemPrompt ?? '', /You own the work/)
 })
 
 test('project chat: Bash allowed, integrations by the chat modes (T-37)', async () => {
@@ -249,7 +239,7 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.ok(spec.allowedTools?.includes('mcp__claude_ai_Atlassian'))
   assert.ok(!spec.disallowedTools?.includes('Bash'))
   assert.ok(spec.disallowedTools?.includes('Edit'))
-  assert.match(spec.appendSystemPrompt ?? '', /ticket_url/)
+  assert.match(spec.appendSystemPrompt ?? '', /create_work/)
 })
 
 const DOC = `# Problem
@@ -308,12 +298,13 @@ test('step developer: the playbook\'s step, the decisions of the work and its ow
   for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push * dev)', 'Bash(git push *:dev)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
 })
 
-test('project chat: the playbook\'s tracker section and the notes block; no merge or push (T-55.2)', async () => {
+test('project chat: the playbook\'s plan (it owns the works it creates) and tracker sections, the notes block; no merge or push (T-55.2, T-55.5)', async () => {
   const { store, orch, project } = setup()
-  store.updateProject(project.id, { notes: 'use pnpm', playbook: { tracker: 'COMMENT WITH A LINK' } })
+  store.updateProject(project.id, { notes: 'use pnpm', playbook: { tracker: 'COMMENT WITH A LINK', plan: 'OUR PLANNING' } })
   await orch.send(orch.newChat(project.id), 'hi')
   const spec = specs.at(-1)!
   assert.ok(spec.appendSystemPrompt!.includes('COMMENT WITH A LINK'))
+  assert.ok(spec.appendSystemPrompt!.includes('OUR PLANNING'))
   assert.ok(spec.appendSystemPrompt!.endsWith('## Project notes\nuse pnpm'))
   assert.ok(!spec.appendSystemPrompt!.includes('## Decisions'), 'a topic has no work')
   assert.ok(spec.disallowedTools?.includes('Bash(gh pr merge:*)'))

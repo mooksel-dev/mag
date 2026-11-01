@@ -4,14 +4,13 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, todoTasks, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, todoTasks, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
-import { createTrackerService } from './core/services/tracker'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
@@ -116,7 +115,6 @@ app.whenReady().then(async () => {
   actions.completeStep = (id) => orch.completeStep(id)
   actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
   actions.setReview = (id, verdict, findings) => orch.setReview(id, verdict, findings)
-  const tracker = createTrackerService(store, { startImport: (id) => orch.importTicket(id) })
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -163,25 +161,34 @@ app.whenReady().then(async () => {
     if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
     store.updateTask(id, { status: 'todo', needsInput: null, rank: nextPlanRank(tasks) })
   })
-  // A ref that names no ticket, or one already imported, is an answer for the import field, not a failure to log.
-  handle('task:import', async (_, projectId: string, ref: string) => {
+  // A link that is not one is an answer for the field, not a failure to log.
+  const answer = (f: () => unknown) => {
     try {
-      return { taskId: (await tracker.import(projectId, ref)).id }
+      f()
+      return { ok: true as const }
     } catch (e) {
       return { error: (e as Error).message }
     }
+  }
+  // A work started from a ticket link, with nobody to discuss it yet: a groomer plans it and owns it (T-55.5).
+  handle('task:fromTicket', (_, projectId: string, url: string) => {
+    let id = ''
+    const r = answer(() => {
+      const ticket = ticketRef(url)
+      id = store.createTask({ projectId, title: ticketLabel(ticket), type: 'dev', description: '', tickets: [ticket] }).id
+    })
+    if ('error' in r) return r
+    orch.groom(id)
+    return { taskId: id }
   })
-  handle('task:retryImport', (_, id: string) => tracker.retryImport(id))
-  // Same for a pasted link: the error is shown under the field.
-  handle('task:linkTicket', (_, id: string, url: string) => {
-    try {
-      tracker.link(id, url)
-      return { ok: true }
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
-  })
-  handle('task:unlinkTicket', (_, id: string) => void tracker.unlink(id))
+  handle('task:addTicket', (_, id: string, url: string) =>
+    answer(() => {
+      const task = store.task(id)
+      if (task.parentId) throw new Error(`${task.key} is a step; add the ticket to its work`)
+      store.updateTask(id, { tickets: withTicket(task.tickets, ticketRef(url)) })
+    }),
+  )
+  handle('task:removeTicket', (_, id: string, url: string) => store.updateTask(id, { tickets: (store.task(id).tickets ?? []).filter((t) => t.url !== url) }))
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:review', (_, id: string) => orch.reviewTask(id))

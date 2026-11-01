@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { RepoWork, Task } from '@mag/core'
-import { LINK_SERVICES, PR_STATE_COLORS, prNumber, prPillState, prTooltip, ticketTooltip, type LinkService } from './linkServices'
+import type { RepoWork, Task, TicketRef } from '@mag/core'
+import { LINK_SERVICES, PR_STATE_COLORS, prNumber, prPillState, prTooltip, ticketLabel, ticketTooltip, type LinkService } from './linkServices'
 
 const mag = window.mag
 
@@ -61,20 +61,18 @@ export function PrPills({ prs }: { prs: RepoWork[] }) {
   return <>{prs.filter((r) => r.prUrl).map((r) => <PrPill key={r.prUrl} pr={r} />)}</>
 }
 
-/**
- * The task's tracker ticket: the tracker icon, the key in bold, its status in the tracker when mag knows it (not yet:
- * T-38) and ↗, on the tracker's brand color. `compact` (rows): icon and key only.
- */
-export function TicketPill({ task, compact }: { task: Task; compact?: boolean }) {
-  const t = task.tracker
-  if (!t) return null
-  const status: string | null = null
+/** One ticket of a work (T-55.5): only a link, its key (or the link) and ↗. `compact` (rows): no ↗. */
+export function TicketPill({ ticket, compact }: { ticket: TicketRef; compact?: boolean }) {
+  const label = ticketLabel(ticket)
   return (
-    <LinkPill url={t.url} color={LINK_SERVICES[t.kind].color} title={ticketTooltip(t, status)} label={`${LINK_SERVICES[t.kind].name} ticket ${t.key}`}>
-      <ServiceIcon service={t.kind} />
-      <b>{t.key}</b>
-      {!compact && status && <span className="linkstatus">{status}</span>}
-      {!compact && t.url && <span aria-hidden="true">↗</span>}
+    <LinkPill url={ticket.url} title={ticketTooltip(ticket)} label={`Ticket ${label}`}>
+      <b>{label}</b>
+      {!compact && <span aria-hidden="true">↗</span>}
     </LinkPill>
   )
+}
+
+/** The work's tickets, one pill each. */
+export function TicketPills({ task, compact }: { task: Task; compact?: boolean }) {
+  return <>{(task.tickets ?? []).map((t) => <TicketPill key={t.url} ticket={t} compact={compact} />)}</>
 }

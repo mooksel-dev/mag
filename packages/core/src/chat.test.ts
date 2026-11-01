@@ -69,7 +69,7 @@ test('liveSession: chats, groomers and developers on Claude Code run on a live p
   assert.equal(liveSession({ role: 'chat', agent: 'claude-code' }), true)
   assert.equal(liveSession({ role: 'groomer', agent: 'claude-code' }), true)
   assert.equal(liveSession({ role: 'developer', agent: 'claude-code' }), true)
-  assert.equal(liveSession({ role: 'tracker', agent: 'claude-code' }), false)
+  assert.equal(liveSession({ role: 'reviewer', agent: 'claude-code' }), false)
   assert.equal(liveSession({ role: 'chat', agent: 'codex' }), false)
   assert.equal(liveSession({ role: 'developer', agent: 'codex' }), false)
 })

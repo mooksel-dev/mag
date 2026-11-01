@@ -33,9 +33,7 @@ test('prTooltip: name, repo and state, URL', () => {
   assert.match(prTooltip({ prUrl: url, prState: null }), /not checked yet/)
 })
 
-test('ticketTooltip: key, tracker and status when known, URL or that it is unknown', () => {
-  const t = { kind: 'jira' as const, key: 'ABC-12', url: 'https://x.atlassian.net/browse/ABC-12' }
-  assert.equal(ticketTooltip(t), `ABC-12\nJira\n${t.url}\n⌥-click copies the link`)
-  assert.equal(ticketTooltip(t, 'In Progress').split('\n')[1], 'Jira · In Progress')
-  assert.equal(ticketTooltip({ ...t, kind: 'linear', url: null }), 'ABC-12\nLinear\nIts link is not known yet')
+test('ticketTooltip: the key when known, the URL', () => {
+  assert.equal(ticketTooltip({ url: 'https://x.atlassian.net/browse/ABC-12', key: 'ABC-12' }), 'ABC-12\nhttps://x.atlassian.net/browse/ABC-12\n⌥-click copies the link')
+  assert.equal(ticketTooltip({ url: 'https://github.com/o/r/issues/5' }), 'https://github.com/o/r/issues/5\n⌥-click copies the link')
 })

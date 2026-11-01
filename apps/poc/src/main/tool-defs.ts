@@ -1,6 +1,7 @@
 // Tools the MCP server exposes to agents. Schemas only; handlers live in tools.ts.
-// scope: 'task' = runs bound to a task (groomer, developer, tracker), 'project' = project chat and architect, 'any' = both.
-// tracker, reviewer: such a role sees only tools marked 'only' (its own) or 'also' for it; the other roles all but 'only'.
+// scope: 'task' = runs bound to a task (groomer, developer, reviewer), 'project' = project chat and architect, 'any' = both.
+// reviewer: it sees only tools marked 'only' (its own) or 'also' for it; the other roles all but 'only'.
+// OWNER_TOOLS: a project chat plans the works it owns with them too, passing work (see toolsFor).
 
 /** One module of set_architecture. `children` items are described in words, not by $ref: not every agent follows it. */
 const ARCH_MODULE = {
@@ -257,7 +258,7 @@ export const TOOL_DEFS = [
     name: 'create_subtask',
     scope: 'task',
     description:
-      'Groomer only, after the user has answered the checkpoint in chat: add an execution step to the current task: a short title and an optional one-line note saying what ships in it. Each step runs in its own developer session from fresh base, with at most one PR per changed repo; steps run in order, kept in creation order.',
+      'The owner of the work (its groomer after the user has answered the checkpoint in chat, or the topic that created it): add an execution step to the work: a short title and an optional one-line note saying what ships in it. Each step runs in its own developer session from fresh base, with at most one PR per changed repo; steps run in order, kept in creation order.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -272,7 +273,7 @@ export const TOOL_DEFS = [
   {
     name: 'update_subtask',
     scope: 'task',
-    description: 'Groomer only: change the title, note, start_manually or repos of a step while re-grooming.',
+    description: 'The owner of the work: change the title, note, start_manually or repos of a step while planning.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -288,13 +289,13 @@ export const TOOL_DEFS = [
   {
     name: 'delete_subtask',
     scope: 'task',
-    description: 'Groomer only: remove a step that is no longer needed.',
+    description: 'The owner of the work: remove a step that is no longer needed.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
     name: 'reorder_subtasks',
     scope: 'task',
-    description: 'Groomer only: set the order of the steps. Pass every step key of the current task, in the new order.',
+    description: 'The owner of the work: set the order of the steps. Pass every step key of the work, in the new order.',
     inputSchema: {
       type: 'object',
       properties: { keys: { type: 'array', items: { type: 'string' } } },
@@ -380,29 +381,6 @@ export const TOOL_DEFS = [
     },
   },
   {
-    name: 'get_import',
-    scope: 'task',
-    tracker: 'only',
-    description: 'Tracker only: the ticket to import into this task: key, url (null only for an old import by key) and kind (jira or linear).',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'set_brief',
-    scope: 'task',
-    tracker: 'only',
-    description:
-      'Tracker only: write what you read from the ticket into the task: its title and the brief (markdown) the groomer starts from. Call it once, at the end. Pass url when get_import had none.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: "The ticket's summary." },
-        brief: { type: 'string', description: 'Markdown brief: description, comments, attachments, subtasks, linked tickets and pages.' },
-        url: { type: 'string', description: "The ticket's web link; only when get_import returned url: null." },
-      },
-      required: ['title', 'brief'],
-    },
-  },
-  {
     name: 'check_architecture',
     reviewer: 'also',
     scope: 'any',
@@ -434,7 +412,7 @@ export const TOOL_DEFS = [
     name: 'list_tasks',
     scope: 'any',
     description:
-      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, cancel reason.',
+      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, tickets (links), cancel reason.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -444,21 +422,26 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
-    name: 'create_task',
+    name: 'create_work',
     scope: 'project',
     description:
-      'Add a task to the backlog. The description is the brief the groomer starts from: what and why, concise. ' +
-      'doc pre-fills the task document. plan: true puts the task in todo (lowest priority) and starts nothing; the user starts it. Use it ' +
+      'Start a work: what the user and you discussed here, about zero or more tickets. This topic owns it: you plan it here (doc via update_task_doc, ' +
+      'diagrams and steps with the owner tools, passing work: its key) and later review its PRs first. The description is the brief: what and why, concise. ' +
+      'doc pre-fills the document. plan: true puts the work in todo (lowest priority) and starts nothing; the user starts it. Use it ' +
       "only when the doc is complete (follow the project's doc template) and the user asked for it; it needs steps.",
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
-        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'] },
+        type: { type: 'string', enum: ['dev', 'design', 'spike', 'research'], description: 'Default dev.' },
         description: { type: 'string' },
-        doc: { type: 'string', description: 'Task document (markdown). Required with plan: true.' },
-        plan: { type: 'boolean', description: 'Skip grooming and put the task in todo; the user starts it.' },
-        ticket_url: { type: 'string', description: 'Jira or Linear ticket URL to link the task to (no import). Fails, creating nothing, when the ticket is linked to another task.' },
+        tickets: {
+          type: 'array',
+          description: 'Tickets the work is about, as links (any tracker); [] or left out for a work without a ticket.',
+          items: { type: 'object', required: ['url'], properties: { url: { type: 'string', description: 'The https link of the ticket.' }, key: { type: 'string', description: 'Its key, e.g. ABC-12, when the link does not show it.' } } },
+        },
+        doc: { type: 'string', description: 'Work document (markdown). Required with plan: true.' },
+        plan: { type: 'boolean', description: 'The plan is complete: put the work in todo; the user starts it.' },
         steps: {
           type: 'array',
           description: 'Execution steps in order; at least one with plan: true. Each runs in its own developer session with at most one PR per repo.',
@@ -469,16 +452,18 @@ export const TOOL_DEFS = [
           },
         },
       },
-      required: ['title', 'type', 'description'],
+      required: ['title', 'description'],
     },
   },
   {
-    name: 'link_ticket',
+    name: 'add_ticket',
     scope: 'project',
-    description:
-      'Link a top-level task to a Jira or Linear ticket by its URL, replacing its link if any. Only a link: nothing is imported and the brief stays. ' +
-      'Fails when the URL is not a ticket link or the ticket is linked to another task.',
-    inputSchema: { type: 'object', properties: { key: { type: 'string' }, url: { type: 'string' } }, required: ['key', 'url'] },
+    description: 'Add a ticket to a work by its link (any tracker); the same link twice is kept once. A ticket may belong to several works. mag stores only the link.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The work, e.g. T-3.' }, url: { type: 'string' }, ticket_key: { type: 'string', description: 'The ticket key, e.g. ABC-12, when the link does not show it.' } },
+      required: ['key', 'url'],
+    },
   },
   {
     name: 'update_task',
@@ -503,7 +488,7 @@ export const TOOL_DEFS = [
   {
     name: 'start_grooming',
     scope: 'project',
-    description: 'Start the groomer agent on a backlog task (or re-groom a todo task not started yet). It works in the background and pings the user with questions; when done, the task goes to todo, ready for the user to start.',
+    description: 'Start a separate groomer agent on a backlog task (or re-groom a todo task not started yet): only for a work nobody planned in a conversation, e.g. one started from a ticket link. The groomer becomes its owner. It works in the background and pings the user with questions; when done, the task goes to todo, ready for the user to start. A work you discussed here you plan yourself.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
@@ -569,7 +554,6 @@ export const TOOL_DEFS = [
   {
     name: 'approve_tool',
     scope: 'any',
-    tracker: 'also',
     reviewer: 'also',
     description: 'Internal: mag uses this to ask the user before an integration call. Do not call it yourself.',
     inputSchema: {
@@ -583,14 +567,35 @@ export const TOOL_DEFS = [
 /** The --permission-prompt-tool, as Claude Code names it. */
 export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 
+/**
+ * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer. In a
+ * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
+ */
+export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas'] as const
+
+const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. T-3.' }
+
 export type ToolScope = 'task' | 'project' | 'any'
 
+/** The tools a run sees, as the MCP server lists them: by scope and role; a project chat gets the owner tools with work. */
+export function toolsFor(scope: 'task' | 'project', role: string | undefined): { name: string; description: string; inputSchema: object }[] {
+  const owner = scope === 'project' && role === 'chat'
+  return TOOL_DEFS.filter((t) => (t.scope === 'any' || t.scope === scope || (owner && (OWNER_TOOLS as readonly string[]).includes(t.name))) && toolForRole(t, role)).map((t) => {
+    if (!owner || !(OWNER_TOOLS as readonly string[]).includes(t.name)) return { name: t.name, description: t.description, inputSchema: t.inputSchema }
+    const schema = t.inputSchema as { properties: Record<string, unknown>; required?: readonly string[] }
+    const optional = t.scope === 'any'
+    return {
+      name: t.name,
+      description: `${t.description} In this chat: ${optional ? 'pass work to draw it in a work you own' : 'pass work, the key of a work you own'}.`,
+      inputSchema: { ...schema, properties: { work: WORK_ARG, ...schema.properties }, required: optional ? schema.required : ['work', ...(schema.required ?? [])] },
+    }
+  })
+}
+
 /** Whether a run of `role` (undefined: unknown, as before roles were passed) gets the tool. */
-export function toolForRole(def: { name: string; tracker?: 'only' | 'also'; reviewer?: 'only' | 'also' }, role: string | undefined): boolean {
-  const tracker = 'tracker' in def ? def.tracker : undefined
+export function toolForRole(def: { name: string; reviewer?: 'only' | 'also' }, role: string | undefined): boolean {
   const reviewer = 'reviewer' in def ? def.reviewer : undefined
-  if (role === 'tracker') return !!tracker
   if (role === 'reviewer') return !!reviewer
-  return tracker !== 'only' && reviewer !== 'only'
+  return reviewer !== 'only'
 }
 export type ToolName = (typeof TOOL_DEFS)[number]['name']

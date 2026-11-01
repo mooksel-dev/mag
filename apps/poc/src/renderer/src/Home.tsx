@@ -42,7 +42,7 @@ const PILLS: Record<InboxKind, [string, string]> = {
 
 const RECENT = 15
 
-export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOpenKey, onStage, onNewTask, onImport }: {
+export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOpenKey, onStage, onNewTask, onFromTicket }: {
   project: Project
   tasks: Task[]
   state: AppState
@@ -55,8 +55,8 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
   /** Open the Tasks view that shows this stage. */
   onStage: (stage: PipelineStage) => void
   onNewTask: () => void
-  /** Open the import field: a tracker ticket into a new task. */
-  onImport: () => void
+  /** Open the ticket link field: a new work from a ticket. */
+  onFromTicket: () => void
 }) {
   const now = useNow(15_000)
   const counts = pipelineCounts(tasks, now)
@@ -80,7 +80,7 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
         </div>
         <div className="grow" />
         <button onClick={onNewTask}>+ New task</button>
-        <button title="Import a Jira or Linear ticket by its URL or key" onClick={onImport}>Import</button>
+        <button title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={onFromTicket}>From a ticket</button>
       </div>
 
       <div className="tiles">
@@ -259,7 +259,6 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
   const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
   const restart = () => {
     const last = item.session
-    if (last?.role === 'tracker') return mag.retryImport(task.id)
     if (last?.role === 'reviewer') return mag.review(task.id)
     // A task in progress is never groomed again: its developer goes on.
     if (last?.role !== 'groomer' || task.status === 'in_progress') return mag.develop(task.id)

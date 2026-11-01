@@ -27,7 +27,6 @@ import {
   taskDiagrams,
   taskPrs,
   taskView,
-  trackerBase,
   viewCounts,
   type AgentRole,
   type AgentSession,
@@ -41,8 +40,6 @@ import {
   type TaskType,
   type TasksView,
   type TaskWork,
-  type TrackerKind,
-  type TrackerScope,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
@@ -56,8 +53,7 @@ import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLink, useNow, type NewTaskFocus } from './Tasks'
-import { scopeKey } from './trackers'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow, type NewTaskFocus } from './Tasks'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -172,7 +168,7 @@ export function App({ projectId }: { projectId: string }) {
             {task ? (
               <TaskView key={task.id} task={task} tasks={tasks} state={state} topicId={topicId} onPickTopic={pickTopic} onNav={showView} onOpenKey={openKey} />
             ) : tab === 'home' ? (
-              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onImport={() => { showView('backlog'); setFocusNewTask('import') }} />
+              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onFromTicket={() => { showView('backlog'); setFocusNewTask('ticket') }} />
             ) : tab === 'tasks' ? (
               <TasksPage project={project} tasks={tasks} sessions={state.sessions} view={view} onView={setView} onOpen={setTaskId} focusNewTask={focusNewTask} />
             ) : tab === 'architecture' ? (
@@ -279,9 +275,6 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
   const manualNext = task.status === 'in_progress' && step?.status === 'todo' && !!step.startManually
   const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
   const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
-  // An import that ended without a brief (T-10); the inbox shows it as Import failed.
-  const lastTracker = sessions.filter((s) => s.role === 'tracker').at(-1)
-  const importFailed = !!task.tracker && !task.tracker.importedAt && lastTracker?.status === 'error' && !anyRunning
   const view = taskView(task)
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
@@ -313,7 +306,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
           <div className="taskrow">
             <button className="crumb" onClick={() => onNav(view)}>Tasks · {VIEW_NAMES[view]} ›</button>
             <span className="key">{task.key}</span>
-            <TicketLink task={task} />
+            <TicketLinks task={task} />
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
@@ -342,12 +335,6 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
           {/* Local checks of the step (T-50) ask on their own cards. */}
           {task.needsInput && !(step && openLocalChecks(step).length) && <div className="banner">Agent needs you: {task.needsInput}</div>}
           {step && <LocalChecks step={step} project={project} />}
-          {importFailed && (
-            <div className="banner">
-              Import of {task.tracker!.key} failed: the tracker agent wrote no brief. See its session in the chat panel.
-              <button className="primary small" onClick={() => mag.retryImport(task.id)}>Retry import</button>
-            </div>
-          )}
           {!task.needsInput && !anyRunning && manualNext && step && (
             <div className="banner">
               {step.key} waits for Start
@@ -517,8 +504,6 @@ function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task; steps
             {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
             {repos && <span className="muted small" title="Repositories the step changes; only they get a worktree">{repos.length ? repos.join(', ') : 'no code'}</span>}
             {steps && <PrPills prs={taskPrs(sub)} />}
-            {/* Sub-ticket of a tracker (T-10) goes here. */}
-            {steps && <span className="subticket" />}
             {editable && <button className="link small" onClick={edit}>Edit</button>}
           </span>
         </>
@@ -619,7 +604,7 @@ function RepoStatus({ path }: { path: string }) {
   return <span className="muted small">{info.origin}</span>
 }
 
-const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect', tracker: 'Tracker' }
+const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect' }
 
 function AgentSettings({ project }: { project: Project }) {
   const agents = useAgents()
@@ -646,8 +631,8 @@ function AgentSettings({ project }: { project: Project }) {
 
 const MODES: [IntegrationMode, string][] = [['off', 'Off'], ['ask', 'Ask'], ['auto', 'Auto']]
 
-/** Roles integration modes apply to: the tracker gets every integration whatever the modes (T-37). */
-const INTEGRATION_ROLES = SETTABLE_ROLES.filter((r) => r !== 'tracker')
+/** Roles integration modes apply to. */
+const INTEGRATION_ROLES = SETTABLE_ROLES
 
 /** Off / Ask / Auto per integration and role. Codex has no integrations; the architect has no chat to ask in. */
 function IntegrationSettings({ project, integrations }: { project: Project; integrations: Integration[] }) {
@@ -680,66 +665,16 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
       ) : (
         <span className="muted small">Run any Claude Code agent to detect integrations.</span>
       )}
-      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask. The Tracker agent gets every integration.</span>
-    </div>
-  )
-}
-
-const KINDS: [TrackerKind, string, string, string][] = [
-  ['jira', 'Jira', 'Jira site URL', 'Project key'],
-  ['linear', 'Linear', 'Linear workspace', 'Team key'],
-]
-
-/** Tracker projects / teams whose bare ticket keys become links (T-10, T-37). How the agent reads them is up to it. */
-function TrackerSettings({ project }: { project: Project }) {
-  const scopes = project.trackers ?? []
-  const [kind, setKind] = useState<TrackerKind>('jira')
-  const [baseText, setBaseText] = useState('')
-  const [scope, setScope] = useState('')
-  const [, , basePlaceholder, keyPlaceholder] = KINDS.find(([k]) => k === kind)!
-  const base = trackerBase(kind, baseText)
-  const key = scopeKey(scope)
-  const taken = !!key && scopes.some((s) => s.scope.toUpperCase() === key)
-  const save = (list: TrackerScope[]) => mag.updateProject(project.id, { trackers: list })
-  return (
-    <div className="field">
-      Trackers
-      {scopes.length > 0 && (
-        <div className="trackerlist">
-          {scopes.map((s, i) => (
-            <div key={`${s.kind}:${s.scope}:${i}`} className="trackerrow">
-              <code>{s.scope}</code>
-              <span className="muted small">· {KINDS.find(([k]) => k === s.kind)?.[1]} · {s.base.replace(/^https?:\/\//, '')} ·</span>
-              <button className="link" onClick={() => save(scopes.filter((_, j) => j !== i))}>remove</button>
-            </div>
-          ))}
-        </div>
-      )}
-      <form
-        className="trackeradd"
-        onSubmit={(e) => { e.preventDefault(); if (!key || taken || !base) return; void save([...scopes, { kind, scope: key, base }]); setScope('') }}
-      >
-        <select value={kind} onChange={(e) => setKind(e.target.value as TrackerKind)} aria-label="Tracker kind">
-          {KINDS.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
-        </select>
-        <input className="trackerbase" value={baseText} onChange={(e) => setBaseText(e.target.value)} placeholder={basePlaceholder} aria-label={basePlaceholder} aria-invalid={!!baseText.trim() && !base} />
-        <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder={keyPlaceholder} aria-label="Project or team key" aria-invalid={!!scope.trim() && !key} />
-        <button type="submit" disabled={!key || taken || !base}>+ Add tracker</button>
-        {taken && <span className="muted small">{key} is already added.</span>}
-        {!!baseText.trim() && !base && <span className="muted small">Not a {basePlaceholder}.</span>}
-      </form>
-      <span className="muted small">
-        A bare key like ABC-12 becomes a link. The agent reads tickets any way it has (MCP, acli…); mag never writes to the tracker.
-      </span>
+      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
     </div>
   )
 }
 
 const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
-  plan: 'How the groomer plans a task: problem, options with diagrams, checkpoint, steps.',
+  plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
-  tracker: 'What agents may do in a ticket tracker.',
+  tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
 }
 
 /**
@@ -816,7 +751,6 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />
-      <TrackerSettings project={project} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <h2>Doc templates</h2>
       {TYPES.map((t) => (
