@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TicketRef } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -51,8 +51,8 @@ export interface NewTask {
   type: TaskType
   description: string
   parentId?: string | null
-  /** Defaults to backlog; subtasks are todo, in_progress or done. */
-  status?: TaskStatus
+  /** Works default to planning; subtasks are todo, in_progress or done. */
+  status?: WorkState | SubtaskStatus
   /** Steps: wait for the user's Start (see Task.startManually). */
   startManually?: boolean
   /** Steps: the repositories it changes (see Task.repos). */
@@ -83,18 +83,12 @@ export interface MagApi {
   groom(taskId: string): Promise<void>
   /** Cancel a task not done yet: its agent stops and its worktrees are removed; open PRs stay. */
   cancel(taskId: string, reason: string | null): Promise<void>
-  /** Archive done or canceled tasks; they keep their status. */
-  archive(taskIds: string[]): Promise<void>
-  /** Bring an archived task back. */
-  restore(taskId: string): Promise<void>
-  /** Swap a todo task with its neighbour in the queue. */
-  move(taskId: string, dir: 'up' | 'down'): Promise<void>
   /** Legacy tasks only: set a checklist subtask's status; starting one sends the task's other in-progress step back to todo. */
   setSubtaskStatus(subtaskId: string, status: SubtaskStatus): Promise<void>
   /** Set the order of a task's subtasks; `ids` lists each of them exactly once. */
   reorderSubtasks(parentId: string, ids: string[]): Promise<void>
   /**
-   * Start a todo task, or restart the developer of the current step of a task in progress. `localRepos` (the Start
+   * Start a ready work, or restart the developer of the current step of a task in progress. `localRepos` (the Start
    * popup): repositories its steps work on in the main checkout instead of a worktree.
    */
   develop(taskId: string, localRepos?: string[]): Promise<void>
@@ -113,8 +107,8 @@ export interface MagApi {
   addTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
   /** Drop one of the task's tickets, by its URL. */
   removeTicket(taskId: string, url: string): Promise<void>
-  /** Move a backlog or grooming task to todo; it needs at least one step. */
-  moveToTodo(taskId: string): Promise<void>
+  /** Approve the plan of a work in planning: it is ready for the user's Start; it needs a step not done yet. */
+  approve(taskId: string): Promise<void>
   /** Continue a done work: back to planning; its owner (else a new groomer) gets `what` and plans the steps for it. */
   reopen(taskId: string, what: string): Promise<void>
   addIdea(projectId: string, text: string): Promise<void>

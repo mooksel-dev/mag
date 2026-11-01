@@ -35,16 +35,19 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 ## What the PoC does
 
 1. Create a project, attach repositories (Settings).
-2. Add tasks to the backlog (Tasks tab → Backlog).
-   Statuses: `backlog` → `grooming` → `todo` → `in_progress` → `done`, plus `canceled` from any status before done.
+2. Start a work: discuss the problem in a project chat (**+ New work** on Home opens a topic; it creates the work and
+   plans it with you), start one from an idea (Home → Ideas) or from a ticket link (**From a ticket**).
+   Work states: `planning` → `ready` (you approved the plan) → `in_progress` → `done`, plus `canceled` before done; a
+   done work can be continued (back to `planning`). mag has no backlog, priority or archive: what nobody works on yet
+   is an idea, priority lives in your tracker. A work's key is its first ticket's key (`ABC-12`) or a slug of its
+   title (`fix-login`); works from before have `T-12`.
 3. **Groom** a task: Claude Code runs in the background in the first repo (read-only tools),
    writes the task document and either asks for input or marks the task groomed. A task with several steps gets
    subtasks: a short checklist of the plan (title + optional note, todo / in progress / done), with no doc, agent or
    PR of their own.
 4. **Waiting on you** (Home) lists what needs you. Open a task, answer in the chat; the agent updates the doc.
-5. A groomed task goes to **todo** by itself, at the end of the queue; reorder not-started tasks by dragging or ▲▼.
-   The Tasks tab has three views: **Active** (In progress, Todo, Grooming, Recently finished), **Backlog** and
-   **Archive**. Rows expand to show their subtasks live. A dot shows the agent state: green = an agent works
+5. **Approve plan** moves a planned work to **ready**; **Start** starts it. The Tasks tab lists works by state (In
+   progress, Ready, Planning, Finished: the 10 newest, then Show all). Rows expand to show their steps live. A dot shows the agent state: green = an agent works
    (`developer · 12m`), yellow = waiting on you (a question, an approval, or a PR to merge).
 6. Todo runs top to bottom, **one task at a time**; the next one starts when no task is in progress.
    One developer session owns a task from start to merge. Its cwd is the task dir (`worktrees/<projectId>/<key>/`), with a
@@ -54,9 +57,7 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 7. Every minute the app checks the open PRs of tasks in progress: all merged (and no repo with commits left without
    one) → task done and worktrees removed; one closed without merge → a note for you; new comments on any of them →
    the same developer session is resumed with them. You merge; agents never do.
-8. **Cancel** stops a task's agent and removes its worktrees (open PRs stay; close them on GitHub). Done and canceled
-   tasks can be **archived** (a flag; they keep their status) by hand, with Archive all, or automatically after
-   `autoArchiveDays` (Settings, default 14, 0 = off). **Restore** brings them back.
+8. **Cancel** stops a work's agent and removes its worktrees (open PRs stay; close them on GitHub).
 
 ### Architecture
 
@@ -75,8 +76,8 @@ Developer agents need `git` and an authenticated `gh` CLI. Worktrees live in use
 ### Project chat
 
 The **Chat** panel sits next to every tab: a free conversation about the project, one or more threads per project.
-The agent reads the code and the web but never edits code; decisions become tasks (`create_task`, `start_grooming`;
-a task already fully discussed can go straight to the end of the todo queue with `create_task` + `doc` + `plan: true`),
+The agent reads the code and the web but never edits code; decisions become works (`create_work`, planned right in the chat;
+a work already fully discussed can go straight to ready with `create_work` + `doc` + `plan: true`),
 notes (`update_notes`) or task-doc changes. Paste screenshots or drop files into any chat (task chats too); they are
 copied to userData/attachments and handed to the agent as paths. Agents draw mockups and diagrams with `show_canvas`:
 self-contained HTML rendered in a sandboxed iframe in the chat, kept with the project and the task.
@@ -102,7 +103,7 @@ Each run gets a stdio MCP server (`src/main/task-mcp.ts`, server name `mag`). Ta
 | `add_idea` | Any agent: put a finding outside its scope on the project's ideas instead of doing it |
 
 Project chats and the architect get `list_tasks`, `read_task`, `create_work`, `reopen_work`, `add_ticket`, `update_task`,
-`update_task_doc`, `start_grooming`, `cancel_task` (after asking you), `archive_task`, `update_notes`, `run_architect`,
+`update_task_doc`, `start_grooming`, `cancel_task` (after asking you), `update_notes`, `run_architect`,
 `show_canvas` and the architecture tools. A project chat owns the works it creates and plans them itself: it also gets
 the step and diagram tools (`create_subtask`, `place_diagram`, `get_diagrams`…) with a `work` argument, the key of a work
 it owns. A separate groomer runs only for a work nobody discussed (one started from a ticket link). A ticket is only a

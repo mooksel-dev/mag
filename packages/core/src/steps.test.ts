@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, canMoveToTodo, canReopen, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { agentState, canApprove, canReopen, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
-const task = (id: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
+const task = (id: string, status: WorkState | SubtaskStatus, patch: Partial<Task> = {}): Task => ({
   id,
   projectId: 'p',
   key: id,
@@ -15,12 +15,11 @@ const task = (id: string, status: TaskStatus, patch: Partial<Task> = {}): Task =
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
 })
-const step = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}) => task(id, status, { parentId: 'T', key: `T.${rank}`, rank, ...patch })
+const step = (id: string, status: WorkState | SubtaskStatus, rank: number, patch: Partial<Task> = {}) => task(id, status, { parentId: 'T', key: `T.${rank}`, rank, ...patch })
 const work = (...repos: Partial<RepoWork>[]): TaskWork => ({
   repos: repos.map((r, i) => ({ repo: `r${i}`, branch: 'b', worktree: `d/r${i}`, prUrl: null, prState: null, ...r })),
   dir: 'd',
@@ -34,13 +33,13 @@ test('currentStep: the first step not done, in order', () => {
   assert.equal(currentStep('x', tasks), null, 'no steps')
 })
 
-test('canMoveToTodo: at least one step', () => {
-  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), []), { ok: false, reason: 'Add at least one step' })
-  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'todo', 1)]), { ok: true })
-  assert.equal(canMoveToTodo(step('a', 'todo', 1), []).ok, false)
+test('canApprove: at least one step', () => {
+  assert.deepEqual(canApprove(task('T', 'planning'), []), { ok: false, reason: 'Add at least one step' })
+  assert.deepEqual(canApprove(task('T', 'planning'), [step('a', 'todo', 1)]), { ok: true })
+  assert.equal(canApprove(step('a', 'todo', 1), []).ok, false)
   // A reopened work (T-55.6) needs a step for what is left.
-  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'done', 1)]), { ok: false, reason: 'Every step is done: add a step for what is left' })
-  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'done', 1), step('b', 'todo', 2)]), { ok: true })
+  assert.deepEqual(canApprove(task('T', 'planning'), [step('a', 'done', 1)]), { ok: false, reason: 'Every step is done: add a step for what is left' })
+  assert.deepEqual(canApprove(task('T', 'planning'), [step('a', 'done', 1), step('b', 'todo', 2)]), { ok: true })
 })
 
 test('canReopen: a done work with steps; not a step, a legacy task or one not done (T-55.6)', () => {
@@ -122,10 +121,10 @@ test('projectRepo: a project repository by short name or path', () => {
 
 test('taskRepos: repositories of the steps not done yet, in project order (T-50)', () => {
   const project = { repos: ['/w/app', '/w/api', '/w/web'] }
-  const tasks = [task('T', 'todo'), step('a', 'done', 1, { repos: ['/w/web'] }), step('b', 'todo', 2, { repos: ['/w/api'] }), step('c', 'todo', 3, { repos: ['/w/app', '/w/api'] })]
+  const tasks = [task('T', 'ready'), step('a', 'done', 1, { repos: ['/w/web'] }), step('b', 'todo', 2, { repos: ['/w/api'] }), step('c', 'todo', 3, { repos: ['/w/app', '/w/api'] })]
   assert.deepEqual(taskRepos('T', tasks, project), ['/w/app', '/w/api'])
-  assert.deepEqual(taskRepos('T', [task('T', 'todo'), step('a', 'todo', 1)], project), project.repos, 'an older step: every repository')
-  assert.deepEqual(taskRepos('T', [task('T', 'todo'), step('a', 'todo', 1, { repos: [] })], project), [])
+  assert.deepEqual(taskRepos('T', [task('T', 'ready'), step('a', 'todo', 1)], project), project.repos, 'an older step: every repository')
+  assert.deepEqual(taskRepos('T', [task('T', 'ready'), step('a', 'todo', 1, { repos: [] })], project), [])
 })
 
 test('localOptions / localCheckText: the card of a local check (T-50)', () => {

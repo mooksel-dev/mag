@@ -116,6 +116,12 @@ export function docDecisions(doc: string, stepKey?: string): string {
   const lines = doc.split('\n')
   const start = lines.findIndex((l) => DECISIONS_HEADING.test(l.trim()))
   if (start < 0) return ''
+  // Another step of the same work: <work key>.<n> (T-12.3, ABC-12.3, fix-login.3).
+  const prefix = stepKey ? `${stepKey.replace(/\.\d+$/, '')}.`.toLowerCase() : null
+  const otherStep = (key: string) => {
+    const k = key.toLowerCase()
+    return !!prefix && k !== stepKey!.toLowerCase() && k.startsWith(prefix) && /^\d+$/.test(k.slice(prefix.length))
+  }
   const out: string[] = []
   let skip = false
   let fence = false
@@ -124,7 +130,7 @@ export function docDecisions(doc: string, stepKey?: string): string {
     if (!fence && /^#\s/.test(line)) break
     if (!fence && /^##\s/.test(line)) {
       const key = line.replace(/^##\s+/, '').trim().split(/\s/)[0]
-      skip = !!stepKey && /^[A-Z]+-\d+\.\d+$/i.test(key) && key.toLowerCase() !== stepKey.toLowerCase()
+      skip = otherStep(key)
     }
     if (!skip) out.push(line)
   }

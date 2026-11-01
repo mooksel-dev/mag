@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, projectIdeas, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, todoTasks, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -118,7 +118,7 @@ function ownerContext(store: Store, ctx: ToolContext, name: string, args: Record
   const key = typeof args.work === 'string' ? args.work.trim() : ''
   if (!key) {
     if (name === 'show_diagram' || name === 'show_canvas') return ctx
-    throw new Error(`${name} needs work: the key of a work this topic owns, e.g. T-3`)
+    throw new Error(`${name} needs work: the key of a work this topic owns, e.g. ABC-12`)
   }
   const work = store.data.tasks.find((t) => t.projectId === ctx.projectId && !t.parentId && t.key.toLowerCase() === key.toLowerCase())
   if (!work) throw new Error(`No work ${key}`)
@@ -147,10 +147,10 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       if (!sub) throw new Error(`${key} is not a subtask of ${task.key}`)
       return sub
     }
-    /** Steps change only while grooming; throws otherwise. */
+    /** Steps change only while planning; throws otherwise. */
     const canEditSteps = () => {
       if (task.parentId) throw new Error('Subtasks cannot have subtasks')
-      if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; its steps change only while grooming`)
+      if (task.status !== 'planning') throw new Error(`${task.key} is ${task.status}; its steps change only while planning`)
     }
     /**
      * The checkpoint (T-55.2): a groomer plans steps only after the user has answered it in its chat (confirmed the
@@ -158,10 +158,10 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
      */
     const pastCheckpoint = () => {
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      if (session?.role === 'groomer' && task.status === 'grooming' && !session.items.some((i) => i.kind === 'user'))
+      if (session?.role === 'groomer' && task.status === 'planning' && !session.items.some((i) => i.kind === 'user'))
         throw new Error('Checkpoint first: steps come after the user confirms the problem and picks an option. Put that under Open questions, call set_needs_input and stop; plan the steps once the user has answered in this chat.')
     }
-    /** A step of the task, while grooming. */
+    /** A step of the task, while planning. */
     const ownSubtask = (key: unknown) => {
       canEditSteps()
       return subtask(key)
@@ -501,7 +501,7 @@ function sharedTool(
 ): string | Promise<string> | undefined {
   const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
   const byKey = (key: unknown) => {
-    const t = tasks.find((x) => x.key.toLowerCase() === String(key).toLowerCase())
+    const t = taskByKey(tasks, String(key))
     if (!t) throw new Error(`No task ${key}`)
     return t
   }
@@ -510,11 +510,11 @@ function sharedTool(
 
   switch (name) {
     case 'list_tasks': {
-      const active = activeSections(tasks)
+      const works = workSections(tasks)
       return JSON.stringify(
         {
           project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
-          tasks: [...active.inProgress, ...active.todo, ...active.grooming, ...backlogTasks(tasks), ...active.finished].flatMap(withSubtasks).map((t) => ({
+          tasks: [...works.inProgress, ...works.ready, ...works.planning, ...works.finished].flatMap(withSubtasks).map((t) => ({
             key: t.key,
             title: t.title,
             type: t.type,
@@ -555,21 +555,21 @@ function sharedTool(
         type: taskType(args.type),
         description: String(args.description ?? ''),
         // The topic that creates a work plans it (T-55.5): no groomer, it is in planning from the start.
-        status: plan ? 'todo' : owner ? 'grooming' : undefined,
+        status: plan ? 'ready' : 'planning',
         tickets,
         // The topic that discussed it owns the work: it plans it, and its fork reviews the PRs first (T-55.1).
         ownerSessionId: owner,
       })
-      // `tasks` was read before the new task existed, so it is the plan ahead of it.
-      if (md.trim()) store.data.docs[t.id] = md
-      if (plan) store.updateTask(t.id, { rank: nextPlanRank(tasks) })
-      else if (md.trim()) store.changed()
+      if (md.trim()) {
+        store.data.docs[t.id] = md
+        store.changed()
+      }
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
       const moved = adopted(store, t.id, md)
-      if (plan) return `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.${moved}`
+      if (plan) return `Created ${t.key}, ready; the user starts it.${moved}`
       return owner
-        ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user moves it to todo when the plan is ready.${moved}`
-        : `Created ${t.key} in the backlog.${moved}`
+        ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user approves the plan when it is ready.${moved}`
+        : `Created ${t.key} in planning; nobody owns it yet: start_grooming plans it.${moved}`
     }
 
     case 'add_ticket': {
@@ -585,7 +585,7 @@ function sharedTool(
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       if (session?.role !== 'chat') throw new Error('reopen_work is for a project chat')
       const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
-      return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user moves it to todo when the plan is ready.`
+      return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user approves the plan when it is ready.`
     }
 
     case 'add_idea': {
@@ -625,13 +625,6 @@ function sharedTool(
       if (!canCancel(t)) throw new Error(`${t.key} is ${t.status}${t.parentId ? ' (a subtask)' : ''}; only tasks not done or canceled yet can be canceled`)
       const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : null
       return actions.cancel(t.id, reason).then(() => `Canceled ${t.key}.${taskPrs(t).some((r) => r.prState === 'open') ? ' Its open PRs are left as they are.' : ''}`)
-    }
-
-    case 'archive_task': {
-      const t = byKey(args.key)
-      if (!canArchive(t)) throw new Error(`${t.key} is ${t.status}${t.archivedAt ? ', already archived' : ''}; only done or canceled tasks can be archived`)
-      store.updateTask(t.id, { archivedAt: Date.now() })
-      return `Archived ${t.key}.`
     }
 
     case 'update_notes':

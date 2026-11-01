@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  DEFAULT_AUTO_ARCHIVE_DAYS,
   DEFAULT_TEMPLATES,
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
@@ -15,6 +14,7 @@ import {
   isLegacy,
   openLocalChecks,
   openPrs,
+  openWorkCount,
   playbookOf,
   projectColor,
   repoWorkName,
@@ -25,20 +25,17 @@ import {
   subtaskProgress,
   subtasksOf,
   taskDiagrams,
+  taskByKey,
   taskPrs,
-  taskView,
-  viewCounts,
   type AgentRole,
   type AgentSession,
   type Integration,
   type IntegrationMode,
-  type PipelineStage,
   type PlaybookSection,
   type Project,
   type SubtaskStatus,
   type Task,
   type TaskType,
-  type TasksView,
   type TaskWork,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
@@ -53,7 +50,7 @@ import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow, type NewTaskFocus } from './Tasks'
+import { AgentDot, ApproveButton, CancelButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow } from './Tasks'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -69,7 +66,6 @@ const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 type Tab = 'home' | 'tasks' | 'architecture' | 'settings'
 const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', architecture: 'Architecture', settings: 'Settings' }
-const VIEW_NAMES: Record<TasksView, string> = { active: 'Active', backlog: 'Backlog', archive: 'Archive' }
 
 /** One project's window; the project is fixed for the window's lifetime. */
 export function App({ projectId }: { projectId: string }) {
@@ -77,8 +73,8 @@ export function App({ projectId }: { projectId: string }) {
   const [tab, setTab] = useState<Tab>('home')
   const [picker, setPicker] = useState<PickerMode | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
-  const [view, setView] = useState<TasksView>('active')
-  const [focusNewTask, setFocusNewTask] = useState<NewTaskFocus>(null)
+  /** Tasks opens with the ticket link field (Home → From a ticket). */
+  const [fromTicket, setFromTicket] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
   const [theme, setTheme] = useTheme()
   const toggleChat = (v: boolean) => {
@@ -126,13 +122,11 @@ export function App({ projectId }: { projectId: string }) {
   const picked = tasks.find((t) => t.id === taskId)
   const task = (picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null
   const inboxCount = inbox(project.id, tasks, state.sessions).length
-  const activeCount = viewCounts(tasks).active
-  /** Leaving a tab drops the new-task focus. */
-  const go = (t: Tab) => { setTab(t); setTaskId(null); setFocusNewTask(null) }
-  const showView = (v: TasksView) => { go('tasks'); setView(v) }
-  const openStage = (s: PipelineStage) => showView(s === 'backlog' ? 'backlog' : 'active')
-  const openKey = (key: string) => setTaskId(tasks.find((t) => t.key === key)?.id ?? null)
-  const screen = task ? `Task ${task.key}` : tab === 'tasks' ? `Tasks · ${VIEW_NAMES[view]}` : TAB_NAMES[tab]
+  const openCount = openWorkCount(tasks)
+  /** Leaving a tab closes the ticket link field. */
+  const go = (t: Tab) => { setTab(t); setTaskId(null); setFromTicket(false) }
+  const openKey = (key: string) => setTaskId(taskByKey(tasks, key)?.id ?? null)
+  const screen = task ? `Task ${task.key}` : TAB_NAMES[tab]
   const chatBusy = state.sessions.some((s) => s.projectId === project.id && s.role === 'chat' && s.status === 'running')
 
   return (
@@ -157,7 +151,7 @@ export function App({ projectId }: { projectId: string }) {
             <button className={tab === 'home' && !task ? 'on' : ''} onClick={() => go('home')}>
               Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
             </button>
-            <button className={tab === 'tasks' && !task ? 'on' : ''} onClick={() => go('tasks')}>Tasks <span className="cnt">{activeCount}</span></button>
+            <button className={tab === 'tasks' && !task ? 'on' : ''} onClick={() => go('tasks')}>Tasks <span className="cnt">{openCount}</span></button>
             <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => go('architecture')}>Architecture</button>
             <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => go('settings')}>Settings</button>
             <div className="grow" />
@@ -166,11 +160,11 @@ export function App({ projectId }: { projectId: string }) {
           </header>
           <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => go('home')}>
             {task ? (
-              <TaskView key={task.id} task={task} tasks={tasks} state={state} topicId={topicId} onPickTopic={pickTopic} onNav={showView} onOpenKey={openKey} />
+              <TaskView key={task.id} task={task} tasks={tasks} state={state} topicId={topicId} onPickTopic={pickTopic} onNav={() => go('tasks')} onOpenKey={openKey} />
             ) : tab === 'home' ? (
-              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onFromTicket={() => { showView('backlog'); setFocusNewTask('ticket') }} />
+              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={() => go('tasks')} onFromTicket={() => { go('tasks'); setFromTicket(true) }} />
             ) : tab === 'tasks' ? (
-              <TasksPage project={project} tasks={tasks} sessions={state.sessions} view={view} onView={setView} onOpen={setTaskId} focusNewTask={focusNewTask} />
+              <TasksPage key={String(fromTicket)} project={project} tasks={tasks} sessions={state.sessions} onOpen={setTaskId} fromTicket={fromTicket} />
             ) : tab === 'architecture' ? (
               <Architecture key={project.id} project={project} />
             ) : (
@@ -244,7 +238,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
   state: AppState
   topicId: string | null
   onPickTopic: (id: string) => void
-  onNav: (view: TasksView) => void
+  onNav: () => void
   onOpenKey: (key: string) => void
 }) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
@@ -270,12 +264,11 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
   )
   const progress = subtaskProgress(task.id, tasks)
   const anyRunning = sessions.some((s) => s.status === 'running')
-  const canGroom = !anyRunning && !task.work && ['backlog', 'grooming', 'todo'].includes(task.status)
+  const canGroom = !anyRunning && !task.work && (task.status === 'planning' || task.status === 'ready')
   // A step that starts manually is started from the banner.
   const manualNext = task.status === 'in_progress' && step?.status === 'todo' && !!step.startManually
-  const canDevelop = !anyRunning && (task.status === 'todo' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
-  const developLabel = task.status === 'todo' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
-  const view = taskView(task)
+  const canDevelop = !anyRunning && (task.status === 'ready' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
+  const developLabel = task.status === 'ready' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
   const now = useNow(15_000)
   const prs = openPrs(task, tasks)
   const stepPrs = step?.status === 'in_progress' ? openPrs(step) : []
@@ -304,22 +297,20 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
       <div className="taskmain">
         <div className="taskhead">
           <div className="taskrow">
-            <button className="crumb" onClick={() => onNav(view)}>Tasks · {VIEW_NAMES[view]} ›</button>
+            <button className="crumb" onClick={onNav}>Tasks ›</button>
             <span className="key">{task.key}</span>
             <TicketLinks task={task} />
             <span className="type">{task.type}</span>
             <StatusPill status={task.status} />
             {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
             {task.status === 'in_progress' && <PrPills prs={prs} />}
-            {task.archivedAt && <span className="pill">archived</span>}
             <AgentDot state={agentState(task, sessions, tasks)} now={now} />
             <div className="grow" />
-            {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
-            {(task.status === 'backlog' || task.status === 'grooming') && <MoveToTodoButton task={task} tasks={tasks} sessions={sessions} />}
-            {canDevelop && (task.status === 'todo' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
+            {canGroom && <button onClick={() => mag.groom(task.id)}>{task.ownerSessionId ? 'Re-groom' : 'Groom'}</button>}
+            {task.status === 'planning' && <ApproveButton task={task} tasks={tasks} sessions={sessions} />}
+            {canDevelop && (task.status === 'ready' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
             {/* The owner plans what is left: a topic opens beside, a groomer in the task's chat. */}
             <ReopenButton task={task} onReopened={() => { if (state.sessions.some((s) => s.id === task.ownerSessionId && s.role === 'chat')) onPickTopic(task.ownerSessionId!) }} />
-            <ArchiveButton task={task} />
             <CancelButton task={task} />
           </div>
           <h1>{task.title}</h1>
@@ -745,11 +736,6 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       <label className="check">
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />
         Enforce core architecture (lib / clients / services) for agents
-      </label>
-      <label className="field">
-        Auto-archive after (days)
-        <input type="number" min={0} style={{ width: 100 }} defaultValue={project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS} onChange={(e) => { const n = Math.floor(Number(e.target.value)); if (e.target.value !== '' && n >= 0) update({ autoArchiveDays: n }) }} />
-        <span className="muted small">Done and canceled tasks move to the Archive this many days after they finished; 0 turns it off.</span>
       </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />

@@ -23,7 +23,7 @@ const setup = () => {
     addRepo: async (id, ref, worktree) => {
       calls.push(`add ${ref} to ${store.task(id).key}${worktree ? ' as a worktree' : ''}`)
       const local = ref === 'web'
-      const r = { repo: `/nowhere/${ref}`, branch: 'mag/t-1-1', worktree: local ? '/nowhere/web' : `/nowhere/w/${ref}`, prUrl: null, prState: null, ...(local && { local }) }
+      const r = { repo: `/nowhere/${ref}`, branch: 'mag/big-1', worktree: local ? '/nowhere/web' : `/nowhere/w/${ref}`, prUrl: null, prState: null, ...(local && { local }) }
       const w = store.task(id).work!
       store.updateTask(id, { work: { ...w, repos: [...w.repos, r] } })
       return r
@@ -35,7 +35,7 @@ const setup = () => {
     reopen: () => 'Reopened.',
   }
   const tools = createTools(store, actions)
-  const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
+  const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'planning' })
   const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
   // The user has answered the groomer's checkpoint: it may plan steps.
   groomer.items.push({ kind: 'user', text: 'Option A', at: 1 })
@@ -45,18 +45,18 @@ const setup = () => {
 
 /** A step's work in a dir that does not exist: no commits of its own. */
 const work = (prUrl: string | null = null): TaskWork => ({
-  repos: [{ repo: '/nowhere/app', branch: 'mag/t-1-1', worktree: '/nowhere/w/app', prUrl, prState: prUrl ? 'open' : null }],
+  repos: [{ repo: '/nowhere/app', branch: 'mag/big-1', worktree: '/nowhere/w/app', prUrl, prState: prUrl ? 'open' : null }],
   dir: '/nowhere/w',
   feedbackSeenAt: 0,
 })
 
-test('the groomer cannot move a task to todo: mark_groomed is gone', async () => {
+test('the groomer cannot approve its plan: mark_groomed is gone', async () => {
   const { store, task, call } = setup()
   await call('create_subtask', { title: 'Core', note: 'models', start_manually: true })
   await assert.rejects(call('mark_groomed'), /Unknown tool mark_groomed/)
-  assert.equal(store.task(task.id).status, 'grooming')
+  assert.equal(store.task(task.id).status, 'planning')
   const [step] = store.data.tasks.filter((t) => t.parentId === task.id)
-  assert.deepEqual([step.key, step.description, step.startManually, step.work], ['T-1.1', 'models', true, null])
+  assert.deepEqual([step.key, step.description, step.startManually, step.work], ['big.1', 'models', true, null])
 })
 
 test('checkpoint: a groomer plans steps only after the user answered it in its chat (T-55.2)', async () => {
@@ -66,7 +66,7 @@ test('checkpoint: a groomer plans steps only after the user answered it in its c
   await assert.rejects(own('create_subtask', { title: 'a' }), /Checkpoint first/)
   await call('create_subtask', { title: 'a' })
   await call('create_subtask', { title: 'b' })
-  await assert.rejects(own('reorder_subtasks', { keys: ['T-1.2', 'T-1.1'] }), /Checkpoint first/)
+  await assert.rejects(own('reorder_subtasks', { keys: ['big.2', 'big.1'] }), /Checkpoint first/)
   fresh.items.push({ kind: 'user', text: 'B', at: 2 })
   await own('create_subtask', { title: 'c' })
   assert.deepEqual(store.data.tasks.filter((t) => t.parentId === task.id).map((t) => t.title), ['a', 'b', 'c'])
@@ -78,7 +78,7 @@ test('create_work with plan: true needs steps', async () => {
   await assert.rejects(tools(ctx, 'create_work', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true }), /needs steps/)
   await tools(ctx, 'create_work', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true, steps: [{ title: 'One' }, { title: 'Two', start_manually: true }] })
   const x = store.data.tasks.find((t) => t.title === 'X')!
-  assert.equal(x.status, 'todo')
+  assert.equal(x.status, 'ready')
   assert.deepEqual(store.data.tasks.filter((t) => t.parentId === x.id).map((t) => [t.title, t.startManually]), [['One', false], ['Two', true]])
 })
 
@@ -86,39 +86,39 @@ test('create_work tickets and add_ticket: links only, any tracker, a ticket in s
   const { store, project, tools } = setup()
   const ctx = { projectId: project.id }
   const jira = 'https://acme.atlassian.net/browse/abc-12'
-  assert.equal(await tools(ctx, 'create_work', { title: 'X', description: 'd', tickets: [{ url: jira }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }] }), 'Created T-2 in the backlog.')
-  const x = store.data.tasks.find((t) => t.key === 'T-2')!
+  assert.equal(await tools(ctx, 'create_work', { title: 'X', description: 'd', tickets: [{ url: jira }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }] }), 'Created ABC-12 in planning; nobody owns it yet: start_grooming plans it.')
+  const x = store.data.tasks.find((t) => t.key === 'ABC-12')!
   assert.equal(x.type, 'dev', 'type defaults to dev')
   assert.deepEqual(x.tickets, [{ url: jira, key: 'ABC-12' }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }])
   await tools(ctx, 'create_work', { title: 'Y', description: 'd', tickets: JSON.stringify([jira]) })
-  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-3')!.tickets, [{ url: jira, key: 'ABC-12' }], 'the same ticket in another work')
+  assert.deepEqual(store.data.tasks.find((t) => t.key === 'ABC-12-2')!.tickets, [{ url: jira, key: 'ABC-12' }], 'the same ticket in another work')
   assert.equal(store.data.tasks.find((t) => t.title === 'Big')!.tickets, undefined, 'a work without a ticket')
   const count = store.data.tasks.length
   await assert.rejects(tools(ctx, 'create_work', { title: 'Z', description: 'd', tickets: [{ url: 'ABC-13' }] }), /Not a ticket link: ABC-13/)
   assert.equal(store.data.tasks.length, count, 'nothing created')
 
-  assert.match(await tools(ctx, 'add_ticket', { key: 't-1', url: 'https://linear.app/acme/issue/ENG-7/slug' }), /T-1 is about ENG-7 now \(1 ticket/)
-  await tools(ctx, 'add_ticket', { key: 'T-1', url: 'https://linear.app/acme/issue/ENG-7/slug' })
-  await tools(ctx, 'add_ticket', { key: 'T-1', url: 'https://jira.example.com/issue/1', ticket_key: 'OPS-1' })
-  assert.deepEqual(store.task(store.data.tasks.find((t) => t.key === 'T-1')!.id).tickets, [{ url: 'https://linear.app/acme/issue/ENG-7/slug', key: 'ENG-7' }, { url: 'https://jira.example.com/issue/1', key: 'OPS-1' }])
+  assert.match(await tools(ctx, 'add_ticket', { key: 'big', url: 'https://linear.app/acme/issue/ENG-7/slug' }), /big is about ENG-7 now \(1 ticket/)
+  await tools(ctx, 'add_ticket', { key: 'big', url: 'https://linear.app/acme/issue/ENG-7/slug' })
+  await tools(ctx, 'add_ticket', { key: 'big', url: 'https://jira.example.com/issue/1', ticket_key: 'OPS-1' })
+  assert.deepEqual(store.task(store.data.tasks.find((t) => t.key === 'big')!.id).tickets, [{ url: 'https://linear.app/acme/issue/ENG-7/slug', key: 'ENG-7' }, { url: 'https://jira.example.com/issue/1', key: 'OPS-1' }])
   const step = store.createTask({ projectId: project.id, parentId: x.id, title: 's', type: 'dev', description: '' })
-  await assert.rejects(tools(ctx, 'add_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; add the ticket to its work T-2/)
-  assert.deepEqual(JSON.parse(await tools(ctx, 'list_tasks', {})).tasks.find((t: { key: string }) => t.key === 'T-2').tickets, [jira, 'https://github.com/o/r/issues/5'])
+  await assert.rejects(tools(ctx, 'add_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; add the ticket to its work ABC-12/)
+  assert.deepEqual(JSON.parse(await tools(ctx, 'list_tasks', {})).tasks.find((t: { key: string }) => t.key === 'ABC-12').tickets, [jira, 'https://github.com/o/r/issues/5'])
 })
 
-test('steps change only while grooming: never in a task in progress', async () => {
+test('steps change only while planning: never in a task in progress', async () => {
   const { store, task, call } = setup()
   for (const title of ['a', 'b']) await call('create_subtask', { title })
   const [a, b] = store.data.tasks.filter((t) => t.parentId === task.id)
   store.updateTask(a.id, { status: 'in_progress', work: work() })
   store.updateTask(task.id, { status: 'in_progress' })
 
-  await assert.rejects(call('create_subtask', { title: 'c' }), /in_progress; its steps change only while grooming/)
-  await assert.rejects(call('update_subtask', { key: b.key, title: 'x' }), /only while grooming/)
-  await assert.rejects(call('delete_subtask', { key: b.key }), /only while grooming/)
-  await assert.rejects(call('reorder_subtasks', { keys: [b.key, a.key] }), /only while grooming/)
+  await assert.rejects(call('create_subtask', { title: 'c' }), /in_progress; its steps change only while planning/)
+  await assert.rejects(call('update_subtask', { key: b.key, title: 'x' }), /only while planning/)
+  await assert.rejects(call('delete_subtask', { key: b.key }), /only while planning/)
+  await assert.rejects(call('reorder_subtasks', { keys: [b.key, a.key] }), /only while planning/)
   const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
-  await assert.rejects(call('create_subtask', { title: 'c' }, dev.id), /only while grooming/)
+  await assert.rejects(call('create_subtask', { title: 'c' }, dev.id), /only while planning/)
   assert.equal(store.data.tasks.filter((t) => t.parentId === task.id).length, 2)
 })
 
@@ -131,8 +131,8 @@ test('step status follows the lifecycle: set_subtask_status is legacy only, comp
   store.updateTask(task.id, { status: 'in_progress' })
   store.updateTask(a.id, { status: 'in_progress', work: work() })
   const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
-  assert.match(await call('complete_step', {}, dev.id), /T-1.1 is done. Next: T-1.2/)
-  assert.deepEqual(calls, ['complete T-1.1'])
+  assert.match(await call('complete_step', {}, dev.id), /big.1 is done. Next: big.2/)
+  assert.deepEqual(calls, ['complete big.1'])
   await assert.rejects(call('complete_step', {}, dev.id), /No step is in progress/)
 })
 
@@ -148,7 +148,7 @@ test('set_pr writes to the step; a second live PR for a repo is an error', async
   assert.equal(store.task(task.id).work, null)
   await assert.rejects(call('set_pr', { url: 'https://github.com/o/app/pull/2' }, dev.id), /already has/)
   const info = JSON.parse(await call('get_task', {}, dev.id))
-  assert.deepEqual(info.subtasks[0], { key: 'T-1.1', title: 'a', status: 'in_progress', startManually: false, prs: ['https://github.com/o/app/pull/1 (open)'], current: true })
+  assert.deepEqual(info.subtasks[0], { key: 'big.1', title: 'a', status: 'in_progress', startManually: false, prs: ['https://github.com/o/app/pull/1 (open)'], current: true })
   assert.equal(info.work.dir, '/nowhere/w')
 })
 
@@ -232,31 +232,31 @@ test('diagrams as data: show_diagram and place_diagram place a diagram as an opt
   const a = Object.values(store.data.canvases)[0]
   assert.deepEqual([a.role, a.option, a.stepId, a.repo], ['option', 'A', null, null])
   await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'option' }), /role option needs option/)
-  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, step: 'T-1.1' }), /go with a role/)
-  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1' }), /role plan needs step/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, step: 'big.1' }), /go with a role/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'big.1' }), /role plan needs step/)
 
   await call('create_subtask', { title: 'Api', repos: ['api'] })
   await call('create_subtask', { title: 'Web', repos: ['web'] })
-  const out = await call('show_diagram', { title: 'Api plan', diagram: state, role: 'plan', step: 't-1.1', repo: 'api' })
+  const out = await call('show_diagram', { title: 'Api plan', diagram: state, role: 'plan', step: 'big.1', repo: 'api' })
   const plan = Object.values(store.data.canvases).find((c) => c.title === 'Api plan')!
-  assert.match(out, new RegExp(`^Diagram ${plan.id} \\(v1\\) in the plan of T-1.1 \\(api\\):`))
-  assert.deepEqual([plan.role, plan.stepId, plan.repo], ['plan', store.data.tasks.find((t) => t.key === 'T-1.1')!.id, '/r/api'])
-  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1', repo: 'web' }), /T-1.1 does not change web; its repos: api/)
-  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1', repo: 'nope' }), /Not a repository of the project: nope/)
+  assert.match(out, new RegExp(`^Diagram ${plan.id} \\(v1\\) in the plan of big.1 \\(api\\):`))
+  assert.deepEqual([plan.role, plan.stepId, plan.repo], ['plan', store.data.tasks.find((t) => t.key === 'big.1')!.id, '/r/api'])
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'big.1', repo: 'web' }), /big.1 does not change web; its repos: api/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'big.1', repo: 'nope' }), /Not a repository of the project: nope/)
   // A revision without role keeps the place; place_diagram moves it without a new version.
   await call('show_diagram', { id: plan.id, title: 'Api plan', diagram: state })
   assert.deepEqual([store.data.canvases[plan.id].role, store.data.canvases[plan.id].version], ['plan', 2])
-  assert.equal(await call('place_diagram', { id: a.id, role: 'plan', step: 'T-1.2' }), `Placed ${a.id} in the plan of T-1.2.`)
+  assert.equal(await call('place_diagram', { id: a.id, role: 'plan', step: 'big.2' }), `Placed ${a.id} in the plan of big.2.`)
   assert.deepEqual([store.data.canvases[a.id].option, store.data.canvases[a.id].version], [null, 1])
 
-  const step1 = JSON.parse(await call('get_diagrams', { step: 'T-1.1' }))
-  assert.deepEqual(step1.map((d: { id: string; role: string; step: string; repo: string }) => [d.id, d.role, d.step, d.repo]), [[plan.id, 'plan', 'T-1.1', 'api']])
+  const step1 = JSON.parse(await call('get_diagrams', { step: 'big.1' }))
+  assert.deepEqual(step1.map((d: { id: string; role: string; step: string; repo: string }) => [d.id, d.role, d.step, d.repo]), [[plan.id, 'plan', 'big.1', 'api']])
   assert.equal(JSON.parse(await call('get_diagrams')).length, 2)
-  await assert.rejects(call('get_diagrams', { step: 'T-9' }), /T-9 is not a subtask of T-1/)
-  assert.deepEqual(JSON.parse(await call('get_task')).diagrams.map((d: { role: string; step: string }) => [d.role, d.step]), [['plan', 'T-1.2'], ['plan', 'T-1.1']])
+  await assert.rejects(call('get_diagrams', { step: 'T-9' }), /T-9 is not a subtask of big/)
+  assert.deepEqual(JSON.parse(await call('get_task')).diagrams.map((d: { role: string; step: string }) => [d.role, d.step]), [['plan', 'big.2'], ['plan', 'big.1']])
   await call('place_diagram', { id: a.id, role: 'none' })
   assert.equal(store.data.canvases[a.id].role, null)
-  assert.equal(await call('get_diagrams', { step: 'T-1.2' }), 'T-1.2 has no diagrams of its own; get_diagrams without step lists all of T-1.')
+  assert.equal(await call('get_diagrams', { step: 'big.2' }), 'big.2 has no diagrams of its own; get_diagrams without step lists all of big.')
 })
 
 test('a doc that links a project-chat diagram adopts it; one of another task stays there, listed, and place_diagram copies it (T-55.3)', async () => {
@@ -266,19 +266,19 @@ test('a doc that links a project-chat diagram adopts it; one of another task sta
   const other = store.createTask({ projectId: project.id, title: 'Research', type: 'research', description: '' })
   const old = store.saveCanvas({ projectId: project.id, taskId: other.id, sessionId: null, title: 'Old', kind: 'diagram', diagram: state })
   const out = await call('update_doc', { markdown: `[c](canvas:${chat.id}) [o](canvas:${old.id})` })
-  assert.equal(out, `Document updated. Moved into T-1, as the doc links them: ${chat.id}.`)
+  assert.equal(out, `Document updated. Moved into big, as the doc links them: ${chat.id}.`)
   assert.deepEqual([store.data.canvases[chat.id].taskId, store.data.canvases[old.id].taskId], [task.id, other.id])
-  assert.deepEqual(JSON.parse(await call('get_diagrams')).map((d: { id: string; of?: string }) => [d.id, d.of]), [[chat.id, undefined], [old.id, 'T-2']])
+  assert.deepEqual(JSON.parse(await call('get_diagrams')).map((d: { id: string; of?: string }) => [d.id, d.of]), [[chat.id, undefined], [old.id, 'research']])
 
   await call('create_subtask', { title: 'Core' })
-  const copied = await call('place_diagram', { id: old.id, role: 'plan', step: 'T-1.1' })
+  const copied = await call('place_diagram', { id: old.id, role: 'plan', step: 'big.1' })
   const copy = Object.values(store.data.canvases).find((c) => c.taskId === task.id && c.title === 'Old')!
-  assert.match(copied, new RegExp(`^${old.id} belongs to T-2: copied into T-1 as ${copy.id} in the plan of T-1.1\\. Link \\[Old\\]\\(canvas:${copy.id}\\)`))
+  assert.match(copied, new RegExp(`^${old.id} belongs to research: copied into big as ${copy.id} in the plan of big.1\\. Link \\[Old\\]\\(canvas:${copy.id}\\)`))
   assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
   // The project chat writes a doc through update_task_doc and adopts the same way.
   const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
   const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '' })
-  assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'T-1', markdown: `[l](canvas:${loose.id})` }), /Moved into T-1/)
+  assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'big', markdown: `[l](canvas:${loose.id})` }), /Moved into big/)
   assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
 
@@ -307,10 +307,10 @@ test('add_repo: the developer of a step in progress only', async () => {
   store.updateTask(a.id, { status: 'in_progress', work: work() })
   const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
   await assert.rejects(call('add_repo', {}, dev.id), /Pass repo/)
-  assert.match(await call('add_repo', { repo: 'api' }, dev.id), /^api: worktree \/nowhere\/w\/api on branch mag\/t-1-1\./)
-  assert.match(await call('add_repo', { repo: 'web' }, dev.id), /^web: the main checkout \/nowhere\/web, on branch mag\/t-1-1 \(the task works there locally\)/)
+  assert.match(await call('add_repo', { repo: 'api' }, dev.id), /^api: worktree \/nowhere\/w\/api on branch mag\/big-1\./)
+  assert.match(await call('add_repo', { repo: 'web' }, dev.id), /^web: the main checkout \/nowhere\/web, on branch mag\/big-1 \(the task works there locally\)/)
   await call('add_repo', { repo: 'db', worktree: true }, dev.id)
-  assert.deepEqual(calls, ['add api to T-1.1', 'add web to T-1.1', 'add db to T-1.1 as a worktree'])
+  assert.deepEqual(calls, ['add api to big.1', 'add web to big.1', 'add db to big.1 as a worktree'])
 })
 
 test('set_review is the reviewer\'s alone and records the verdict of its step', async () => {
@@ -323,7 +323,7 @@ test('set_review is the reviewer\'s alone and records the verdict of its step', 
   await assert.rejects(call('set_review', { verdict: 'changes', findings: [{ where: 'a.ts' }] }, reviewer.id), /needs a text/)
   await call('set_review', { verdict: 'changes', findings: JSON.stringify([{ text: ' no test ', where: 'a.ts:3' }, { text: 'scope' }]) }, reviewer.id)
   await call('set_review', { verdict: 'merge', findings: [] }, reviewer.id)
-  assert.deepEqual(calls, ['review T-1.1: changes a.ts:3|no test;|scope', 'review T-1.1: merge '])
+  assert.deepEqual(calls, ['review big.1: changes a.ts:3|no test;|scope', 'review big.1: merge '])
 })
 
 test('the reviewer reads the task but changes nothing', async () => {
@@ -338,12 +338,12 @@ test('the reviewer reads the task but changes nothing', async () => {
 test('create_work from a topic: the topic owns the work and plans it, no groomer (T-55.5)', async () => {
   const { store, project, tools } = setup()
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
-  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'create_work', { title: 'Owned', description: 'd' }), /you own it and plan it here: pass work: "T-2"/)
+  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'create_work', { title: 'Owned', description: 'd' }), /you own it and plan it here: pass work: "owned"/)
   await tools({ projectId: project.id }, 'create_work', { title: 'Orphan', type: 'dev', description: 'd' })
   const owned = store.data.tasks.find((t) => t.title === 'Owned')!
-  assert.deepEqual([owned.ownerSessionId, owned.status], [topic.id, 'grooming'])
+  assert.deepEqual([owned.ownerSessionId, owned.status], [topic.id, 'planning'])
   const orphan = store.data.tasks.find((t) => t.title === 'Orphan')!
-  assert.deepEqual([orphan.ownerSessionId, orphan.status], [undefined, 'backlog'])
+  assert.deepEqual([orphan.ownerSessionId, orphan.status], [undefined, 'planning'])
 })
 
 test('owner tools in a project chat: the topic plans the works it owns, passing work (T-55.5)', async () => {
@@ -353,34 +353,34 @@ test('owner tools in a project chat: the topic plans the works it owns, passing 
   const chat = (name: string, args: Record<string, unknown>, sessionId = topic.id) => tools({ projectId: project.id, sessionId }, name, args)
   await chat('create_work', { title: 'Owned', description: 'd' })
   // No user message in the topic yet: the groomer's checkpoint is not the owner's.
-  assert.equal(await chat('create_subtask', { work: 't-2', title: 'One', repos: [] }), 'Created T-2.1.')
-  await chat('create_subtask', { work: 'T-2', title: 'Two' })
-  assert.equal(await chat('reorder_subtasks', { work: 'T-2', keys: ['T-2.2', 'T-2.1'] }), 'Order: T-2.2, T-2.1.')
-  await chat('update_subtask', { work: 'T-2', key: 'T-2.1', note: 'the core' })
-  await chat('delete_subtask', { work: 'T-2', key: 'T-2.2' })
-  const owned = store.data.tasks.find((t) => t.key === 'T-2')!
-  assert.deepEqual(store.data.tasks.filter((t) => t.parentId === owned.id).map((t) => [t.key, t.description]), [['T-2.1', 'the core']])
+  assert.equal(await chat('create_subtask', { work: 'OWNED', title: 'One', repos: [] }), 'Created owned.1.')
+  await chat('create_subtask', { work: 'owned', title: 'Two' })
+  assert.equal(await chat('reorder_subtasks', { work: 'owned', keys: ['owned.2', 'owned.1'] }), 'Order: owned.2, owned.1.')
+  await chat('update_subtask', { work: 'owned', key: 'owned.1', note: 'the core' })
+  await chat('delete_subtask', { work: 'owned', key: 'owned.2' })
+  const owned = store.data.tasks.find((t) => t.key === 'owned')!
+  assert.deepEqual(store.data.tasks.filter((t) => t.parentId === owned.id).map((t) => [t.key, t.description]), [['owned.1', 'the core']])
 
   const diagram = { type: 'state', entity: 'Work', states: [{ id: 'a', label: 'A', initial: true, diff: 'add' }], transitions: [] }
-  const shown = await chat('show_diagram', { work: 'T-2', title: 'States', diagram, role: 'plan', step: 'T-2.1' })
-  assert.match(shown, /in the plan of T-2.1/)
+  const shown = await chat('show_diagram', { work: 'owned', title: 'States', diagram, role: 'plan', step: 'owned.1' })
+  assert.match(shown, /in the plan of owned.1/)
   const id = /Diagram (\S+) /.exec(shown)![1]
   assert.equal(store.data.canvases[id].taskId, owned.id, 'the drawing belongs to the work')
   assert.ok(topic.items.some((i) => i.kind === 'canvas' && i.canvas.id === id), 'and shows in the topic')
-  assert.match(await chat('get_diagrams', { work: 'T-2', step: 'T-2.1' }), /"States"/)
-  assert.match(await chat('place_diagram', { work: 'T-2', id, role: 'none' }), /unplaced/)
+  assert.match(await chat('get_diagrams', { work: 'owned', step: 'owned.1' }), /"States"/)
+  assert.match(await chat('place_diagram', { work: 'owned', id, role: 'none' }), /unplaced/)
   const free = await chat('show_diagram', { title: 'Sketch', diagram })
   assert.equal(store.data.canvases[/Diagram (\S+) /.exec(free)![1]].taskId, null, 'without work: the project\'s')
-  assert.match(await chat('update_doc', { work: 'T-2', markdown: `# Plan\n[s](canvas:${id})` }), /Document updated/)
+  assert.match(await chat('update_doc', { work: 'owned', markdown: `# Plan\n[s](canvas:${id})` }), /Document updated/)
   assert.equal(store.data.docs[owned.id], `# Plan\n[s](canvas:${id})`)
-  await chat('set_needs_input', { work: 'T-2', reason: 'Plan ready for review' })
+  await chat('set_needs_input', { work: 'owned', reason: 'Plan ready for review' })
   assert.equal(store.task(owned.id).needsInput, 'Plan ready for review')
 
   await assert.rejects(chat('create_subtask', { title: 'x' }), /needs work/)
   await assert.rejects(chat('create_subtask', { work: 'T-9', title: 'x' }), /No work T-9/)
-  await assert.rejects(chat('create_subtask', { work: 'T-2', title: 'x' }, other.id), /T-2 is not planned in this topic/)
-  await assert.rejects(chat('create_subtask', { work: 'T-1', title: 'x' }), /T-1 is not planned in this topic/)
-  await assert.rejects(tools({ projectId: project.id }, 'create_subtask', { work: 'T-2', title: 'x' }), /needs a task/, 'only a chat')
+  await assert.rejects(chat('create_subtask', { work: 'owned', title: 'x' }, other.id), /owned is not planned in this topic/)
+  await assert.rejects(chat('create_subtask', { work: 'big', title: 'x' }), /big is not planned in this topic/)
+  await assert.rejects(tools({ projectId: project.id }, 'create_subtask', { work: 'owned', title: 'x' }), /needs a task/, 'only a chat')
 })
 
 test('toolsFor: a project chat lists the owner tools with work; task runs list them as they are (T-55.5)', () => {
@@ -408,7 +408,7 @@ test('add_idea: any agent puts a finding on the project ideas, with where it cam
   await call('add_idea', { text: 'flaky test' }, reviewer.id)
   await tools({ projectId: project.id, sessionId: topic.id }, 'add_idea', { text: 'dark mode' })
   await assert.rejects(call('add_idea', { text: ' ' }), /An idea needs a text/)
-  assert.deepEqual(store.data.ideas.map((i) => [i.text, i.source]), [['retry logic is duplicated in web', 'T-1.1'], ['cache rates', 'T-1'], ['flaky test', 'T-1.1'], ['dark mode', undefined]])
+  assert.deepEqual(store.data.ideas.map((i) => [i.text, i.source]), [['retry logic is duplicated in web', 'big.1'], ['cache rates', 'big'], ['flaky test', 'big.1'], ['dark mode', undefined]])
   const listed = JSON.parse(await tools({ projectId: project.id, sessionId: topic.id }, 'list_tasks', {}))
   assert.deepEqual(listed.ideas[0], { text: 'dark mode' }, 'newest first')
   assert.ok(toolsFor('task', 'reviewer').some((t) => t.name === 'add_idea'))
@@ -419,10 +419,10 @@ test('reopen_work: a project chat continues a done work it then owns (T-55.6)', 
   const reopened: string[] = []
   const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.') })
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
-  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'T-1', what: 'web' }), /^Back\. Plan what is left right here: .*work: "T-1"/)
-  assert.deepEqual(reopened, [`T-1: web by ${topic.id}`])
-  await assert.rejects(tools({ projectId: project.id }, 'reopen_work', { key: 'T-1', what: 'web' }), /reopen_work is for a project chat/)
-  await assert.rejects(call('reopen_work', { key: 'T-1', what: 'web' }), /reopen_work is for a project chat|needs a task|Unknown/)
+  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'big', what: 'web' }), /^Back\. Plan what is left right here: .*work: "big"/)
+  assert.deepEqual(reopened, [`big: web by ${topic.id}`])
+  await assert.rejects(tools({ projectId: project.id }, 'reopen_work', { key: 'big', what: 'web' }), /reopen_work is for a project chat/)
+  await assert.rejects(call('reopen_work', { key: 'big', what: 'web' }), /reopen_work is for a project chat|needs a task|Unknown/)
   assert.ok(!toolsFor('task', 'groomer').some((t) => t.name === 'reopen_work'))
-  assert.equal(store.task(task.id).status, 'grooming')
+  assert.equal(store.task(task.id).status, 'planning')
 })

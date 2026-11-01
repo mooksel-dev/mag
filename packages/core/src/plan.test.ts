@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canMoveInPlan, canMoveSubtask, devRunOutcome, findRepoWork, nextPlanRank, planQueue, prRollup, prsMerged, repoDirNames, repoWorkName, subtaskProgress, subtaskStatusChanges, todoTasks, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { canMoveSubtask, devRunOutcome, findRepoWork, prRollup, prsMerged, repoDirNames, repoWorkName, subtaskProgress, subtaskStatusChanges, taskByKey, titleSlug, workKey, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
-const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
+const task = (id: string, status: WorkState | SubtaskStatus, rank: number, patch: Partial<Task> = {}): Task => ({
   id,
   projectId: 'p',
   key: id,
@@ -15,31 +15,36 @@ const task = (id: string, status: TaskStatus, rank: number, patch: Partial<Task>
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
 })
-const sub = (id: string, parentId: string, status: TaskStatus, rank: number, patch: Partial<Task> = {}) =>
+const sub = (id: string, parentId: string, status: WorkState | SubtaskStatus, rank: number, patch: Partial<Task> = {}) =>
   task(id, status, rank, { parentId, ...patch })
 const repo = (path: string, worktree: string): RepoWork => ({ repo: path, branch: 'b', worktree, prUrl: null, prState: null })
 
-test('planQueue: top-level todo and in-progress tasks by rank', () => {
-  const tasks = [task('b', 'todo', 2), task('a', 'in_progress', 1), task('d', 'done', 0), task('c', 'grooming', 0), sub('s', 'b', 'todo', 0)]
-  assert.deepEqual(planQueue(tasks).map((t) => t.id), ['a', 'b'])
+test('workKey: the first ticket key, else a slug of the title; taken keys get a suffix (T-55.7)', () => {
+  assert.equal(workKey('Fix login', [{ url: 'https://x/browse/ABC-12', key: 'ABC-12' }], []), 'ABC-12')
+  assert.equal(workKey('Fix login', [{ url: 'https://x/a' }, { url: 'https://x/b', key: 'XY-3' }], []), 'XY-3', 'the first ticket with a key')
+  assert.equal(workKey('Fix the login page', [], []), 'fix-the-login-page')
+  assert.equal(workKey('Fix login', [{ url: 'https://x/a' }], []), 'fix-login', 'a ticket without a key')
+  assert.equal(workKey('Fix login', undefined, ['fix-login', 'FIX-LOGIN-2']), 'fix-login-3', 'taken in any case')
+  assert.equal(workKey('x', [{ url: 'u', key: 'abc 1.2' }], []), 'abc-1-2', 'no dots or spaces: step keys and branches stay clean')
 })
 
-test('nextPlanRank: after the last queued task, ignoring the rest and subtasks', () => {
-  assert.equal(nextPlanRank([]), 1)
-  assert.equal(nextPlanRank([task('c', 'grooming', 9)]), 1)
-  const tasks = [task('a', 'done', 5), task('b', 'todo', 3), task('c', 'backlog', 9), sub('s', 'b', 'todo', 7)]
-  assert.equal(nextPlanRank(tasks), 4)
+test('titleSlug: ASCII words, Cyrillic transliterated, short', () => {
+  assert.equal(titleSlug('Remove task management!'), 'remove-task-management')
+  assert.equal(titleSlug('Прибрати таск-менеджмент'), 'prybraty-task-menedzhment')
+  assert.equal(titleSlug('one two three four five six seven'), 'one-two-three-four-five')
+  assert.equal(titleSlug('a'.repeat(60)), 'a'.repeat(40))
+  assert.equal(titleSlug('🙂 ?'), 'work')
 })
 
-test('todoTasks: top-level todo tasks by rank, wherever in-progress tasks sit', () => {
-  const tasks = [task('c', 'todo', 3), task('run', 'in_progress', 2), task('a', 'todo', 1), task('d', 'done', 0), sub('s', 'a', 'todo', 0)]
-  assert.deepEqual(todoTasks(tasks).map((t) => t.id), ['a', 'c'])
-  assert.deepEqual(todoTasks([]), [])
+test('taskByKey: any case', () => {
+  const tasks = [task('ABC-12', 'ready', 0), task('fix-login', 'planning', 0)]
+  assert.equal(taskByKey(tasks, 'abc-12')?.id, 'ABC-12')
+  assert.equal(taskByKey(tasks, ' FIX-LOGIN ')?.id, 'fix-login')
+  assert.equal(taskByKey(tasks, 'T-1'), undefined)
 })
 
 test('subtaskProgress', () => {
@@ -113,33 +118,6 @@ test('devRunOutcome', () => {
   assert.deepEqual(devRunOutcome(w(a, b), ['a'], false, true), needs('Developer stopped without opening a PR or completing the step'))
   assert.deepEqual(devRunOutcome(null, [], false, false), needs('Developer stopped without opening a PR'))
   assert.deepEqual(devRunOutcome(w(pr(a, 'closed'), b), [], false, true), needs('Developer stopped without opening a PR'))
-})
-
-test('canMoveInPlan: only between not-started todo tasks', () => {
-  const work: TaskWork = { dir: 'w', feedbackSeenAt: 0, repos: [repo('r', 'w/r')] }
-  const tasks = [
-    task('run', 'in_progress', 0, { work }),
-    task('a', 'todo', 1, { work }),
-    task('b', 'todo', 2),
-    task('c', 'todo', 3),
-    task('x', 'grooming', 4),
-  ]
-  const t = (id: string) => tasks.find((x) => x.id === id)!
-  assert.equal(canMoveInPlan(t('c'), tasks, 'up'), true)
-  assert.equal(canMoveInPlan(t('b'), tasks, 'down'), true)
-  assert.equal(canMoveInPlan(t('c'), tasks, 'down'), false, 'last one')
-  assert.equal(canMoveInPlan(t('b'), tasks, 'up'), false, 'a has started work')
-  assert.equal(canMoveInPlan(t('a'), tasks, 'down'), false, 'a has started work')
-  assert.equal(canMoveInPlan(t('run'), tasks, 'down'), false)
-  assert.equal(canMoveInPlan(t('x'), tasks, 'up'), false, 'not todo')
-})
-
-test('canMoveInPlan: in-progress tasks between todo tasks do not block reordering', () => {
-  const tasks = [task('a', 'todo', 1), task('run', 'in_progress', 2), task('b', 'todo', 3)]
-  const t = (id: string) => tasks.find((x) => x.id === id)!
-  assert.equal(canMoveInPlan(t('b'), tasks, 'up'), true)
-  assert.equal(canMoveInPlan(t('a'), tasks, 'down'), true)
-  assert.equal(canMoveInPlan(t('a'), tasks, 'up'), false, 'first todo')
 })
 
 test('canMoveSubtask: a legacy checklist moves freely, done or not', () => {

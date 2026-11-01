@@ -22,6 +22,9 @@ test('docDecisions: the Decisions section, with the given step\'s subsection onl
   assert.equal(docDecisions(doc), '- draft PRs\n## T-5.1\n- only core\n## T-5.2\n- old API\n## Notes\n- kept')
   assert.equal(docDecisions(doc, 'T-5.1'), '- draft PRs\n## T-5.1\n- only core\n## Notes\n- kept')
   assert.equal(docDecisions(doc, 't-5.2'), '- draft PRs\n## T-5.2\n- old API\n## Notes\n- kept')
+  const keyed = '# Decisions\n- all\n## ABC-12.1\n- one\n## ABC-12.2\n- two\n## v1.2\n- kept'
+  assert.equal(docDecisions(keyed, 'abc-12.2'), '- all\n## ABC-12.2\n- two\n## v1.2\n- kept', 'any work key (T-55.7); a heading of another shape stays')
+  assert.equal(docDecisions('# Decisions\n## fix-login.1\n- one\n## fix-login.2\n- two', 'fix-login.1'), '## fix-login.1\n- one')
   assert.equal(docDecisions('# Problem\np'), '')
   assert.equal(docDecisions('# Рішення\n1. Опція A\n\n# Plan'), '1. Опція A')
   assert.equal(docDecisions('# Decisions\n```\n# not a heading\n```\n- a\n# Plan'), '```\n# not a heading\n```\n- a')

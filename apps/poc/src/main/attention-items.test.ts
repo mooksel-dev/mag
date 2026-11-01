@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Project, Task, TaskStatus } from '@mag/core'
+import type { Project, Task, WorkState } from '@mag/core'
 import { attentionItems, newAttention } from './attention-items.ts'
 
-const project = (id: string): Project => ({ id, name: `Project ${id}`, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: false, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: 0 })
-const task = (id: string, projectId: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
-  id, projectId, key: `T-${id}`, parentId: null, title: id, type: 'dev', status, description: '', rank: 0, needsInput: null, work: null, nextSubNo: 1, archivedAt: null, createdAt: 0, updatedAt: 0, ...patch,
+const project = (id: string): Project => ({ id, name: `Project ${id}`, repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: false, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: 0 })
+const task = (id: string, projectId: string, status: WorkState, patch: Partial<Task> = {}): Task => ({
+  id, projectId, key: `T-${id}`, parentId: null, title: id, type: 'dev', status, description: '', rank: 0, needsInput: null, work: null, nextSubNo: 1, createdAt: 0, updatedAt: 0, ...patch,
 })
 
 test('attentionItems: one per waiting task, titled by project', () => {
