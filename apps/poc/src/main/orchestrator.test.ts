@@ -342,3 +342,148 @@ test('develop: a step without repos gets its dir and no worktree', async () => {
   await assert.rejects(orch.addRepo(step.id, dir), /is not a git repository/)
   assert.deepEqual(store.task(step.id).work!.repos, [], 'a failed worktree records nothing')
 })
+
+const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
+
+/** A task with one step in `repos`, working on `local` in the main checkout; started through the Start popup. */
+function localSetup() {
+  const s = setup()
+  const app = gitRepo(join(s.dir, 'repos', 'app'))
+  const api = gitRepo(join(s.dir, 'repos', 'api'))
+  s.store.updateProject(s.project.id, { repos: [app, api] })
+  s.store.updateTask(s.task.id, { status: 'todo' })
+  const step = s.store.createTask({ projectId: s.project.id, title: 's', type: 'dev', description: '', parentId: s.task.id, status: 'todo', repos: [app, api] })
+  const sessions = () => s.store.data.sessions.filter((x) => x.stepId === step.id)
+  return { ...s, app, api, step, sessions }
+}
+
+test('develop: a local repository works in the main checkout on the step branch (T-50)', async () => {
+  const { store, orch, task, step, app, api, sessions } = localSetup()
+  await orch.develop(task.id, undefined, [app])
+  assert.deepEqual(store.task(task.id).localRepos, [app])
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local]), [[app, app, true], [api, join(work.dir, 'api'), false]])
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-1')
+  assert.equal(sessions().length, 1)
+  const spec = specs.at(-1)!
+  assert.ok(spec.addDirs?.includes(app), 'the agent may change the main checkout')
+  assert.match(spec.appendSystemPrompt!, /- app: .*app \(local: the user's main checkout, not a worktree; branch mag\/t-1-1\)/)
+
+  // The step is done: the checkout stays on its branch, the worktree goes.
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await orch.completeStep(step.id)
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-1')
+  assert.equal(existsSync(work.repos[1].worktree), false)
+})
+
+test('develop: uncommitted changes ask the user; Ignore keeps them off-limits (T-50)', async () => {
+  const { store, orch, task, step, app, sessions } = localSetup()
+  mkdirSync(join(app, 'src'))
+  execFileSync('touch', [join(app, 'src', 'mine.ts')])
+  await orch.develop(task.id, undefined, [app])
+  assert.equal(sessions().length, 0, 'no session before the user decides')
+  assert.deepEqual(store.task(step.id).localChecks, [{ repo: app, busyBy: null, dirty: ['src/mine.ts'], branch: null }])
+  assert.equal(store.task(task.id).needsInput, 'app: needs your choice')
+  assert.equal(git(app, 'branch', '--show-current'), 'main', 'nothing touched')
+  await assert.rejects(orch.resolveLocal(step.id, app, 'switch'), /switch is not an answer to app has uncommitted changes/)
+
+  await orch.resolveLocal(step.id, app, 'ignore')
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-1')
+  assert.ok(existsSync(join(app, 'src', 'mine.ts')))
+  assert.deepEqual(store.task(step.id).localChecks, [])
+  assert.equal(store.task(task.id).needsInput, null)
+  assert.deepEqual(store.task(step.id).work!.repos[0].foreignFiles, ['src/mine.ts'])
+  assert.equal(sessions().length, 1)
+  assert.match(specs.at(-1)!.appendSystemPrompt!, /In app these files had the user's uncommitted changes before the step: never stage, commit or revert them: src\/mine\.ts\./)
+})
+
+test('resolveLocal: Stash, Switch, Use worktree and Discuss (T-50)', async () => {
+  {
+    const { store, orch, task, step, app } = localSetup()
+    execFileSync('touch', [join(app, 'mine')])
+    await orch.develop(task.id, undefined, [app])
+    await orch.resolveLocal(step.id, app, 'stash')
+    assert.equal(git(app, 'status', '--porcelain'), '')
+    assert.match(git(app, 'stash', 'list'), /mag: before T-1\.1/)
+    assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-1')
+  }
+  {
+    const { store, orch, task, step, app, sessions } = localSetup()
+    git(app, 'checkout', '-q', '-b', 'feature')
+    await orch.develop(task.id, undefined, [app])
+    assert.deepEqual(store.task(step.id).localChecks, [{ repo: app, busyBy: null, dirty: [], branch: 'feature' }])
+    await orch.resolveLocal(step.id, app, 'switch')
+    assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-1')
+    assert.ok(git(app, 'branch', '--list', 'feature'), 'the user\'s branch stays')
+    assert.equal(sessions().length, 1)
+  }
+  {
+    const { store, orch, task, step, app } = localSetup()
+    git(app, 'checkout', '-q', '-b', 'feature')
+    await orch.develop(task.id, undefined, [app])
+    await orch.resolveLocal(step.id, app, 'worktree')
+    assert.deepEqual(store.task(task.id).localRepos, [])
+    const r = store.task(step.id).work!.repos.find((w) => w.repo === app)!
+    assert.equal(r.local, undefined)
+    assert.ok(existsSync(r.worktree) && r.worktree !== app)
+    assert.equal(git(app, 'branch', '--show-current'), 'feature', 'the main checkout is not touched')
+  }
+  {
+    const { store, orch, task, step, app, sessions } = localSetup()
+    git(app, 'checkout', '-q', '-b', 'feature')
+    await orch.develop(task.id, undefined, [app])
+    await orch.resolveLocal(step.id, app, 'discuss')
+    assert.equal(git(app, 'branch', '--show-current'), 'feature')
+    assert.equal(store.task(task.id).needsInput, null)
+    const first = sessions()[0].items.find((i) => i.kind === 'user')
+    assert.match(first?.kind === 'user' ? first.text : '', /In .*app: app is on branch feature, not main\.\nBefore anything else, talk with the user/)
+    assert.deepEqual(store.task(step.id).localChecks, [])
+  }
+})
+
+test('develop: a repository another step works in locally; Wait starts the step when that one is done (T-50)', async () => {
+  const { store, orch, project, task, step, app, sessions } = localSetup()
+  // T-2.1 holds app in its main checkout.
+  const other = store.createTask({ projectId: project.id, title: 'o', type: 'dev', description: '', status: 'todo' })
+  const holder = store.createTask({ projectId: project.id, title: 'h', type: 'dev', description: '', parentId: other.id, status: 'todo', repos: [app] })
+  await orch.develop(other.id, undefined, [app])
+  assert.equal(localHolderKey(store, app), holder.key)
+
+  await orch.develop(task.id, undefined, [app])
+  assert.deepEqual(store.task(step.id).localChecks, [{ repo: app, busyBy: holder.key, dirty: [], branch: null }])
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/t-2-1')
+  await orch.resolveLocal(step.id, app, 'wait')
+  assert.deepEqual(store.task(step.id).waitingFor, { key: holder.key, repo: app })
+  assert.equal(store.task(task.id).needsInput, null)
+  await orch.develop(task.id)
+  assert.equal(sessions().length, 0, 'a restart keeps waiting')
+
+  await orch.completeStep(holder.id)
+  // The waiting step starts in the background (git calls).
+  for (let i = 0; i < 50 && store.task(step.id).waitingFor; i++) await tick()
+  for (let i = 0; i < 50 && !store.task(step.id).localChecks?.length; i++) await new Promise((r) => setTimeout(r, 20))
+  assert.equal(store.task(step.id).waitingFor, null)
+  // The holder left the checkout on its branch: the step asks about that now.
+  assert.deepEqual(store.task(step.id).localChecks, [{ repo: app, busyBy: null, dirty: [], branch: 'mag/t-2-1' }])
+})
+
+test('addRepo: a local repository goes on the step branch in its main checkout, or says what is in the way (T-50)', async () => {
+  const { store, orch, project, task, app, api } = localSetup()
+  const step = store.createTask({ projectId: project.id, title: 's2', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  store.updateTask(store.data.tasks.find((t) => t.parentId === task.id && t.id !== step.id)!.id, { status: 'done' })
+  await orch.develop(task.id, undefined, [app, api])
+  execFileSync('touch', [join(api, 'mine')])
+  await assert.rejects(orch.addRepo(step.id, 'api'), /api has uncommitted changes: mine\. The task works on it in the main checkout: ask the user/)
+  assert.equal(git(api, 'branch', '--show-current'), 'main')
+  const r = await orch.addRepo(step.id, 'app')
+  assert.deepEqual([r.worktree, r.local], [app, true])
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/t-1-2')
+  const w = await orch.addRepo(step.id, 'api', true)
+  assert.equal(w.local, undefined)
+  assert.ok(existsSync(w.worktree))
+})
+
+function localHolderKey(store: Store, repo: string) {
+  return store.data.tasks.find((t) => t.parentId && t.work?.repos.some((r) => r.local && r.repo === repo))?.key
+}

@@ -199,6 +199,10 @@ export interface RepoWork {
   prDraft?: boolean
   /** Last PR check problem, shown on the task; null when the last check worked. */
   checkError?: string | null
+  /** Local mode (T-50): the step works in the repository's main checkout (worktree === repo), on its branch. */
+  local?: boolean
+  /** Local mode: the user's uncommitted files the step works on top of (their Ignore); never the agent's to commit. */
+  foreignFiles?: string[]
 }
 
 /** Execution state of a task once a developer agent picks it up. */
@@ -256,6 +260,72 @@ export function stepRepoNames(step: Pick<Task, 'repos'>, project: Pick<Project, 
   if (!step.repos) return undefined
   const names = repoNames(project)
   return project.repos.flatMap((r, i) => (step.repos!.includes(r) ? [names[i]] : []))
+}
+
+/** Repositories the Start popup offers (T-50): those of the task's steps that are not done, in project order. */
+export function taskRepos(taskId: string, tasks: Task[], project: Pick<Project, 'repos'>): string[] {
+  const used = new Set(subtasksOf(taskId, tasks).filter((s) => s.status !== 'done').flatMap((s) => stepRepos(s, project)))
+  return project.repos.filter((r) => used.has(r))
+}
+
+/**
+ * What keeps a step from working in a repository's main checkout (local mode, T-50). busyBy: key of another step
+ * working there locally; dirty: uncommitted files; branch: the current branch when it is neither base nor the step's.
+ */
+export interface LocalCheck {
+  repo: string
+  busyBy: string | null
+  dirty: string[]
+  branch: string | null
+  /** The user chose Discuss: the developer talks it through with them first; no longer waits for a choice. */
+  discuss?: boolean
+  /** The last choice failed (e.g. the checkout conflicted with the uncommitted files); the card shows it. */
+  error?: string
+}
+
+/** The user's answer to a local check. */
+export type LocalChoice = 'worktree' | 'wait' | 'stash' | 'ignore' | 'switch' | 'discuss'
+
+/** Answers a local check offers, in the order of its card's buttons. */
+export function localOptions(check: LocalCheck): LocalChoice[] {
+  if (check.busyBy) return ['worktree', 'wait']
+  if (check.dirty.length) return ['stash', 'ignore', 'worktree', 'discuss']
+  if (check.branch) return ['switch', 'worktree', 'discuss']
+  return []
+}
+
+/** One line on what is wrong, for the card, the developer's add_repo error and its Discuss message. */
+export function localCheckText(check: LocalCheck, base: string): string {
+  const name = baseName(check.repo)
+  if (check.busyBy) return `${name} is used locally by ${check.busyBy}`
+  const files = check.dirty.length > 5 ? `${check.dirty.slice(0, 5).join(', ')} and ${check.dirty.length - 5} more` : check.dirty.join(', ')
+  const branch = check.branch ? `${name} is on branch ${check.branch}, not ${base}` : ''
+  if (check.dirty.length) return `${name} has uncommitted changes: ${files}${branch ? `; it is on branch ${check.branch}` : ''}`
+  return branch
+}
+
+/** Checks of a step still waiting for the user's choice (Discuss settled the others). */
+export function openLocalChecks(step: Pick<Task, 'localChecks'>): LocalCheck[] {
+  return step.localChecks?.filter((c) => !c.discuss) ?? []
+}
+
+/**
+ * The step that works in `repo`'s main checkout, if any: not done, of a task not canceled, with the repo local in its
+ * work. A step that still waits (for the user's choice on this repo, or for another step) holds nothing yet.
+ */
+export function localHolder(repo: string, tasks: Task[]): Task | null {
+  const parents = new Map(tasks.filter((t) => !t.parentId).map((t) => [t.id, t]))
+  return (
+    tasks.find(
+      (t) =>
+        t.parentId &&
+        t.status !== 'done' &&
+        parents.get(t.parentId)?.status !== 'canceled' &&
+        !t.waitingFor &&
+        !openLocalChecks(t).some((c) => c.repo === repo) &&
+        !!t.work?.repos.some((r) => r.local && r.repo === repo),
+    ) ?? null
+  )
 }
 
 /** The repo work a developer means by `ref`: its short name (see repoWorkName), the repository path or the worktree path. */
@@ -377,6 +447,12 @@ export interface Task {
    * Missing = every project repository (steps planned before T-50); [] = a step without code.
    */
   repos?: string[]
+  /** Top-level tasks: repositories (paths) its steps work on in the main checkout instead of a worktree (T-50, Start). */
+  localRepos?: string[]
+  /** Steps: local checks waiting for the user (see LocalCheck); the task needs input while any is open. */
+  localChecks?: LocalCheck[]
+  /** Steps: the user chose Wait; the step starts once `key` (the step holding `repo` locally) is done or canceled. */
+  waitingFor?: { key: string; repo: string } | null
   /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
   nextSubNo: number
   /** Set when a done or canceled task is archived; a flag, the status stays. */
@@ -854,6 +930,8 @@ export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]):
   const running = mine.filter((s) => s.status === 'running').at(-1)
   if (running) return { kind: 'working', role: running.role, since: running.runStartedAt ?? running.createdAt }
   const wait = stepWait(task, tasks)
+  const step = task.parentId || isLegacy(task) ? null : currentStep(task.id, tasks)
+  if (step?.waitingFor) return { kind: 'waiting', reason: `Waiting for ${step.waitingFor.key} (${baseName(step.waitingFor.repo)})` }
   if (wait?.kind === 'start') return { kind: 'waiting', reason: `${wait.step.key} waits for Start` }
   if (wait) return { kind: 'waiting', reason: `${wait.step.key}: ${wait.prs.length > 1 ? `${wait.prs.length} PRs wait` : 'PR waits'} for merge` }
   // A legacy task's own PRs; new tasks have none.

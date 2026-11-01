@@ -37,17 +37,58 @@ export async function removeWorktree(repo: string, dir: string) {
   await ok(run('git', ['worktree', 'remove', '--force', dir], repo))
 }
 
-/** Whether the worktree's branch has commits that are not on the base yet. A missing worktree has none. */
-export async function hasOwnCommits(worktree: string, base: string): Promise<boolean> {
+/** Uncommitted files of a checkout (untracked ones too), as git status names them. */
+export async function dirtyFiles(repo: string): Promise<string[]> {
+  // -z: names as they are; a rename or copy is followed by its old name, which is skipped.
+  const { stdout } = await exec('git', ['status', '--porcelain', '-z', '-uall'], { cwd: repo, maxBuffer: 10 * 1024 * 1024 })
+  const entries = stdout.split('\0')
+  const files: string[] = []
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]
+    if (!e) continue
+    files.push(e.slice(3))
+    if (/^[RC]/.test(e)) i++
+  }
+  return files
+}
+
+/** The checkout's current branch; empty on a detached HEAD. */
+export async function currentBranch(repo: string): Promise<string> {
+  return run('git', ['branch', '--show-current'], repo)
+}
+
+/**
+ * Local mode (T-50): puts the main checkout on `branch`, new from the freshest base, or the existing branch. git carries
+ * uncommitted changes over and fails (changing nothing) if they conflict.
+ */
+export async function checkoutLocal(repo: string, base: string, branch: string) {
+  const info = await repoInfo(repo)
+  if (!info.git) throw new Error(`${repo} is not a git repository`)
+  await ok(run('git', ['fetch', 'origin', base], repo))
+  if (await ok(run('git', ['rev-parse', '--verify', `refs/heads/${branch}`], repo))) return void (await run('git', ['checkout', branch], repo))
+  const start = (await ok(run('git', ['rev-parse', '--verify', `origin/${base}`], repo))) ? `origin/${base}` : base
+  await run('git', ['checkout', '--no-track', '-b', branch, start], repo)
+}
+
+/** Stashes every uncommitted change (untracked files too) under `message`. */
+export async function stash(repo: string, message: string) {
+  await run('git', ['stash', 'push', '-u', '-m', message], repo)
+}
+
+/** Whether `ref` (a worktree's HEAD, or a branch) has commits that are not on the base yet. A missing checkout has none. */
+export async function hasOwnCommits(worktree: string, base: string, ref = 'HEAD'): Promise<boolean> {
   if (!existsSync(worktree)) return false
-  const ref = (await ok(run('git', ['rev-parse', '--verify', `origin/${base}`], worktree))) ? `origin/${base}` : base
-  const count = await run('git', ['rev-list', '--count', `${ref}..HEAD`], worktree).catch(() => '0')
+  const from = (await ok(run('git', ['rev-parse', '--verify', `origin/${base}`], worktree))) ? `origin/${base}` : base
+  const count = await run('git', ['rev-list', '--count', `${from}..${ref}`], worktree).catch(() => '0')
   return Number(count) > 0
 }
 
-/** Repositories (RepoWork.repo) of a task whose branch has commits of its own. Merged ones count as changed. */
+/**
+ * Repositories (RepoWork.repo) of a task whose branch has commits of its own. Merged ones count as changed. A local
+ * repository counts by its branch: the user may have switched the checkout since.
+ */
 export async function changedRepos(work: TaskWork, base: string): Promise<string[]> {
-  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, base))))
+  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, base, r.local ? r.branch : 'HEAD'))))
   return work.repos.filter((_, i) => flags[i]).map((r) => r.repo)
 }
 

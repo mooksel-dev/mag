@@ -19,9 +19,10 @@ const setup = () => {
       calls.push(`complete ${store.task(id).key}`)
       store.updateTask(id, { status: 'done' })
     },
-    addRepo: async (id, ref) => {
-      calls.push(`add ${ref} to ${store.task(id).key}`)
-      const r = { repo: '/nowhere/api', branch: 'mag/t-1-1', worktree: '/nowhere/w/api', prUrl: null, prState: null }
+    addRepo: async (id, ref, worktree) => {
+      calls.push(`add ${ref} to ${store.task(id).key}${worktree ? ' as a worktree' : ''}`)
+      const local = ref === 'web'
+      const r = { repo: `/nowhere/${ref}`, branch: 'mag/t-1-1', worktree: local ? '/nowhere/web' : `/nowhere/w/${ref}`, prUrl: null, prState: null, ...(local && { local }) }
       const w = store.task(id).work!
       store.updateTask(id, { work: { ...w, repos: [...w.repos, r] } })
       return r
@@ -237,5 +238,7 @@ test('add_repo: the developer of a step in progress only', async () => {
   const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
   await assert.rejects(call('add_repo', {}, dev.id), /Pass repo/)
   assert.match(await call('add_repo', { repo: 'api' }, dev.id), /^api: worktree \/nowhere\/w\/api on branch mag\/t-1-1\./)
-  assert.deepEqual(calls, ['add api to T-1.1'])
+  assert.match(await call('add_repo', { repo: 'web' }, dev.id), /^web: the main checkout \/nowhere\/web, on branch mag\/t-1-1 \(the task works there locally\)/)
+  await call('add_repo', { repo: 'db', worktree: true }, dev.id)
+  assert.deepEqual(calls, ['add api to T-1.1', 'add web to T-1.1', 'add db to T-1.1 as a worktree'])
 })

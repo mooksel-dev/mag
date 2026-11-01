@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, todoTasks, type Attachment, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, todoTasks, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -114,7 +114,7 @@ app.whenReady().then(async () => {
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)
   actions.completeStep = (id) => orch.completeStep(id)
-  actions.addRepo = (id, ref) => orch.addRepo(id, ref)
+  actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
   const tracker = createTrackerService(store, { startImport: (id) => orch.importTicket(id) })
 
   protocol.handle('mag-file', (req) => {
@@ -215,7 +215,8 @@ app.whenReady().then(async () => {
     if (locked.some((s, i) => ids[i] !== s.id)) throw new Error(`${locked.map((s) => s.key).join(', ')} started; they keep their places`)
     store.reorderSubtasks(parentId, ids)
   })
-  handle('task:develop', (_, id: string) => orch.develop(id))
+  handle('task:develop', (_, id: string, localRepos?: string[]) => orch.develop(id, undefined, localRepos))
+  handle('task:resolveLocal', (_, stepId: string, repo: string, choice: LocalChoice) => orch.resolveLocal(stepId, repo, choice))
   handle('pr:checkNow', () => scheduler.pollNow())
   handle('shell:open', (_, url: string) => {
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
