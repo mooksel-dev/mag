@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentEvent } from '@mag/core'
+import { DEFAULT_PLAYBOOK, PRECEDENCE, type AgentEvent } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -252,16 +252,72 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.match(spec.appendSystemPrompt ?? '', /ticket_url/)
 })
 
-test('groomer prompt: diagrams sketched per option before the checkpoint, plan per step and repo (T-54)', async () => {
-  const { orch, task } = setup()
+const DOC = `# Problem
+p
+
+# Decisions
+- all PRs are draft
+## T-1.1
+- touch only core
+## T-1.2
+- keep the old API
+
+# Plan
+1. x
+`
+
+test('groomer prompt: frame + the playbook\'s plan, then decisions and notes as blocks; no diagram grammar (T-55.2)', async () => {
+  const { store, orch, project, task } = setup()
+  store.updateProject(project.id, { notes: 'use pnpm' })
+  store.data.docs[task.id] = DOC
   orch.groom(task.id)
   await tick()
   const prompt = specs.at(-1)!.appendSystemPrompt!
-  assert.match(prompt, /Sketch every option that changes code with show_diagram/)
-  assert.match(prompt, /do not create steps before the user confirms/)
-  assert.doesNotMatch(prompt, /do not draw diagrams/)
-  assert.match(prompt, /revise its sketches by their ids \(never redraw copies\)/)
-  assert.match(prompt, /for every repository in\n   a step's repos, what changes there and links to the diagrams/)
+  assert.ok(prompt.startsWith('You are grooming a task'))
+  assert.ok(prompt.includes(DEFAULT_PLAYBOOK.plan))
+  const decisions = prompt.indexOf('## Decisions\n- all PRs are draft\n## T-1.1\n- touch only core\n## T-1.2\n- keep the old API')
+  const notes = prompt.indexOf('## Project notes\nuse pnpm')
+  assert.ok(decisions > prompt.indexOf(DEFAULT_PLAYBOOK.plan) && notes > decisions, 'blocks come after the playbook, notes last')
+  assert.ok(prompt.includes(PRECEDENCE))
+  assert.doesNotMatch(prompt, /One method or call per line|\(add, mod, del\)/, 'the grammar is in show_diagram')
+})
+
+test('playbook: a project\'s own section replaces the default in the prompt; the rest stays default (T-55.2)', async () => {
+  const { store, orch, project, task } = setup()
+  store.updateProject(project.id, { playbook: { plan: 'OUR PLANNING' } })
+  orch.groom(task.id)
+  await tick()
+  const prompt = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(prompt.includes('OUR PLANNING'))
+  assert.ok(!prompt.includes(DEFAULT_PLAYBOOK.plan))
+})
+
+test('step developer: the playbook\'s step, the decisions of the work and its own step only; merge and push to base blocked (T-55.2)', async () => {
+  const { store, orch, project, task } = setup()
+  store.updateProject(project.id, { playbook: { step: 'OUR STEP' }, baseBranch: 'dev' })
+  store.data.docs[task.id] = DOC
+  store.updateTask(task.id, { status: 'todo' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const spec = specs.at(-1)!
+  const prompt = spec.appendSystemPrompt!
+  assert.ok(prompt.includes('OUR STEP'))
+  assert.ok(!prompt.includes(DEFAULT_PLAYBOOK.step))
+  assert.ok(prompt.includes('## Decisions\n- all PRs are draft\n## T-1.1\n- touch only core'))
+  assert.ok(!prompt.includes('keep the old API'), 'another step\'s decisions stay out')
+  for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push * dev)', 'Bash(git push *:dev)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
+})
+
+test('project chat: the playbook\'s tracker section and the notes block; no merge or push (T-55.2)', async () => {
+  const { store, orch, project } = setup()
+  store.updateProject(project.id, { notes: 'use pnpm', playbook: { tracker: 'COMMENT WITH A LINK' } })
+  await orch.send(orch.newChat(project.id), 'hi')
+  const spec = specs.at(-1)!
+  assert.ok(spec.appendSystemPrompt!.includes('COMMENT WITH A LINK'))
+  assert.ok(spec.appendSystemPrompt!.endsWith('## Project notes\nuse pnpm'))
+  assert.ok(!spec.appendSystemPrompt!.includes('## Decisions'), 'a topic has no work')
+  assert.ok(spec.disallowedTools?.includes('Bash(gh pr merge:*)'))
+  assert.ok(spec.disallowedTools?.includes('Bash(git push:*)'))
 })
 
 test('renameChat: project topics only, a non-empty title, kept over the first message and the generated title', async () => {
@@ -598,6 +654,23 @@ test('review: changes past the rounds go to the user (T-55.1)', async () => {
   await tick()
   assert.equal(store.task(step.id).review?.round, 3)
   assert.equal(live.sent.length, sent)
+})
+
+test('review: the playbook\'s review section and the step\'s decisions go in every round; its reviewRounds limits the changes (T-55.2)', async () => {
+  const { store, orch, step, task, project, dir, live } = await inReview(true)
+  store.updateProject(project.id, { playbook: { review: 'OUR REVIEW', reviewRounds: 0 } })
+  store.data.docs[task.id] = DOC
+  await orch.review(step.id, { [dir]: 'a1' })
+  const run = runs.at(-1)!
+  assert.ok(run.spec.prompt.includes('OUR REVIEW'))
+  assert.ok(run.spec.prompt.includes('## Decisions\n- all PRs are draft\n## T-1.1\n- touch only core'))
+  assert.ok(!run.spec.prompt.includes('keep the old API'))
+  assert.ok(run.spec.disallowedTools?.includes('Bash(git push:*)'))
+  assert.match(orch.setReview(step.id, 'changes', [{ text: 'x' }]), /the user gets your verdict/)
+  const sent = live.sent.length
+  run.end()
+  await tick()
+  assert.equal(live.sent.length, sent, 'no rounds: changes go to the user')
 })
 
 test('groom makes the groomer the owner of the work (T-55.1)', async () => {

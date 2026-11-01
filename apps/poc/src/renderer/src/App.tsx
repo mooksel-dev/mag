@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   DEFAULT_AUTO_ARCHIVE_DAYS,
   DEFAULT_TEMPLATES,
+  PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
   SUBTASK_STATUSES,
@@ -14,9 +15,11 @@ import {
   isLegacy,
   openLocalChecks,
   openPrs,
+  playbookOf,
   projectColor,
   repoWorkName,
   stepRepoNames,
+  storedPlaybook,
   resolveChoice,
   runningAgents,
   subtaskProgress,
@@ -30,6 +33,7 @@ import {
   type Integration,
   type IntegrationMode,
   type PipelineStage,
+  type PlaybookSection,
   type Project,
   type SubtaskStatus,
   type Task,
@@ -729,6 +733,39 @@ function TrackerSettings({ project }: { project: Project }) {
   )
 }
 
+const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
+  plan: 'How the groomer plans a task: problem, options with diagrams, checkpoint, steps.',
+  step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
+  review: 'What the first reviewer checks a step\'s PRs against.',
+  tracker: 'What agents may do in a ticket tracker.',
+}
+
+/**
+ * The project's playbook (T-55.2): mag's default process, editable per section. A section left as the default (or
+ * emptied) follows mag's default; decisions in a task's doc override it for that task.
+ */
+function PlaybookSettings({ project, update }: { project: Project; update: (patch: Partial<Project>) => void }) {
+  const playbook = playbookOf(project)
+  const set = (patch: Partial<typeof playbook>) => update({ playbook: storedPlaybook({ ...playbookOf(project), ...patch }) })
+  return (
+    <>
+      <h2>Playbook</h2>
+      <span className="muted small">The process agents follow. mag keeps what it enforces (never merge, never push to base, steps only after the checkpoint); a task's §Decisions override the playbook.</span>
+      {PLAYBOOK_SECTIONS.map((s) => (
+        <label key={s} className="field">{s}
+          <textarea rows={8} defaultValue={playbook[s]} onChange={(e) => set({ [s]: e.target.value })} />
+          <span className="muted small">{PLAYBOOK_HINTS[s]}</span>
+        </label>
+      ))}
+      <label className="field">
+        Agent review rounds
+        <input type="number" min={0} style={{ width: 100 }} defaultValue={playbook.reviewRounds} onChange={(e) => { const n = Math.floor(Number(e.target.value)); if (e.target.value !== '' && n >= 0) set({ reviewRounds: n }) }} />
+        <span className="muted small">How many agent reviews in a row may send changes back to the developer before you decide; 0 sends every review to you.</span>
+      </label>
+    </>
+  )
+}
+
 function Settings({ project, integrations }: { project: Project; integrations: Integration[] }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   return (
@@ -785,6 +822,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
           <textarea rows={6} defaultValue={project.templates[t] ?? DEFAULT_TEMPLATES[t]} onChange={(e) => update({ templates: { ...project.templates, [t]: e.target.value } })} />
         </label>
       ))}
+      <PlaybookSettings project={project} update={update} />
       <h2>Diagnostics</h2>
       <div className="field">
         <div><button onClick={() => mag.openLogs()}>Open logs folder</button></div>

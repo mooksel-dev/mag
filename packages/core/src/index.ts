@@ -3,9 +3,11 @@
 
 import type { ArchDiagram } from './arch.ts'
 import type { Diagram } from './diagram.ts'
+import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 
 export * from './arch.ts'
 export * from './diagram.ts'
+export * from './playbook.ts'
 
 export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
@@ -32,6 +34,8 @@ export interface Project {
   notes: string
   /** Markdown template per task type that agents follow when writing the task doc. */
   templates: Partial<Record<TaskType, string>>
+  /** The project's own playbook sections (T-55.2); missing or null = mag's default (see playbookOf). */
+  playbook?: Partial<Playbook> | null
   nextTaskNo: number
   /** Branch that worktrees start from and PRs target. */
   baseBranch: string
@@ -448,9 +452,6 @@ export interface AgentReview {
   at: number
 }
 
-/** How many reviews in a row may send changes to the developer; after that the user decides. */
-export const DEFAULT_REVIEW_ROUNDS = 2
-
 /** Heads of a step's open PRs: repository path → head commit. Open PRs whose head is not known yet are left out. */
 export function prHeads(work: TaskWork | null): Record<string, string> {
   return Object.fromEntries((work?.repos ?? []).flatMap((r) => (r.prUrl && r.prState === 'open' && r.prHead ? [[r.repo, r.prHead]] : [])))
@@ -476,8 +477,11 @@ export function nextReviewRound(prev: AgentReview | null | undefined): number {
   return prev?.verdict === 'changes' ? prev.round + 1 : 1
 }
 
-/** Where a review goes: changes go to the developer while the rounds last; everything else goes to the user. */
-export function reviewOutcome(review: Pick<AgentReview, 'verdict' | 'round'>, maxRounds = DEFAULT_REVIEW_ROUNDS): 'developer' | 'human' {
+/**
+ * Where a review goes: changes go to the developer while the rounds last (`maxRounds`, the playbook's reviewRounds);
+ * everything else goes to the user.
+ */
+export function reviewOutcome(review: Pick<AgentReview, 'verdict' | 'round'>, maxRounds = DEFAULT_PLAYBOOK.reviewRounds): 'developer' | 'human' {
   return review.verdict === 'changes' && review.round <= maxRounds ? 'developer' : 'human'
 }
 
@@ -1133,6 +1137,9 @@ export function runningAgents(sessions: AgentSession[]): AgentSession[] {
 export const DEFAULT_TEMPLATES: Record<TaskType, string> = {
   dev: `# Problem
 One or two sentences, plus the evidence that it is real.
+
+# Decisions
+What the user decided for this work, one per line; they override the project's playbook. A "## <step key>" subsection holds decisions of that step only.
 
 # Open questions
 Only if any.

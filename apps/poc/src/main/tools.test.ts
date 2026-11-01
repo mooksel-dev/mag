@@ -35,8 +35,10 @@ const setup = () => {
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
   const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
+  // The user has answered the groomer's checkpoint: it may plan steps.
+  groomer.items.push({ kind: 'user', text: 'Option A', at: 1 })
   const call = (name: string, args: Record<string, unknown> = {}, sessionId = groomer.id) => tools({ taskId: task.id, sessionId }, name, args)
-  return { store, project, task, tools, call, calls }
+  return { store, project, task, tools, call, calls, groomer }
 }
 
 /** A step's work in a dir that does not exist: no commits of its own. */
@@ -53,6 +55,19 @@ test('the groomer cannot move a task to todo: mark_groomed is gone', async () =>
   assert.equal(store.task(task.id).status, 'grooming')
   const [step] = store.data.tasks.filter((t) => t.parentId === task.id)
   assert.deepEqual([step.key, step.description, step.startManually, step.work], ['T-1.1', 'models', true, null])
+})
+
+test('checkpoint: a groomer plans steps only after the user answered it in its chat (T-55.2)', async () => {
+  const { store, project, task, tools, call } = setup()
+  const fresh = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
+  const own = (name: string, args: Record<string, unknown> = {}) => tools({ taskId: task.id, sessionId: fresh.id }, name, args)
+  await assert.rejects(own('create_subtask', { title: 'a' }), /Checkpoint first/)
+  await call('create_subtask', { title: 'a' })
+  await call('create_subtask', { title: 'b' })
+  await assert.rejects(own('reorder_subtasks', { keys: ['T-1.2', 'T-1.1'] }), /Checkpoint first/)
+  fresh.items.push({ kind: 'user', text: 'B', at: 2 })
+  await own('create_subtask', { title: 'c' })
+  assert.deepEqual(store.data.tasks.filter((t) => t.parentId === task.id).map((t) => t.title), ['a', 'b', 'c'])
 })
 
 test('create_task with plan: true needs steps', async () => {
