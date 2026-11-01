@@ -99,13 +99,18 @@ Each run gets a stdio MCP server (`src/main/task-mcp.ts`, server name `mag`). Ta
 | `get_architecture` | The project's architecture diagram |
 | `list_tasks` | All tasks of the project |
 | `show_canvas` | Show an HTML mockup/diagram; revise by id |
+| `add_idea` | Any agent: put a finding outside its scope on the project's ideas instead of doing it |
 
-Project chats and the architect get `list_tasks`, `read_task`, `create_work`, `add_ticket`, `update_task`,
+Project chats and the architect get `list_tasks`, `read_task`, `create_work`, `reopen_work`, `add_ticket`, `update_task`,
 `update_task_doc`, `start_grooming`, `cancel_task` (after asking you), `archive_task`, `update_notes`, `run_architect`,
 `show_canvas` and the architecture tools. A project chat owns the works it creates and plans them itself: it also gets
 the step and diagram tools (`create_subtask`, `place_diagram`, `get_diagrams`…) with a `work` argument, the key of a work
 it owns. A separate groomer runs only for a work nobody discussed (one started from a ticket link). A ticket is only a
 link (`Task.tickets`); agents read trackers through whatever the user's environment has (MCP, CLI).
+
+Ideas (Home) are a plain list without status: the user's notes and agents' `add_idea` findings. Start work opens a new
+topic with the idea, which leaves the list. A done work that needs more is continued, not duplicated: `reopen_work` in a
+chat, or Continue on the work, puts it back in planning (its done steps stay) and its owner adds steps.
 
 The MCP server forwards calls to a localhost endpoint in the main process (random port + token).
 

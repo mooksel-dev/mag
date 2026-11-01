@@ -670,3 +670,54 @@ test('groom makes the groomer the owner of the work (T-55.1)', async () => {
   await tick()
   assert.equal(store.task(task.id).ownerSessionId, store.data.sessions.find((s) => s.role === 'groomer')!.id)
 })
+
+/** A done work with one done step, owned by `owner` (a session id) if given. */
+function doneWork(s: ReturnType<typeof setup>, owner?: string) {
+  s.store.createTask({ projectId: s.project.id, title: 'one', type: 'dev', description: '', parentId: s.task.id, status: 'done' })
+  s.store.updateTask(s.task.id, { status: 'done', archivedAt: 5, ...(owner && { ownerSessionId: owner }) })
+}
+
+test('reopen: only a done work with steps; asked by a topic, it is back in planning and the topic owns it (T-55.6)', async () => {
+  const s = setup()
+  const { store, orch, task, project } = s
+  assert.throws(() => orch.reopen(task.id, 'more'), /T-1 is backlog; only a done work with steps is continued/)
+  const topic = orch.newChat(project.id)
+  doneWork(s, 'someone-else')
+  assert.throws(() => orch.reopen(task.id, '  '), /Say what else is needed/)
+  assert.match(orch.reopen(task.id, 'the web part', topic), /back in planning and this topic owns it/)
+  const t = store.task(task.id)
+  assert.deepEqual([t.status, t.ownerSessionId, t.archivedAt, t.needsInput], ['grooming', topic, null, null])
+  assert.deepEqual(store.data.tasks.filter((x) => x.parentId === task.id).map((x) => x.status), ['done'], 'done steps stay')
+  assert.equal(store.data.events.filter((e) => e.taskId === task.id).at(-1)!.text, 'Reopened')
+})
+
+test('reopen from the app: the owner topic is told what is needed; without an owner a groomer plans it (T-55.6)', async () => {
+  const s = setup()
+  const { store, orch, task, project } = s
+  const topic = orch.newChat(project.id)
+  doneWork(s, topic)
+  assert.match(orch.reopen(task.id, 'the web part'), /its owner plans the rest/)
+  await tick()
+  const said = store.session(topic).items.find((i) => i.kind === 'user')
+  assert.ok(said?.kind === 'user' && said.text.includes('more is needed: the web part') && said.text.includes('pass work: "T-1"'))
+  assert.equal(store.task(task.id).ownerSessionId, topic)
+
+  const t = setup()
+  doneWork(t)
+  assert.match(t.orch.reopen(t.task.id, 'docs'), /a groomer plans the rest/)
+  const groomer = t.store.data.sessions.find((x) => x.role === 'groomer')!
+  assert.equal(t.store.task(t.task.id).ownerSessionId, groomer.id)
+  // Not the user's answer: the groomer's checkpoint still waits for one.
+  assert.deepEqual(groomer.items.map((i) => i.kind), ['notice'])
+})
+
+test('reopen from the app while the owner works: the user is asked to tell it (T-55.6)', async () => {
+  const s = setup()
+  const { store, orch, task, project } = s
+  const topic = orch.newChat(project.id)
+  await orch.send(topic, 'hi')
+  doneWork(s, topic)
+  assert.match(orch.reopen(task.id, 'docs'), /its owner is busy/)
+  assert.match(store.task(task.id).needsInput!, /More needed: docs/)
+  assert.equal(store.task(task.id).status, 'grooming')
+})

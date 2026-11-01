@@ -589,6 +589,15 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .topicrow .dot.live { margin-right: 0; flex: none; }
 .topicrow .iconbtn { width: 24px; height: 24px; font-size: 12px; visibility: hidden; }
 .topicrow:hover .iconbtn, .topicrow .iconbtn:focus-visible { visibility: visible; }
+.idearow { display: flex; align-items: flex-start; gap: 6px; padding: 5px 6px; margin: 0 -6px; border-radius: 7px; }
+.idearow:hover { background: var(--hover); }
+.idearow .text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.idearow textarea { flex: 1; min-width: 0; font: inherit; resize: vertical; }
+.idearow .iconbtn { width: 24px; height: 24px; font-size: 12px; visibility: hidden; }
+.idearow:hover .iconbtn, .idearow .iconbtn:focus-visible { visibility: visible; }
+.idearow button.small { white-space: nowrap; }
+.ideaadd { display: flex; gap: 6px; margin-top: 6px; }
+.ideaadd input { flex: 1; min-width: 0; }
 .inboxrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--row-line); cursor: pointer; }
 .inboxrow:first-of-type { border-top: none; }
 .inboxrow:hover .title { color: var(--accent); }

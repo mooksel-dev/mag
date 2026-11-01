@@ -412,7 +412,7 @@ export const TOOL_DEFS = [
     name: 'list_tasks',
     scope: 'any',
     description:
-      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, tickets (links), cancel reason.',
+      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, tickets (links), cancel reason; then the project\'s ideas (text, source: where an agent found it).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -464,6 +464,25 @@ export const TOOL_DEFS = [
       properties: { key: { type: 'string', description: 'The work, e.g. T-3.' }, url: { type: 'string' }, ticket_key: { type: 'string', description: 'The ticket key, e.g. ABC-12, when the link does not show it.' } },
       required: ['key', 'url'],
     },
+  },
+  {
+    name: 'reopen_work',
+    scope: 'project',
+    description:
+      'Continue a done work instead of creating a new one (one problem, one work): it goes back to planning with its done steps kept, and this topic owns it from now on. Then plan what is left here with the owner tools (passing work: its key); the user moves it to todo when the plan is ready.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The done work, e.g. T-3.' }, what: { type: 'string', description: 'One line: what else is needed.' } },
+      required: ['key', 'what'],
+    },
+  },
+  {
+    name: 'add_idea',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "Put something worth doing that is outside your scope (a bug, a smell, a missed case, the user's aside) on the project's list of ideas, instead of doing it now. One line: what and where. Ideas have no status; the user starts a work from one or deletes it.",
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
   },
   {
     name: 'update_task',

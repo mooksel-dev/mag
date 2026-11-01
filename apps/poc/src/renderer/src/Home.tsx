@@ -5,8 +5,10 @@ import {
   inbox,
   isLegacy,
   pipelineCounts,
+  projectIdeas,
   runningAgents,
   taskPrs,
+  type Idea,
   type InboxItem,
   type InboxKind,
   type PipelineStage,
@@ -101,6 +103,7 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
             : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} now={now} onOpen={onOpen} />,
           ) : <p className="muted">Nothing is waiting on you.</p>}
         </div>
+        <Ideas projectId={project.id} ideas={projectIdeas(state.ideas, project.id)} now={now} onOpenKey={onOpenKey} onStarted={onOpenTopic} />
         <Topics topics={topics} openId={topicId} now={now} onOpen={onOpenTopic} onNew={() => mag.newChat(project.id).then(onOpenTopic)} />
       </div>
 
@@ -194,6 +197,77 @@ function TopicRow({ topic, open, now, onOpen }: { topic: AgentSession; open: boo
       <span className="muted small">{threadTime(topic.createdAt, now)}</span>
       <button className="iconbtn" aria-label="Rename topic" title="Rename" onClick={act(startEdit)}>✎</button>
       <button className="iconbtn" aria-label="Delete topic" title="Delete" onClick={act(remove)}>🗑</button>
+    </div>
+  )
+}
+
+/**
+ * The project's ideas (T-55.6): things worth doing that nobody works on yet, the user's or an agent's finding. No
+ * status: edit, delete, or start a work from one in a new topic.
+ */
+function Ideas({ projectId, ideas, now, onOpenKey, onStarted }: { projectId: string; ideas: Idea[]; now: number; onOpenKey: (key: string) => void; onStarted: (topicId: string) => void }) {
+  const [draft, setDraft] = useState('')
+  const add = () => {
+    const t = draft.trim()
+    if (t) void mag.addIdea(projectId, t).then(() => setDraft(''))
+  }
+  return (
+    <div className="card">
+      <h2>Ideas <span className="muted">{ideas.length}</span></h2>
+      {ideas.length ? ideas.map((i) => <IdeaRow key={i.id} idea={i} now={now} onOpenKey={onOpenKey} onStart={() => mag.startIdea(i.id).then(onStarted)} />) : <p className="muted small">No ideas. Agents put findings outside their scope here too.</p>}
+      <form className="ideaadd" onSubmit={(e) => { e.preventDefault(); add() }}>
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="An idea…" aria-label="New idea" />
+        <button type="submit" className="small" disabled={!draft.trim()}>Add</button>
+      </form>
+    </div>
+  )
+}
+
+function IdeaRow({ idea, now, onOpenKey, onStart }: { idea: Idea; now: number; onOpenKey: (key: string) => void; onStart: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(idea.text)
+  const startEdit = () => {
+    setDraft(idea.text)
+    setEditing(true)
+  }
+  const save = () => {
+    setEditing(false)
+    const t = draft.trim()
+    if (t && t !== idea.text) void mag.updateIdea(idea.id, t)
+  }
+  const remove = () => {
+    if (confirm('Delete this idea?')) void mag.deleteIdea(idea.id)
+  }
+  if (editing)
+    return (
+      <div className="idearow">
+        <textarea
+          autoFocus
+          rows={2}
+          value={draft}
+          aria-label="Idea"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur() }
+            else if (e.key === 'Escape') { setDraft(idea.text); setEditing(false) }
+          }}
+        />
+      </div>
+    )
+  return (
+    <div className="idearow">
+      <div className="text">
+        {idea.text}
+        <div className="muted small">
+          {idea.source && <>from <button className="link key" onClick={() => onOpenKey(idea.source!.replace(/\.\d+$/, ''))}>{idea.source}</button> · </>}
+          {ago(idea.createdAt, now)}
+        </div>
+      </div>
+      <button className="iconbtn" aria-label="Edit idea" title="Edit" onClick={startEdit}>✎</button>
+      <button className="iconbtn" aria-label="Delete idea" title="Delete" onClick={remove}>🗑</button>
+      <button className="small" title="Start a work from it in a new topic; it leaves the list" onClick={onStart}>▶ Start work</button>
     </div>
   )
 }

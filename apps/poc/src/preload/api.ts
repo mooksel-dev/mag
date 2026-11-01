@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TicketRef } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TicketRef } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -11,6 +11,8 @@ export interface AppState {
   canvases: Omit<Canvas, 'html'>[]
   /** Project activity log, oldest first. */
   events: ProjectEvent[]
+  /** Ideas of every project, in the order they were added (see projectIdeas). */
+  ideas: Idea[]
   /** MCP servers agents reported (claude.ai connectors and others); modes are per project in Project.integrations. */
   integrations: Integration[]
   claudeBin: string | null
@@ -113,6 +115,13 @@ export interface MagApi {
   removeTicket(taskId: string, url: string): Promise<void>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
+  /** Continue a done work: back to planning; its owner (else a new groomer) gets `what` and plans the steps for it. */
+  reopen(taskId: string, what: string): Promise<void>
+  addIdea(projectId: string, text: string): Promise<void>
+  updateIdea(ideaId: string, text: string): Promise<void>
+  deleteIdea(ideaId: string): Promise<void>
+  /** A new topic that starts a work from the idea; the idea leaves the list. Returns the topic's session id. */
+  startIdea(ideaId: string): Promise<string>
   /** Check open PRs for merges and new comments right away. */
   checkPrs(): Promise<void>
   /** Open a URL in the browser or a path in Finder. */
