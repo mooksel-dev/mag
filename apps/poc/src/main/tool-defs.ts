@@ -77,7 +77,7 @@ const PLACEMENT = {
     description: 'option: sketches an option of §Options; plan: the planned change of one step; none: unplaced. Omitted on a revision: the diagram keeps its place.',
   },
   option: { type: 'string', description: 'role option: the option\'s name as in §Options, e.g. "A".' },
-  step: { type: 'string', description: 'role plan: the key of the step, e.g. T-3.2.' },
+  step: { type: 'string', description: 'role plan: the key of the step, e.g. ABC-12.2.' },
   repo: { type: 'string', description: 'role plan: the repository it changes (name or path); omit when the diagram spans the step.' },
 } as const
 
@@ -225,7 +225,7 @@ export const TOOL_DEFS = [
     scope: 'task',
     description:
       'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; component marks moved interface methods, data moved entities and fields, with move and from. Each says where it stands: role option (with option), plan (with step and repo); of names the task that owns a diagram the doc links. With step: only that step\'s diagrams.',
-    inputSchema: { type: 'object', properties: { step: { type: 'string', description: 'Key of a step, e.g. T-3.2: only its diagrams.' } } },
+    inputSchema: { type: 'object', properties: { step: { type: 'string', description: 'Key of a step, e.g. ABC-12.2: only its diagrams.' } } },
   },
   {
     name: 'place_diagram',
@@ -412,13 +412,13 @@ export const TOOL_DEFS = [
     name: 'list_tasks',
     scope: 'any',
     description:
-      'Tasks of the project, archived ones left out: in progress, then todo by priority, then grooming, backlog and recently finished (done, canceled); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, tickets (links), cancel reason; then the project\'s ideas (text, source: where an agent found it).',
+      'Works of the project: in progress, then ready, planning and finished (done, canceled; newest first); subtasks (execution steps: todo, in_progress, done) follow their task. Key, title, type, status, parent, needs_input, PRs with their state, tickets (links), cancel reason; then the project\'s ideas (text, source: where an agent found it).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'read_task',
     scope: 'project',
-    description: 'One task with its document, by key (e.g. T-12, subtask T-12.3).',
+    description: 'One work or step with its document, by key (e.g. ABC-12, step ABC-12.3).',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
@@ -427,7 +427,7 @@ export const TOOL_DEFS = [
     description:
       'Start a work: what the user and you discussed here, about zero or more tickets. This topic owns it: you plan it here (doc via update_task_doc, ' +
       'diagrams and steps with the owner tools, passing work: its key) and later review its PRs first. The description is the brief: what and why, concise. ' +
-      'doc pre-fills the document. plan: true puts the work in todo (lowest priority) and starts nothing; the user starts it. Use it ' +
+      'Its key is the first ticket\'s key, else a slug of the title. doc pre-fills the document. plan: true makes the work ready (the plan approved) and starts nothing; the user starts it. Use it ' +
       "only when the doc is complete (follow the project's doc template) and the user asked for it; it needs steps.",
     inputSchema: {
       type: 'object',
@@ -441,7 +441,7 @@ export const TOOL_DEFS = [
           items: { type: 'object', required: ['url'], properties: { url: { type: 'string', description: 'The https link of the ticket.' }, key: { type: 'string', description: 'Its key, e.g. ABC-12, when the link does not show it.' } } },
         },
         doc: { type: 'string', description: 'Work document (markdown). Required with plan: true.' },
-        plan: { type: 'boolean', description: 'The plan is complete: put the work in todo; the user starts it.' },
+        plan: { type: 'boolean', description: 'The plan is complete and the user approved it: the work is ready; the user starts it.' },
         steps: {
           type: 'array',
           description: 'Execution steps in order; at least one with plan: true. Each runs in its own developer session with at most one PR per repo.',
@@ -461,7 +461,7 @@ export const TOOL_DEFS = [
     description: 'Add a ticket to a work by its link (any tracker); the same link twice is kept once. A ticket may belong to several works. mag stores only the link.',
     inputSchema: {
       type: 'object',
-      properties: { key: { type: 'string', description: 'The work, e.g. T-3.' }, url: { type: 'string' }, ticket_key: { type: 'string', description: 'The ticket key, e.g. ABC-12, when the link does not show it.' } },
+      properties: { key: { type: 'string', description: 'The work, e.g. ABC-12.' }, url: { type: 'string' }, ticket_key: { type: 'string', description: 'The ticket key, e.g. ABC-12, when the link does not show it.' } },
       required: ['key', 'url'],
     },
   },
@@ -469,10 +469,10 @@ export const TOOL_DEFS = [
     name: 'reopen_work',
     scope: 'project',
     description:
-      'Continue a done work instead of creating a new one (one problem, one work): it goes back to planning with its done steps kept, and this topic owns it from now on. Then plan what is left here with the owner tools (passing work: its key); the user moves it to todo when the plan is ready.',
+      'Continue a done work instead of creating a new one (one problem, one work): it goes back to planning with its done steps kept, and this topic owns it from now on. Then plan what is left here with the owner tools (passing work: its key); the user approves the plan when it is ready.',
     inputSchema: {
       type: 'object',
-      properties: { key: { type: 'string', description: 'The done work, e.g. T-3.' }, what: { type: 'string', description: 'One line: what else is needed.' } },
+      properties: { key: { type: 'string', description: 'The done work, e.g. ABC-12.' }, what: { type: 'string', description: 'One line: what else is needed.' } },
       required: ['key', 'what'],
     },
   },
@@ -507,7 +507,7 @@ export const TOOL_DEFS = [
   {
     name: 'start_grooming',
     scope: 'project',
-    description: 'Start a separate groomer agent on a backlog task (or re-groom a todo task not started yet): only for a work nobody planned in a conversation, e.g. one started from a ticket link. The groomer becomes its owner. It works in the background and pings the user with questions; when done, the task goes to todo, ready for the user to start. A work you discussed here you plan yourself.',
+    description: 'Start a separate groomer agent on a work in planning (or re-plan a ready one not started yet): only for a work nobody planned in a conversation, e.g. one started from a ticket link. The groomer becomes its owner. It works in the background and pings the user with questions; the user approves its plan, and the work is ready to start. A work you discussed here you plan yourself.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
@@ -520,12 +520,6 @@ export const TOOL_DEFS = [
       properties: { key: { type: 'string' }, reason: { type: 'string', description: 'Optional one line: why it is canceled.' } },
       required: ['key'],
     },
-  },
-  {
-    name: 'archive_task',
-    scope: 'project',
-    description: 'Archive a done or canceled task: it leaves the Active view and keeps its status. The user can restore it.',
-    inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
     name: 'update_notes',
@@ -592,7 +586,7 @@ export const APPROVE_TOOL = 'mcp__mag__approve_tool'
  */
 export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas'] as const
 
-const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. T-3.' }
+const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 
 export type ToolScope = 'task' | 'project' | 'any'
 

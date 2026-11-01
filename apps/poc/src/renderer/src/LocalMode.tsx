@@ -4,7 +4,7 @@ import { localCheckText, localOptions, openLocalChecks, repoNames, taskRepos, ty
 const mag = window.mag
 
 /**
- * Start of a todo task (T-50): a popup lists the repositories its steps change, each with a "worktree" checkbox (on by
+ * Start of a ready work (T-50): a popup lists the repositories its steps change, each with a "worktree" checkbox (on by
  * default); an unticked one works right in its main checkout. A task without repositories starts at once.
  */
 export function StartButton({ task, tasks, project, label = 'Start', className, disabled, title }: {

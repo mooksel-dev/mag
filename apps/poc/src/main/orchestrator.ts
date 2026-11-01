@@ -29,7 +29,7 @@ Diagrams of a change go through show_diagram (its description has the rules); li
 with the id it returns, and revise a diagram by its id. Every diagram gets its place: role option for an option's sketch,
 role plan with step and repo for a step's change (place_diagram once the steps exist).
 mag enforces: steps (create_subtask, reorder_subtasks) come only after the user has answered you in this chat; you never
-move the task to todo or cancel it yourself, and you never edit code.
+approve the plan (the work goes to ready) or cancel it yourself, and you never edit code.
 Keep chat replies to one or two sentences; the doc carries the detail.`
 
 const workLines = (work: TaskWork) =>
@@ -114,16 +114,16 @@ a workspace that organizes agents' work on problems; tickets live in the user's 
 is a free conversation about the project: ideas, product and design decisions, architecture, priorities, reviewing what
 agents did. You can read the code (read-only), the web and tickets.
 How mag works: a work (a task; one problem, one work) is planned by its owner: the document with the problem, options
-with diagrams and the decisions, then steps (subtasks; at least one) -> todo: planned and ready; the order of todo
-works is only the user's priority -> in progress: the user starts it with Start, and its steps run one after another.
+with diagrams and the decisions, then steps (subtasks; at least one) -> ready: the user approved the plan; priority lives in the
+tracker, not in mag -> in progress: the user starts it with Start, and its steps run one after another.
 Each step gets a new developer session from fresh base, its own branch and a worktree per repository it changes, and
 at most one PR per changed repository. Before the user sees a step's PRs, the owner reviews them in a fork of itself:
 changes go back to the developer, merge or look go to the user. A step is done when its PRs are merged (or, without
 code, when its developer closes it), and the next one starts on its own unless it is marked start manually (then it
 waits for the user's Start) -> done when every step is done. A done work that needs more is continued, never
 duplicated: back to planning, its owner adds steps. Any number of works can be in progress in parallel. Any work not
-done yet can be canceled. Done and canceled ones can be archived; mag archives them after some days. The project also
-keeps a list of ideas: things worth doing that nobody works on yet, without status or priority.
+done yet can be canceled. mag has no backlog: the project keeps a list of ideas instead, things worth doing that nobody
+works on yet, without status or priority; what has a state is a work.
 - You never change code. A change becomes a work, and you own the works you create: create_work (title, the brief,
   tickets: the links it is about, none is fine) and plan it right here with the user, following the playbook's plan
   below: the doc with update_doc, diagrams with show_diagram / place_diagram, steps with create_subtask and the
@@ -135,17 +135,17 @@ keeps a list of ideas: things worth doing that nobody works on yet, without stat
 - Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line. list_tasks shows
   the ideas; when the user starts a work from one, plan it like any other.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
-  plan: true and its steps (at least one): it goes to todo and starts nothing; the user starts it with Start.
+  plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
 - Record outcomes so they outlive this chat: what the user decided about a work goes under §Decisions in its doc
   (update_task_doc; it overrides the project's playbook for that work), project-wide conventions in update_notes,
   plan changes in update_task / update_task_doc; add_ticket adds a ticket to a work.
 - One answer per turn: make the tool calls first, then reply once at the end. Don't answer before recording and
   again after it; say what you recorded in one line of that final reply.
-- cancel_task only after the user has said yes to canceling that work; archive_task when they ask to clean up.
+- cancel_task only after the user has said yes to canceling that work.
 - For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
   diagram of a change (component, sequence, state, flowchart, data) use show_diagram. Revise either by id instead of drawing
   a new one. Prefer showing over describing.
-- Refer to works by key (T-12, subtask T-12.3); the app turns keys into links.
+- Refer to works by key (a ticket key like ABC-12 or a slug; T-12 for older works) and steps by theirs (ABC-12.3).
 - Be concise: short answers, markdown only where it helps. The user hates filler.
 - Bash is for reading only: never change files.
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
@@ -333,11 +333,11 @@ export class Orchestrator {
   groom(taskId: string, message?: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
-    // A todo task leaves todo while it is groomed again; started work is past grooming.
-    if (!['backlog', 'grooming', 'todo'].includes(task.status) || task.work) throw new Error(`${task.key} is ${task.status}; only backlog, grooming or not started todo tasks can be groomed`)
+    // A ready work goes back to planning while it is groomed again; started work is past planning.
+    if ((task.status !== 'planning' && task.status !== 'ready') || task.work) throw new Error(`${task.key} is ${task.status}; only a work in planning or a ready one not started is groomed`)
     const session = this.newSession(taskId, 'groomer')
     // The groomer discusses the options and plans: it owns the work from now on (T-55.1).
-    this.store.updateTask(taskId, { status: 'grooming', needsInput: null, ownerSessionId: session.id })
+    this.store.updateTask(taskId, { status: 'planning', needsInput: null, ownerSessionId: session.id })
     const intro = `Groom task ${task.key}. Start with get_task.`
     // Shown, not as the user's: the groomer's checkpoint still waits for the user's answer in its chat.
     if (message) session.items.push({ kind: 'notice', text: message, at: Date.now() })
@@ -354,7 +354,7 @@ export class Orchestrator {
     if (!canReopen(task)) throw new Error(`${task.key} is ${task.status}${task.parentId ? ' (a step)' : isLegacy(task) ? ' (a legacy task)' : ''}; only a done work with steps is continued`)
     const need = what.replace(/\s+/g, ' ').trim()
     if (!need) throw new Error('Say what else is needed')
-    this.store.updateTask(taskId, { status: 'grooming', needsInput: null, archivedAt: null, ...(by && { ownerSessionId: by }) })
+    this.store.updateTask(taskId, { status: 'planning', needsInput: null, ...(by && { ownerSessionId: by }) })
     log.info('agent', `${task.key} reopened`, { by: by ?? 'app' })
     if (by) return `${task.key} is back in planning and this topic owns it.`
     // The owner: the topic that created it, or its groomer.
@@ -373,7 +373,7 @@ export class Orchestrator {
   }
 
   /**
-   * Start a todo task (the user's Start) or restart one in progress, on its current step: a todo step gets a worktree +
+   * Start a ready work (the user's Start) or restart one in progress, on its current step: a todo step gets a worktree +
    * branch from fresh base per repository it changes (see stepRepos) and a new developer session; a step in progress
    * resumes its session.
    * `message`, if given, is what the resumed session is told (shown in its chat). Legacy tasks run as one whole.
@@ -383,7 +383,7 @@ export class Orchestrator {
   async develop(taskId: string, message?: string, localRepos?: string[]) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
-    if (task.status !== 'todo' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only todo or in progress tasks are developed`)
+    if (task.status !== 'ready' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only ready or in progress works are developed`)
     const project = this.store.project(task.projectId)
     if (!project.repos.length) {
       this.store.updateTask(taskId, { needsInput: 'Project has no repository' })
@@ -1229,10 +1229,8 @@ export class Orchestrator {
     // A background task will wake the agent again: the run is not over yet.
     if (session.background?.length) return
     const failed = session.status === 'error'
-    if (session.role === 'groomer' && task.status === 'grooming') {
-      if (failed) this.store.updateTask(task.id, { status: 'backlog' })
-      else this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
-    }
+    // A failed groomer shows in Needs you (agent_failed); the work stays in planning.
+    if (session.role === 'groomer' && task.status === 'planning' && !failed) this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
     if (session.role === 'developer' && task.status === 'in_progress') {
       const work = this.ownerOf(session).work
       const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []

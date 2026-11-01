@@ -45,7 +45,7 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   assert.equal(t('done').work?.repos[0].prState, 'merged')
   assert.deepEqual([t('doneSub').status, t('runSub1').status, t('runSub2').status], ['done', 'done', 'todo'])
   assert.deepEqual([t('doneSub').work, t('runSub2').work, t('runSub2').needsInput], [null, null, null])
-  assert.equal(t('run').status, 'todo', 'started only through its subtasks: picked up again as a whole')
+  assert.equal(t('run').status, 'ready', 'started only through its subtasks: picked up again as a whole (todo then, ready since T-55.7)')
   assert.equal(t('review').status, 'in_progress', 'in review is in progress with an open PR')
   assert.equal(store.session('s').taskId, 'run')
   assert.equal(store.session('s').nativeSessionId, null)
@@ -58,7 +58,7 @@ test('T-22 migration: per-repo work, subtasks as todo/done steps, their sessions
   assert.deepEqual(again.data.tasks, store.data.tasks)
 })
 
-test('T-26 migration: groomed and planned become todo in queue order, in_review in progress, an archive flag', () => {
+test('T-26 migration: groomed and planned become todo (ready since T-55.7), in_review in progress', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, updatedAt: 0 }
   const task = (id: string, status: string, rank: number, createdAt: number, patch = {}) => ({ ...base, id, key: id, title: id, status, rank, createdAt, ...patch })
@@ -77,12 +77,12 @@ test('T-26 migration: groomed and planned become todo in queue order, in_review 
   writeFileSync(file, JSON.stringify({ projects: [], tasks, sessions: [] }))
   const store = new Store(file)
   const t = (id: string) => store.task(id)
-  const todo = store.data.tasks.filter((x) => x.projectId === 'p' && !x.parentId && x.status === 'todo').sort((a, b) => a.rank - b.rank)
-  assert.deepEqual(todo.map((x) => x.id), ['p1', 'p2', 'g1', 'g2'], 'planned by rank, then groomed by creation')
+  const ready = store.data.tasks.filter((x) => x.projectId === 'p' && !x.parentId && x.status === 'ready')
+  assert.deepEqual(ready.map((x) => x.id).sort(), ['g1', 'g2', 'p1', 'p2'])
   assert.equal(t('rev').status, 'in_progress')
   assert.equal(t('rev').work?.repos[0].prState, 'open')
-  assert.deepEqual([t('d').status, t('b').status, t('s').status, t('q').status], ['done', 'backlog', 'todo', 'todo'])
-  assert.ok(store.data.tasks.every((x) => x.archivedAt === null))
+  assert.deepEqual([t('d').status, t('s').status, t('q').status], ['done', 'todo', 'ready'])
+  assert.deepEqual(store.data.ideas.map((i) => i.text), ['b'], 'the backlog task is an idea now (T-55.7)')
 
   store.flush()
   const again = new Store(file)
@@ -92,7 +92,7 @@ test('T-26 migration: groomed and planned become todo in queue order, in_review 
 test('T-55.5 migration: the tracker link becomes tickets; no tracker settings', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   const projects = [{ id: 'p', name: 'p', repos: [], trackers: [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] }]
-  const base = { projectId: 'p', parentId: null, title: 't', type: 'dev', status: 'backlog', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0 }
+  const base = { projectId: 'p', parentId: null, title: 't', type: 'dev', status: 'grooming', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0 }
   const tasks = [
     { ...base, id: 'a', key: 'T-1', tracker: { kind: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1', importedAt: 5 } },
     { ...base, id: 'b', key: 'T-2', tracker: { kind: 'jira', key: 'ABC-2', url: null, importedAt: null } },
@@ -104,6 +104,54 @@ test('T-55.5 migration: the tracker link becomes tickets; no tracker settings', 
   assert.deepEqual(store.task('a').tickets, [{ url: 'https://acme.atlassian.net/browse/ABC-1', key: 'ABC-1' }])
   assert.equal(store.task('b').tickets, undefined, 'no URL, no ticket')
   assert.ok(['a', 'b', 'c'].every((id) => !('tracker' in store.task(id))))
+})
+
+test('T-55.7 migration: work states, an untouched backlog becomes ideas, no archive, T-N counter or auto-archive', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const projects = [{ id: 'p', name: 'p', repos: [], notes: '', templates: {}, nextTaskNo: 9, autoArchiveDays: 14 }]
+  const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, rank: 0, archivedAt: null, createdAt: 0, updatedAt: 0 }
+  const task = (id: string, status: string, patch = {}) => ({ ...base, id, key: id, title: `title ${id}`, status, ...patch })
+  const tasks = [
+    task('T-1', 'grooming'),
+    task('T-2', 'todo', { nextSubNo: 2 }),
+    task('T-2.1', 'todo', { parentId: 'T-2' }),
+    task('T-3', 'done', { archivedAt: 5 }),
+    task('T-4', 'backlog', { description: ' why ', createdAt: 7, tickets: [{ url: 'https://x/browse/ABC-1', key: 'ABC-1' }] }),
+    task('T-5', 'backlog'),
+    task('T-6', 'backlog'),
+    task('T-7', 'backlog'),
+    task('T-8', 'backlog'),
+  ]
+  const sessions = [{ id: 's', projectId: 'p', taskId: 'T-5', role: 'groomer', agent: 'claude-code', nativeSessionId: null, status: 'error', items: [], createdAt: 0 }]
+  const canvases = { c: { id: 'c', projectId: 'p', taskId: 'T-6', sessionId: null, title: 't', kind: 'diagram', version: 1, updatedAt: 0 } }
+  const docs = { 'T-4': '  ', 'T-7': '# Problem' }
+  const steps = [task('T-8.1', 'todo', { parentId: 'T-8' })]
+  writeFileSync(file, JSON.stringify({ projects, tasks: [...tasks, ...steps], sessions, canvases, docs, stepsMigrated: true }))
+  const store = new Store(file)
+  const status = (id: string) => store.task(id).status
+  assert.deepEqual([status('T-1'), status('T-2'), status('T-2.1'), status('T-3')], ['planning', 'ready', 'todo', 'done'])
+  assert.deepEqual(['T-5', 'T-6', 'T-7', 'T-8'].map(status), ['planning', 'planning', 'planning', 'planning'], 'a backlog task with a session, diagram, doc or step has a state')
+  assert.equal(store.data.tasks.some((t) => t.id === 'T-4'), false)
+  assert.equal('T-4' in store.data.docs, false)
+  assert.deepEqual(store.data.ideas.map(({ projectId, text, createdAt }) => ({ projectId, text, createdAt })), [{ projectId: 'p', text: 'title T-4\n\nwhy\n\nhttps://x/browse/ABC-1', createdAt: 7 }])
+  assert.ok(store.data.tasks.every((t) => !('archivedAt' in t)))
+  assert.deepEqual(['nextTaskNo' in store.project('p'), 'autoArchiveDays' in store.project('p')], [false, false])
+
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual([again.data.tasks, again.data.ideas], [store.data.tasks, store.data.ideas], 'idempotent')
+})
+
+test('new works: keyed by their first ticket or title, in planning; steps by their work (T-55.7)', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const a = store.createTask({ projectId: p.id, title: 'Fix login', type: 'dev', description: '', tickets: [{ url: 'https://x/browse/ABC-12', key: 'ABC-12' }] })
+  const b = store.createTask({ projectId: p.id, title: 'Fix login', type: 'dev', description: '' })
+  const c = store.createTask({ projectId: p.id, title: 'Fix login', type: 'dev', description: '' })
+  const step = store.createTask({ projectId: p.id, parentId: a.id, title: 's', type: 'dev', description: '' })
+  assert.deepEqual([a.key, b.key, c.key, step.key], ['ABC-12', 'fix-login', 'fix-login-2', 'ABC-12.1'])
+  assert.deepEqual([a.status, step.status, a.rank, step.rank], ['planning', 'todo', 0, 1])
+  assert.equal('nextTaskNo' in p, false)
 })
 
 test('project windows and recent projects persist', () => {
@@ -125,7 +173,7 @@ test('project windows and recent projects persist', () => {
 
 test('T-28 migration: steps for todo and in-progress tasks, legacy tasks untouched, once', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
-  const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, rank: 0, archivedAt: null, createdAt: 0, updatedAt: 0 }
+  const base = { projectId: 'p', type: 'dev', description: '', needsInput: null, nextSubNo: 1, parentId: null, work: null, rank: 0, createdAt: 0, updatedAt: 0 }
   const task = (id: string, status: string, patch = {}) => ({ ...base, id, key: id, title: `title ${id}`, status, ...patch })
   const work = { repos: [{ repo: '/r', branch: 'b', worktree: '/w/r', prUrl: null, prState: null }], dir: '/w', feedbackSeenAt: 0 }
   const tasks = [

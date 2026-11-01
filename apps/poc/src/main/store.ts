@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -150,6 +150,47 @@ export class Store {
     this.migrateToTaskWork()
     this.migrateStatuses()
     this.migrateToSteps()
+    this.migrateToWorkStates()
+  }
+
+  /**
+   * Task management goes (T-55.7): statuses become work states (grooming → planning, todo → ready), the project's
+   * T-N counter and auto-archive go, archived works are just done or canceled. A backlog task nobody started on (no
+   * steps, doc, sessions or diagrams) becomes an idea; one with any of them has a state, so it stays a work in planning.
+   */
+  private migrateToWorkStates() {
+    let changed = false
+    for (const p of this.data.projects) {
+      const old = p as { nextTaskNo?: number; autoArchiveDays?: number }
+      if (old.nextTaskNo === undefined && old.autoArchiveDays === undefined) continue
+      delete old.nextTaskNo
+      delete old.autoArchiveDays
+      changed = true
+    }
+    const started = (t: Task) =>
+      subtasksOf(t.id, this.data.tasks).length > 0 ||
+      !!this.data.docs[t.id]?.trim() ||
+      this.data.sessions.some((s) => s.taskId === t.id) ||
+      Object.values(this.data.canvases).some((c) => c.taskId === t.id)
+    for (const t of [...this.data.tasks]) {
+      const status = t.status as string
+      if ('archivedAt' in t) {
+        delete (t as { archivedAt?: unknown }).archivedAt
+        changed = true
+      }
+      if (t.parentId) continue
+      if (status === 'grooming') t.status = 'planning'
+      else if (status === 'todo') t.status = 'ready'
+      else if (status === 'backlog' && started(t)) t.status = 'planning'
+      else if (status === 'backlog') {
+        const text = [t.title, t.description.trim(), ...(t.tickets ?? []).map((x) => x.url)].filter(Boolean).join('\n\n')
+        this.data.ideas.push({ id: id(), projectId: t.projectId, text, createdAt: t.createdAt })
+        this.data.tasks = this.data.tasks.filter((x) => x.id !== t.id)
+        delete this.data.docs[t.id]
+      } else continue
+      changed = true
+    }
+    if (changed) this.changed()
   }
 
   /**
@@ -161,12 +202,13 @@ export class Store {
     if (this.data.stepsMigrated) return
     for (const t of this.data.tasks) if (t.parentId) t.startManually ??= false
     for (const t of [...this.data.tasks]) {
-      if (t.parentId || isLegacy(t) || (t.status !== 'todo' && t.status !== 'in_progress')) continue
+      // Before T-55.7: todo is ready now (see migrateToWorkStates, which runs after).
+      if (t.parentId || isLegacy(t) || ((t.status as string) !== 'todo' && t.status !== 'in_progress')) continue
       if (subtasksOf(t.id, this.data.tasks).length) continue
       const now = Date.now()
       this.data.tasks.push({
         id: id(), projectId: t.projectId, key: subtaskKey(t.key, t.nextSubNo++), parentId: t.id, title: t.title, type: t.type, status: 'todo', description: '',
-        rank: 1, needsInput: null, work: null, startManually: false, nextSubNo: 1, archivedAt: null, createdAt: now, updatedAt: now,
+        rank: 1, needsInput: null, work: null, startManually: false, nextSubNo: 1, createdAt: now, updatedAt: now,
       })
     }
     this.data.stepsMigrated = true
@@ -175,7 +217,7 @@ export class Store {
 
   /**
    * Statuses before T-26: groomed and planned become todo, planned first in their order, then groomed by creation;
-   * in_review becomes in_progress (its open PR shows as a badge). Every task gets an archive flag.
+   * in_review becomes in_progress (its open PR shows as a badge).
    */
   private migrateStatuses() {
     let changed = false
@@ -184,15 +226,12 @@ export class Store {
       const mine = this.data.tasks.filter((t) => t.projectId === pid && !t.parentId)
       const groomed = mine.filter((t) => old(t) === 'groomed').sort((a, b) => a.createdAt - b.createdAt)
       let rank = Math.max(0, ...mine.filter((t) => ['planned', 'in_progress', 'in_review'].includes(old(t))).map((t) => t.rank))
+      // Statuses of that time; migrateToWorkStates maps them to work states.
       for (const t of groomed) Object.assign(t, { status: 'todo', rank: ++rank })
       for (const t of mine) if (old(t) === 'planned') t.status = 'todo'
       changed ||= groomed.length > 0
     }
     for (const t of this.data.tasks) {
-      if (t.archivedAt === undefined) {
-        t.archivedAt = null
-        changed = true
-      }
       if (old(t) === 'planned') t.status = 'todo'
       else if (old(t) === 'in_review') t.status = 'in_progress'
       else if (t.parentId && !['todo', 'in_progress', 'done'].includes(old(t))) t.status = 'todo'
@@ -412,7 +451,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
@@ -443,18 +482,19 @@ export class Store {
     const p = this.project(n.projectId)
     const now = Date.now()
     const parentId = n.parentId ?? null
-    const siblings = this.data.tasks.filter((x) => x.projectId === p.id && x.parentId === parentId)
+    const mine = this.data.tasks.filter((x) => x.projectId === p.id)
     const parent = parentId ? this.task(parentId) : null
     const t: Task = {
       id: id(),
       projectId: p.id,
-      key: parent ? subtaskKey(parent.key, parent.nextSubNo++) : `T-${p.nextTaskNo++}`,
+      key: parent ? subtaskKey(parent.key, parent.nextSubNo++) : workKey(n.title, n.tickets, mine.filter((x) => !x.parentId).map((x) => x.key)),
       parentId,
       title: n.title,
       type: n.type,
-      status: n.status ?? 'backlog',
+      status: n.status ?? (parent ? 'todo' : 'planning'),
       description: n.description,
-      rank: Math.max(0, ...siblings.map((x) => x.rank)) + 1,
+      // Steps keep their order; works have none.
+      rank: parent ? Math.max(0, ...subtasksOf(parent.id, mine).map((x) => x.rank)) + 1 : 0,
       needsInput: null,
       work: null,
       ...(parent && { startManually: n.startManually ?? false }),
@@ -462,7 +502,6 @@ export class Store {
       ...(!parent && n.tickets?.length && { tickets: n.tickets }),
       ...(!parent && n.ownerSessionId && { ownerSessionId: n.ownerSessionId }),
       nextSubNo: 1,
-      archivedAt: null,
       createdAt: now,
       updatedAt: now,
     }

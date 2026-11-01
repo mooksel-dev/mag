@@ -1,37 +1,26 @@
 import { useEffect, useState } from 'react'
 import {
-  DEFAULT_AUTO_ARCHIVE_DAYS,
   STATUS_LABELS,
-  activeSections,
   agentState,
-  archivedTasks,
-  backlogTasks,
-  canArchive,
+  canApprove,
   canCancel,
   canReopen,
-  canMoveInPlan,
-  canMoveToTodo,
   openPrs,
   subtaskProgress,
   subtasksOf,
   taskPrs,
-  viewCounts,
+  workSections,
   type AgentSession,
   type AgentState,
-  type ArchiveFilter,
   type Project,
   type SubtaskStatus,
   type Task,
-  type TaskStatus,
-  type TaskType,
-  type TasksView,
 } from '@mag/core'
 import { ago } from './format'
 import { PrPills, TicketPill, TicketPills } from './LinkPill'
 import { StartButton } from './LocalMode'
 
 const mag = window.mag
-const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 
 /** Re-renders every `ms` so durations keep growing. */
 export function useNow(ms: number) {
@@ -43,7 +32,7 @@ export function useNow(ms: number) {
   return now
 }
 
-export function StatusPill({ status }: { status: TaskStatus }) {
+export function StatusPill({ status }: { status: Task['status'] }) {
   return <span className={`status s-${status}`}>{STATUS_LABELS[status].toLowerCase()}</span>
 }
 
@@ -64,7 +53,7 @@ export function AgentDot({ state, now }: { state: AgentState; now: number }) {
 export const SUBTASK_ICONS: Record<SubtaskStatus, string> = { todo: '○', in_progress: '◐', done: '●' }
 
 /** ○ / ◐ / ● for a subtask status. */
-export function SubtaskIcon({ status }: { status: TaskStatus }) {
+export function SubtaskIcon({ status }: { status: Task['status'] }) {
   const s = status as SubtaskStatus
   return <span className={`subicon sub-${s}`} title={STATUS_LABELS[s]} aria-label={STATUS_LABELS[s]}>{SUBTASK_ICONS[s] ?? '○'}</span>
 }
@@ -126,53 +115,62 @@ export function TicketLinks({ task }: { task: Task }) {
   )
 }
 
-/** Moves a backlog or grooming task to todo; disabled, with the reason, while it has no steps. */
-export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
-  const can = canMoveToTodo(task, tasks)
+/** Approves the plan of a work in planning (→ ready); disabled, with the reason, while it has no step to do. */
+export function ApproveButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
+  const can = canApprove(task, tasks)
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
-  // On a groomed plan the click is the user's approval of it.
-  const approve = task.status === 'grooming' && subtasksOf(task.id, tasks).length > 0
-  const why = !can.ok ? can.reason : busy ? 'An agent is running on this task' : approve ? 'Approve the plan: move to todo' : 'Ready to start: move to todo'
+  const why = !can.ok ? can.reason : busy ? 'An agent is running on this work' : 'Approve the plan: the work is ready to start'
   return (
-    <button className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onClick={(e) => { e.stopPropagation(); void mag.moveToTodo(task.id) }}>
-      {approve ? 'Approve → todo' : 'Move to todo'}
+    <button className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onClick={(e) => { e.stopPropagation(); void mag.approve(task.id) }}>
+      Approve plan
     </button>
   )
 }
 
-export type NewTaskFocus = 'task' | 'ticket' | null
+/** Finished works shown before "Show all". */
+const FINISHED_SHOWN = 10
 
-const VIEWS: [TasksView, string][] = [['active', 'Active'], ['backlog', 'Backlog'], ['archive', 'Archive']]
-
-/** The Tasks tab: Active · Backlog · Archive. */
-export function TasksPage({ project, tasks, sessions, view, onView, onOpen, focusNewTask }: {
+/** The Tasks tab: works by state. No backlog (ideas are on Home), priority or archive (T-55.7). */
+export function TasksPage({ project, tasks, sessions, onOpen, fromTicket }: {
   project: Project
   tasks: Task[]
   sessions: AgentSession[]
-  view: TasksView
-  onView: (v: TasksView) => void
   onOpen: (id: string) => void
-  /** Focus the new-task title or the ticket link field (from Home). */
-  focusNewTask: NewTaskFocus
+  /** Open the ticket link field (from Home). */
+  fromTicket: boolean
 }) {
-  const counts = viewCounts(tasks)
   const now = useNow(15_000)
+  const [ticket, setTicket] = useState(fromTicket)
+  const [allFinished, setAllFinished] = useState(false)
+  const s = workSections(tasks)
   const row = { tasks, sessions, now, onOpen }
+  const finished = allFinished ? s.finished : s.finished.slice(0, FINISHED_SHOWN)
+  const empty = !s.inProgress.length && !s.ready.length && !s.planning.length && !s.finished.length
   return (
     <section className="page">
       <div className="tasksbar">
         <h1>Tasks</h1>
-        <div className="seg views" role="tablist" aria-label="Tasks view">
-          {VIEWS.map(([v, label]) => (
-            <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'on' : ''} onClick={() => onView(v)}>
-              {label} <span className="cnt">{counts[v]}</span>
-            </button>
-          ))}
-        </div>
+        <span className="grow" />
+        {!ticket && <button title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={() => setTicket(true)}>From a ticket</button>}
       </div>
-      {view === 'active' ? <ActiveView project={project} {...row} />
-        : view === 'backlog' ? <BacklogView project={project} focusNewTask={focusNewTask} {...row} />
-        : <ArchiveView {...row} />}
+      {ticket && <WorkFromTicket projectId={project.id} onOpen={onOpen} onClose={() => setTicket(false)} />}
+      {empty ? (
+        <p className="muted">No works yet. Discuss a problem in a project chat (it plans the work with you), start one from an idea on Home or from a ticket link.</p>
+      ) : (
+        <>
+          <Section title="In progress" list={s.inProgress} empty="No work in progress." {...row} />
+          <Section title="Ready" note="plan approved; you start it" list={s.ready} rowActions={(t) => <span className="rowactions"><ReadyStart task={t} tasks={tasks} sessions={sessions} project={project} /></span>} {...row} />
+          <Section title="Planning" list={s.planning} rowActions={(t) => <span className="rowactions"><ApproveButton task={t} tasks={tasks} sessions={sessions} small /></span>} {...row} />
+          <Section
+            title="Finished"
+            list={finished}
+            count={s.finished.length}
+            action={s.finished.length > FINISHED_SHOWN && <button className="small" onClick={() => setAllFinished((a) => !a)}>{allFinished ? 'Show recent' : `Show all ${s.finished.length}`}</button>}
+            extra={(t) => t.status === 'canceled' && t.cancelReason ? <span className="muted small reason" title={t.cancelReason}>{t.cancelReason}</span> : undefined}
+            {...row}
+          />
+        </>
+      )}
     </section>
   )
 }
@@ -184,82 +182,29 @@ interface RowProps {
   onOpen: (id: string) => void
 }
 
-function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Project } & RowProps) {
-  const s = activeSections(tasks)
-  const row = { tasks, sessions, now, onOpen }
-  const days = project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS
-  if (!s.inProgress.length && !s.todo.length && !s.grooming.length && !s.finished.length)
-    return <p className="muted">Nothing active. Groom tasks from the Backlog: groomed tasks land in Todo, and you start them with Start.</p>
-  return (
-    <>
-      <Section title="In progress" list={s.inProgress} empty="No task in progress." {...row} />
-      <Section title="Todo" note="ready to start; order is priority; drag or ▲▼ to reorder" list={s.todo} empty="Nothing in todo." ordered project={project} {...row} />
-      <Section title="Grooming" list={s.grooming} rowActions={(t) => <span className="rowactions"><MoveToTodoButton task={t} tasks={tasks} sessions={sessions} small /></span>} {...row} />
-      <Section
-        title="Recently finished"
-        note={days > 0 ? `archived after ${days} days` : undefined}
-        list={s.finished}
-        action={s.finished.length > 0 && <button className="small" onClick={() => mag.archive(s.finished.map((t) => t.id))}>Archive all</button>}
-        {...row}
-      />
-    </>
-  )
-}
-
-function Section({ title, note, list, empty, ordered, action, rowActions, project, ...row }: {
+function Section({ title, note, list, count, empty, action, rowActions, extra, ...row }: {
   title: string
-  /** Ordered (todo) sections: the project, for the Start popup's repositories. */
-  project?: Project
   note?: string
   list: Task[]
+  /** When the list shows only some: how many there are. */
+  count?: number
   empty?: string
-  ordered?: boolean
   action?: React.ReactNode
   rowActions?: (t: Task) => React.ReactNode
+  extra?: (t: Task) => React.ReactNode
 } & RowProps) {
-  const [dragId, setDragId] = useState<string | null>(null)
   if (!list.length && !empty) return null
-  /** Moves the dragged task step by step to `target`'s place; every step must be allowed. */
-  const drop = async (target: Task) => {
-    const from = list.findIndex((t) => t.id === dragId)
-    const to = list.indexOf(target)
-    setDragId(null)
-    if (from < 0 || from === to) return
-    const dir = to < from ? 'up' : 'down'
-    for (let i = 0; i < Math.abs(to - from); i++) await mag.move(list[from].id, dir)
-  }
-  /** Can the dragged task get to `target`'s place: every task in between must be not started. */
-  const canDrop = (target: Task) => {
-    const from = list.findIndex((t) => t.id === dragId)
-    const to = list.indexOf(target)
-    if (from < 0 || from === to) return false
-    return list.slice(Math.min(from, to), Math.max(from, to) + 1).every((t) => t.status === 'todo' && !t.work)
-  }
   return (
     <div className="tasksec">
       <h2>
-        {title} <span className="muted cnt">{list.length}</span>
+        {title} <span className="muted cnt">{count ?? list.length}</span>
         {note && <span className="muted small"> · {note}</span>}
         <span className="grow" />
         {action}
       </h2>
       {list.length ? (
         <div className="tree">
-          {list.map((t, i) => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              {...row}
-              order={ordered ? i + 1 : undefined}
-              drag={ordered ? { dragging: dragId === t.id, onStart: () => setDragId(t.id), onEnd: () => setDragId(null), canDrop: () => canDrop(t), onDrop: () => void drop(t) } : undefined}
-              actions={ordered ? (
-                <span className="todoactions">
-                  <TodoStart task={t} tasks={row.tasks} sessions={row.sessions} project={project} />
-                  <Moves task={t} tasks={row.tasks} />
-                </span>
-              ) : rowActions?.(t)}
-            />
-          ))}
+          {list.map((t) => <TaskRow key={t.id} task={t} {...row} actions={rowActions?.(t)} extra={extra?.(t)} />)}
         </div>
       ) : (
         <p className="muted small">{empty}</p>
@@ -268,58 +213,26 @@ function Section({ title, note, list, empty, ordered, action, rowActions, projec
   )
 }
 
-/** Starts development of a todo task (the Start popup). Not while it waits on the user or an agent of it is running. */
-function TodoStart({ task, tasks, sessions, project }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project?: Project }) {
+/** Starts development of a ready work (the Start popup). Not while it waits on the user or an agent of it is running. */
+function ReadyStart({ task, tasks, sessions, project }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project: Project }) {
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
-  const why = task.needsInput ? `Needs input: ${task.needsInput}` : busy ? 'An agent is running on this task' : `Start a developer on ${task.key}`
+  const why = task.needsInput ? `Needs input: ${task.needsInput}` : busy ? 'An agent is running on this work' : `Start a developer on ${task.key}`
   return <StartButton task={task} tasks={tasks} project={project} className="small" disabled={!!task.needsInput || busy} title={why} />
 }
 
-function Moves({ task, tasks }: { task: Task; tasks: Task[] }) {
-  return (
-    <span className="moves">
-      {(['up', 'down'] as const).map((dir) => (
-        <button key={dir} className="icon" disabled={!canMoveInPlan(task, tasks, dir)} aria-label={`Move ${task.key} ${dir}`} onClick={() => mag.move(task.id, dir)}>
-          {dir === 'up' ? '▲' : '▼'}
-        </button>
-      ))}
-    </span>
-  )
-}
-
-interface Drag {
-  dragging: boolean
-  onStart: () => void
-  onEnd: () => void
-  canDrop: () => boolean
-  onDrop: () => void
-}
-
-/** A task row: chevron, key, title, agent indicator, badges, progress and status; expands to its steps with their PRs. */
-export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actions, extra }: RowProps & {
+/** A work row: chevron, key, title, agent indicator, badges, progress and state; expands to its steps with their PRs. */
+export function TaskRow({ task, tasks, sessions, now, onOpen, actions, extra }: RowProps & {
   task: Task
-  /** Position in the todo list: its priority. */
-  order?: number
-  drag?: Drag
   actions?: React.ReactNode
   /** Shown before the status, e.g. a PR link or the cancel reason. */
   extra?: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const [over, setOver] = useState(false)
   const subs = subtasksOf(task.id, tasks)
   const progress = subtaskProgress(task.id, tasks)
   const prs = task.status === 'in_progress' ? openPrs(task, tasks) : []
   return (
-    <div
-      className={`taskrow-wrap ${drag?.dragging ? 'dragging' : ''} ${over ? 'dropover' : ''}`}
-      draggable={!!drag && canDragRow(task, tasks)}
-      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; drag?.onStart() }}
-      onDragEnd={() => { setOver(false); drag?.onEnd() }}
-      onDragOver={(e) => { if (drag?.canDrop()) { e.preventDefault(); setOver(true) } }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => { e.preventDefault(); setOver(false); drag?.onDrop() }}
-    >
+    <div className="taskrow-wrap">
       <div className="rowwrap">
         <button
           className="icon chevron"
@@ -331,7 +244,6 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
           {subs.length ? (open ? '▾' : '▸') : ''}
         </button>
         <button className="row" onClick={() => onOpen(task.id)}>
-          {order !== undefined && <span className="ordno muted small">{order}</span>}
           <span className="key">{task.key}</span>
           <span className="title grow">{task.title}</span>
           <TicketPills task={task} compact />
@@ -361,103 +273,6 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
   )
 }
 
-const canDragRow = (task: Task, tasks: Task[]) => canMoveInPlan(task, tasks, 'up') || canMoveInPlan(task, tasks, 'down')
-
-function BacklogView({ project, tasks, sessions, now, onOpen, focusNewTask }: { project: Project; focusNewTask: NewTaskFocus } & RowProps) {
-  const list = backlogTasks(tasks)
-  return (
-    <>
-      <NewTask projectId={project.id} focus={focusNewTask} onOpen={onOpen} />
-      {list.length ? (
-        <div className="tree">
-          {list.map((t) => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              tasks={tasks}
-              sessions={sessions}
-              now={now}
-              onOpen={onOpen}
-              actions={
-                <span className="rowactions">
-                  <button className="small" onClick={() => mag.groom(t.id)}>Groom</button>
-                  <MoveToTodoButton task={t} tasks={tasks} sessions={sessions} small />
-                  <CancelButton task={t} small />
-                </span>
-              }
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="muted">Backlog is empty.</p>
-      )}
-    </>
-  )
-}
-
-const FILTERS: [ArchiveFilter, string][] = [['all', 'All'], ['done', 'Done'], ['canceled', 'Canceled']]
-
-function ArchiveView({ tasks, sessions, now, onOpen }: RowProps) {
-  const [filter, setFilter] = useState<ArchiveFilter>('all')
-  const [query, setQuery] = useState('')
-  const list = archivedTasks(tasks, filter, query)
-  return (
-    <>
-      <div className="archivebar">
-        <div className="seg" role="group" aria-label="Archive filter">
-          {FILTERS.map(([f, label]) => (
-            <button key={f} aria-pressed={filter === f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>{label}</button>
-          ))}
-        </div>
-        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by key or title" aria-label="Search the archive" />
-      </div>
-      {list.length ? (
-        <div className="tree">
-          {list.map((t) => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              tasks={tasks}
-              sessions={sessions}
-              now={now}
-              onOpen={onOpen}
-              extra={
-                t.status === 'canceled' ? (t.cancelReason && <span className="muted small reason" title={t.cancelReason}>{t.cancelReason}</span>)
-                : <PrPills prs={taskPrs(t, tasks)} />
-              }
-              actions={<span className="rowactions"><button className="small" onClick={() => mag.restore(t.id)}>Restore</button></span>}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="muted">{query || filter !== 'all' ? 'No archived tasks match.' : 'The archive is empty.'}</p>
-      )}
-    </>
-  )
-}
-
-/** A new backlog task: typed in, or a work started from a ticket link (T-55.5). */
-function NewTask({ projectId, focus, onOpen }: { projectId: string; focus: NewTaskFocus; onOpen: (id: string) => void }) {
-  const [fromTicket, setFromTicket] = useState(focus === 'ticket')
-  const [title, setTitle] = useState('')
-  const [type, setType] = useState<TaskType>('dev')
-  const [description, setDescription] = useState('')
-  if (fromTicket) return <WorkFromTicket projectId={projectId} onOpen={onOpen} onClose={() => setFromTicket(false)} />
-  return (
-    <form className="newtask" onSubmit={async (e) => { e.preventDefault(); if (!title.trim()) return; await mag.createTask({ projectId, title: title.trim(), type, description }); setTitle(''); setDescription('') }}>
-      <input autoFocus={focus === 'task'} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
-      <select value={type} onChange={(e) => setType(e.target.value as TaskType)} aria-label="Task type">
-        {TYPES.map((t) => <option key={t}>{t}</option>)}
-      </select>
-      <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What and why, as briefly as you like" aria-label="Task description" rows={2} />
-      <span className="newtaskactions">
-        <button type="submit">Add to backlog</button>
-        <button type="button" title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={() => setFromTicket(true)}>From a ticket</button>
-      </span>
-    </form>
-  )
-}
-
 /** A ticket link → a new work, which opens; a groomer reads the ticket and plans it in the background. */
 function WorkFromTicket({ projectId, onOpen, onClose }: { projectId: string; onOpen: (id: string) => void; onClose: () => void }) {
   const [url, setUrl] = useState('')
@@ -483,7 +298,7 @@ function WorkFromTicket({ projectId, onOpen, onClose }: { projectId: string; onO
       />
       <span className="newtaskactions">
         <button type="submit" className="primary" disabled={!url.trim() || busy}>Start</button>
-        <button type="button" onClick={onClose}>New task instead</button>
+        <button type="button" onClick={onClose}>Close</button>
       </span>
       {error ? <span className="err small" role="alert">{error}</span>
         : <span className="muted small">mag keeps only the link. A groomer reads the ticket any way your environment has (MCP, CLI) and plans the work; to plan it yourself, discuss it in a project chat instead.</span>}
@@ -534,11 +349,4 @@ export function ReopenButton({ task, onReopened }: { task: Task; onReopened?: ()
       <button type="button" className="small" onClick={() => setAsking(false)}>Keep done</button>
     </form>
   )
-}
-
-/** Archive or Restore, where the task allows it. */
-export function ArchiveButton({ task }: { task: Task }) {
-  if (task.archivedAt) return <button onClick={() => mag.restore(task.id)}>Restore</button>
-  if (canArchive(task)) return <button onClick={() => mag.archive([task.id])}>Archive</button>
-  return null
 }

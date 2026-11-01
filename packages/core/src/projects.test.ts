@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PROJECT_COLORS, projectColor, projectState, waitingTotal, type Task, type TaskStatus } from './index.ts'
+import { PROJECT_COLORS, projectColor, projectState, waitingTotal, type Task, type WorkState } from './index.ts'
 
-const task = (id: string, projectId: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
+const task = (id: string, projectId: string, status: WorkState, patch: Partial<Task> = {}): Task => ({
   id,
   projectId,
   key: id,
@@ -15,7 +15,6 @@ const task = (id: string, projectId: string, status: TaskStatus, patch: Partial<
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
@@ -45,6 +44,6 @@ test('projectState: waiting, in review, idle', () => {
 
 test('waitingTotal sums the inbox of every project', () => {
   const q = { needsInput: '?' }
-  const tasks = [task('a', 'p', 'grooming', q), task('b', 'p', 'backlog', q), task('c', 'q', 'todo', q), task('d', 'gone', 'todo', q)]
+  const tasks = [task('a', 'p', 'planning', q), task('b', 'p', 'planning', q), task('c', 'q', 'ready', q), task('d', 'gone', 'ready', q)]
   assert.equal(waitingTotal([{ id: 'p' }, { id: 'q' }], tasks, []), 3)
 })

@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, ideaPrompt, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, todoTasks, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, ideaPrompt, isLegacy, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -148,19 +148,18 @@ app.whenReady().then(async () => {
     const task = store.task(id)
     if (patch.status !== undefined && patch.status !== task.status) {
       if (task.parentId && !legacyParent(task)) throw new Error(`${task.key} is a step: its status follows its lifecycle`)
-      const todo = patch.status === 'todo' && !task.parentId ? canMoveToTodo(task, projectTasks(task.projectId)) : { ok: true }
-      if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
+      const ready = patch.status === 'ready' && !task.parentId ? canApprove(task, projectTasks(task.projectId)) : { ok: true }
+      if (!ready.ok) throw new Error(`${task.key} cannot be approved: ${ready.reason}`)
     }
     store.updateTask(id, patch)
   })
-  handle('task:moveToTodo', (_, id: string) => {
+  handle('task:approve', (_, id: string) => {
     const task = store.task(id)
-    if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; only backlog and grooming tasks move to todo`)
+    if (task.status !== 'planning') throw new Error(`${task.key} is ${task.status}; only a plan in planning is approved`)
     if (store.data.sessions.some((s) => s.taskId === id && orch.isRunning(s.id))) throw new Error('An agent is still working on this task')
-    const tasks = projectTasks(task.projectId)
-    const todo = canMoveToTodo(task, tasks)
-    if (!todo.ok) throw new Error(`${task.key} cannot move to todo: ${todo.reason}`)
-    store.updateTask(id, { status: 'todo', needsInput: null, rank: nextPlanRank(tasks) })
+    const ready = canApprove(task, projectTasks(task.projectId))
+    if (!ready.ok) throw new Error(`${task.key} cannot be approved: ${ready.reason}`)
+    store.updateTask(id, { status: 'ready', needsInput: null })
   })
   // A link that is not one is an answer for the field, not a failure to log.
   const answer = (f: () => unknown) => {
@@ -206,30 +205,11 @@ app.whenReady().then(async () => {
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:review', (_, id: string) => orch.reviewTask(id))
   handle('task:cancel', (_, id: string, reason: string | null) => orch.cancel(id, reason))
-  handle('task:archive', (_, ids: string[]) => {
-    const now = Date.now()
-    for (const id of ids) {
-      const task = store.task(id)
-      if (!canArchive(task)) throw new Error(`${task.key} is ${task.status}; only done or canceled tasks can be archived`)
-      store.updateTask(id, { archivedAt: now })
-    }
-  })
-  handle('task:restore', (_, id: string) => store.updateTask(id, { archivedAt: null }))
   handle('task:setSubtaskStatus', (_, id: string, status: SubtaskStatus) => {
     const sub = store.task(id)
     if (!sub.parentId || !SUBTASK_STATUSES.includes(status)) throw new Error(`Cannot set ${sub.key} to ${status}`)
     if (!legacyParent(sub)) throw new Error(`${sub.key} is a step: its status follows its lifecycle`)
     for (const c of subtaskStatusChanges(sub, status, store.data.tasks)) store.updateTask(c.id, { status: c.status })
-  })
-  handle('task:move', (_, id: string, dir: 'up' | 'down') => {
-    const task = store.task(id)
-    const tasks = projectTasks(task.projectId)
-    if (!canMoveInPlan(task, tasks, dir)) throw new Error(`${task.key} cannot move ${dir}`)
-    const todo = todoTasks(tasks)
-    const other = todo[todo.indexOf(task) + (dir === 'up' ? -1 : 1)]
-    const [a, b] = [task.rank, other.rank]
-    store.updateTask(other.id, { rank: a })
-    store.updateTask(task.id, { rank: b })
   })
   handle('task:reorderSubtasks', (_, parentId: string, ids: string[]) => {
     // Steps that started (done, current) keep their places at the front; a legacy checklist moves freely.

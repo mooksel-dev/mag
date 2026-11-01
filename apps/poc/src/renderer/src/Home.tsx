@@ -25,9 +25,8 @@ import { LocalChecks } from './LocalMode'
 const mag = window.mag
 
 const STAGES: [PipelineStage, string][] = [
-  ['backlog', 'Backlog'],
-  ['grooming', 'Grooming'],
-  ['todo', 'Todo'],
+  ['planning', 'Planning'],
+  ['ready', 'Ready'],
   ['in_progress', 'In progress'],
   ['done7d', 'Done · 7d'],
 ]
@@ -44,7 +43,7 @@ const PILLS: Record<InboxKind, [string, string]> = {
 
 const RECENT = 15
 
-export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOpenKey, onStage, onNewTask, onFromTicket }: {
+export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOpenKey, onStage, onFromTicket }: {
   project: Project
   tasks: Task[]
   state: AppState
@@ -54,9 +53,8 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
   onOpenTopic: (id: string) => void
   onOpen: (id: string) => void
   onOpenKey: (key: string) => void
-  /** Open the Tasks view that shows this stage. */
+  /** Open the Tasks tab, which shows this stage. */
   onStage: (stage: PipelineStage) => void
-  onNewTask: () => void
   /** Open the ticket link field: a new work from a ticket. */
   onFromTicket: () => void
 }) {
@@ -81,7 +79,7 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
           <RepoLine project={project} />
         </div>
         <div className="grow" />
-        <button onClick={onNewTask}>+ New task</button>
+        <button title="A new topic: discuss the problem, and it plans the work with you" onClick={() => mag.newChat(project.id).then(onOpenTopic)}>+ New work</button>
         <button title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={onFromTicket}>From a ticket</button>
       </div>
 

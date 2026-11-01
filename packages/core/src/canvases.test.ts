@@ -27,7 +27,6 @@ const step = (id: string): Task => ({
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
 })

@@ -1,12 +1,11 @@
 import { rmdir } from 'node:fs'
-import { DEFAULT_AUTO_ARCHIVE_DAYS, autoArchiveDue, currentStep, isLegacy, prHeads, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { currentStep, isLegacy, prHeads, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
 import { log } from './log'
 
 const PR_POLL_EVERY_MS = 60_000
-const ARCHIVE_EVERY_MS = 60 * 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
 const ADVANCE_DELAY_MS = 300
 
@@ -15,7 +14,7 @@ const STATES: Record<Awaited<ReturnType<typeof prState>>['state'], PrState> = { 
 /**
  * Watches the open PRs of the tasks in progress, step by step: a step whose PRs are merged is done and the next one
  * starts (unless it starts manually); the task is done with its last step. Legacy tasks (see isLegacy) are watched as
- * a whole. Archives finished tasks after the project's autoArchiveDays. It never starts a todo task: the user does.
+ * a whole. It never starts a ready work: the user does.
  */
 export function startScheduler(store: Store, orch: Orchestrator) {
   const anyRunning = (pred: (s: AgentSession) => boolean) => store.data.sessions.some((s) => pred(s) && orch.isRunning(s.id))
@@ -141,22 +140,9 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     }, ADVANCE_DELAY_MS)
   })
 
-  const archiveOld = () => {
-    const now = Date.now()
-    for (const project of store.data.projects) {
-      const tasks = store.data.tasks.filter((t) => t.projectId === project.id)
-      for (const t of autoArchiveDue(tasks, project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS, now)) {
-        log.info('scheduler', `${t.key} archived after ${project.autoArchiveDays ?? DEFAULT_AUTO_ARCHIVE_DAYS} days`)
-        store.updateTask(t.id, { archivedAt: now })
-      }
-    }
-  }
-
   void pollPrs()
   advance()
-  archiveOld()
   setInterval(pollPrs, PR_POLL_EVERY_MS)
-  setInterval(archiveOld, ARCHIVE_EVERY_MS)
   return { pollNow: pollPrs }
 }
 

@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activeSections, ideaPrompt, ideaText, projectIdeas, agentState, archivedTasks, autoArchiveDue, backlogTasks, inbox, pipelineCounts, runningAgents, taskChangeEvents, viewCounts, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { workSections, ideaPrompt, ideaText, projectIdeas, agentState, inbox, openWorkCount, pipelineCounts, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
-const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
+const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
   projectId: 'p',
   key: id,
@@ -15,12 +15,11 @@ const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
 })
-const sub = (id: string, parentId: string, status: TaskStatus, rank: number) => task(id, status, rank, { parentId })
+const sub = (id: string, parentId: string, status: WorkState | SubtaskStatus, rank: number) => task(id, status, rank, { parentId })
 const repo = (patch: Partial<RepoWork> = {}): RepoWork => ({ repo: 'r', branch: 'b', worktree: 'd/r', prUrl: null, prState: null, ...patch })
 /** Work in one repo, or in several when more are given. */
 const work = (patch: Partial<RepoWork> = {}, ...more: Partial<RepoWork>[]): TaskWork => ({
@@ -43,8 +42,8 @@ const session = (taskId: string, role: AgentSession['role'], status: AgentSessio
 const texts = (prev: Task, next: Task) => taskChangeEvents(prev, next).map((e) => `${e.kind}:${e.text}`)
 
 test('taskChangeEvents: status change uses the label', () => {
-  const events = taskChangeEvents(task('t', 'backlog'), task('t', 'grooming'))
-  assert.deepEqual(events, [{ projectId: 'p', taskId: 't', taskKey: 't', kind: 'status', text: 'Grooming' }])
+  const events = taskChangeEvents(task('t', 'planning'), task('t', 'ready'))
+  assert.deepEqual(events, [{ projectId: 'p', taskId: 't', taskKey: 't', kind: 'status', text: 'Ready' }])
 })
 
 test('taskChangeEvents: PR opened and merged', () => {
@@ -56,8 +55,8 @@ test('taskChangeEvents: PR opened and merged', () => {
 })
 
 test('taskChangeEvents: canceled, with the reason', () => {
-  assert.deepEqual(texts(task('t', 'todo'), task('t', 'canceled', 0, { cancelReason: 'dup of T-1' })), ['status:Canceled: dup of T-1'])
-  assert.deepEqual(texts(task('t', 'todo'), task('t', 'canceled')), ['status:Canceled'])
+  assert.deepEqual(texts(task('t', 'ready'), task('t', 'canceled', 0, { cancelReason: 'dup of T-1' })), ['status:Canceled: dup of T-1'])
+  assert.deepEqual(texts(task('t', 'ready'), task('t', 'canceled')), ['status:Canceled'])
 })
 
 test('taskChangeEvents: a ticked subtask is not activity', () => {
@@ -69,9 +68,9 @@ test('taskChangeEvents: a check error in any repo', () => {
 })
 
 test('taskChangeEvents: needsInput set and changed, not cleared', () => {
-  assert.deepEqual(texts(task('t', 'grooming'), task('t', 'grooming', 0, { needsInput: 'q1' })), ['needs_input:q1'])
-  assert.deepEqual(texts(task('t', 'grooming', 0, { needsInput: 'q1' }), task('t', 'grooming', 0, { needsInput: 'q2' })), ['needs_input:q2'])
-  assert.deepEqual(texts(task('t', 'grooming', 0, { needsInput: 'q1' }), task('t', 'grooming')), [])
+  assert.deepEqual(texts(task('t', 'planning'), task('t', 'planning', 0, { needsInput: 'q1' })), ['needs_input:q1'])
+  assert.deepEqual(texts(task('t', 'planning', 0, { needsInput: 'q1' }), task('t', 'planning', 0, { needsInput: 'q2' })), ['needs_input:q2'])
+  assert.deepEqual(texts(task('t', 'planning', 0, { needsInput: 'q1' }), task('t', 'planning')), [])
 })
 
 test('taskChangeEvents: checkError set and changed', () => {
@@ -90,10 +89,10 @@ test('inbox: one item per task, by priority', () => {
     task('review', 'in_progress', 0, { work: work({ prUrl: 'u', prState: 'open' }) }),
     task('working', 'in_progress', 0, { work: work({ prUrl: 'u', prState: 'open' }) }),
     task('gone', 'canceled', 0, { needsInput: 'q' }),
-    task('question', 'grooming', 0, { needsInput: 'which db?' }),
+    task('question', 'planning', 0, { needsInput: 'which db?' }),
     task('check', 'in_progress', 0, { needsInput: 'q', work: work({ prUrl: 'u', checkError: 'gh down' }) }),
     task('failed', 'in_progress', 0, { needsInput: 'Developer agent failed; check the chat', work: work() }),
-    task('quiet', 'todo'),
+    task('quiet', 'ready'),
     sub('subtodo', 'quiet', 'todo', 0),
   ]
   const sessions = [session('failed', 'developer', 'error'), session('question', 'groomer', 'idle'), session('working', 'developer', 'running')]
@@ -116,7 +115,7 @@ test('inbox: ready to merge counts the PRs still open', () => {
 })
 
 test('inbox: agent_failed only from the task agent that ran last', () => {
-  const t = task('t', 'backlog')
+  const t = task('t', 'planning')
   assert.deepEqual(inbox('p', [t], [session('t', 'groomer', 'error'), session('t', 'groomer', 'idle')]), [])
   assert.equal(inbox('p', [t], [session('t', 'groomer', 'idle'), session('t', 'groomer', 'error')])[0]?.kind, 'agent_failed')
   assert.deepEqual(inbox('p', [t], [session('t', 'reviewer', 'error')]).map((i) => i.text), ['Review failed'], 'the agent review of a step (T-55.1)')
@@ -145,11 +144,10 @@ test('pipelineCounts: top-level only, done in the last 7 days', () => {
   const now = 100 * 24 * 3600 * 1000
   const day = 24 * 3600 * 1000
   const tasks = [
-    task('a', 'backlog'),
-    task('b', 'backlog'),
-    task('c', 'grooming'),
-    task('d', 'todo'),
-    task('e', 'todo'),
+    task('a', 'planning'),
+    task('b', 'planning'),
+    task('d', 'ready'),
+    task('e', 'ready'),
     task('f', 'in_progress'),
     sub('fs', 'f', 'todo', 0),
     task('g', 'canceled'),
@@ -157,7 +155,7 @@ test('pipelineCounts: top-level only, done in the last 7 days', () => {
     task('i', 'done', 0, { updatedAt: now - 8 * day }),
     sub('hs', 'h', 'done', 0),
   ]
-  assert.deepEqual(pipelineCounts(tasks, now), { backlog: 2, grooming: 1, todo: 2, in_progress: 1, done7d: 1 })
+  assert.deepEqual(pipelineCounts(tasks, now), { planning: 2, ready: 2, in_progress: 1, done7d: 1 })
 })
 
 test('runningAgents: running sessions of any role and project', () => {
@@ -169,11 +167,11 @@ test('runningAgents: running sessions of any role and project', () => {
 test('agentState: working, waiting, or nothing', () => {
   const running = { ...session('t', 'developer', 'running'), runStartedAt: 42 }
   assert.deepEqual(agentState(task('t', 'in_progress'), [session('t', 'groomer', 'idle'), running], []), { kind: 'working', role: 'developer', since: 42 })
-  assert.deepEqual(agentState(task('t', 'grooming', 0, { needsInput: 'Which DB?' }), [session('t', 'groomer', 'idle')], []), { kind: 'waiting', reason: 'Which DB?' })
+  assert.deepEqual(agentState(task('t', 'planning', 0, { needsInput: 'Which DB?' }), [session('t', 'groomer', 'idle')], []), { kind: 'waiting', reason: 'Which DB?' })
   const pr = work({ prUrl: 'u', prState: 'open' })
   assert.deepEqual(agentState(task('t', 'in_progress', 0, { work: pr }), [session('t', 'developer', 'idle')], []), { kind: 'waiting', reason: 'PR waits for merge' })
   assert.equal(agentState(task('t', 'in_progress', 0, { work: pr }), [running], [])?.kind, 'working', 'addressing PR feedback')
-  assert.equal(agentState(task('t', 'todo'), [], []), null)
+  assert.equal(agentState(task('t', 'ready'), [], []), null)
   assert.equal(agentState(task('t', 'done', 0, { work: work({ prUrl: 'u', prState: 'merged' }) }), [], []), null)
   assert.equal(agentState(task('t', 'in_progress'), [session('x', 'developer', 'running')], []), null, 'another task')
 })
@@ -183,48 +181,26 @@ test('agentState: a pending approval waits even while the agent runs', () => {
   assert.deepEqual(agentState(task('t', 'in_progress'), [dev], []), { kind: 'waiting', reason: 'Approval: Cloudflare · execute' })
 })
 
-test('Tasks views: active sections, backlog and archive', () => {
+test('workSections: works by state, no backlog, priority or archive (T-55.7)', () => {
   const tasks = [
-    task('b2', 'backlog', 0, { createdAt: 2 }),
-    task('b1', 'backlog', 0, { createdAt: 1 }),
-    task('g', 'grooming'),
-    task('t2', 'todo', 3),
-    task('t1', 'todo', 2),
-    task('run', 'in_progress', 1),
+    task('p2', 'planning', 0, { createdAt: 2 }),
+    task('p1', 'planning', 0, { createdAt: 1 }),
+    task('r2', 'ready', 0, { createdAt: 4 }),
+    task('r1', 'ready', 0, { createdAt: 3 }),
+    task('run', 'in_progress'),
     task('d1', 'done', 0, { updatedAt: 10 }),
     task('c1', 'canceled', 0, { updatedAt: 20 }),
-    task('d2', 'done', 0, { updatedAt: 5, archivedAt: 50, title: 'Old login' }),
-    task('c2', 'canceled', 0, { updatedAt: 6, archivedAt: 60 }),
+    task('d2', 'done', 0, { updatedAt: 5 }),
     sub('s', 'run', 'todo', 0),
   ]
-  const s = activeSections(tasks)
+  const s = workSections(tasks)
   const k = (l: Task[]) => l.map((t) => t.id)
-  assert.deepEqual([k(s.inProgress), k(s.todo), k(s.grooming), k(s.finished)], [['run'], ['t1', 't2'], ['g'], ['c1', 'd1']])
-  assert.deepEqual(k(backlogTasks(tasks)), ['b1', 'b2'])
-  assert.deepEqual(k(archivedTasks(tasks)), ['c2', 'd2'])
-  assert.deepEqual(k(archivedTasks(tasks, 'done')), ['d2'])
-  assert.deepEqual(k(archivedTasks(tasks, 'all', 'login')), ['d2'])
-  assert.deepEqual(k(archivedTasks(tasks, 'all', 'C2')), ['c2'], 'by key')
-  assert.deepEqual(viewCounts(tasks), { active: 6, backlog: 2, archive: 2 })
-})
-
-test('autoArchiveDue: finished tasks older than N days, 0 = off', () => {
-  const day = 24 * 3600 * 1000
-  const now = 100 * day
-  const tasks = [
-    task('old', 'done', 0, { updatedAt: now - 15 * day }),
-    task('oldc', 'canceled', 0, { updatedAt: now - 20 * day }),
-    task('new', 'done', 0, { updatedAt: now - 3 * day }),
-    task('arch', 'done', 0, { updatedAt: now - 30 * day, archivedAt: 1 }),
-    task('open', 'in_progress', 0, { updatedAt: now - 30 * day }),
-    sub('s', 'old', 'done', 0),
-  ]
-  assert.deepEqual(autoArchiveDue(tasks, 14, now).map((t) => t.id), ['old', 'oldc'])
-  assert.deepEqual(autoArchiveDue(tasks, 0, now), [])
+  assert.deepEqual([k(s.inProgress), k(s.ready), k(s.planning), k(s.finished)], [['run'], ['r1', 'r2'], ['p1', 'p2'], ['c1', 'd1', 'd2']])
+  assert.equal(openWorkCount(tasks), 5, 'not finished, steps left out')
 })
 
 test('taskChangeEvents: a done work back in planning is reopened (T-55.6)', () => {
-  assert.deepEqual(texts(task('t', 'done'), task('t', 'grooming')), ['status:Reopened'])
+  assert.deepEqual(texts(task('t', 'done'), task('t', 'planning')), ['status:Reopened'])
 })
 
 test('ideas: per project, newest first; a text is required; the prompt that starts a work from one (T-55.6)', () => {

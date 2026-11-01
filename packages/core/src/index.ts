@@ -14,10 +14,13 @@ export * from './playbook.ts'
 export type TaskType = 'dev' | 'design' | 'spike' | 'research'
 
 /**
- * backlog → grooming → todo (ready to work) → in_progress → done; canceled from any status before done. An open PR is a
- * badge on an in_progress task, not a status. Subtasks use SubtaskStatus.
+ * The state of a work (T-55.7): its agents' progress, not a status for a team. planning (the owner gathers, states the
+ * problem, plans) → ready (plan approved) → in_progress (steps, PRs, reviews) → done; canceled before done. A done work
+ * goes back to planning when more is needed (see canReopen). No backlog, priority or archive: what nobody works on yet
+ * is an idea, priority lives in the tracker. An open PR is a badge on an in_progress work, not a state. Steps use
+ * SubtaskStatus.
  */
-export type TaskStatus = 'backlog' | 'grooming' | 'todo' | 'in_progress' | 'done' | 'canceled'
+export type WorkState = 'planning' | 'ready' | 'in_progress' | 'done' | 'canceled'
 
 /**
  * A step of a task: its own developer session, branch and PR (T-28). Steps run in order, one at a time; the status
@@ -38,7 +41,6 @@ export interface Project {
   templates: Partial<Record<TaskType, string>>
   /** The project's own playbook sections (T-55.2); missing or null = mag's default (see playbookOf). */
   playbook?: Partial<Playbook> | null
-  nextTaskNo: number
   /** Branch that worktrees start from and PRs target. */
   baseBranch: string
   /** Enforce the core/{lib,clients,services} layering in grooming, development and checks. */
@@ -53,12 +55,8 @@ export interface Project {
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   /** Hex color from PROJECT_COLORS; missing or null = picked from the id (see projectColor). */
   color?: string | null
-  /** Done and canceled tasks are archived this many days after they finished; 0 = never. Missing = DEFAULT_AUTO_ARCHIVE_DAYS. */
-  autoArchiveDays?: number
   createdAt: number
 }
-
-export const DEFAULT_AUTO_ARCHIVE_DAYS = 14
 
 /**
  * A ticket a work is about (T-55.5): only a link. mag knows no tracker: reading, searching and commenting are the
@@ -337,8 +335,8 @@ export function currentStep(taskId: string, tasks: Task[]): Task | null {
   return subtasksOf(taskId, tasks).find((s) => s.status !== 'done') ?? null
 }
 
-/** Whether a task can go to todo: it needs at least one step, and one not done yet (a reopened work, see canReopen). */
-export function canMoveToTodo(task: Task, tasks: Task[]): { ok: boolean; reason?: string } {
+/** Whether a work's plan can be approved (planning → ready): it needs a step, and one not done yet (a reopened work, see canReopen). */
+export function canApprove(task: Task, tasks: Task[]): { ok: boolean; reason?: string } {
   if (task.parentId) return { ok: false, reason: 'A step has no status of its own' }
   const steps = subtasksOf(task.id, tasks)
   if (!steps.length) return { ok: false, reason: 'Add at least one step' }
@@ -468,16 +466,19 @@ export function reviewText(review: AgentReview): string {
 export interface Task {
   id: string
   projectId: string
-  /** Human key: T-12 for tasks, T-12.3 for subtasks. Assigned at creation, never changes. */
+  /**
+   * Human key, assigned at creation, never changes: a work's is its first ticket's key or a slug of its title (see
+   * workKey; T-12 for works before T-55.7), a step's is its work's with its number (ABC-12.3).
+   */
   key: string
   parentId: string | null
   title: string
   type: TaskType
-  /** Subtasks: one of SubtaskStatus. */
-  status: TaskStatus
+  /** Works: their WorkState; steps: their SubtaskStatus. */
+  status: WorkState | SubtaskStatus
   /** What the user wrote. The agent-owned document lives separately. Subtasks: the optional one-line note. */
   description: string
-  /** Order: top-level tasks by position in the plan, subtasks by position within the parent. */
+  /** Steps: position within their work. Works have no order of their own (priority lives in the tracker). */
   rank: number
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
@@ -498,8 +499,6 @@ export interface Task {
   waitingFor?: { key: string; repo: string } | null
   /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
   nextSubNo: number
-  /** Set when a done or canceled task is archived; a flag, the status stays. */
-  archivedAt: number | null
   /** Why the user canceled the task, if they said. */
   cancelReason?: string | null
   /** Top-level tasks: the tickets the work is about, as links (T-55.5); [] or missing = none. */
@@ -769,13 +768,53 @@ export function interimReplies(items: ChatItem[]): Set<number> {
   return interim
 }
 
-/** Top-level statuses of the plan: ready (todo) and started (in progress) work, in rank order. */
-export const QUEUE_STATUSES: TaskStatus[] = ['todo', 'in_progress']
-/** Finished statuses: only these can be archived. */
-export const FINISHED_STATUSES: TaskStatus[] = ['done', 'canceled']
+/** States of a work that is over. */
+export const FINISHED_STATES: WorkState[] = ['done', 'canceled']
 
-/** A task key: T-12, or T-12.3 for a subtask. No boundaries; wrap it for the context. */
+/** A key of the old numbering (before T-55.7): T-12, or T-12.3 for a subtask. No boundaries; wrap it for the context. */
 export const TASK_KEY_RE = /T-\d+(?:\.\d+)?/
+
+const CYRILLIC: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'h', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i',
+  к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch',
+  ш: 'sh', щ: 'shch', ь: '', ю: 'iu', я: 'ia', ё: 'io', ы: 'y', э: 'e', ъ: '',
+}
+
+/** Most words of a work key from a title. */
+const SLUG_WORDS = 5
+const SLUG_MAX = 40
+
+/** A title as a key: ASCII words (Cyrillic transliterated) joined by "-", at most SLUG_WORDS words and SLUG_MAX chars. */
+export function titleSlug(title: string): string {
+  const ascii = [...title.toLowerCase()].map((c) => CYRILLIC[c] ?? c).join('')
+  const words = ascii.split(/[^a-z0-9]+/).filter(Boolean).slice(0, SLUG_WORDS)
+  let slug = ''
+  for (const w of words) {
+    const next = slug ? `${slug}-${w}` : w
+    if (next.length > SLUG_MAX) break
+    slug = next
+  }
+  return slug || words[0]?.slice(0, SLUG_MAX) || 'work'
+}
+
+/**
+ * The key of a new work (T-55.7; no T-N of mag's own): its first ticket's key, else a slug of its title. Taken keys
+ * (any case) get -2, -3… Only letters, digits, - and _ stay, so a step key (<key>.<n>), its branch and dir stay clean.
+ */
+export function workKey(title: string, tickets: TicketRef[] | undefined, taken: string[]): string {
+  const ticket = tickets?.find((t) => t.key)?.key?.replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '')
+  const want = ticket || titleSlug(title)
+  const used = new Set(taken.map((k) => k.toLowerCase()))
+  let key = want
+  for (let i = 2; used.has(key.toLowerCase()); i++) key = `${want}-${i}`
+  return key
+}
+
+/** The work or step with this key; keys match in any case. */
+export function taskByKey<T extends Pick<Task, 'key'>>(tasks: T[], key: string): T | undefined {
+  const k = key.trim().toLowerCase()
+  return tasks.find((t) => t.key.toLowerCase() === k)
+}
 
 export function subtaskKey(parentKey: string, n: number): string {
   return `${parentKey}.${n}`
@@ -795,24 +834,6 @@ export function subtasksOf(id: string, tasks: Task[]): Task[] {
   return tasks.filter((t) => t.parentId === id).sort((a, b) => a.rank - b.rank)
 }
 
-/** Top-level todo and in-progress tasks, in rank order. */
-export function planQueue(tasks: Task[]): Task[] {
-  return tasks.filter((t) => !t.parentId && QUEUE_STATUSES.includes(t.status)).sort((a, b) => a.rank - b.rank)
-}
-
-/**
- * Top-level todo tasks: ready to work, in priority order (by rank). Nothing starts them on its own; the user does, and
- * any number of tasks can be in progress at once.
- */
-export function todoTasks(tasks: Task[]): Task[] {
-  return tasks.filter((t) => !t.parentId && t.status === 'todo').sort((a, b) => a.rank - b.rank)
-}
-
-/** Rank that puts a task at the end of the todo list: the lowest priority. */
-export function nextPlanRank(tasks: Task[]): number {
-  return Math.max(0, ...planQueue(tasks).map((t) => t.rank)) + 1
-}
-
 /** Done and total subtasks of a task: the progress of its plan. */
 export function subtaskProgress(id: string, tasks: Task[]): { done: number; total: number } {
   const subs = subtasksOf(id, tasks)
@@ -830,15 +851,6 @@ export function subtaskStatusChanges(sub: Task, status: SubtaskStatus, tasks: Ta
   return [...others.map((s) => ({ id: s.id, status: 'todo' as const })), { id: sub.id, status }]
 }
 
-/** Whether a todo task can swap priority with its todo neighbour; both must be not started. In-progress tasks don't count. */
-export function canMoveInPlan(task: Task, tasks: Task[], dir: 'up' | 'down'): boolean {
-  const todo = todoTasks(tasks)
-  const i = todo.findIndex((t) => t.id === task.id)
-  const other = i < 0 ? undefined : todo[dir === 'up' ? i - 1 : i + 1]
-  const notStarted = (t: Task) => t.status === 'todo' && !t.work
-  return !!other && notStarted(task) && notStarted(other)
-}
-
 /**
  * Whether a subtask can swap places with its neighbour. A legacy checklist is a plan: any step can move. Steps that
  * started (in progress or done) keep their place; only todo steps swap, with each other.
@@ -853,79 +865,44 @@ export function canMoveSubtask(sub: Task, tasks: Task[], dir: 'up' | 'down'): bo
   return (parent && isLegacy(parent)) || (sub.status === 'todo' && other.status === 'todo')
 }
 
-/** A top-level task that is not done or canceled yet can be canceled. */
+/** A work that is not done or canceled yet can be canceled. */
 export function canCancel(task: Task): boolean {
-  return !task.parentId && !FINISHED_STATUSES.includes(task.status)
-}
-
-/** Only done and canceled tasks can be archived. */
-export function canArchive(task: Task): boolean {
-  return !task.parentId && !task.archivedAt && FINISHED_STATUSES.includes(task.status)
+  return !task.parentId && !FINISHED_STATES.includes(task.status as WorkState)
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** Finished, unarchived tasks that finished at least `days` days ago (by updatedAt); none when days is 0. */
-export function autoArchiveDue(tasks: Task[], days: number, now: number): Task[] {
-  if (!(days > 0)) return []
-  return tasks.filter((t) => canArchive(t) && t.updatedAt <= now - days * DAY_MS)
-}
-
-/** The Tasks tab views. */
-export type TasksView = 'active' | 'backlog' | 'archive'
-
-/** Which view of the Tasks tab a top-level task is in. */
-export function taskView(task: Task): TasksView {
-  if (task.archivedAt) return 'archive'
-  return task.status === 'backlog' ? 'backlog' : 'active'
-}
-
-/** Sections of the Active view, each in display order. */
-export interface ActiveSections {
+/** The Tasks tab: works by state, each in display order. */
+export interface WorkSections {
+  /** Oldest first. */
   inProgress: Task[]
-  /** Ready to start, in priority order. */
-  todo: Task[]
-  grooming: Task[]
-  /** Done and canceled, not archived, newest first. */
+  /** Plan approved, waiting for the user's Start; oldest first. */
+  ready: Task[]
+  /** Oldest first. */
+  planning: Task[]
+  /** Done and canceled, newest first. */
   finished: Task[]
 }
 
-export function activeSections(tasks: Task[]): ActiveSections {
-  const active = tasks.filter((t) => !t.parentId && taskView(t) === 'active')
+export function workSections(tasks: Task[]): WorkSections {
+  const works = tasks.filter((t) => !t.parentId)
+  const by = (state: WorkState) => works.filter((t) => t.status === state).sort((a, b) => a.createdAt - b.createdAt)
   return {
-    inProgress: planQueue(active).filter((t) => t.status === 'in_progress'),
-    todo: todoTasks(active),
-    grooming: active.filter((t) => t.status === 'grooming').sort((a, b) => a.createdAt - b.createdAt),
-    finished: active.filter((t) => FINISHED_STATUSES.includes(t.status)).sort((a, b) => b.updatedAt - a.updatedAt),
+    inProgress: by('in_progress'),
+    ready: by('ready'),
+    planning: by('planning'),
+    finished: works.filter((t) => FINISHED_STATES.includes(t.status as WorkState)).sort((a, b) => b.updatedAt - a.updatedAt),
   }
 }
 
-/** Backlog view: raw ideas, oldest first. */
-export function backlogTasks(tasks: Task[]): Task[] {
-  return tasks.filter((t) => !t.parentId && taskView(t) === 'backlog').sort((a, b) => a.createdAt - b.createdAt)
+/** Works not finished yet: the Tasks tab count. */
+export function openWorkCount(tasks: Task[]): number {
+  return tasks.filter((t) => !t.parentId && !FINISHED_STATES.includes(t.status as WorkState)).length
 }
 
-export type ArchiveFilter = 'all' | 'done' | 'canceled'
-
-/** Archive view: archived tasks matching the filter and a key or title search, most recently archived first. */
-export function archivedTasks(tasks: Task[], filter: ArchiveFilter = 'all', query = ''): Task[] {
-  const q = query.trim().toLowerCase()
-  return tasks
-    .filter((t) => !t.parentId && t.archivedAt && (filter === 'all' || t.status === filter))
-    .filter((t) => !q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q))
-    .sort((a, b) => b.archivedAt! - a.archivedAt!)
-}
-
-/** Top-level task count per Tasks view. */
-export function viewCounts(tasks: Task[]): Record<TasksView, number> {
-  const counts: Record<TasksView, number> = { active: 0, backlog: 0, archive: 0 }
-  for (const t of tasks) if (!t.parentId) counts[taskView(t)]++
-  return counts
-}
-
-export const STATUS_LABELS: Record<TaskStatus, string> = {
-  backlog: 'Backlog',
-  grooming: 'Grooming',
+export const STATUS_LABELS: Record<WorkState | SubtaskStatus, string> = {
+  planning: 'Planning',
+  ready: 'Ready',
   todo: 'Todo',
   in_progress: 'In progress',
   done: 'Done',
@@ -1023,7 +1000,7 @@ export function lastTaskSession(taskId: string, sessions: AgentSession[]): Agent
 
 /** One item for a top-level task; its steps' PRs and Start count for it. */
 function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
-  if (task.parentId || task.archivedAt || task.status === 'canceled') return null
+  if (task.parentId || task.status === 'canceled') return null
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
   if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
@@ -1084,16 +1061,16 @@ export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], ses
   return projects.reduce((n, p) => n + inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).length, 0)
 }
 
-export type PipelineStage = 'backlog' | 'grooming' | 'todo' | 'in_progress' | 'done7d'
+export type PipelineStage = 'planning' | 'ready' | 'in_progress' | 'done7d'
 
 const WEEK_MS = 7 * DAY_MS
 
-/** Top-level task counts per status; done only counts tasks finished in the last 7 days; canceled is not counted. */
+/** Work counts per state; done only counts works finished in the last 7 days; canceled is not counted. */
 export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage, number> {
-  const counts: Record<PipelineStage, number> = { backlog: 0, grooming: 0, todo: 0, in_progress: 0, done7d: 0 }
+  const counts: Record<PipelineStage, number> = { planning: 0, ready: 0, in_progress: 0, done7d: 0 }
   for (const t of tasks) {
     if (t.parentId || t.status === 'canceled') continue
-    if (t.status !== 'done') counts[t.status]++
+    if (t.status !== 'done') counts[t.status as Exclude<WorkState, 'done' | 'canceled'>]++
     else if (t.updatedAt >= now - WEEK_MS) counts.done7d++
   }
   return counts

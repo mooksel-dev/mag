@@ -15,7 +15,6 @@ const task = (id: string, patch: Partial<Task> = {}): Task => ({
   needsInput: null,
   work: null,
   nextSubNo: 1,
-  archivedAt: null,
   createdAt: 0,
   updatedAt: 0,
   ...patch,
