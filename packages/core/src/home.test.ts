@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activeSections, agentState, archivedTasks, autoArchiveDue, backlogTasks, inbox, pipelineCounts, runningAgents, taskChangeEvents, viewCounts, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { activeSections, ideaPrompt, ideaText, projectIdeas, agentState, archivedTasks, autoArchiveDue, backlogTasks, inbox, pipelineCounts, runningAgents, taskChangeEvents, viewCounts, type AgentSession, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -221,4 +221,17 @@ test('autoArchiveDue: finished tasks older than N days, 0 = off', () => {
   ]
   assert.deepEqual(autoArchiveDue(tasks, 14, now).map((t) => t.id), ['old', 'oldc'])
   assert.deepEqual(autoArchiveDue(tasks, 0, now), [])
+})
+
+test('taskChangeEvents: a done work back in planning is reopened (T-55.6)', () => {
+  assert.deepEqual(texts(task('t', 'done'), task('t', 'grooming')), ['status:Reopened'])
+})
+
+test('ideas: per project, newest first; a text is required; the prompt that starts a work from one (T-55.6)', () => {
+  const idea = (id: string, projectId: string, createdAt: number) => ({ id, projectId, text: id, createdAt })
+  assert.deepEqual(projectIdeas([idea('a', 'p', 1), idea('b', 'q', 2), idea('c', 'p', 3)], 'p').map((i) => i.id), ['c', 'a'])
+  assert.equal(ideaText('  cache rates \n'), 'cache rates')
+  assert.throws(() => ideaText(' '), /An idea needs a text/)
+  assert.match(ideaPrompt({ text: 'dup retry', source: 'T-3.1' }), /idea \(found in T-3\.1\):\n\ndup retry\n\n.*reopen_work/s)
+  assert.ok(!ideaPrompt({ text: 'x' }).includes('found in'))
 })

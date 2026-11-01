@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, canMoveToTodo, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { agentState, canMoveToTodo, canReopen, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
   id,
@@ -38,6 +38,17 @@ test('canMoveToTodo: at least one step', () => {
   assert.deepEqual(canMoveToTodo(task('T', 'grooming'), []), { ok: false, reason: 'Add at least one step' })
   assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'todo', 1)]), { ok: true })
   assert.equal(canMoveToTodo(step('a', 'todo', 1), []).ok, false)
+  // A reopened work (T-55.6) needs a step for what is left.
+  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'done', 1)]), { ok: false, reason: 'Every step is done: add a step for what is left' })
+  assert.deepEqual(canMoveToTodo(task('T', 'grooming'), [step('a', 'done', 1), step('b', 'todo', 2)]), { ok: true })
+})
+
+test('canReopen: a done work with steps; not a step, a legacy task or one not done (T-55.6)', () => {
+  assert.equal(canReopen(task('T', 'done')), true)
+  assert.equal(canReopen(task('T', 'canceled')), false)
+  assert.equal(canReopen(task('T', 'in_progress')), false)
+  assert.equal(canReopen(step('a', 'done', 1)), false)
+  assert.equal(canReopen(task('T', 'done', { work: work({}) })), false)
 })
 
 test('stepBranch and stepDir', () => {

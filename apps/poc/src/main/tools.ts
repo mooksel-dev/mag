@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, todoTasks, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, projectIdeas, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, todoTasks, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -26,6 +26,8 @@ export interface ToolActions {
   addRepo(stepId: string, ref: string, worktree?: boolean): Promise<RepoWork>
   /** The reviewer's verdict on the step under review (T-55.1); returns what to tell it. */
   setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string
+  /** Continue a done work (T-55.6): back to planning; `by`, the topic asking, owns it. Returns what to tell the agent. */
+  reopen(taskId: string, what: string, by?: string): string
 }
 
 /**
@@ -523,6 +525,7 @@ function sharedTool(
             tickets: t.tickets?.length ? t.tickets.map((x) => x.url) : undefined,
             cancelReason: t.cancelReason ?? undefined,
           })),
+          ideas: projectIdeas(store.data.ideas, project.id).map((i) => ({ text: i.text, source: i.source ?? undefined })),
         },
         null,
         2,
@@ -575,6 +578,22 @@ function sharedTool(
       const ticket = ticketRef(String(args.url ?? ''), typeof args.ticket_key === 'string' ? args.ticket_key : null)
       store.updateTask(t.id, { tickets: withTicket(t.tickets, ticket) })
       return `${t.key} is about ${ticket.key ?? ticket.url} now (${store.task(t.id).tickets!.length} ticket(s)).`
+    }
+
+    case 'reopen_work': {
+      const t = byKey(args.key)
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (session?.role !== 'chat') throw new Error('reopen_work is for a project chat')
+      const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
+      return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user moves it to todo when the plan is ready.`
+    }
+
+    case 'add_idea': {
+      // A step's developer or reviewer found it in that step; a groomer or an owner topic in its work.
+      const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
+      const source = stepId ? store.task(stepId).key : ctx.taskId ? store.task(ctx.taskId).key : null
+      store.addIdea(project.id, String(args.text ?? ''), source)
+      return "Added to the project's ideas; the user decides if it becomes a work. Go on with yours."
     }
 
     case 'update_task': {

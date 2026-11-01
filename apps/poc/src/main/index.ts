@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canArchive, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, todoTasks, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canArchive, ideaPrompt, canMoveInPlan, canMoveToTodo, isLegacy, nextPlanRank, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, todoTasks, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
@@ -97,7 +97,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -115,6 +115,7 @@ app.whenReady().then(async () => {
   actions.completeStep = (id) => orch.completeStep(id)
   actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
   actions.setReview = (id, verdict, findings) => orch.setReview(id, verdict, findings)
+  actions.reopen = (id, what, by) => orch.reopen(id, what, by)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -189,6 +190,18 @@ app.whenReady().then(async () => {
     }),
   )
   handle('task:removeTicket', (_, id: string, url: string) => store.updateTask(id, { tickets: (store.task(id).tickets ?? []).filter((t) => t.url !== url) }))
+  handle('task:reopen', (_, id: string, what: string) => void orch.reopen(id, what))
+  handle('idea:add', (_, projectId: string, text: string) => void store.addIdea(projectId, text))
+  handle('idea:update', (_, ideaId: string, text: string) => store.updateIdea(ideaId, text))
+  handle('idea:delete', (_, ideaId: string) => store.deleteIdea(ideaId))
+  // A work starts from an idea in a new topic, which then owns it; the idea is that topic's first message now.
+  handle('idea:start', (_, ideaId: string) => {
+    const idea = store.idea(ideaId)
+    const sid = orch.newChat(idea.projectId)
+    store.deleteIdea(ideaId)
+    void orch.send(sid, ideaPrompt(idea)).catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
+    return sid
+  })
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:review', (_, id: string) => orch.reviewTask(id))

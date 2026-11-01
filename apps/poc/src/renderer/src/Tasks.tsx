@@ -8,6 +8,7 @@ import {
   backlogTasks,
   canArchive,
   canCancel,
+  canReopen,
   canMoveInPlan,
   canMoveToTodo,
   openPrs,
@@ -506,6 +507,31 @@ export function CancelButton({ task, small }: { task: Task; small?: boolean }) {
       <input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" aria-label={`Why cancel ${task.key}`} />
       <button type="submit" className="danger small">Cancel {task.key}</button>
       <button type="button" className="small" onClick={() => setAsking(false)}>Keep</button>
+    </form>
+  )
+}
+
+/** Continue a done work (T-55.6): what else is needed goes to its owner, and the work is back in planning. */
+export function ReopenButton({ task, onReopened }: { task: Task; onReopened?: () => void }) {
+  const [asking, setAsking] = useState(false)
+  const [what, setWhat] = useState('')
+  if (!canReopen(task)) return null
+  if (!asking) return <button title="More is needed: back to planning, its owner adds steps" onClick={() => setAsking(true)}>Continue</button>
+  return (
+    <form
+      className="cancelform"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!what.trim()) return
+        void mag.reopen(task.id, what.trim()).then(onReopened)
+        setAsking(false)
+        setWhat('')
+      }}
+      onKeyDown={(e) => e.key === 'Escape' && setAsking(false)}
+    >
+      <input autoFocus value={what} onChange={(e) => setWhat(e.target.value)} placeholder="What else is needed?" aria-label={`What else ${task.key} needs`} />
+      <button type="submit" className="primary small" disabled={!what.trim()}>Continue {task.key}</button>
+      <button type="button" className="small" onClick={() => setAsking(false)}>Keep done</button>
     </form>
   )
 }

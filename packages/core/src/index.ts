@@ -337,10 +337,50 @@ export function currentStep(taskId: string, tasks: Task[]): Task | null {
   return subtasksOf(taskId, tasks).find((s) => s.status !== 'done') ?? null
 }
 
-/** Whether a task can go to todo: it needs at least one step. */
+/** Whether a task can go to todo: it needs at least one step, and one not done yet (a reopened work, see canReopen). */
 export function canMoveToTodo(task: Task, tasks: Task[]): { ok: boolean; reason?: string } {
   if (task.parentId) return { ok: false, reason: 'A step has no status of its own' }
-  return subtasksOf(task.id, tasks).length ? { ok: true } : { ok: false, reason: 'Add at least one step' }
+  const steps = subtasksOf(task.id, tasks)
+  if (!steps.length) return { ok: false, reason: 'Add at least one step' }
+  return steps.some((s) => s.status !== 'done') ? { ok: true } : { ok: false, reason: 'Every step is done: add a step for what is left' }
+}
+
+/**
+ * Whether a finished work can be continued (T-55.6): a done top-level work goes back to planning, where its owner adds
+ * steps; its done steps stay. A legacy task (no steps) and a canceled one cannot.
+ */
+export function canReopen(task: Task): boolean {
+  return !task.parentId && task.status === 'done' && !isLegacy(task)
+}
+
+/**
+ * Something worth doing that nobody works on yet (T-55.6): the user's note or an agent's finding outside its scope. No
+ * status, priority or key: what has a state is a work. Starting a work from it takes it off the list.
+ */
+export interface Idea {
+  id: string
+  projectId: string
+  text: string
+  createdAt: number
+  /** Where it came from: the key of the work or step whose agent found it; missing for the user's own and a chat's. */
+  source?: string | null
+}
+
+/** The project's ideas, newest first; `ideas` are in the order they were added, which breaks ties. */
+export function projectIdeas(ideas: Idea[], projectId: string): Idea[] {
+  return ideas.filter((i) => i.projectId === projectId).reverse().sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/** An idea's text as stored: trimmed; throws when empty. */
+export function ideaText(text: string): string {
+  const t = text.trim()
+  if (!t) throw new Error('An idea needs a text')
+  return t
+}
+
+/** The first message of the topic a work starts in from an idea: the owner takes it from the problem on. */
+export function ideaPrompt(idea: Pick<Idea, 'text' | 'source'>): string {
+  return `Let's start a work from this idea${idea.source ? ` (found in ${idea.source})` : ''}:\n\n${idea.text}\n\nCheck list_tasks for a work about the same problem first (a done one is continued with reopen_work), then plan it with me as the playbook says.`
 }
 
 /** Branch of a step: T-41.3 → mag/t-41-3. */
@@ -900,7 +940,8 @@ export function taskChangeEvents(prev: Task, next: Task): NewEvent[] {
   if (prev.status !== next.status && next.parentId && next.status === 'done' && taskPrs(next).length) events.push({ ...base, kind: 'status', text: 'merged' })
   if (prev.status !== next.status && !next.parentId) {
     const text =
-      next.status === 'done' && taskPrs(next).length ? 'merged'
+      prev.status === 'done' ? 'Reopened'
+      : next.status === 'done' && taskPrs(next).length ? 'merged'
       : next.status === 'canceled' && next.cancelReason ? `Canceled: ${next.cancelReason}`
       : STATUS_LABELS[next.status]
     events.push({ ...base, kind: 'status', text })

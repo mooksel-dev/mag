@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -14,6 +14,8 @@ interface Data {
   canvases: Record<string, Canvas>
   /** Project activity log, oldest first; kept after its task is deleted. */
   events: ProjectEvent[]
+  /** Ideas of every project (T-55.6), in the order they were added. */
+  ideas: Idea[]
   /** MCP servers agents reported on start; global, since connectors belong to the account. */
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
@@ -91,13 +93,14 @@ export function migrateArch(a: ArchDiagram | LegacyArch | null | undefined): Arc
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], ideas: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private file: string) {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
     this.data.events ??= []
+    this.data.ideas ??= []
     this.data.integrations ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
     this.data.ui.windows ??= {}
@@ -503,6 +506,31 @@ export class Store {
     this.data.sessions = this.data.sessions.filter((s) => s.taskId !== tid)
     delete this.data.docs[tid]
     for (const c of Object.values(this.data.canvases)) if (c.taskId === tid) delete this.data.canvases[c.id]
+    this.changed()
+  }
+
+  addIdea(projectId: string, text: string, source?: string | null): Idea {
+    this.project(projectId)
+    const idea: Idea = { id: id(), projectId, text: ideaText(text), createdAt: Date.now(), ...(source && { source }) }
+    this.data.ideas.push(idea)
+    this.changed()
+    return idea
+  }
+
+  idea(ideaId: string) {
+    const i = this.data.ideas.find((x) => x.id === ideaId)
+    if (!i) throw new Error(`No idea ${ideaId}`)
+    return i
+  }
+
+  updateIdea(ideaId: string, text: string) {
+    this.idea(ideaId).text = ideaText(text)
+    this.changed()
+  }
+
+  deleteIdea(ideaId: string) {
+    this.idea(ideaId)
+    this.data.ideas = this.data.ideas.filter((i) => i.id !== ideaId)
     this.changed()
   }
 

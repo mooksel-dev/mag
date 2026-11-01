@@ -53,7 +53,7 @@ import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow, type NewTaskFocus } from './Tasks'
+import { AgentDot, ArchiveButton, CancelButton, MoveToTodoButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow, type NewTaskFocus } from './Tasks'
 import { useTheme, type ThemeMode } from './useTheme'
 
 const loadFlag = (k: string, d: boolean) => {
@@ -317,6 +317,8 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
             {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
             {(task.status === 'backlog' || task.status === 'grooming') && <MoveToTodoButton task={task} tasks={tasks} sessions={sessions} />}
             {canDevelop && (task.status === 'todo' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
+            {/* The owner plans what is left: a topic opens beside, a groomer in the task's chat. */}
+            <ReopenButton task={task} onReopened={() => { if (state.sessions.some((s) => s.id === task.ownerSessionId && s.role === 'chat')) onPickTopic(task.ownerSessionId!) }} />
             <ArchiveButton task={task} />
             <CancelButton task={task} />
           </div>

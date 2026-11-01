@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -120,14 +120,20 @@ Each step gets a new developer session from fresh base, its own branch and a wor
 at most one PR per changed repository. Before the user sees a step's PRs, the owner reviews them in a fork of itself:
 changes go back to the developer, merge or look go to the user. A step is done when its PRs are merged (or, without
 code, when its developer closes it), and the next one starts on its own unless it is marked start manually (then it
-waits for the user's Start) -> done when every step is done. Any number of works can be in progress in parallel. Any
-work not done yet can be canceled. Done and canceled ones can be archived; mag archives them after some days.
+waits for the user's Start) -> done when every step is done. A done work that needs more is continued, never
+duplicated: back to planning, its owner adds steps. Any number of works can be in progress in parallel. Any work not
+done yet can be canceled. Done and canceled ones can be archived; mag archives them after some days. The project also
+keeps a list of ideas: things worth doing that nobody works on yet, without status or priority.
 - You never change code. A change becomes a work, and you own the works you create: create_work (title, the brief,
   tickets: the links it is about, none is fine) and plan it right here with the user, following the playbook's plan
   below: the doc with update_doc, diagrams with show_diagram / place_diagram, steps with create_subtask and the
   other owner tools, each with work: its key. A fork of this topic reviews its PRs later. Check list_tasks first to
   avoid duplicates. start_grooming (a separate groomer, which then owns the work) is only for a work nobody discussed,
   e.g. one the user started from a ticket link.
+- The user wants more of a done work ("X is still needed"): reopen_work(key, what) instead of create_work; it is
+  back in planning, this topic owns it, and you plan the new steps here as above.
+- Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line. list_tasks shows
+  the ideas; when the user starts a work from one, plan it like any other.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to todo and starts nothing; the user starts it with Start.
 - Record outcomes so they outlive this chat: what the user decided about a work goes under §Decisions in its doc
@@ -323,8 +329,8 @@ export class Orchestrator {
     log.info('agent', 'topic deleted', { session: sessionId })
   }
 
-  /** Start (or restart) grooming in a new background session. */
-  groom(taskId: string) {
+  /** Start (or restart) grooming in a new background session; `message`, if given, is its first message (shown in its chat). */
+  groom(taskId: string, message?: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
     // A todo task leaves todo while it is groomed again; started work is past grooming.
@@ -332,7 +338,38 @@ export class Orchestrator {
     const session = this.newSession(taskId, 'groomer')
     // The groomer discusses the options and plans: it owns the work from now on (T-55.1).
     this.store.updateTask(taskId, { status: 'grooming', needsInput: null, ownerSessionId: session.id })
-    void this.run(session, `Groom task ${task.key}. Start with get_task.`)
+    const intro = `Groom task ${task.key}. Start with get_task.`
+    // Shown, not as the user's: the groomer's checkpoint still waits for the user's answer in its chat.
+    if (message) session.items.push({ kind: 'notice', text: message, at: Date.now() })
+    void this.run(session, message ? `${intro}\n\n${message}` : intro)
+  }
+
+  /**
+   * Continue a done work (T-55.6): it goes back to planning, its done steps stay, and its owner plans the steps for
+   * `what`. `by`: the topic asking (reopen_work); it plans in its own turn and owns the work from now on. Asked from the
+   * app, the owner gets `what` in its chat; a work without an owner session gets a groomer.
+   */
+  reopen(taskId: string, what: string, by?: string): string {
+    const task = this.store.task(taskId)
+    if (!canReopen(task)) throw new Error(`${task.key} is ${task.status}${task.parentId ? ' (a step)' : isLegacy(task) ? ' (a legacy task)' : ''}; only a done work with steps is continued`)
+    const need = what.replace(/\s+/g, ' ').trim()
+    if (!need) throw new Error('Say what else is needed')
+    this.store.updateTask(taskId, { status: 'grooming', needsInput: null, archivedAt: null, ...(by && { ownerSessionId: by }) })
+    log.info('agent', `${task.key} reopened`, { by: by ?? 'app' })
+    if (by) return `${task.key} is back in planning and this topic owns it.`
+    // The owner: the topic that created it, or its groomer.
+    const owner = this.store.data.sessions.find((s) => s.id === task.ownerSessionId && (s.taskId === null || s.taskId === taskId))
+    const ask = `${task.key} was done, but more is needed: ${need}\nIt is back in planning; its done steps stay as they are. Update the doc (problem, decisions, plan) for what is needed, add the new steps${owner?.role === 'chat' ? ` (pass work: "${task.key}")` : ''} and ask the user to review the plan.`
+    if (owner && this.isRunning(owner.id)) {
+      this.store.updateTask(taskId, { needsInput: `More needed: ${need}. Its owner is busy: tell it in its chat` })
+      return `${task.key} is back in planning; its owner is busy.`
+    }
+    if (owner) {
+      void this.send(owner.id, ask).catch((e) => this.store.updateTask(taskId, { needsInput: `Could not tell its owner: ${(e as Error).message}` }))
+      return `${task.key} is back in planning; its owner plans the rest.`
+    }
+    this.groom(taskId, ask)
+    return `${task.key} is back in planning; a groomer plans the rest.`
   }
 
   /**

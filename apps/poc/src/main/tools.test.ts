@@ -32,6 +32,7 @@ const setup = () => {
       calls.push(`review ${store.task(id).key}: ${verdict} ${findings.map((f) => `${f.where ?? ''}|${f.text}`).join(';')}`)
       return 'Recorded.'
     },
+    reopen: () => 'Reopened.',
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
@@ -276,7 +277,7 @@ test('a doc that links a project-chat diagram adopts it; one of another task sta
   assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
   // The project chat writes a doc through update_task_doc and adopts the same way.
   const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '' })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '' })
   assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'T-1', markdown: `[l](canvas:${loose.id})` }), /Moved into T-1/)
   assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
@@ -394,4 +395,34 @@ test('toolsFor: a project chat lists the owner tools with work; task runs list t
   assert.ok(!toolsFor('project', 'architect').some((t) => t.name === 'create_subtask'))
   const groomer = toolsFor('task', 'groomer').find((t) => t.name === 'create_subtask')!.inputSchema as { properties: Record<string, unknown> }
   assert.equal(groomer.properties.work, undefined)
+})
+
+test('add_idea: any agent puts a finding on the project ideas, with where it came from (T-55.6)', async () => {
+  const { store, project, task, tools, call } = setup()
+  const step = store.createTask({ projectId: project.id, parentId: task.id, title: 'One', type: 'dev', description: '', status: 'in_progress' })
+  const dev = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  const reviewer = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'reviewer', agent: 'claude-code', status: 'running' })
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  assert.match(await call('add_idea', { text: ' retry logic is duplicated in web ' }, dev.id), /Added to the project's ideas/)
+  await call('add_idea', { text: 'cache rates' })
+  await call('add_idea', { text: 'flaky test' }, reviewer.id)
+  await tools({ projectId: project.id, sessionId: topic.id }, 'add_idea', { text: 'dark mode' })
+  await assert.rejects(call('add_idea', { text: ' ' }), /An idea needs a text/)
+  assert.deepEqual(store.data.ideas.map((i) => [i.text, i.source]), [['retry logic is duplicated in web', 'T-1.1'], ['cache rates', 'T-1'], ['flaky test', 'T-1.1'], ['dark mode', undefined]])
+  const listed = JSON.parse(await tools({ projectId: project.id, sessionId: topic.id }, 'list_tasks', {}))
+  assert.deepEqual(listed.ideas[0], { text: 'dark mode' }, 'newest first')
+  assert.ok(toolsFor('task', 'reviewer').some((t) => t.name === 'add_idea'))
+})
+
+test('reopen_work: a project chat continues a done work it then owns (T-55.6)', async () => {
+  const { store, project, task, call } = setup()
+  const reopened: string[] = []
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.') })
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'T-1', what: 'web' }), /^Back\. Plan what is left right here: .*work: "T-1"/)
+  assert.deepEqual(reopened, [`T-1: web by ${topic.id}`])
+  await assert.rejects(tools({ projectId: project.id }, 'reopen_work', { key: 'T-1', what: 'web' }), /reopen_work is for a project chat/)
+  await assert.rejects(call('reopen_work', { key: 'T-1', what: 'web' }), /reopen_work is for a project chat|needs a task|Unknown/)
+  assert.ok(!toolsFor('task', 'groomer').some((t) => t.name === 'reopen_work'))
+  assert.equal(store.task(task.id).status, 'grooming')
 })

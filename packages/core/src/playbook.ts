@@ -52,17 +52,20 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    repo) so the step's developer and reviewer get it.
 9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
    approves, or asks for changes in chat; after changes, ask for review again.
-Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question, not into
-the doc or a step.`,
+Stay within the brief: do not add work nobody asked for. A finding outside it goes to the project's ideas with
+add_idea (one line: what and where), not into the doc or a step; ask the user only when it changes this work.`,
   step: `1. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
 2. Review your own diff in every repo you changed (git diff <base>...HEAD) like a strict reviewer and fix what you find.
 3. In every repo with changes: commit with clear messages, push the branch and open a PR against base with gh pr create.
    A draft PR only if the decisions say so. Body: short summary, how you tested, and any assumptions you were not sure
    about.
-4. At the end, append to §Progress in the doc (update_doc): what was done in the step and what changed against the plan.`,
+4. At the end, append to §Progress in the doc (update_doc): what was done in the step and what changed against the plan.
+Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
+what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
 2. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
-   Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?`,
+   Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
+3. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
