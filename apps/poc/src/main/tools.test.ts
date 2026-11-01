@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { TaskWork } from '@mag/core'
+import type { Diagram, TaskWork } from '@mag/core'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 
@@ -229,6 +229,64 @@ test('show_diagram: one flowchart per method of; the same one is revised by id',
   await call('show_diagram', { id: c.id, title: 'groom() v2', diagram: flow('tasks#groom') })
   await call('show_diagram', { title: 'list()', diagram: flow('tasks#list') })
   assert.deepEqual([store.data.canvases[c.id].version, Object.keys(store.data.canvases).length], [2, 2])
+})
+
+test('diagrams as data: show_diagram and place_diagram place a diagram as an option or in a step and repo; get_diagrams(step) (T-55.3)', async () => {
+  const { store, project, task, call } = setup()
+  store.updateProject(project.id, { repos: ['/r/api', '/r/web'] })
+  const state = { type: 'state', entity: 'Job', states: [{ id: 'a' }], transitions: [] }
+  await call('show_diagram', { title: 'A', diagram: state, role: 'option', option: 'A' })
+  const a = Object.values(store.data.canvases)[0]
+  assert.deepEqual([a.role, a.option, a.stepId, a.repo], ['option', 'A', null, null])
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'option' }), /role option needs option/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, step: 'T-1.1' }), /go with a role/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1' }), /role plan needs step/)
+
+  await call('create_subtask', { title: 'Api', repos: ['api'] })
+  await call('create_subtask', { title: 'Web', repos: ['web'] })
+  const out = await call('show_diagram', { title: 'Api plan', diagram: state, role: 'plan', step: 't-1.1', repo: 'api' })
+  const plan = Object.values(store.data.canvases).find((c) => c.title === 'Api plan')!
+  assert.match(out, new RegExp(`^Diagram ${plan.id} \\(v1\\) in the plan of T-1.1 \\(api\\):`))
+  assert.deepEqual([plan.role, plan.stepId, plan.repo], ['plan', store.data.tasks.find((t) => t.key === 'T-1.1')!.id, '/r/api'])
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1', repo: 'web' }), /T-1.1 does not change web; its repos: api/)
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: state, role: 'plan', step: 'T-1.1', repo: 'nope' }), /Not a repository of the project: nope/)
+  // A revision without role keeps the place; place_diagram moves it without a new version.
+  await call('show_diagram', { id: plan.id, title: 'Api plan', diagram: state })
+  assert.deepEqual([store.data.canvases[plan.id].role, store.data.canvases[plan.id].version], ['plan', 2])
+  assert.equal(await call('place_diagram', { id: a.id, role: 'plan', step: 'T-1.2' }), `Placed ${a.id} in the plan of T-1.2.`)
+  assert.deepEqual([store.data.canvases[a.id].option, store.data.canvases[a.id].version], [null, 1])
+
+  const step1 = JSON.parse(await call('get_diagrams', { step: 'T-1.1' }))
+  assert.deepEqual(step1.map((d: { id: string; role: string; step: string; repo: string }) => [d.id, d.role, d.step, d.repo]), [[plan.id, 'plan', 'T-1.1', 'api']])
+  assert.equal(JSON.parse(await call('get_diagrams')).length, 2)
+  await assert.rejects(call('get_diagrams', { step: 'T-9' }), /T-9 is not a subtask of T-1/)
+  assert.deepEqual(JSON.parse(await call('get_task')).diagrams.map((d: { role: string; step: string }) => [d.role, d.step]), [['plan', 'T-1.2'], ['plan', 'T-1.1']])
+  await call('place_diagram', { id: a.id, role: 'none' })
+  assert.equal(store.data.canvases[a.id].role, null)
+  assert.equal(await call('get_diagrams', { step: 'T-1.2' }), 'T-1.2 has no diagrams of its own; get_diagrams without step lists all of T-1.')
+})
+
+test('a doc that links a project-chat diagram adopts it; one of another task stays there, listed, and place_diagram copies it (T-55.3)', async () => {
+  const { store, project, task, call } = setup()
+  const state: Diagram = { type: 'state', entity: 'Job', states: [{ id: 'a', label: 'A' }], transitions: [] }
+  const chat = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Chat', kind: 'diagram', diagram: state })
+  const other = store.createTask({ projectId: project.id, title: 'Research', type: 'research', description: '' })
+  const old = store.saveCanvas({ projectId: project.id, taskId: other.id, sessionId: null, title: 'Old', kind: 'diagram', diagram: state })
+  const out = await call('update_doc', { markdown: `[c](canvas:${chat.id}) [o](canvas:${old.id})` })
+  assert.equal(out, `Document updated. Moved into T-1, as the doc links them: ${chat.id}.`)
+  assert.deepEqual([store.data.canvases[chat.id].taskId, store.data.canvases[old.id].taskId], [task.id, other.id])
+  assert.deepEqual(JSON.parse(await call('get_diagrams')).map((d: { id: string; of?: string }) => [d.id, d.of]), [[chat.id, undefined], [old.id, 'T-2']])
+
+  await call('create_subtask', { title: 'Core' })
+  const copied = await call('place_diagram', { id: old.id, role: 'plan', step: 'T-1.1' })
+  const copy = Object.values(store.data.canvases).find((c) => c.taskId === task.id && c.title === 'Old')!
+  assert.match(copied, new RegExp(`^${old.id} belongs to T-2: copied into T-1 as ${copy.id} in the plan of T-1.1\\. Link \\[Old\\]\\(canvas:${copy.id}\\)`))
+  assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
+  // The project chat writes a doc through update_task_doc and adopts the same way.
+  const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '' })
+  assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'T-1', markdown: `[l](canvas:${loose.id})` }), /Moved into T-1/)
+  assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
 
 test('steps get repos from the groomer: names or paths of project repos; get_task lists them (T-50)', async () => {

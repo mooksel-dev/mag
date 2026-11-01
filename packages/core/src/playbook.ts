@@ -29,9 +29,9 @@ export const DEFAULT_PLAYBOOK: Playbook = {
 4. Options. List every sensible way to fix it. Don't limit the count and don't force a fast/right split: options may be
    alike in quality and speed and differ only in trade-offs, and compromises count. Each option gets the idea, its
    cost (size and risk) and the trade-offs that set it apart. Give a recommendation and say why. If there is only one
-   sensible way, say so. Sketch every option that changes code with show_diagram: one or two diagrams of the levels
-   the option really changes, linked in the option's line. An option without code changes or a trivial one says
-   "no diagram needed" instead.
+   sensible way, say so. Sketch every option that changes code with show_diagram (role option, option: its name): one
+   or two diagrams of the levels the option really changes, linked in the option's line. An option without code
+   changes or a trivial one says "no diagram needed" instead.
 5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
    everything else only the user can decide, call set_needs_input with a one-line summary, then stop and wait. Ask
    everything at once, at the task level; steps never get questions of their own.
@@ -47,7 +47,8 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    step without code. When re-grooming, change the existing steps with update_subtask / delete_subtask /
    reorder_subtasks instead of creating duplicates. Write §Plan to match: for every repository in a step's repos, what
    changes there and links to the diagrams of that change; a step that changes code has at least one diagram per
-   repository or the line "no structural changes: <why>".
+   repository or the line "no structural changes: <why>". Place each plan diagram with place_diagram (role plan, step,
+   repo) so the step's developer and reviewer get it.
 9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
    approves, or asks for changes in chat; after changes, ask for review again.
 Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question, not into

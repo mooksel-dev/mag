@@ -2,10 +2,12 @@
 // Keep it free of runtime dependencies.
 
 import type { ArchDiagram } from './arch.ts'
+import type { CanvasRole } from './canvases.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 
 export * from './arch.ts'
+export * from './canvases.ts'
 export * from './diagram.ts'
 export * from './playbook.ts'
 
@@ -1207,6 +1209,16 @@ export interface Canvas {
   html?: string
   /** kind 'diagram'. */
   diagram?: Diagram
+  /** Where the diagram stands in its work (T-55.3); none for a diagram not placed yet. */
+  role?: CanvasRole | null
+  /** role 'option': the option it sketches, e.g. "A". */
+  option?: string | null
+  /** role 'plan' / 'fact': the step it belongs to. */
+  stepId?: string | null
+  /** role 'plan' / 'fact': the project repository (path) it changes; none when it spans the step. */
+  repo?: string | null
+  /** role 'fact': the plan diagram it is the fact of (T-55.4). */
+  planOf?: string | null
   version: number
   updatedAt: number
 }
