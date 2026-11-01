@@ -9,11 +9,14 @@ import type { Change, ChangeSet, Level, Vocabulary } from './types.ts'
 const DRAWN: Level = 'medium'
 const drawn = (c: Change) => !c.test && (!c.level || LEVELS.indexOf(c.level) <= LEVELS.indexOf(DRAWN))
 
-/** An interface line for an element: its signature from the method name on, else the name alone. */
+/**
+ * An interface line for an element: its signature from the method name on, else the name alone. A schema element
+ * (table, column, operation, resource) reads best by its whole signature.
+ */
 function lineText(c: Change, sig: string | undefined): string {
   const contract = /\[([^\]]+)\]$/.exec(c.name!)
   const short = contract ? contract[1] : c.name!.split('.').at(-1)!
-  const at = sig ? sig.indexOf(short) : -1
+  const at = !sig ? -1 : c.elementKind && c.elementKind !== 'symbol' && !contract ? 0 : sig.indexOf(short)
   const text = at >= 0 ? sig!.slice(at) : short
   return looksGrouped(text) ? short : text
 }

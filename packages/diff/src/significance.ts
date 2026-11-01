@@ -48,8 +48,9 @@ function byDefault(c: Change): Level {
       if (c.path && isCode(c.path) && !adapterOf(c.path)) return 'high'
       return c.path && DOCS.test(c.path) ? 'noise' : 'low'
   }
-  if (c.elementKind === 'entity' || c.elementKind === 'infra') return 'critical'
-  if (c.elementKind === 'contract') return 'high'
+  // A changed body of a table, view or resource is high; a new, removed or renamed one, or another header, critical.
+  if (c.elementKind === 'entity' || c.elementKind === 'infra') return c.diff === 'mod' && c.part === 'body' ? 'high' : 'critical'
+  if (c.elementKind === 'contract' || c.elementKind === 'field') return 'high'
   // A planned element does not know whether it is exported: it counts as exported.
   if (c.name === '(top-level)' || c.exported === false) return 'low'
   return c.diff === 'mod' && c.part === 'body' ? 'medium' : 'high'

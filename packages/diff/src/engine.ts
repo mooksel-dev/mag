@@ -1,20 +1,29 @@
 import { builtinModules } from 'node:module'
 import { dirname, join, normalize } from 'node:path/posix'
+import { graphql } from './graphql.ts'
+import { manifest } from './manifest.ts'
+import { prisma } from './prisma.ts'
+import { proto } from './proto.ts'
+import { sql } from './sql.ts'
+import { terraform } from './terraform.ts'
 import { typescript } from './typescript.ts'
 import { moduleResolver } from './vocabulary.ts'
 import type { Change, ChangeSet, Element, FileDiff, FileImport, GitSource, Hunk, LangAdapter, ModuleEdge, ParsedElement, Repo, Skeleton, Vocabulary } from './types.ts'
 
-export const ADAPTERS: LangAdapter[] = [typescript]
+export const ADAPTERS: LangAdapter[] = [typescript, sql, prisma, proto, graphql, terraform, manifest]
 
 /** Source files of languages without an adapter yet: a change there makes the set non-deterministic. */
-const CODE = /\.(py|go|rs|java|kt|kts|scala|rb|php|cs|fs|swift|m|mm|c|h|cc|cpp|hpp|ex|exs|erl|clj|dart|lua|sql|prisma|proto|graphql|gql|tf|hcl|vue|svelte)$/i
+const CODE = /\.(py|go|rs|java|kt|kts|scala|rb|php|cs|fs|swift|m|mm|c|h|cc|cpp|hpp|ex|exs|erl|clj|dart|lua|hcl|vue|svelte)$/i
 const TEST = /(^|\/)(__tests__|__mocks__)\/|\.(test|spec|stories)\.[^./]+$/
 export const isTest = (path: string) => TEST.test(path)
 
 export const adapterOf = (path: string) => ADAPTERS.find((a) => a.matches(path))
 
-/** A source file: one an adapter reads or of a language without an adapter yet. */
-export const isCode = (path: string) => !!adapterOf(path) || CODE.test(path)
+/** A source file: one an adapter reads (but YAML / JSON) or of a language without an adapter yet. */
+export const isCode = (path: string) => {
+  const a = adapterOf(path)
+  return a ? !a.data : CODE.test(path)
+}
 
 interface Parsed {
   elements: ParsedElement[]
@@ -97,6 +106,8 @@ export function createDiff(git: GitSource) {
       return null
     }
     const resolve = (from: string, spec: string): string | null => {
+      const own = adapterOf(from)?.resolve
+      if (own) return own(from, spec, paths)
       if (spec.startsWith('.')) return resolveFile(join(dirname(from), spec))
       if (spec.startsWith('node:') || BUILTIN.has(spec) || BUILTIN.has(spec.split('/')[0]) || /^[@~]\//.test(spec)) return null
       const name = pkgOf(spec)
