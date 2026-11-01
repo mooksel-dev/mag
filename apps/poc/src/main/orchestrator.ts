@@ -9,6 +9,8 @@ import type { LocalApi } from './api'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { diagramDrift, driftText } from './plan-check.ts'
+import { factCounts, stepFact, unshown } from './fact.ts'
+import { describe, factDiagram, formatComparison } from '@mag/diff'
 import { log } from './log.ts'
 
 interface Paths {
@@ -174,7 +176,7 @@ ${playbookOf(project).tracker}`
  * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
  * so the whole job is said here, every round.
  */
-const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string) => {
+const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string, fact: string) => {
   const prs = work.repos.filter((r) => heads[r.repo]).map((r) => `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, code in ${r.worktree}`)
   const prev = step.review
   const again =
@@ -186,6 +188,8 @@ ${prs.join('\n')}
 ${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
 First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. Call get_pr_changes for the structural diff computed from the code (symbols with signatures, contracts, dependencies between modules, files) and check each change against the plan. Then review following the project's playbook:
 ${playbookOf(project).review}
+mag has compared the PRs with this step's plan diagrams (below; levels by the playbook). For every critical or high item not done as planned, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most. The fact diagram is mag's draft from the code: revise it with show_diagram (its id, same module ids) to say what the changes mean (summary, names, calls); add to it, never drop a change the code has.
+${fact}
 Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
 
@@ -774,9 +778,56 @@ export class Orchestrator {
     this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now() })
     this.reviewTried.set(stepId, key)
     log.info('agent', `${step.key}: agent review round ${round}`, { withContext })
-    const text = reviewPrompt(this.store.project(task.projectId), task, fresh, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '')
+    const fact = await this.factOf(stepId, now).catch((e) => {
+      log.warn('agent', `${step.key}: plan ↔ fact failed: ${(e as Error).message}`)
+      // Nothing proves the PRs match their plan: merge waits for the user.
+      const prev = this.store.task(stepId).fact
+      const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unchecked: 0 }
+      const blockers = [`mag could not compare the PRs with the plan (${(e as Error).message.split('\n')[0]})`]
+      this.store.updateTask(stepId, { fact: { heads: now, counts, blockers, canvasId: prev?.canvasId ?? null, canvasVersion: prev?.canvasVersion ?? null, at: Date.now() } })
+      return `(mag could not compare: ${(e as Error).message.split('\n')[0]}; compare get_pr_changes with the plan yourself.)`
+    })
+    // Canceled while mag compared.
+    if (this.store.task(stepId).status !== 'in_progress') {
+      this.reviewing.delete(stepId)
+      return
+    }
+    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact)
     session.items.push({ kind: 'user', text, at: Date.now() })
     return this.run(session, text)
+  }
+
+  /**
+   * Plan ↔ fact of a step's PRs at `heads` (T-57.4), recorded on the step, with a draft fact diagram (role fact) for the
+   * reviewer to say what the changes mean. The draft is redrawn on new heads until someone revises it; a revised one
+   * stays, and the text says what of the fact it does not show. Returns what the reviewer reads.
+   */
+  async factOf(stepId: string, heads: Record<string, string>): Promise<string> {
+    const step = this.store.task(stepId)
+    const project = this.store.project(step.projectId)
+    const fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases))
+    const prev = step.fact
+    const own = prev?.canvasId ? this.store.data.canvases[prev.canvasId] : undefined
+    const revised = !!own && own.version !== prev!.canvasVersion
+    let canvas = own
+    let drawn = prev?.canvasVersion ?? null
+    if (!revised) {
+      const draft = factDiagram(fact.facts, project.architecture?.modules ?? [], fact.vocabulary)
+      const planOf = fact.plans.length === 1 ? fact.plans[0].id : null
+      if (draft) {
+        canvas = this.store.saveCanvas({ id: own?.id, projectId: project.id, taskId: step.parentId, sessionId: null, title: `${step.key}: fact`, kind: 'diagram', diagram: draft, placement: { role: 'fact', option: null, stepId, repo: null, planOf } })
+        drawn = canvas.version
+      }
+    }
+    this.store.updateTask(stepId, { fact: { heads, counts: factCounts(fact.comparison), blockers: fact.blockers, canvasId: canvas?.id ?? null, canvasVersion: drawn, at: Date.now() } })
+    const plans = fact.plans.length ? fact.plans.map((c) => `[${c.title}](canvas:${c.id})`).join(', ') : 'none: the step has no plan diagram, so nothing it changes is planned'
+    const missed = revised && own?.diagram ? unshown(fact, own.diagram, project.architecture) : []
+    const diagram = !canvas
+      ? 'Fact diagram: none, the PRs change nothing a diagram draws.'
+      : revised
+        ? `Fact diagram: [${canvas.title}](canvas:${canvas.id}), revised since mag drew it${missed.length ? `; it does not show:\n${missed.map((c) => `  - ${describe(c)}`).join('\n')}` : '.'}`
+        : `Fact diagram: [${canvas.title}](canvas:${canvas.id}) (v${canvas.version}), mag's draft.`
+    return `## Plan ↔ fact (mag, from the code)\nPlan diagrams: ${plans}.\n${formatComparison(fact.comparison, fact.blockers)}\n${diagram}`
   }
 
   /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */
@@ -805,6 +856,10 @@ export class Orchestrator {
     const pending = this.reviewing.get(stepId)
     const step = this.store.task(stepId)
     if (!pending) throw new Error(`No agent review of ${step.key} is going on`)
+    // The threshold for "no need to look at the code" (T-57 Decision 6) is mag's, not the reviewer's.
+    const fact = step.fact
+    if (verdict === 'merge' && fact?.blockers.length && JSON.stringify(fact.heads) === JSON.stringify(pending.heads))
+      throw new Error(`Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nGive look (with these as findings) or changes.`)
     const review: AgentReview = { verdict, findings, round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })

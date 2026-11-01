@@ -6,7 +6,7 @@ import type { Change, Element, PlanCheck, PlanWarning, Skeleton } from './types.
 const IDENT = /^[A-Za-z_$][\w$]*$/
 
 /** The names a method of a module may have among its elements: `fn`, `Class.fn`, a contract `TOOL_DEFS[fn]`. */
-function names(e: Element): string[] {
+export function names(e: Pick<Element, 'name'>): string[] {
   const out = [e.name, e.name.split('.').at(-1)!]
   const contract = /\[([^\]]+)\]$/.exec(e.name)
   if (contract) out.push(contract[1])
@@ -55,7 +55,8 @@ export function planChanges(diagram: Diagram, base: Skeleton | Skeleton[], archi
     const added = n.diff === 'add' || ancestors.some((a) => a.diff === 'add')
     const removed = n.diff === 'del' || ancestors.some((a) => a.diff === 'del')
     const inArch = inner.has(n.id)
-    if (n.diff) out.changes.push({ key: n.id, kind: 'module', diff: n.diff, module: n.id, name: n.name, hunks: [] })
+    const path = n.paths?.[0] ?? n.path
+    if (n.diff) out.changes.push({ key: n.id, kind: 'module', diff: n.diff, module: n.id, name: n.name, ...(path && { path }), hunks: [] })
     if (!inArch && !added) warn({ code: 'unknown-module', module: n.id, message: `${n.id} is not a module of the architecture: take its id from get_architecture, or mark it add if it is new.` })
     if (inArch && n.diff === 'add') warn({ code: 'exists', module: n.id, message: `${n.id} is a module of the architecture already: unmark it, or mark it mod.` })
     if (added && !n.paths?.length && !n.path && (ancestors.length || n.layer))

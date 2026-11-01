@@ -420,6 +420,21 @@ export interface AgentReview {
   at: number
 }
 
+/**
+ * Plan ↔ fact of a step's PRs at `heads` (T-57.4), by mag from the code: how many plan changes were done as planned,
+ * otherwise or not at all, what the code changed outside the plan, what the code cannot tell; and why the review may
+ * not say merge (Decision 6 of T-57: a significant change the plan does not show, code no adapter reads).
+ */
+export interface StepFact {
+  heads: Record<string, string>
+  counts: { match: number; differs: number; missing: number; unplanned: number; unchecked: number }
+  blockers: string[]
+  /** The draft fact diagram (role fact) and the version mag drew; a higher version is the reviewer's. */
+  canvasId: string | null
+  canvasVersion: number | null
+  at: number
+}
+
 /** Heads of a step's open PRs: repository path → head commit. Open PRs whose head is not known yet are left out. */
 export function prHeads(work: TaskWork | null): Record<string, string> {
   return Object.fromEntries((work?.repos ?? []).flatMap((r) => (r.prUrl && r.prState === 'open' && r.prHead ? [[r.repo, r.prHead]] : [])))
@@ -510,6 +525,8 @@ export interface Task {
   ownerSessionId?: string | null
   /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
   review?: AgentReview | null
+  /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). */
+  fact?: StepFact | null
   createdAt: number
   updatedAt: number
 }

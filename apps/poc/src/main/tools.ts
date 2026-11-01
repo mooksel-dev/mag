@@ -1,11 +1,12 @@
 import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
-import { carryIds, formatChangeSet, formatPlanWarnings, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
+import { carryIds, describe, formatChangeSet, formatPlanWarnings, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
 import { changedRepos, mergeBase, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { baseShas, checkPlan, diagramRepos, diff } from './plan-check.ts'
+import { stepFact, unshown as factUnshown } from './fact.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -460,12 +461,12 @@ function placementOut(store: Store, project: Project, taskId: string, c: Canvas)
 /** The short name of a project repository (see repoNames); the path of one removed since. */
 const repoName = (project: Project, path: string) => repoNames(project)[project.repos.indexOf(path)] ?? path
 
-/** " as option A", " in the plan of T-1.2 (api)", or " (unplaced)". */
+/** " as option A", " in the plan of T-1.2 (api)", " in the fact of T-1.2", or " (unplaced)". */
 function placedAs(store: Store, project: Project, p: CanvasPlacement): string {
   if (p.role === 'option') return ` as option ${p.option}`
-  if (p.role !== 'plan') return ' (unplaced)'
+  if (p.role !== 'plan' && p.role !== 'fact') return ' (unplaced)'
   const key = store.data.tasks.find((t) => t.id === p.stepId)?.key
-  return ` in the plan of ${key}${p.repo ? ` (${repoName(project, p.repo)})` : ''}`
+  return ` in the ${p.role} of ${key}${p.repo ? ` (${repoName(project, p.repo)})` : ''}`
 }
 
 /** Moves the project-chat canvases a task doc links into the task; says so in the tool's answer. */
@@ -493,6 +494,21 @@ async function againstBase(store: Store, project: Project, canvas: Canvas): Prom
     return `\nSaved, but it disagrees with the code at ${project.baseBranch} (${check.base.map((b) => `${b.repo}@${b.sha.slice(0, 8)}`).join(', ')}). Fix the diagram and revise it by id, or say in the doc why it is right:\n${formatPlanWarnings(check.warnings)}`
   } catch (e) {
     log.warn('tools', `plan check of ${canvas.id} failed: ${(e as Error).message}`)
+    return ''
+  }
+}
+
+/** A fact diagram against the fact of its step's PRs (T-57.4): the significant changes of the code it does not show. */
+async function factShown(store: Store, project: Project, canvas: Canvas): Promise<string> {
+  const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
+  if (!step?.fact || canvas.diagram?.type !== 'component') return ''
+  try {
+    const fact = await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases))
+    const missed = factUnshown(fact, canvas.diagram, project.architecture)
+    if (!missed.length) return ' It shows every significant change of the code.'
+    return `\nSaved, but it no longer shows these changes of the code; a fact diagram may say what they mean, never drop them. Add them back and revise it by id:\n${missed.map((c) => `- ${describe(c)}`).join('\n')}`
+  } catch (e) {
+    log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
     return ''
   }
 }
@@ -762,7 +778,15 @@ function sharedTool(
       const errors = validateDiagram(diagram)
       if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
       const id = args.id ? String(args.id) : undefined
-      const placement = placementArg(store, ctx.taskId ? store.task(ctx.taskId) : null, project, args)
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      const reviewer = session?.role === 'reviewer'
+      if (reviewer) {
+        const own = id ? store.data.canvases[id] : undefined
+        if (own?.role !== 'fact' || !own.stepId || own.stepId !== session.stepId) throw new Error('A reviewer revises only the fact diagram of the step under review: pass its id from the review message')
+        if (diagram.type !== 'component') throw new Error('The fact diagram is a component diagram')
+      }
+      // A reviewer's revision keeps the fact diagram where it is.
+      const placement = reviewer ? undefined : placementArg(store, ctx.taskId ? store.task(ctx.taskId) : null, project, args)
       // One flow per method: a second flowchart of the same method is revised by id instead.
       const of = diagram.type === 'flowchart' && diagram.of ? parseFlowRef(diagram.of) : null
       if (of && ctx.taskId) {
@@ -785,7 +809,7 @@ function sharedTool(
       })
       showInChat(store, ctx, canvas)
       const saved = `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
-      return againstBase(store, project, canvas).then((note) => saved + note)
+      return (canvas.role === 'fact' ? factShown(store, project, canvas) : againstBase(store, project, canvas)).then((note) => saved + note)
     }
   }
   return undefined

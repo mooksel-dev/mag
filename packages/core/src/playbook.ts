@@ -2,9 +2,9 @@
 // prompt (role, repositories, tools, what is enforced); the playbook is the part a project may rewrite.
 
 /** Phase texts of the playbook; each one goes into the prompts of the roles doing that phase. */
-export type PlaybookSection = 'plan' | 'step' | 'review' | 'tracker'
+export type PlaybookSection = 'plan' | 'step' | 'review' | 'tracker' | 'significance'
 
-export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['plan', 'step', 'review', 'tracker']
+export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['plan', 'step', 'review', 'tracker', 'significance']
 
 export interface Playbook {
   /** How to plan a work: information → problem → options with diagrams → plan. The owner: the chat that made it, or its groomer. */
@@ -15,6 +15,11 @@ export interface Playbook {
   review: string
   /** What agents may do in a ticket tracker. Every role that sees tickets. */
   tracker: string
+  /**
+   * How much changes of the code matter to a review (T-57.4): rules `<level>: <path>[#<name>]`, one per line, over
+   * mag's defaults; mag reads them, no agent does.
+   */
+  significance: string
   /** How many agent reviews in a row may send changes to the developer; then the user decides. */
   reviewRounds: number
 }
@@ -72,6 +77,14 @@ comments, transitions, edits) unless the user explicitly asks. If you cannot rea
 Atlassian MCP, acli not logged in).
 Asked "what is on me?": search the trackers you can reach for open tickets assigned to the user, and list them with key,
 title, status and link, saying which already have a work in mag (list_tasks shows tickets).`,
+  significance: `How much a change of the code matters when mag compares a PR with its plan. One rule per line,
+"<level>: <path>[#<name>]", the first that matches wins; other lines are ignored. level: critical, high, medium, low,
+noise. path: a file, a folder or a glob relative to the repository; empty for any. name: a glob over the symbol, e.g.
+Class.method or TOOL_DEFS[tool], any case. Without a matching rule: data models and infrastructure are critical;
+contracts (tool definitions), dependencies between modules, exported signatures and code no adapter reads are high;
+exported bodies and outside packages medium; internal code low; docs, lockfiles and tests noise. Critical and high
+changes the plan does not show keep the review from saying merge.
+high: #*prompt*`,
   reviewRounds: 2,
 }
 
@@ -85,6 +98,7 @@ export function playbookOf(project: { playbook?: Partial<Playbook> | null }): Pl
     step: text('step'),
     review: text('review'),
     tracker: text('tracker'),
+    significance: text('significance'),
     reviewRounds: typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 0 ? rounds : DEFAULT_PLAYBOOK.reviewRounds,
   }
 }
