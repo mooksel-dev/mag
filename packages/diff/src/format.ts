@@ -1,41 +1,29 @@
-import type { Change, ChangeSet } from './types.ts'
+import type { FileChange } from './types.ts'
 
-const MARK: Record<Change['diff'], string> = { add: '+', mod: '~', del: '-', move: '>' }
+const MARK: Record<FileChange['status'], string> = { add: '+', mod: '~', del: '-', rename: '>' }
 const NO_MODULE = '(no module)'
 
-const where = (c: Change) => {
-  if (c.path && c.line) return `  ${c.path}:${c.line}`
-  const h = c.hunks[0]
-  return h ? `  ${h.path}:${h.newLines ? h.newStart : h.oldStart}` : ''
-}
+const range = (start: number, lines: number) => (lines === 1 ? `${start}` : lines ? `${start}-${start + lines - 1}` : `${start} (none)`)
 
-function elementLine(c: Change): string[] {
-  const label = c.name === '(top-level)' ? 'top-level statements' : `${c.decl ?? c.elementKind} ${c.name}${c.exported ? '' : ' (internal)'}`
-  if (c.diff === 'mod' && c.part === 'signature') return [`  ~ ${label}${where(c)}`, `      - ${c.before}`, `      + ${c.after}`]
-  if (c.diff === 'mod') return [`  ~ ${label}: body${where(c)}`]
-  if (c.diff === 'move') return [`  > ${label}: moved from ${c.from}${where(c)}`]
-  const sig = c.diff === 'del' ? c.before : c.after
-  return [`  ${MARK[c.diff]} ${label}${sig && sig !== c.name && sig !== c.name!.split('.').at(-1) ? `: ${sig}` : ''}${where(c)}`]
-}
-
-/** Compact text for agents: changes by module; elements, then dependencies, then files. */
-export function formatChangeSet(cs: ChangeSet): string {
-  const files = cs.changes.filter((c) => c.kind === 'file')
+/**
+ * Compact text for agents (get_pr_changes, T-58): the changed files of a repo by owner module, with their hunks; files
+ * that are not code (tests, styles, lock files, generated, docs) listed apart, as nothing a fact diagram has to show.
+ */
+export function formatFiles(repo: string, baseSha: string, headSha: string, files: FileChange[]): string {
+  const code = files.filter((f) => f.kind === 'code')
   const lines = [
-    `${cs.repo}: ${cs.baseSha.slice(0, 12)} → ${cs.headSha.slice(0, 12)}, ${files.length} file(s) changed, ${cs.deterministic ? 'deterministic' : `NOT deterministic: no adapter for ${cs.unparsed.join(', ')}; read those files`}.`,
-    'Marks: + added, - removed, ~ changed, > moved. (internal) = not exported.',
+    `${repo}: ${baseSha.slice(0, 12)} → ${headSha.slice(0, 12)}, ${files.length} file(s) changed, ${code.length} of them code.`,
+    'Marks: + added, - removed, ~ changed, > renamed. Hunks: old lines → new lines; read them with git diff.',
   ]
-  if (!files.length) return lines.join('\n')
-  const modules = [...new Set(cs.changes.filter((c) => !c.test).map((c) => c.module ?? NO_MODULE))].sort((a, b) => (a === NO_MODULE ? 1 : b === NO_MODULE ? -1 : a.localeCompare(b)))
+  const modules = [...new Set(code.map((f) => f.module ?? NO_MODULE))].sort((a, b) => (a === NO_MODULE ? 1 : b === NO_MODULE ? -1 : a.localeCompare(b)))
   for (const m of modules) {
-    const of = cs.changes.filter((c) => !c.test && (c.module ?? NO_MODULE) === m)
     lines.push('', m)
-    for (const c of of.filter((c) => c.kind === 'element').sort((a, b) => a.path!.localeCompare(b.path!) || a.name!.localeCompare(b.name!))) lines.push(...elementLine(c))
-    for (const c of of.filter((c) => c.kind === 'edge').sort((a, b) => a.name!.localeCompare(b.name!))) lines.push(`  ${MARK[c.diff]} uses ${c.name}${where(c)}`)
-    for (const c of of.filter((c) => c.kind === 'file'))
-      lines.push(`  file ${MARK[c.diff]} ${c.path}${c.from ? ` (from ${c.from})` : ''}, ${c.hunks.length} hunk(s)`)
+    for (const f of code.filter((f) => (f.module ?? NO_MODULE) === m)) {
+      const hunks = f.hunks.map((h) => `${range(h.oldStart, h.oldLines)} → ${range(h.newStart, h.newLines)}`)
+      lines.push(`  ${MARK[f.status]} ${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ''}: ${f.hunks.length} hunk(s)${hunks.length ? ` ${hunks.slice(0, 8).join(', ')}${hunks.length > 8 ? ', …' : ''}` : ''}`)
+    }
   }
-  const tests = files.filter((c) => c.test)
-  if (tests.length) lines.push('', `tests: ${tests.map((c) => `${MARK[c.diff]} ${c.path}`).join(', ')}`)
+  const rest = files.filter((f) => f.kind !== 'code')
+  if (rest.length) lines.push('', `not code: ${rest.map((f) => `${MARK[f.status]} ${f.path} (${f.kind})`).join(', ')}`)
   return lines.join('\n')
 }

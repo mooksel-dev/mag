@@ -476,7 +476,7 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .facttable td { vertical-align: top; padding: 5px 6px; border-top: 1px solid var(--line); }
 .factstatus { width: 16px; font-weight: 700; }
 .s-match { color: var(--diff-add); } .s-differs { color: var(--diff-mod); } .s-missing { color: var(--diff-del); }
-.s-unplanned { color: var(--diff-move); } .s-unchecked { color: var(--accent); }
+.s-unplanned { color: var(--diff-move); }
 .factlevel { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line); white-space: nowrap; }
 .factlevel.lv-critical { border-color: var(--diff-del); color: var(--diff-del); }
 .factlevel.lv-high { border-color: var(--diff-mod); color: var(--diff-mod); }

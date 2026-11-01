@@ -55,10 +55,12 @@ const DATA_DIFF = {
   description: 'Change: add, mod, del, or move (it moved here; from says where from). Leave it out for unchanged context.',
 }
 const ONE_PER_LINE = 'One per line, never several joined by "/", "," or "+"; a plain string is an unchanged line; a changed one is the old line del and the new line add.'
+/** On a fact diagram (T-58): the PR's files a changed element rests on. */
+const FILES = { type: 'array', items: { type: 'string' }, description: "Fact diagrams only: the PR's files (repo-relative paths, as get_pr_changes lists them) this change rests on, of this module. Required on every changed line, use and call of a fact." }
 const LINES = (what: string) => ({
   type: 'array',
   description: `${what}. ${ONE_PER_LINE}`,
-  items: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, diff: DIFF } },
+  items: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, diff: DIFF, files: FILES } },
 })
 const INTERFACE = {
   type: 'array',
@@ -70,6 +72,7 @@ const INTERFACE = {
       text: { type: 'string' },
       diff: { ...DATA_DIFF, description: 'Change: add, mod, del, or move (it moved here; from says from which module). Leave it out for unchanged context.' },
       from: { type: 'string', description: 'With move: the id of the module it moved from, another module of this diagram.' },
+      files: FILES,
     },
   },
 }
@@ -119,7 +122,7 @@ const DIAGRAM = {
           interface: INTERFACE,
           uses: {
             type: 'array',
-            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF } },
+            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF, files: FILES } },
           },
           children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields.' }, description: 'Inner modules.' },
         },
@@ -390,7 +393,7 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'also',
     description:
-      "The structural diff of the step's branches against the base, computed from the code, not drawn: per module of the project's architecture, the added, removed, changed and moved symbols with old and new signatures, contracts (tool definitions and other arrays of named items), new and removed dependencies between modules, and the changed files. Check every change against the plan; 'NOT deterministic' lists files of languages it cannot read.",
+      "The files the step's branches change against the base, any language: per module of the project's architecture that owns them, each changed code file with its hunks (old → new lines); tests, styles, lock files, generated code and docs listed apart. Read the diff itself with git diff or gh pr diff. Every changed code file has to be on the fact diagram; its lines give these paths as files.",
     inputSchema: {
       type: 'object',
       properties: { repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Default: every repo of the step.' } },
@@ -567,10 +570,10 @@ export const TOOL_DEFS = [
   {
     name: 'show_diagram',
     scope: 'any',
-    // The reviewer revises the draft fact diagram of its step only (T-57.4).
+    // The reviewer revises the fact diagram of its step only (T-57.4, T-58).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the code at base, and the answer lists where they disagree (an id not in the architecture, a method, call or dependency base does not have, an add of what exists, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. A reviewer only revises the fact diagram of its step (role fact, drafted by mag from the code): the answer lists the significant changes of the code it no longer shows.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. A reviewer only revises the fact diagram of its step (role fact, started by mag as a copy of the plan): it draws what the diff did, and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module. The answer lists the changed code files it does not show, the lines that do not rest on the PR and plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {

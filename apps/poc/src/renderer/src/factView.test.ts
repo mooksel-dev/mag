@@ -1,27 +1,32 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Change } from '@mag/diff/types'
-import { mark, rows, statusCounts, what, where, type FactItem } from './factView.ts'
+import type { Change, FileChange } from '@mag/diff/types'
+import { filesOf, mark, rows, statusCounts, unverified, what, type FactItem } from './factView.ts'
 
-const change = (c: Partial<Change>): Change & { repo: string } => ({ key: 'k', kind: 'element', diff: 'add', module: 'store', hunks: [], repo: '/r', ...c })
+const change = (c: Partial<Change>): Change => ({ key: 'store#save', kind: 'element', diff: 'add', module: 'store', name: 'save', ...c })
+const file = (path: string, repo = 'app'): FileChange => ({ path, status: 'mod', hunks: [], repo, module: 'store', kind: 'code' })
 
-test('mark, what, where: a change in a few words and its first hunk', () => {
-  const fn = change({ name: 'save', decl: 'function', path: 'src/store.ts', line: 5, hunks: [{ path: 'src/store.ts', oldStart: 4, oldLines: 0, newStart: 5, newLines: 3 }] })
-  assert.equal(mark(fn), 'add')
-  assert.equal(what(fn), 'store function save')
-  assert.equal(where(fn)!.label, 'src/store.ts:5')
-  assert.equal(mark(change({ diff: 'mod', part: 'body' })), 'mod (body)')
-  assert.equal(mark(change({ diff: 'move', from: 'app:src/old.ts#x' })), 'move from src/old.ts#x')
-  assert.equal(what(change({ kind: 'edge', module: 'a', name: 'b' })), 'a → b')
-  assert.equal(what(change({ kind: 'file', path: 'README.md', module: null })), 'file README.md')
-  assert.equal(what(change({ name: 'h', exported: false, module: null })), '(no module) h (internal)')
-  // A deleted range points at base.
-  assert.equal(where(change({ hunks: [{ path: 'a.ts', oldStart: 9, oldLines: 2, newStart: 8, newLines: 0 }] }))!.label, 'a.ts:9')
-  assert.equal(where(change({})), null)
+test('mark, what: a change in a few words', () => {
+  assert.equal(mark(change({})), 'add')
+  assert.equal(what(change({ after: 'save(id): void' })), 'store save(id): void')
+  assert.equal(mark(change({ diff: 'mod', part: 'signature' })), 'mod (signature)')
+  assert.equal(mark(change({ diff: 'move', from: 'db' })), 'move from db')
+  assert.equal(what(change({ kind: 'edge', key: 'a -> b', module: 'a', name: 'b' })), 'a → b')
+  assert.equal(what(change({ kind: 'call', key: 'a -> b#run', module: 'a', name: 'run' })), 'a → b#run')
+  assert.equal(what(change({ kind: 'module', key: 'store' })), 'module store')
+})
+
+test('filesOf and unverified: the files a line rests on, and why it is not verified', () => {
+  const files = [file('src/store.ts'), file('src/db.ts', 'web')]
+  assert.deepEqual(filesOf(change({ files: ['web:src/db.ts', 'src/store.ts', 'nope.ts'] }), files).map((f) => f.path), ['src/db.ts', 'src/store.ts'])
+  const c = change({})
+  const view = { unverified: [{ change: c, reason: 'not-in-pr' as const, files: ['nope.ts'] }] }
+  assert.equal(unverified(c, view), 'unverified: not in the PR (nope.ts)')
+  assert.equal(unverified(change({ key: 'other' }), view), null)
 })
 
 test('rows: matches apart, low and noise folded unless all; counts in order', () => {
-  const item = (status: FactItem['status'], level: FactItem['level']): FactItem => ({ status, level, fact: [] })
+  const item = (status: FactItem['status'], level: FactItem['level']): FactItem => ({ status, level })
   const items = [item('differs', 'high'), item('unplanned', 'low'), item('unplanned', 'noise'), item('missing', 'medium'), item('match', 'high')]
   const folded = rows(items, false)
   assert.deepEqual(folded.shown.map((i) => i.status), ['differs', 'missing'])

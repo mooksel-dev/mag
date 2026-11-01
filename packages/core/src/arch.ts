@@ -12,6 +12,8 @@ export type DiffMark = 'add' | 'mod' | 'del'
 export interface Line {
   text: string
   diff?: DiffMark
+  /** On a fact diagram: the PR's files (repo-relative paths) the change rests on (T-58). */
+  files?: string[]
 }
 
 /** What the tree helpers need of a module: the architecture's ArchNode and a Component diagram's DNode alike. */

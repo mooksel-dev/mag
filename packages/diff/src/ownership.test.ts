@@ -13,10 +13,10 @@ const mod = (id: string, paths: string[] = [], children?: ArchNode[], level?: Ar
   ...(children && { children }),
 })
 
-test('unowned lists code files no module owns, tests included, other files not', () => {
+test('unowned lists code files no module owns, tests included, whatever the language; docs and lock files not', () => {
   const v = { modules: [{ id: 'app', paths: ['apps/web'] }, { id: 'db', paths: ['db/*.sql'] }] }
-  const files = ['apps/web/a.ts', 'apps/api/b.ts', 'apps/api/b.test.ts', 'db/1.sql', 'db/seed/2.sql', 'README.md', 'package.json', 'types.d.ts']
-  assert.deepEqual(unowned(v, files), ['apps/api/b.ts', 'apps/api/b.test.ts', 'db/seed/2.sql'])
+  const files = ['apps/web/a.ts', 'apps/api/b.ts', 'apps/api/b.test.ts', 'db/1.sql', 'db/seed/2.sql', 'README.md', 'pnpm-lock.yaml', 'svc/main.go']
+  assert.deepEqual(unowned(v, files), ['apps/api/b.ts', 'apps/api/b.test.ts', 'db/seed/2.sql', 'svc/main.go'])
 })
 
 test('sharedPaths finds a path two modules give, however written', () => {

@@ -1,13 +1,13 @@
 // Every code file in exactly one module, and module ids that survive a new run of the architect (T-56 F2, T-57.2).
 import { walkArch, type ArchNode } from '@mag/core'
-import { isCode } from './engine.ts'
+import { fileKind } from './files.ts'
 import type { Vocabulary } from './types.ts'
 import { clean, moduleResolver, vocabularyOf } from './vocabulary.ts'
 
 /** Code files (tests included) that no module of the vocabulary owns. */
 export function unowned(vocabulary: Vocabulary, files: string[]): string[] {
   const of = moduleResolver(vocabulary)
-  return files.filter((f) => isCode(f) && !of(f))
+  return files.filter((f) => ['code', 'test'].includes(fileKind(f)) && !of(f))
 }
 
 /** A path more than one module gives: the files under it would be in each of them. */

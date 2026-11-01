@@ -1,16 +1,14 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, taskDiagrams, stepDiagrams, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
-import { diagramDrift, driftText } from './plan-check.ts'
-import { factCounts, stepFact, unshown } from './fact.ts'
-import { describe, factDiagram, formatComparison } from '@mag/diff'
+import { factRecord, factReport, factSeed, stepFact } from './fact.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -49,10 +47,6 @@ const foreignLines = (work: TaskWork) =>
 /** The developer's first message when the user chose Discuss on local checks (T-50). */
 const discussText = (checks: LocalCheck[], base: string) =>
   `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
-
-/** The developer's first message when base moved under the step's plan (T-57.3): mag waits for the user. */
-const driftNote = (drift: string, base: string) =>
-  `${base} has moved since the plan of this step was drawn, and the plan no longer agrees with it here:\n${drift}\nmag is waiting for the user: before anything else, tell them in a few lines what each means for the plan and what you propose; don't change code until they answer.`
 
 /** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
@@ -186,9 +180,9 @@ const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, 
   return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
 ${prs.join('\n')}
 ${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
-First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. Call get_pr_changes for the structural diff computed from the code (symbols with signatures, contracts, dependencies between modules, files) and check each change against the plan. Then review following the project's playbook:
+First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. get_pr_changes lists the files the PRs change, each with the module that owns it and its hunks; read the diff itself with gh pr diff or git diff in the worktrees. Then review following the project's playbook:
 ${playbookOf(project).review}
-mag has compared the PRs with this step's plan diagrams (below; levels by the playbook). For every critical or high item not done as planned, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most. The fact diagram is mag's draft from the code: revise it with show_diagram (its id, same module ids) to say what the changes mean (summary, names, calls); add to it, never drop a change the code has.
+The fact diagram (below) is yours to draw: mag started it as a copy of this step's plan (without a plan, as the modules that own the changed code, unmarked). Revise it with show_diagram (its id, the same module ids) under the diff: keep what was done as planned; change a line done otherwise; drop the mark of what was not done; add what was done outside the plan, with module ids from get_architecture. Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module. Draw only what the diff has, and show every changed code file. mag checks each revision: which changed code files it does not show, which lines do not rest on the PR, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
 ${fact}
 Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
@@ -431,33 +425,10 @@ export class Orchestrator {
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
-    // Once per step, like the local checks: base moved under its plan since it was drawn.
-    const drift = last ? '' : await this.planDrift(step)
-    const notes = [ready.discuss.length ? discussText(ready.discuss, project.baseBranch) : '', drift ? driftNote(drift, project.baseBranch) : ''].filter(Boolean)
-    const talk = notes.length ? [intro, ...notes].join('\n\n') : undefined
+    const talk = ready.discuss.length ? [intro, discussText(ready.discuss, project.baseBranch)].join('\n\n') : undefined
     const text = [talk, message].filter(Boolean).join('\n\n')
     if (text) session.items.push({ kind: 'user', text, at: Date.now() })
-    if (drift) this.store.updateTask(taskId, { needsInput: `${step.key}: ${project.baseBranch} moved under its plan; see the developer chat` })
     return this.run(session, text || intro)
-  }
-
-  /**
-   * The step's plan diagrams against fresh base (T-57.3): what they no longer agree on since they were checked, as
-   * text; empty when base has not moved or the move does not touch them. A check that fails is skipped.
-   */
-  private async planDrift(step: Task): Promise<string> {
-    const task = this.store.task(step.parentId!)
-    const project = this.store.project(task.projectId)
-    const plans = stepDiagrams(taskDiagrams(task, this.store.data.docs[task.id], Object.values(this.store.data.canvases)), step.id).filter((c) => c.role === 'plan')
-    const drift: Parameters<typeof driftText>[0] = []
-    for (const canvas of plans) {
-      const warnings = await diagramDrift(project, canvas).catch((e) => {
-        log.warn('agent', `${step.key}: plan check of ${canvas.id} failed: ${(e as Error).message}`)
-        return []
-      })
-      if (warnings.length) drift.push({ canvas, warnings })
-    }
-    return driftText(drift)
   }
 
   /** Every task but the step: who else may hold a local repository. */
@@ -782,10 +753,10 @@ export class Orchestrator {
       log.warn('agent', `${step.key}: plan ↔ fact failed: ${(e as Error).message}`)
       // Nothing proves the PRs match their plan: merge waits for the user.
       const prev = this.store.task(stepId).fact
-      const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unchecked: 0 }
+      const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unshown: 0, unverified: 0 }
       const blockers = [`mag could not compare the PRs with the plan (${(e as Error).message.split('\n')[0]})`]
       this.store.updateTask(stepId, { fact: { heads: now, counts, blockers, canvasId: prev?.canvasId ?? null, canvasVersion: prev?.canvasVersion ?? null, at: Date.now() } })
-      return `(mag could not compare: ${(e as Error).message.split('\n')[0]}; compare get_pr_changes with the plan yourself.)`
+      return `(mag could not compare: ${(e as Error).message.split('\n')[0]}; draw the fact from the diff and compare it with the plan yourself.)`
     })
     // Canceled while mag compared.
     if (this.store.task(stepId).status !== 'in_progress') {
@@ -798,36 +769,27 @@ export class Orchestrator {
   }
 
   /**
-   * Plan ↔ fact of a step's PRs at `heads` (T-57.4), recorded on the step, with a draft fact diagram (role fact) for the
-   * reviewer to say what the changes mean. The draft is redrawn on new heads until someone revises it; a revised one
-   * stays, and the text says what of the fact it does not show. Returns what the reviewer reads.
+   * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58), recorded on the step. The first time, mag starts the fact
+   * diagram (role fact) as a copy of the step's plan for the reviewer to revise under the diff; their revisions stay
+   * on new heads. Returns what the reviewer reads.
    */
   async factOf(stepId: string, heads: Record<string, string>): Promise<string> {
     const step = this.store.task(stepId)
     const project = this.store.project(step.projectId)
-    const fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases))
-    const prev = step.fact
-    const own = prev?.canvasId ? this.store.data.canvases[prev.canvasId] : undefined
-    const revised = !!own && own.version !== prev!.canvasVersion
-    let canvas = own
-    let drawn = prev?.canvasVersion ?? null
-    if (!revised) {
-      const draft = factDiagram(fact.facts, project.architecture?.modules ?? [], fact.vocabulary)
-      const planOf = fact.plans.length === 1 ? fact.plans[0].id : null
-      if (draft) {
-        canvas = this.store.saveCanvas({ id: own?.id, projectId: project.id, taskId: step.parentId, sessionId: null, title: `${step.key}: fact`, kind: 'diagram', diagram: draft, placement: { role: 'fact', option: null, stepId, repo: null, planOf } })
-        drawn = canvas.version
+    let fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases))
+    let started = step.fact?.canvasVersion ?? null
+    if (!fact.canvas) {
+      const seed = factSeed(step, fact.plans, fact.files, project.architecture)
+      if (seed) {
+        const planOf = fact.plans.length === 1 ? fact.plans[0].id : null
+        const canvas = this.store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: `${step.key}: fact`, kind: 'diagram', diagram: seed, placement: { role: 'fact', option: null, stepId, repo: null, planOf } })
+        started = canvas.version
+        // The step's first fact diagram is its fact; the files are those just read.
+        fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases), fact)
       }
     }
-    this.store.updateTask(stepId, { fact: { heads, counts: factCounts(fact.comparison), blockers: fact.blockers, canvasId: canvas?.id ?? null, canvasVersion: drawn, at: Date.now() } })
-    const plans = fact.plans.length ? fact.plans.map((c) => `[${c.title}](canvas:${c.id})`).join(', ') : 'none: the step has no plan diagram, so nothing it changes is planned'
-    const missed = revised && own?.diagram ? unshown(fact, own.diagram, project.architecture) : []
-    const diagram = !canvas
-      ? 'Fact diagram: none, the PRs change nothing a diagram draws.'
-      : revised
-        ? `Fact diagram: [${canvas.title}](canvas:${canvas.id}), revised since mag drew it${missed.length ? `; it does not show:\n${missed.map((c) => `  - ${describe(c)}`).join('\n')}` : '.'}`
-        : `Fact diagram: [${canvas.title}](canvas:${canvas.id}) (v${canvas.version}), mag's draft.`
-    return `## Plan ↔ fact (mag, from the code)\nPlan diagrams: ${plans}.\n${formatComparison(fact.comparison, fact.blockers)}\n${diagram}`
+    this.store.updateTask(stepId, { fact: factRecord(fact, heads, started) })
+    return factReport(fact, started)
   }
 
   /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */
@@ -856,7 +818,7 @@ export class Orchestrator {
     const pending = this.reviewing.get(stepId)
     const step = this.store.task(stepId)
     if (!pending) throw new Error(`No agent review of ${step.key} is going on`)
-    // The threshold for "no need to look at the code" (T-57 Decision 6) is mag's, not the reviewer's.
+    // The threshold for "no need to look at the code" (T-58 Decision 5) is mag's, not the reviewer's; each revision of the fact diagram records it anew.
     const fact = step.fact
     if (verdict === 'merge' && fact?.blockers.length && JSON.stringify(fact.heads) === JSON.stringify(pending.heads))
       throw new Error(`Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nGive look (with these as findings) or changes.`)

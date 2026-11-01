@@ -68,22 +68,25 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
 Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
 what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
-2. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
+2. Draw the fact: revise the step's fact diagram (a copy of its plan) under the diff. Done as planned: keep it; done
+   otherwise: change the line; not done: drop its mark; done outside the plan: add it. Every changed line, dependency
+   and call gives files, the PR's paths it rests on, of its module. Nothing that is not in the diff.
+3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
-3. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
+4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
 Atlassian MCP, acli not logged in).
 Asked "what is on me?": search the trackers you can reach for open tickets assigned to the user, and list them with key,
 title, status and link, saying which already have a work in mag (list_tasks shows tickets).`,
-  significance: `How much a change of the code matters when mag compares a PR with its plan. One rule per line,
+  significance: `How much a change matters when mag compares a PR's fact diagram with its plan. One rule per line,
 "<level>: <path>[#<name>]", the first that matches wins; other lines are ignored. level: critical, high, medium, low,
-noise. path: a file, a folder or a glob relative to the repository; empty for any. name: a glob over the symbol, e.g.
-Class.method or TOOL_DEFS[tool], any case. Without a matching rule: data models and infrastructure are critical;
-contracts (tool definitions), dependencies between modules, exported signatures and code no adapter reads are high;
-exported bodies and outside packages medium; internal code low; docs, lockfiles and tests noise. Critical and high
-changes the plan does not show keep the review from saying merge.
+noise. path: a file, a folder or a glob relative to the repository, matched against the files a line of the fact gives;
+empty for any. name: a glob over the name the line is about (a method, field, type or tool), any case. Without a
+matching rule: new and removed modules, dependencies between modules, new, removed, moved and re-signed interface lines
+are high; a line marked mod, a changed module and a call medium. Critical and high differences between plan and fact
+the review does not explain keep it from saying merge.
 high: #*prompt*`,
   reviewRounds: 2,
 }

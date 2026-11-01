@@ -1,12 +1,12 @@
 import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
-import { carryIds, describe, formatChangeSet, formatPlanWarnings, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
+import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
 import { changedRepos, mergeBase, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
-import { baseShas, checkPlan, diagramRepos, diff } from './plan-check.ts'
-import { stepFact, unshown as factUnshown } from './fact.ts'
+import { planCheck } from './plan-check.ts'
+import { diff, factRecord, factReport, stepFact } from './fact.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -368,7 +368,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (ref && !target) throw new Error(`${ref} is not a repo of this task; one of ${work.repos.map((r) => repoWorkName(work, r)).join(', ')}`)
         const vocabulary = vocabularyOf(project.architecture?.modules ?? [])
         const parts = await Promise.all((target ? [target] : work.repos).map((r) => prChanges(work, r, project.baseBranch, vocabulary)))
-        const note = vocabulary.modules.length ? '' : 'No architecture with paths is recorded: changes are not grouped by module.\n\n'
+        const note = vocabulary.modules.length ? '' : 'No architecture with paths is recorded: files are not grouped by module.\n\n'
         return note + parts.join('\n\n')
       }
 
@@ -388,7 +388,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
   }
 }
 
-/** get_pr_changes for one repo: its branch against where it left the base (T-57.1). */
+/** get_pr_changes for one repo: the files its branch changes against where it left the base (T-58). */
 async function prChanges(work: TaskWork, r: RepoWork, base: string, vocabulary: ReturnType<typeof vocabularyOf>): Promise<string> {
   const name = repoWorkName(work, r)
   // A worktree is removed once merged; the main checkout still has the branch.
@@ -399,7 +399,7 @@ async function prChanges(work: TaskWork, r: RepoWork, base: string, vocabulary: 
     const from = await revParse(dir, `origin/${base}`).catch(() => revParse(dir, base))
     const baseSha = await mergeBase(dir, from, head)
     if (baseSha === head) return `${name}: no commits of its own on ${r.branch}.`
-    return formatChangeSet(await diff.changes({ path: dir, name }, baseSha, head, vocabulary))
+    return formatFiles(name, baseSha, head, await diff.changedFiles({ path: dir, name }, baseSha, head, vocabulary))
   } catch (e) {
     return `${name}: cannot diff ${r.branch} (${e instanceof Error ? e.message.split('\n')[0] : e}).`
   }
@@ -479,34 +479,18 @@ function adopted(store: Store, taskId: string, md: string): string {
 const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'no changes'
 
 /**
- * A Component diagram against the fresh base of its repositories (T-57.3): records the commits on the diagram and says
- * where it disagrees with the code. Warnings, not errors: the diagram is saved either way. Empty when nothing to say.
+ * A revision of a fact diagram against its step's PRs (T-58): mag checks it again (coverage, grounding, plan ↔ fact),
+ * records it on the step for the merge threshold, and says what the reviewer has left to fix.
  */
-async function againstBase(store: Store, project: Project, canvas: Canvas): Promise<string> {
-  if (canvas.diagram?.type !== 'component' || !project.architecture) return ''
-  try {
-    const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
-    const shas = await baseShas(project, diagramRepos(project, canvas, step))
-    const check = await checkPlan(project, canvas.diagram, shas)
-    if (!check) return ''
-    store.setCanvasBase(canvas.id, shas)
-    if (!check.warnings.length) return ` It agrees with ${project.baseBranch}.`
-    return `\nSaved, but it disagrees with the code at ${project.baseBranch} (${check.base.map((b) => `${b.repo}@${b.sha.slice(0, 8)}`).join(', ')}). Fix the diagram and revise it by id, or say in the doc why it is right:\n${formatPlanWarnings(check.warnings)}`
-  } catch (e) {
-    log.warn('tools', `plan check of ${canvas.id} failed: ${(e as Error).message}`)
-    return ''
-  }
-}
-
-/** A fact diagram against the fact of its step's PRs (T-57.4): the significant changes of the code it does not show. */
-async function factShown(store: Store, project: Project, canvas: Canvas): Promise<string> {
+async function factCheck(store: Store, project: Project, canvas: Canvas): Promise<string> {
   const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
   if (!step?.fact || canvas.diagram?.type !== 'component') return ''
   try {
     const fact = await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases))
-    const missed = factUnshown(fact, canvas.diagram, project.architecture)
-    if (!missed.length) return ' It shows every significant change of the code.'
-    return `\nSaved, but it no longer shows these changes of the code; a fact diagram may say what they mean, never drop them. Add them back and revise it by id:\n${missed.map((c) => `- ${describe(c)}`).join('\n')}`
+    if (fact.canvas?.id !== canvas.id) return ''
+    store.updateTask(step.id, { fact: factRecord(fact, step.fact.heads, step.fact.canvasVersion) })
+    if (!fact.blockers.length) return ' It shows every changed code file, rests on the PR and agrees with the plan: merge is allowed.'
+    return `\n${factReport(fact, step.fact.canvasVersion)}`
   } catch (e) {
     log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
     return ''
@@ -809,7 +793,7 @@ function sharedTool(
       })
       showInChat(store, ctx, canvas)
       const saved = `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
-      return (canvas.role === 'fact' ? factShown(store, project, canvas) : againstBase(store, project, canvas)).then((note) => saved + note)
+      return canvas.role === 'fact' ? factCheck(store, project, canvas).then((note) => saved + note) : saved + planCheck(project, canvas.diagram!)
     }
   }
   return undefined
