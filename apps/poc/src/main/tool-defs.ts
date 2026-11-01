@@ -68,6 +68,18 @@ const INTERFACE = {
   },
 }
 
+/** Where a diagram stands in its task (T-55.3): show_diagram and place_diagram. */
+const PLACEMENT = {
+  role: {
+    type: 'string',
+    enum: ['option', 'plan', 'none'],
+    description: 'option: sketches an option of §Options; plan: the planned change of one step; none: unplaced. Omitted on a revision: the diagram keeps its place.',
+  },
+  option: { type: 'string', description: 'role option: the option\'s name as in §Options, e.g. "A".' },
+  step: { type: 'string', description: 'role plan: the key of the step, e.g. T-3.2.' },
+  repo: { type: 'string', description: 'role plan: the repository it changes (name or path); omit when the diagram spans the step.' },
+} as const
+
 /** The data of show_diagram; one shape per type, fields of the other types are left out. */
 const DIAGRAM = {
   type: 'object',
@@ -210,8 +222,16 @@ export const TOOL_DEFS = [
     name: 'get_diagrams',
     reviewer: 'also',
     scope: 'task',
-    description: 'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; component marks moved interface methods, data moved entities and fields, with move and from.',
-    inputSchema: { type: 'object', properties: {} },
+    description:
+      'The diagrams of this task with their data: the target picture of the change (component, sequence, state, flowchart, data) with diff marks; component marks moved interface methods, data moved entities and fields, with move and from. Each says where it stands: role option (with option), plan (with step and repo); of names the task that owns a diagram the doc links. With step: only that step\'s diagrams.',
+    inputSchema: { type: 'object', properties: { step: { type: 'string', description: 'Key of a step, e.g. T-3.2: only its diagrams.' } } },
+  },
+  {
+    name: 'place_diagram',
+    scope: 'task',
+    description:
+      'Say where a diagram stands in this task, without redrawing it: role option with option (the option it sketches), role plan with step and repo (the step and repository it changes), role none to unplace. A diagram drawn in the project chat moves into the task; one of another task is copied in (link the copy in the doc instead).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, ...PLACEMENT }, required: ['id', 'role'] },
   },
   {
     name: 'update_doc',
@@ -534,13 +554,14 @@ export const TOOL_DEFS = [
     name: 'show_diagram',
     scope: 'any',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. To revise, pass the id you got back.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string' },
         diagram: DIAGRAM,
         id: { type: 'string', description: 'Existing diagram id to revise.' },
+        ...PLACEMENT,
       },
       required: ['title', 'diagram'],
     },

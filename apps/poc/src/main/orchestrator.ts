@@ -26,7 +26,8 @@ const groomerPrompt = (playbook: Playbook) => `You are grooming a task in "mag",
 Plan it following the project's playbook:
 ${playbook.plan}
 Diagrams of a change go through show_diagram (its description has the rules); link each in the doc as [title](canvas:<id>)
-with the id it returns, and revise a diagram by its id.
+with the id it returns, and revise a diagram by its id. Every diagram gets its place: role option for an option's sketch,
+role plan with step and repo for a step's change (place_diagram once the steps exist).
 mag enforces: steps (create_subtask, reorder_subtasks) come only after the user has answered you in this chat; you never
 move the task to todo or cancel it yourself, and you never edit code.
 Keep chat replies to one or two sentences; the doc carries the detail.`
@@ -59,7 +60,7 @@ const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) =>
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
 Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
 First read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
-The target picture is the task's diagrams (get_diagrams); your part is what your step links in the doc.
+The target picture is the task's diagrams (get_diagrams); your part is get_diagrams(step: "${step.key}") and what the doc links for your step.
 Then work following the project's playbook:
 ${playbookOf(project).step}
 After opening a PR, call set_pr with its URL and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
@@ -180,7 +181,7 @@ const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, 
   return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
 ${prs.join('\n')}
 ${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
-First read get_task, get_doc and get_diagrams; this step's part is what the doc links for it. Then review following the project's playbook:
+First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. Then review following the project's playbook:
 ${playbookOf(project).review}
 Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.

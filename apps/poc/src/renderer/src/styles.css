@@ -463,6 +463,14 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .diffrow .type { width: 80px; flex: none; font-size: 12px; color: var(--muted); }
 .diffrow .title { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diffopen .canvashead { padding: 0 0 10px; border-bottom: none; }
+.diffgroups { display: flex; flex-direction: column; gap: 22px; }
+.diffgroups section { display: flex; flex-direction: column; gap: 10px; }
+.diffhead { align-self: flex-start; font-weight: 600; font-size: 13px; color: var(--text); }
+.diffsub { display: flex; gap: 6px; align-items: center; font-weight: 500; margin-bottom: 6px; }
+.diffoptions { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.diffoptions .difflistrows { max-width: none; }
+.diffstep { display: flex; flex-direction: column; gap: 8px; }
+.diffrepo { display: flex; flex-direction: column; gap: 4px; padding-left: 18px; }
 
 /* project chat drawer */
 .workspace { flex: 1; min-width: 0; min-height: 0; display: flex; }

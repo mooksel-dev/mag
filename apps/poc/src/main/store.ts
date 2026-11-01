@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type ChatItem, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { isLegacy, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -363,20 +363,44 @@ export class Store {
     return Object.values(this.data.canvases).map(({ html: _, ...meta }) => meta)
   }
 
-  /** A new canvas, or a new version of `id`; a revision keeps the kind. */
+  /** A new canvas, or a new version of `id`; a revision keeps the kind, and its placement unless `placement` is given. */
   saveCanvas(
-    c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string } & ({ kind: 'html'; html: string } | { kind: 'diagram'; diagram: Diagram }),
+    c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string; placement?: CanvasPlacement } & ({ kind: 'html'; html: string } | { kind: 'diagram'; diagram: Diagram }),
   ): Canvas {
     const prev = c.id ? this.data.canvases[c.id] : undefined
     if (c.id && !prev) throw new Error(`No canvas ${c.id}`)
     if (prev && prev.kind !== c.kind) throw new Error(`Canvas ${prev.id} is ${prev.kind === 'diagram' ? 'a diagram: revise it with show_diagram' : 'HTML: revise it with show_canvas'}`)
     const content = c.kind === 'html' ? { kind: c.kind, html: c.html } : { kind: c.kind, diagram: c.diagram }
     const canvas: Canvas = prev
-      ? { ...prev, title: c.title || prev.title, ...content, version: prev.version + 1, updatedAt: Date.now() }
-      : { id: id(), projectId: c.projectId, taskId: c.taskId, sessionId: c.sessionId, title: c.title, ...content, version: 1, updatedAt: Date.now() }
+      ? { ...prev, title: c.title || prev.title, ...content, ...c.placement, version: prev.version + 1, updatedAt: Date.now() }
+      : { id: id(), projectId: c.projectId, taskId: c.taskId, sessionId: c.sessionId, title: c.title, ...content, ...c.placement, version: 1, updatedAt: Date.now() }
     this.data.canvases[canvas.id] = canvas
     this.changed()
     return canvas
+  }
+
+  /** Places a diagram in its work (T-55.3); the content and its version stay. */
+  placeCanvas(canvasId: string, placement: CanvasPlacement): Canvas {
+    const prev = this.data.canvases[canvasId]
+    if (!prev) throw new Error(`No canvas ${canvasId}`)
+    const canvas = { ...prev, ...placement }
+    this.data.canvases[canvasId] = canvas
+    this.changed()
+    return canvas
+  }
+
+  /**
+   * The canvases among `ids` that belong to no task yet (drawn in the project chat) move into the task: a doc that
+   * links them makes them part of its work. Returns the ones moved.
+   */
+  adoptCanvases(taskId: string, ids: string[]): Canvas[] {
+    const projectId = this.task(taskId).projectId
+    const moved = ids.flatMap((cid) => {
+      const c = this.data.canvases[cid]
+      return c && c.projectId === projectId && c.taskId === null ? [(this.data.canvases[cid] = { ...c, taskId })] : []
+    })
+    if (moved.length) this.changed()
+    return moved
   }
 
   createProject(name: string): Project {

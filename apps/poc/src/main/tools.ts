@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -157,7 +157,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
               dir: work.dir,
               repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, prUrl: r.prUrl, prState: r.prState })),
             },
-            diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c) })),
+            diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c), ...placementOut(store, project, task.id, c) })),
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
             tracker: task.tracker ?? undefined,
           },
@@ -170,15 +170,39 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         return doc(task.id)
 
       case 'get_diagrams': {
-        const list = taskDiagrams(store, task.id)
-        if (!list.length) return 'This task has no diagrams.'
-        return JSON.stringify(list.map((c) => ({ id: c.id, title: c.title, version: c.version, changes: changes(c), diagram: c.diagram })), null, 2)
+        const all = taskDiagrams(store, task.id)
+        const step = args.step === undefined || args.step === null || args.step === '' ? null : subtask(args.step)
+        const list = step ? stepDiagrams(all, step.id) : all
+        if (!list.length) return step ? `${step.key} has no diagrams of its own; get_diagrams without step lists all of ${task.key}.` : 'This task has no diagrams.'
+        return JSON.stringify(
+          list.map((c) => ({ id: c.id, title: c.title, version: c.version, changes: changes(c), ...placementOut(store, project, task.id, c), diagram: c.diagram })),
+          null,
+          2,
+        )
       }
 
-      case 'update_doc':
-        store.data.docs[task.id] = String(args.markdown ?? '')
+      case 'update_doc': {
+        const md = String(args.markdown ?? '')
+        store.data.docs[task.id] = md
         store.changed()
-        return 'Document updated.'
+        return `Document updated.${adopted(store, task.id, md)}`
+      }
+
+      case 'place_diagram': {
+        const placement = placementArg(store, task, project, args)
+        if (!placement) throw new Error(`role is required: ${PLACE_ROLES.join(', ')}`)
+        const c = store.data.canvases[String(args.id ?? '')]
+        if (!c || c.projectId !== project.id || c.kind !== 'diagram' || !c.diagram) throw new Error(`No diagram ${args.id} in this project`)
+        if (c.taskId === task.id || c.taskId === null) {
+          store.adoptCanvases(task.id, [c.id])
+          store.placeCanvas(c.id, placement)
+          return `Placed ${c.id}${placedAs(store, project, placement)}.`
+        }
+        // A diagram of another task stays there; this work gets its own copy to place and revise.
+        const copy = store.saveCanvas({ projectId: project.id, taskId: task.id, sessionId: ctx.sessionId ?? null, title: c.title, kind: 'diagram', diagram: c.diagram, placement })
+        const owner = store.data.tasks.find((t) => t.id === c.taskId)?.key ?? 'another task'
+        return `${c.id} belongs to ${owner}: copied into ${task.key} as ${copy.id}${placedAs(store, project, placement)}. Link [${copy.title}](canvas:${copy.id}) in the doc instead of canvas:${c.id} and revise the copy from now on.`
+      }
 
       case 'set_needs_input': {
         const reason = args.reason == null || args.reason === '' ? null : String(args.reason)
@@ -328,9 +352,74 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
   }
 }
 
-/** Diagrams of a task, in the order they were drawn. */
+/** Diagrams of a task: its own in the order they were drawn, then those of other tasks its doc links. */
 function taskDiagrams(store: Store, taskId: string): Canvas[] {
-  return Object.values(store.data.canvases).filter((c) => c.taskId === taskId && c.kind === 'diagram' && c.diagram)
+  return workDiagrams(store.task(taskId), store.data.docs[taskId], Object.values(store.data.canvases))
+}
+
+/** Roles an agent places a diagram in; none takes it out of the groups. Facts come with the PR review (T-55.4). */
+const PLACE_ROLES = ['option', 'plan', 'none'] as const
+
+/**
+ * A diagram's placement from tool arguments (T-55.3): role option with option, role plan with step and an optional
+ * repo, role none to unplace. undefined when no role is passed: a revision keeps its placement.
+ */
+function placementArg(store: Store, task: Task | null, project: Project, args: Record<string, unknown>): CanvasPlacement | undefined {
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const role = text(args.role)
+  if (!role) {
+    if (text(args.option) || text(args.step) || text(args.repo)) throw new Error('option, step and repo go with a role')
+    return undefined
+  }
+  if (!(PLACE_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${PLACE_ROLES.join(', ')}`)
+  const none = { role: null, option: null, stepId: null, repo: null, planOf: null }
+  if (role === 'none') return none
+  if (role === 'option') {
+    if (text(args.step) || text(args.repo)) throw new Error('An option diagram has no step or repo')
+    if (!text(args.option)) throw new Error('role option needs option: its name as in §Options, e.g. "A"')
+    return { ...none, role: 'option', option: text(args.option) }
+  }
+  if (text(args.option)) throw new Error('A plan diagram has no option')
+  if (!task) throw new Error('Plan diagrams belong to the steps of a task: draw them in its run')
+  const key = text(args.step)
+  const step = key && store.data.tasks.find((t) => t.parentId === task.id && t.key.toLowerCase() === key.toLowerCase())
+  if (!step) throw new Error(`role plan needs step: the key of a step of ${task.key}, e.g. ${task.key}.1`)
+  let repo: string | null = null
+  if (text(args.repo)) {
+    repo = projectRepo(project, text(args.repo)) ?? null
+    if (!repo) throw new Error(`Not a repository of the project: ${text(args.repo)}; one of ${repoNames(project).join(', ') || '(none)'}`)
+    if (step.repos && !step.repos.includes(repo)) throw new Error(`${step.key} does not change ${text(args.repo)}; its repos: ${stepRepoNames(step, project)!.join(', ') || '(none)'}`)
+  }
+  return { ...none, role: 'plan', stepId: step.id, repo }
+}
+
+/** A diagram's placement as tools show it: step keys and repo names; a diagram of another task says whose. */
+function placementOut(store: Store, project: Project, taskId: string, c: Canvas) {
+  const keyOf = (id: string | null | undefined) => (id ? store.data.tasks.find((t) => t.id === id)?.key : undefined)
+  return {
+    role: c.role ?? undefined,
+    option: c.option ?? undefined,
+    step: keyOf(c.stepId),
+    repo: c.repo ? repoName(project, c.repo) : undefined,
+    of: c.taskId !== taskId ? (keyOf(c.taskId) ?? 'another task') : undefined,
+  }
+}
+
+/** The short name of a project repository (see repoNames); the path of one removed since. */
+const repoName = (project: Project, path: string) => repoNames(project)[project.repos.indexOf(path)] ?? path
+
+/** " as option A", " in the plan of T-1.2 (api)", or " (unplaced)". */
+function placedAs(store: Store, project: Project, p: CanvasPlacement): string {
+  if (p.role === 'option') return ` as option ${p.option}`
+  if (p.role !== 'plan') return ' (unplaced)'
+  const key = store.data.tasks.find((t) => t.id === p.stepId)?.key
+  return ` in the plan of ${key}${p.repo ? ` (${repoName(project, p.repo)})` : ''}`
+}
+
+/** Moves the project-chat canvases a task doc links into the task; says so in the tool's answer. */
+function adopted(store: Store, taskId: string, md: string): string {
+  const moved = store.adoptCanvases(taskId, linkedCanvasIds(md))
+  return moved.length ? ` Moved into ${store.task(taskId).key}, as the doc links them: ${moved.map((c) => c.id).join(', ')}.` : ''
 }
 
 /** "+2 ~1 −0", or "no changes". */
@@ -450,7 +539,8 @@ function sharedTool(
       if (plan) store.updateTask(t.id, { rank: nextPlanRank(tasks) })
       else if (md.trim()) store.changed()
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
-      return plan ? `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.` : `Created ${t.key} in the backlog.`
+      const moved = adopted(store, t.id, md)
+      return plan ? `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.${moved}` : `Created ${t.key} in the backlog.${moved}`
     }
 
     case 'link_ticket': {
@@ -472,9 +562,10 @@ function sharedTool(
 
     case 'update_task_doc': {
       const t = byKey(args.key)
-      store.data.docs[t.id] = String(args.markdown ?? '')
+      const md = String(args.markdown ?? '')
+      store.data.docs[t.id] = md
       store.changed()
-      return `Document of ${t.key} updated.`
+      return `Document of ${t.key} updated.${adopted(store, t.id, md)}`
     }
 
     case 'start_grooming': {
@@ -552,10 +643,12 @@ function sharedTool(
       const errors = validateDiagram(diagram)
       if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
       const id = args.id ? String(args.id) : undefined
+      const placement = placementArg(store, ctx.taskId ? store.task(ctx.taskId) : null, project, args)
       // One flow per method: a second flowchart of the same method is revised by id instead.
       const of = diagram.type === 'flowchart' && diagram.of ? parseFlowRef(diagram.of) : null
       if (of && ctx.taskId) {
         const same = taskDiagrams(store, ctx.taskId).find((c) => {
+          if (c.taskId !== ctx.taskId) return false
           const ref = c.id !== id && c.diagram!.type === 'flowchart' && c.diagram!.of ? parseFlowRef(c.diagram!.of) : null
           return ref?.module === of.module && ref.method === of.method
         })
@@ -569,9 +662,10 @@ function sharedTool(
         title: String(args.title ?? 'Diagram'),
         kind: 'diagram',
         diagram,
+        placement,
       })
       showInChat(store, ctx, canvas)
-      return `Diagram ${canvas.id} (v${canvas.version}): ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
+      return `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
     }
   }
   return undefined
