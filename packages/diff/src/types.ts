@@ -155,6 +155,35 @@ export interface PlanCheck {
   warnings: PlanWarning[]
 }
 
+/**
+ * A plan change against the fact of a PR (T-57.4). match: done as planned; differs: done otherwise (another mark, a
+ * planned signature change that only touched the body); missing: planned, not in the code; unplanned: in the code, not
+ * on the plan; unchecked: planned where the code cannot tell (a module without code, a changed call).
+ */
+export type CompareStatus = 'match' | 'differs' | 'missing' | 'unplanned' | 'unchecked'
+
+export interface CompareItem {
+  status: CompareStatus
+  /** The plan's change; none for unplanned. */
+  plan?: Change
+  /** The fact's changes it stands for; [] for missing and unchecked. */
+  fact: Change[]
+  /** The highest level among its changes. */
+  level: Level
+  /** differs: how. */
+  note?: string
+}
+
+export interface Comparison {
+  items: CompareItem[]
+}
+
+/** What of a PR's fact a diagram shows (T-57.4). Test changes are left out. */
+export interface Coverage {
+  shown: Change[]
+  unshown: Change[]
+}
+
 /** Language adapter: elements and imports of one file, whatever its module. */
 export interface LangAdapter {
   lang: string

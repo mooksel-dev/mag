@@ -11,7 +11,7 @@ const CODE = /\.(py|go|rs|java|kt|kts|scala|rb|php|cs|fs|swift|m|mm|c|h|cc|cpp|h
 const TEST = /(^|\/)(__tests__|__mocks__)\/|\.(test|spec|stories)\.[^./]+$/
 export const isTest = (path: string) => TEST.test(path)
 
-const adapterOf = (path: string) => ADAPTERS.find((a) => a.matches(path))
+export const adapterOf = (path: string) => ADAPTERS.find((a) => a.matches(path))
 
 /** A source file: one an adapter reads or of a language without an adapter yet. */
 export const isCode = (path: string) => !!adapterOf(path) || CODE.test(path)

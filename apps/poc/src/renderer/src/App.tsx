@@ -668,6 +668,7 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
+  significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',
 }
 
 /**

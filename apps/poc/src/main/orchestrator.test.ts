@@ -563,6 +563,8 @@ async function inReview(owner: boolean) {
   }
   const repo = { repo: s.dir, branch: 'mag/login-1', worktree: join(s.workDir, 'app'), prUrl: 'https://github.com/o/app/pull/7', prState: 'open' as const }
   s.store.updateTask(s.step.id, { work: { dir: s.workDir, repos: [repo], feedbackSeenAt: 0 } })
+  // These heads are not in git: plan ↔ fact over real git is in fact.test.ts.
+  ;(s.orch as unknown as { factOf: () => Promise<string> }).factOf = async () => '## Plan ↔ fact (stub)'
   return s
 }
 
@@ -609,6 +611,36 @@ test('review: the first round forks the owner session; changes go to the develop
   // The same heads are not reviewed again.
   await orch.review(step.id, { [dir]: 'b2b2b2' })
   assert.equal(runs.at(-1), second)
+})
+
+test('review: the reviewer reads plan ↔ fact; merge is refused over the threshold (T-57.4)', async () => {
+  const { store, orch, step, dir } = await inReview(false)
+  await orch.review(step.id, { [dir]: 'a1' })
+  const run = runs.at(-1)!
+  assert.match(run.spec.prompt, /compared the PRs with this step's plan diagrams[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
+  const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unchecked: 0 }
+  store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, canvasVersion: null, at: 1 } })
+  assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
+  assert.equal(store.task(step.id).review, undefined)
+  assert.match(orch.setReview(step.id, 'look', [{ text: 'x is unplanned' }]), /user gets your verdict/)
+  // A fact of other heads does not hold this review.
+  store.updateTask(step.id, { fact: { ...store.task(step.id).fact!, heads: { [dir]: 'zz' } } })
+  orch.setReview(step.id, 'merge', [])
+  assert.equal(store.task(step.id).review?.verdict, 'merge')
+  run.end()
+  await tick()
+})
+
+test('review: a failed plan ↔ fact keeps merge from the reviewer (T-57.4)', async () => {
+  const { store, orch, step, dir } = await inReview(false)
+  delete (orch as unknown as { factOf?: unknown }).factOf
+  await orch.review(step.id, { [dir]: 'deadbeef' })
+  const run = runs.at(-1)!
+  assert.match(run.spec.prompt, /mag could not compare/)
+  assert.match(store.task(step.id).fact!.blockers[0], /^mag could not compare the PRs with the plan/)
+  assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold/)
+  run.end()
+  await tick()
 })
 
 test('review: without an owner a fresh reviewer reads the doc; no verdict fails, retried only by the user (T-55.1)', async () => {
