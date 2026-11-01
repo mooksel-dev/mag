@@ -1,5 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { Change, CompareItem, HunkRef } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -71,6 +72,31 @@ export type WindowTarget =
   | { kind: 'architecture'; projectId: string }
   | { kind: 'canvas'; canvasId: string }
   | { kind: 'doc'; taskId: string }
+
+/** A change of a PR's fact with the repository (path) it is in. */
+export type FactChange = Change & { repo: string }
+
+/** A diagram a fact view names. */
+export interface FactCanvas {
+  id: string
+  title: string
+  version: number
+}
+
+/**
+ * Plan ↔ fact of a step's PRs as Diff shows it (T-57.5): what `stepFact` found at `heads`, from the code. The fact
+ * changes carry their repository, so a hunk can be opened (stepHunk).
+ */
+export interface FactView {
+  heads: Record<string, string>
+  repos: { repo: string; name: string; baseSha: string; headSha: string; deterministic: boolean; unparsed: string[] }[]
+  items: (Omit<CompareItem, 'fact'> & { fact: FactChange[] })[]
+  blockers: string[]
+  plans: FactCanvas[]
+  /** What of the fact the step's fact diagram shows; null without one. */
+  coverage: { canvas: FactCanvas; shown: FactChange[]; unshown: FactChange[] } | null
+  at: number
+}
 
 export interface MagApi {
   getState(): Promise<AppState>
@@ -155,6 +181,13 @@ export interface MagApi {
   openTask(taskId: string): Promise<void>
   /** Project window: show this task (a task key clicked in a pop-out, a notification clicked). */
   onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
+  /**
+   * Plan ↔ fact of a step from the code (T-57.5): its open PRs (else the heads its fact was recorded at) against its
+   * plan diagrams; null when it has neither.
+   */
+  stepFact(stepId: string): Promise<FactView | null>
+  /** The lines of one hunk of a step's PR (`+…`, `-…`), from `base`..`head` of one of its repositories. */
+  stepHunk(stepId: string, repo: string, base: string, head: string, hunk: HunkRef): Promise<string[]>
   /** Save a renderer error as a crash report in the logs folder. */
   reportCrash(crash: RendererCrash): Promise<void>
   /** The newest crash from before this start that the user has not dismissed. */

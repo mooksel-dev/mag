@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { SUBTASK_STATUSES, canApprove, ideaPrompt, isLegacy, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
+import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
@@ -14,6 +15,7 @@ import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { repoInfo } from './git'
+import { factView, stepHunk } from './fact'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
 import { startAttention } from './attention'
@@ -235,6 +237,11 @@ app.whenReady().then(async () => {
     const c = store.data.canvases[id]
     return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null
   })
+  handle('step:fact', (_, stepId: string) => {
+    const step = store.task(stepId)
+    return factView(store.project(step.projectId), step, Object.values(store.data.canvases))
+  })
+  handle('step:hunk', (_, stepId: string, repo: string, base: string, head: string, hunk: HunkRef) => stepHunk(store.task(stepId), repo, base, head, hunk))
   handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
     const name = basename(f.name || (f.path ? basename(f.path) : 'file')).replace(/[^\w.-]+/g, '_') || 'file'
     const path = join(attachmentsDir, `${randomUUID().slice(0, 8)}-${name}`)
