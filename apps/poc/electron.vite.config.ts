@@ -3,7 +3,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
 // Workspace packages ship TypeScript sources, so they must be bundled, not externalized.
-const workspace = ['@mag/core', '@mag/agents', '@mag/arch']
+const workspace = ['@mag/core', '@mag/agents', '@mag/arch', '@mag/diff']
 
 export default defineConfig({
   main: {

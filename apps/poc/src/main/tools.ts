@@ -1,8 +1,9 @@
 import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
+import { createDiff, formatChangeSet, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
-import { changedRepos } from './git.ts'
+import { blobs, changedRepos, diffHunks, mergeBase, revParse, treeAt } from './git.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -356,6 +357,18 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           : `PR recorded for ${repoWorkName(next, target)}. Still without a PR: ${missing.join(', ') || 'none'}; open one per changed repo.`
       }
 
+      case 'get_pr_changes': {
+        const work = runWork(store, ctx)
+        if (!work) throw new Error(`${task.key} has no work in progress`)
+        const ref = typeof args.repo === 'string' && args.repo.trim() ? args.repo : null
+        const target = ref ? findRepoWork(work, ref) : null
+        if (ref && !target) throw new Error(`${ref} is not a repo of this task; one of ${work.repos.map((r) => repoWorkName(work, r)).join(', ')}`)
+        const vocabulary = vocabularyOf(project.architecture?.modules ?? [])
+        const parts = await Promise.all((target ? [target] : work.repos).map((r) => prChanges(work, r, project.baseBranch, vocabulary)))
+        const note = vocabulary.modules.length ? '' : 'No architecture with paths is recorded: changes are not grouped by module.\n\n'
+        return note + parts.join('\n\n')
+      }
+
       case 'set_review': {
         const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
         if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
@@ -369,6 +382,25 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       default:
         throw new Error(`Unknown tool ${name}`)
     }
+  }
+}
+
+const diff = createDiff({ treeAt, blobs, diffHunks })
+
+/** get_pr_changes for one repo: its branch against where it left the base (T-57.1). */
+async function prChanges(work: TaskWork, r: RepoWork, base: string, vocabulary: ReturnType<typeof vocabularyOf>): Promise<string> {
+  const name = repoWorkName(work, r)
+  // A worktree is removed once merged; the main checkout still has the branch.
+  const inWorktree = !r.local && existsSync(r.worktree)
+  const dir = inWorktree ? r.worktree : r.repo
+  try {
+    const head = await revParse(dir, inWorktree ? 'HEAD' : r.branch)
+    const from = await revParse(dir, `origin/${base}`).catch(() => revParse(dir, base))
+    const baseSha = await mergeBase(dir, from, head)
+    if (baseSha === head) return `${name}: no commits of its own on ${r.branch}.`
+    return formatChangeSet(await diff.changes({ path: dir, name }, baseSha, head, vocabulary))
+  } catch (e) {
+    return `${name}: cannot diff ${r.branch} (${e instanceof Error ? e.message.split('\n')[0] : e}).`
   }
 }
 

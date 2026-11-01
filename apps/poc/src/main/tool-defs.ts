@@ -381,6 +381,17 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'get_pr_changes',
+    scope: 'task',
+    reviewer: 'also',
+    description:
+      "The structural diff of the step's branches against the base, computed from the code, not drawn: per module of the project's architecture, the added, removed, changed and moved symbols with old and new signatures, contracts (tool definitions and other arrays of named items), new and removed dependencies between modules, and the changed files. Check every change against the plan; 'NOT deterministic' lists files of languages it cannot read.",
+    inputSchema: {
+      type: 'object',
+      properties: { repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Default: every repo of the step.' } },
+    },
+  },
+  {
     name: 'check_architecture',
     reviewer: 'also',
     scope: 'any',
