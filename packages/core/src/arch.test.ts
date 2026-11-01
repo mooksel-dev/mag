@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { callersOf, edgesAt, findNode, methodName, pathTo, walkArch, type ArchNode } from './arch.ts'
+import { callersOf, edgesAt, findNode, methodName, pathTo, renameIds, walkArch, type ArchNode } from './arch.ts'
 
 const node = (id: string, uses: [string, string[]?][] = [], children?: ArchNode[]): ArchNode => ({
   id,
@@ -70,4 +70,13 @@ test('methodName and callersOf', () => {
     callersOf(tree, 'tasks').map((c) => [c.node.id, c.calls]),
     [['ui', ['list()', 'groom(id)']], ['worker', ['groom(id)']]],
   )
+})
+
+test('renameIds renames modules and the uses pointing at them, leaving the input as it is', () => {
+  const out = renameIds(tree, new Map([['tasks', 'jobs'], ['github', 'gh']]))
+  assert.deepEqual(findNode(out, 'jobs')?.uses, [{ to: 'store', calls: ['load()'] }, { to: 'gh', calls: ['openPr(b)'] }])
+  assert.deepEqual(findNode(out, 'ui')?.uses, [{ to: 'jobs', calls: ['list()', 'groom(id)'] }])
+  assert.equal(out[1].id, 'gh')
+  assert.ok(findNode(tree, 'tasks'))
+  assert.equal(renameIds(tree, new Map()), tree)
 })

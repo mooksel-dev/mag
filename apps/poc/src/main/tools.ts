@@ -1,7 +1,7 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
-import { createDiff, formatChangeSet, vocabularyOf } from '@mag/diff'
+import { carryIds, createDiff, formatChangeSet, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
 import { blobs, changedRepos, diffHunks, mergeBase, revParse, treeAt } from './git.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
@@ -477,11 +477,17 @@ function adopted(store: Store, taskId: string, md: string): string {
 /** "+2 ~1 −0", or "no changes". */
 const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'no changes'
 
+/** Unowned files listed in the answer of set_architecture; the rest is a count. */
+const UNOWNED_SHOWN = 30
+
 /**
  * Records the module tree. Ids must be unique in the whole tree; uses of unknown ids or of the module itself are
- * dropped, repeats of one target merged. A plain string in `uses` counts as `{ to, calls: [] }`.
+ * dropped, repeats of one target merged. A plain string in `uses` counts as `{ to, calls: [] }`. Every module gets a
+ * level (top: system, inside: module) and `paths` (a legacy `path` joins them); two modules may not give one path. A
+ * module that is a previous one under a new id gets its old id back (T-57.2). Code files of the repos no module owns
+ * are listed in the answer: the architect adds them and calls again.
  */
-function setArchitecture(store: Store, projectId: string, args: Record<string, unknown>) {
+async function setArchitecture(store: Store, project: Project, args: Record<string, unknown>) {
   const modules = Array.isArray(args.modules) ? (args.modules as ArchNode[]) : null
   if (!modules?.length) throw new Error('modules is required')
   const ids = new Set<string>()
@@ -493,7 +499,7 @@ function setArchitecture(store: Store, projectId: string, args: Record<string, u
   })
   if (dupes.size) throw new Error(`Ids must be unique in the whole tree; repeated: ${[...dupes].join(', ')}`)
   let dropped = 0
-  walkArch(modules, (n) => {
+  walkArch(modules, (n, ancestors) => {
     const uses = (Array.isArray(n.uses) ? n.uses : []).map((u: ArchUse | string) =>
       typeof u === 'string' ? { to: u, calls: [] } : { to: u.to, calls: Array.isArray(u.calls) ? u.calls.map(String) : [] },
     )
@@ -508,11 +514,34 @@ function setArchitecture(store: Store, projectId: string, args: Record<string, u
     }
     n.uses = [...byTo.values()]
     if (n.children && !n.children.length) delete n.children
+    const level = n.level ?? (ancestors.length ? 'module' : 'system')
+    if (level !== 'system' && level !== 'module') throw new Error(`${n.id}: level must be system or module`)
+    if (level === 'system' && ancestors.some((a) => a.level === 'module')) throw new Error(`${n.id}: a system cannot be inside a module`)
+    n.level = level
+    const paths = [...(Array.isArray(n.paths) ? n.paths : []), ...(typeof n.path === 'string' ? [n.path] : [])].map((p) => String(p).trim().replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean)
+    const outside = paths.find((p) => p.startsWith('/') || p.startsWith('~') || p.split('/').includes('..'))
+    if (outside) throw new Error(`${n.id}: paths are relative to the repository, inside it; got "${outside}"`)
+    delete n.path
+    if (paths.length) n.paths = [...new Set(paths)]
+    else delete n.paths
   })
-  store.updateProject(projectId, {
-    architecture: { summary: String(args.summary ?? ''), modules, updatedAt: Date.now() },
-  })
-  return `Recorded ${ids.size} module(s), ${modules.length} on the top level.${dropped ? ` Dropped ${dropped} use(s) of unknown ids or of the module itself.` : ''}`
+  const shared = sharedPaths(vocabularyOf(modules))
+  if (shared.length) throw new Error(`A file belongs to one module; paths given by several: ${shared.map((s) => `"${s.path}" (${s.modules.join(', ')})`).join(', ')}`)
+  const trees = await Promise.all(project.repos.map((r) => treeAt(r, 'HEAD').then((t) => t.map((f) => f.path)).catch(() => null)))
+  const files = trees.flatMap((t) => t ?? [])
+  const renamed = carryIds(project.architecture?.modules ?? [], modules, files)
+  const recorded = renameIds(modules, renamed)
+  store.updateProject(project.id, { architecture: { summary: String(args.summary ?? ''), modules: recorded, updatedAt: Date.now() } })
+  const notes = [`Recorded ${ids.size} module(s), ${modules.length} on the top level.`]
+  if (dropped) notes.push(`Dropped ${dropped} use(s) of unknown ids or of the module itself.`)
+  if (renamed.size) notes.push(`Kept the previous ids of modules that own the same code: ${[...renamed].map(([a, b]) => `${a} → ${b}`).join(', ')}.`)
+  const vocabulary = vocabularyOf(recorded)
+  const missing = project.repos.flatMap((r, i) => (trees[i] ? unowned(vocabulary, trees[i]).map((f) => (project.repos.length > 1 ? `${repoName(project, r)}:${f}` : f)) : []))
+  if (missing.length) {
+    const shown = missing.slice(0, UNOWNED_SHOWN).join(', ') + (missing.length > UNOWNED_SHOWN ? ` and ${missing.length - UNOWNED_SHOWN} more` : '')
+    notes.push(`${missing.length} code file(s) belong to no module: ${shown}. Every code file must be in exactly one module: add them to the paths of the modules that own them and call set_architecture again with the full tree.`)
+  }
+  return notes.join(' ')
 }
 
 /** Puts a card of the canvas into the run's chat. */
@@ -671,7 +700,7 @@ function sharedTool(
       return project.architecture ? JSON.stringify(project.architecture, null, 2) : 'No architecture recorded yet.'
 
     case 'set_architecture':
-      return setArchitecture(store, project.id, args)
+      return setArchitecture(store, project, args)
 
     case 'check_architecture': {
       const work = ctx.taskId ? runWork(store, ctx) : null

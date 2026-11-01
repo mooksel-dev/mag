@@ -1,7 +1,7 @@
 import { walkArch, type ArchNode } from '@mag/core'
 import type { Vocabulary } from './types.ts'
 
-const clean = (p: string) => p.replace(/^\.\//, '').replace(/\/+$/, '')
+export const clean = (p: string) => p.replace(/^\.\//, '').replace(/\/+$/, '')
 
 /** A glob (`*`, `**`) or a plain path: the file itself or anything under the folder. */
 function matcher(pattern: string): (path: string) => number {
@@ -30,8 +30,8 @@ export function moduleResolver(vocabulary: Vocabulary): (path: string) => string
   }
 }
 
-/** The vocabulary of a recorded architecture: every module with a repo-relative path. `paths` comes with T-57.2. */
-export function vocabularyOf(modules: (ArchNode & { paths?: string[] })[]): Vocabulary {
+/** The vocabulary of a recorded architecture: every module with a repo-relative path (`path` before T-57.2). */
+export function vocabularyOf(modules: ArchNode[]): Vocabulary {
   const out: Vocabulary['modules'] = []
   walkArch(modules, (n) => {
     const paths = (n.paths?.length ? n.paths : n.path ? [n.path] : []).filter((p) => p && !/^([~/]|[a-z]+:)/i.test(p))

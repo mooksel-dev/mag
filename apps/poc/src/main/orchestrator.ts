@@ -97,17 +97,25 @@ or services; nothing below app uses app; app should not use clients directly.
 How to work:
 1. Find the apps (packages, entrypoints) and the outside runtimes they talk to (databases, 3rd-party APIs, agent
    CLIs, files they keep state in). Skim structure first (Glob), then read the key files.
-2. Record a tree of modules. Top level: the apps and the outside runtimes, each with a kind ("Electron app",
-   "database", "3rd-party API"…). Inside an app: modules with a layer, at the granularity a human designs at, one
-   per real responsibility, not per file; usually 5-20 per app. A big module gets inner modules (children), as deep
-   as it helps. Classify by what the code does, not by folder names; the code may not follow the pattern.
-3. For services and clients, write the public interface as short lines "method(args): Result - what it does", one
+2. Record a tree of modules. Top level: the apps and the outside runtimes, each with level "system" and a kind
+   ("Electron app", "database", "3rd-party API"…). Inside an app: modules with level "module" and a layer, at the
+   granularity a human designs at, one per real responsibility, not per file; usually 5-20 per app. A big module gets
+   inner modules (children), as deep as it helps. Classify by what the code does, not by folder names; the code may
+   not follow the pattern.
+3. paths: the code each module owns, folders, files or globs relative to the repository. A file belongs to the most
+   specific match: an app gives its folder, its modules their parts of it. Every code file (tests too) must be in
+   exactly one module, so cover the whole tree and never give one path to two modules. Outside runtimes have none.
+4. For services and clients, write the public interface as short lines "method(args): Result - what it does", one
    method per line with its signature; never several in one line ("get / set", "a, b") and no prose.
-4. uses = real dependencies, to any module of the tree (ids are unique in the whole tree), each with calls: the
+5. uses = real dependencies, to any module of the tree (ids are unique in the whole tree), each with calls: the
    methods of the target it calls, one per item, e.g. "groom(taskId)". Point a use at the most specific module. If something
    breaks the rules or mixes layers, say so in concern.
-5. Keep ids stable if get_architecture shows a previous version and the module still exists.
-Call get_architecture first, then set_architecture once with the full picture. Be concise everywhere.`
+6. get_architecture shows the previous version, if any: start from it. Keep the id of every module that still
+   exists, even when it is renamed or moved; diagrams and diffs refer to modules by id. mag also gives a module its
+   old id back when it owns the same code under a new one.
+7. set_architecture lists the code files no module owns: add them to paths and call it again with the full tree
+   until none is left.
+Call get_architecture first, then set_architecture with the full picture. Be concise everywhere.`
 
 const chatPrompt = (project: Project, logsDir: string) => `You are the user's partner for project "${project.name}" in "mag",
 a workspace that organizes agents' work on problems; tickets live in the user's trackers, mag knows them as links. This

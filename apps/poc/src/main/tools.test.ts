@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Diagram, TaskWork } from '@mag/core'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
@@ -181,6 +182,40 @@ test('set_architecture records a module tree, drops unknown and self uses, rejec
   assert.equal(tasks.children, undefined)
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { children: [mod('a')] })] }), /repeated: a/)
   await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', apps: [] }), /modules is required/)
+})
+
+test('set_architecture records levels and paths, keeps ids of the same code, lists files without a module', async () => {
+  const { store, project, tools } = setup()
+  const repo = mkdtempSync(join(tmpdir(), 'mag-arch-'))
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo, stdio: 'ignore' })
+  git('init', '-q', '-b', 'main')
+  for (const f of ['app/ui/a.tsx', 'app/ui/b.tsx', 'app/store/s.ts', 'app/tasks/t.ts', 'tools/x.py', 'README.md']) {
+    mkdirSync(join(repo, dirname(f)), { recursive: true })
+    writeFileSync(join(repo, f), '')
+  }
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  store.updateProject(project.id, { repos: [repo] })
+  const ctx = { projectId: project.id }
+  const mod = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id, description: 'd', uses: [], ...extra })
+  const first = [mod('app', { path: './app/', children: [mod('ui', { paths: ['app/ui'], uses: [{ to: 'store', calls: [] }] }), mod('store', { paths: ['app/store'] })] }), mod('github')]
+  const out = await tools(ctx, 'set_architecture', { summary: 's', modules: first })
+  assert.match(out, /1 code file\(s\) belong to no module: tools\/x\.py\. Every code file/)
+  const [app, gh] = store.project(project.id).architecture!.modules
+  assert.deepEqual([app.level, app.paths, app.path, app.children![0].level, gh.level, gh.paths], ['system', ['app'], undefined, 'module', 'system', undefined])
+  // A new run calls ui "views" and covers every file: views gets ui's id back, in the uses too.
+  const second = [
+    mod('app', { paths: ['app', 'tools'], children: [mod('views', { paths: ['app/ui'], uses: [{ to: 'state', calls: [] }] }), mod('state', { paths: ['app/store'] }), mod('tasks', { paths: ['app/tasks'] })] }),
+    mod('github', { level: 'system' }),
+  ]
+  const again = await tools(ctx, 'set_architecture', { summary: 's', modules: second })
+  assert.equal(again, 'Recorded 5 module(s), 2 on the top level. Kept the previous ids of modules that own the same code: views → ui, state → store.')
+  const kids = store.project(project.id).architecture!.modules[0].children!
+  assert.deepEqual(kids.map((k) => k.id), ['ui', 'store', 'tasks'])
+  assert.deepEqual(kids[0].uses, [{ to: 'store', calls: [] }])
+  await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { paths: ['app'] }), mod('b', { paths: ['./app'] })] }), /paths given by several: "app" \(a, b\)/)
+  await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { paths: ['/etc'] })] }), /relative to the repository/)
+  await assert.rejects(tools(ctx, 'set_architecture', { summary: 's', modules: [mod('a', { children: [mod('b', { level: 'module', children: [mod('c', { level: 'system' })] })] })] }), /c: a system cannot be inside a module/)
 })
 
 test('show_diagram validates, saves a diagram canvas and lists it in get_task and get_diagrams', async () => {
