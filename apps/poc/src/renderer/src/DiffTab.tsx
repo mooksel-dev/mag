@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { diagramGroups, diagramSummary, repoNames, subtasksOf, type DiffCount, type Project, type Task } from '@mag/core'
+import { diagramGroups, diagramSummary, prHeads, repoNames, subtasksOf, type DiffCount, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { DIAGRAM_NAMES, DiagramView } from './diagrams/DiagramView'
+import { FactPanel } from './FactPanel'
 import { SubtaskIcon } from './Tasks'
 
 const mag = window.mag
@@ -47,18 +48,28 @@ function Rows({ diagrams, onOpen, from }: { diagrams: DiagramCanvas[]; onOpen: (
   )
 }
 
+/** A step has a fact to show: an open PR, or the fact mag recorded at its review. */
+const hasFact = (step: Task) => !!step.fact || Object.keys(prHeads(step.work)).length > 0
+
 /**
- * The diagrams of a work by their place (T-55.3): Options side by side → Plan by step and repository → the rest.
- * Options fold once there is a plan. Click a diagram to open it here, ⧉ in its own window.
+ * The diagrams of a work by their place (T-55.3): Options side by side → Plan by step and repository, with plan ↔ fact
+ * of the step's PRs (T-57.5) → the rest. Options fold once there is a plan. Click a diagram to open it here, ⧉ in its
+ * own window.
  */
 export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks: Task[]; project: Project | undefined; diagrams: DiagramCanvas[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const repos = project?.repos ?? []
-  const groups = diagramGroups(diagrams, subtasksOf(task.id, tasks), repos)
+  const steps = subtasksOf(task.id, tasks)
+  const groups = diagramGroups(diagrams, steps, repos)
+  // Steps with diagrams, and steps with a fact but no diagram (everything they change is unplanned), in step order.
+  const plan = steps.flatMap((step) => {
+    const g = groups.plan.find((p) => p.step.id === step.id)
+    return g ? [g] : hasFact(step) ? [{ step, repos: [] }] : []
+  })
   const [optionsOpen, setOptionsOpen] = useState<boolean | null>(null)
-  const showOptions = optionsOpen ?? !groups.plan.length
+  const showOptions = optionsOpen ?? !plan.length
   const open = diagrams.find((d) => d.id === openId)
-  if (!diagrams.length) return <p className="muted">No diagrams yet. The groomer draws the change here: modules, scenarios, states, algorithms and data.</p>
+  if (!diagrams.length && !plan.length) return <p className="muted">No diagrams yet. The groomer draws the change here: modules, scenarios, states, algorithms and data.</p>
   if (open)
     return (
       <div className="diffopen">
@@ -76,7 +87,7 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
     )
   const from = (d: DiagramCanvas) => (d.taskId === task.id ? null : (tasks.find((t) => t.id === d.taskId)?.key ?? 'another task'))
   const repoName = (r: string | null) => (r === null ? 'Whole step' : (repoNames({ repos })[repos.indexOf(r)] ?? r))
-  const grouped = groups.options.length > 0 || groups.plan.length > 0
+  const grouped = groups.options.length > 0 || plan.length > 0
   if (!grouped) return <Rows diagrams={groups.other} onOpen={setOpenId} from={from} />
   return (
     <div className="diffgroups">
@@ -97,10 +108,10 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
           )}
         </section>
       )}
-      {groups.plan.length > 0 && (
+      {plan.length > 0 && (
         <section>
           <div className="diffhead">Plan</div>
-          {groups.plan.map((p) => (
+          {plan.map((p) => (
             <div key={p.step.id} className="diffstep">
               <div className="diffsub">
                 <SubtaskIcon status={p.step.status} /> {p.step.key} · {p.step.title}
@@ -111,6 +122,7 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
                   <Rows diagrams={r.diagrams} onOpen={setOpenId} from={from} />
                 </div>
               ))}
+              {hasFact(p.step) && <FactPanel step={p.step} diagramsKey={p.repos.flatMap((r) => r.diagrams.map((d) => `${d.id}@${d.version}`)).join(',')} />}
             </div>
           ))}
         </section>

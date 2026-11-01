@@ -462,6 +462,28 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .diffoptions .difflistrows { max-width: none; }
 .diffstep { display: flex; flex-direction: column; gap: 8px; }
 .diffrepo { display: flex; flex-direction: column; gap: 4px; padding-left: 18px; }
+/* plan ↔ fact of a step (T-57.5): threshold, rows by status and level, hunks inline, coverage of the fact diagram */
+.factpanel { display: flex; flex-direction: column; gap: 8px; padding-left: 18px; max-width: 1100px; }
+.factpanel .diffsub { margin-bottom: 0; }
+.factbar { display: flex; gap: 8px; align-items: center; }
+.factbar button.link.on { font-weight: 600; color: var(--text); }
+.factthreshold { padding: 6px 10px; border-radius: 6px; border: 1px solid; font-size: 12px; }
+.factthreshold.warn { border-color: var(--diff-mod); }
+.factthreshold.ok { border-color: var(--diff-add); }
+.factthreshold ul { margin: 4px 0 0; padding-left: 18px; }
+.facttable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.facttable th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; }
+.facttable td { vertical-align: top; padding: 5px 6px; border-top: 1px solid var(--line); }
+.factstatus { width: 16px; font-weight: 700; }
+.s-match { color: var(--diff-add); } .s-differs { color: var(--diff-mod); } .s-missing { color: var(--diff-del); }
+.s-unplanned { color: var(--diff-move); } .s-unchecked { color: var(--accent); }
+.factlevel { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line); white-space: nowrap; }
+.factlevel.lv-critical { border-color: var(--diff-del); color: var(--diff-del); }
+.factlevel.lv-high { border-color: var(--diff-mod); color: var(--diff-mod); }
+.factlevel.lv-low, .factlevel.lv-noise { color: var(--muted); }
+.factline + .factline { margin-top: 3px; }
+.facthunk { margin: 4px 0; padding: 6px 8px; background: var(--code); border-radius: 4px; font: 11px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: pre; }
+.factcoverage { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
 /* project chat drawer */
 .workspace { flex: 1; min-width: 0; min-height: 0; display: flex; }

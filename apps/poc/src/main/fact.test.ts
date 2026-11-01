@@ -9,7 +9,8 @@ import type { ArchDiagram, ComponentDiagram } from '@mag/core'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 import { createTools, type ToolActions } from './tools.ts'
-import { stepFact } from './fact.ts'
+import { factHeads, factView, stepFact, stepHunk } from './fact.ts'
+import { hunkLines } from './git.ts'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
 
@@ -108,4 +109,64 @@ test('factOf: records the fact, drafts the fact diagram; the reviewer may add to
   assert.equal(store.data.canvases[fact.canvasId!].diagram!.type === 'component' && (store.data.canvases[fact.canvasId!].diagram as ComponentDiagram).summary, revised.summary)
   assert.match(again, /revised since mag drew it; it does not show:\n {2}- store function save/)
   assert.match(await show(d, fact.canvasId!), /shows every significant change of the code/)
+})
+
+test('factView: the comparison with repositories on the fact, the threshold, coverage of the fact diagram; hunks open', async () => {
+  const { store, step, repo, head, orch } = setup()
+  // No open PR head yet, no recorded fact: nothing to show.
+  assert.equal(await factView(store.project(store.task(step.id).projectId), store.task(step.id), Object.values(store.data.canvases)), null)
+  store.updateTask(step.id, { work: { ...store.task(step.id).work!, repos: store.task(step.id).work!.repos.map((r) => ({ ...r, prHead: head })) } })
+  await orch.factOf(step.id, { [repo]: head })
+  const s = store.task(step.id)
+  const view = (await factView(store.project(s.projectId), s, Object.values(store.data.canvases)))!
+  assert.deepEqual(view.heads, { [repo]: head })
+  assert.equal(view.repos.length, 1)
+  assert.equal(view.repos[0].headSha, head)
+  assert.deepEqual(view.items.map((i) => i.status), ['missing', 'unplanned', 'unplanned', 'match'])
+  assert.ok(view.items.flatMap((i) => i.fact).every((c) => c.repo === repo))
+  assert.equal(view.blockers.length, 2)
+  assert.deepEqual(view.plans.map((p) => p.title), ['Plan'])
+  // mag's draft shows all of the fact.
+  assert.equal(view.coverage!.canvas.id, s.fact!.canvasId)
+  assert.deepEqual(view.coverage!.unshown, [])
+
+  const save = view.items.flatMap((i) => i.fact).find((c) => c.name === 'save')!
+  const lines = await stepHunk(s, repo, view.repos[0].baseSha, head, save.hunks[0])
+  assert.ok(lines.includes('+export function save(id: string) {'), lines.join('\n'))
+  await assert.rejects(stepHunk(s, '/elsewhere', view.repos[0].baseSha, head, save.hunks[0]), /does not change/)
+  await assert.rejects(stepHunk(s, repo, 'HEAD', head, save.hunks[0]), /commit shas/)
+
+  // Merged: the PR is no longer open, the recorded heads stand.
+  store.updateTask(step.id, { work: { ...s.work!, repos: s.work!.repos.map((r) => ({ ...r, prState: 'merged' as const })) } })
+  assert.deepEqual(factHeads(store.task(step.id)), { [repo]: head })
+})
+
+test('hunkLines: one hunk of one file, renames by their new path, no-newline markers left out', () => {
+  const text = [
+    'diff --git a/src/a.ts b/src/a.ts',
+    'index 1..2 100644',
+    '--- a/src/a.ts',
+    '+++ b/src/a.ts',
+    '@@ -1 +1,2 @@',
+    '-old',
+    '+new',
+    '+-- not a header',
+    '@@ -5,0 +7 @@ function x',
+    '+later',
+    '\\ No newline at end of file',
+    'diff --git a/src/b.ts b/src/c.ts',
+    'similarity index 90%',
+    'rename from src/b.ts',
+    'rename to src/c.ts',
+    '--- a/src/b.ts',
+    '+++ b/src/c.ts',
+    '@@ -3 +3 @@',
+    '-x',
+    '+y',
+    '',
+  ].join('\n')
+  assert.deepEqual(hunkLines(text, 'src/a.ts', { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }), ['-old', '+new', '+-- not a header'])
+  assert.deepEqual(hunkLines(text, 'src/a.ts', { oldStart: 5, oldLines: 0, newStart: 7, newLines: 1 }), ['+later'])
+  assert.deepEqual(hunkLines(text, 'src/c.ts', { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }), ['-x', '+y'])
+  assert.deepEqual(hunkLines(text, 'src/b.ts', { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }), [])
 })

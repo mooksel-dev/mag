@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import type { TaskWork } from '@mag/core'
-import type { FileDiff } from '@mag/diff'
+import type { FileDiff, Hunk } from '@mag/diff'
 
 const exec = promisify(execFile)
 
@@ -187,8 +187,37 @@ export function blobs(repo: string, shas: string[]): Promise<Map<string, string>
 
 /** Changed files between two commits with zero-context hunks; renames detected (T-57). */
 export async function diffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
+  return parseDiff(await diffText(repo, base, head))
+}
+
+/** The zero-context diff between two commits as git prints it, renames detected: the text diffHunks parses. */
+export async function diffText(repo: string, base: string, head: string): Promise<string> {
   const { stdout } = await exec('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=0', base, head], { cwd: repo, maxBuffer: 256 * 1024 * 1024 })
-  return parseDiff(stdout)
+  return stdout
+}
+
+/** The lines (`-…`, `+…`) of one hunk of `path` (its path at head; at base when deleted) in a diffText; [] if absent. */
+export function hunkLines(text: string, path: string, hunk: Hunk): string[] {
+  const range = (start: number, lines: number) => `${start}${lines === 1 ? '' : `,${lines}`}`
+  const header = `@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`
+  for (const file of parseDiffSections(text)) {
+    if (file.path !== path) continue
+    const at = file.lines.findIndex((l) => l.startsWith(header))
+    if (at < 0) continue
+    const out: string[] = []
+    for (const l of file.lines.slice(at + 1)) {
+      if (out.length === hunk.oldLines + hunk.newLines || !/^[-+\\]/.test(l)) break
+      if (!l.startsWith('\\')) out.push(l)
+    }
+    return out
+  }
+  return []
+}
+
+/** A diffText split by file, with the path parseDiff gives each. */
+function parseDiffSections(text: string): { path: string; lines: string[] }[] {
+  const parts = text.split(/^(?=diff --git )/m).filter((p) => p.startsWith('diff --git '))
+  return parts.map((part) => ({ path: parseDiff(part)[0]?.path ?? '', lines: part.split('\n') }))
 }
 
 /** A unified diff, as `git diff --unified=0` prints it, into files and hunks. */
