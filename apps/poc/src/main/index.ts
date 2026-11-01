@@ -225,6 +225,8 @@ app.whenReady().then(async () => {
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
+  handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))
+  handle('chat:delete', (_, sessionId: string) => orch.deleteChat(sessionId))
   handle('canvas:get', (_, id: string) => {
     const c = store.data.canvases[id]
     return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null

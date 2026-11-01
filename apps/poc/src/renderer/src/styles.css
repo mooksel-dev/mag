@@ -576,7 +576,17 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .tile.hl { border-color: var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; align-self: start; }
 .card h2 { margin: 0 0 8px; font-size: 14px; }
-.home .side { display: grid; gap: 16px; align-content: start; }
+.home .side, .home .col { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.cardhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cardhead h2 { margin: 0; }
+.topicrow { display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin: 0 -6px; border-radius: 7px; cursor: pointer; }
+.topicrow:hover { background: var(--hover); }
+.topicrow.on .title { font-weight: 600; }
+.topicrow .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topicrow input { flex: 1; min-width: 0; font: inherit; }
+.topicrow .dot.live { margin-right: 0; flex: none; }
+.topicrow .iconbtn { width: 24px; height: 24px; font-size: 12px; visibility: hidden; }
+.topicrow:hover .iconbtn, .topicrow .iconbtn:focus-visible { visibility: visible; }
 .inboxrow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--row-line); cursor: pointer; }
 .inboxrow:first-of-type { border-top: none; }
 .inboxrow:hover .title { color: var(--accent); }

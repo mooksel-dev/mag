@@ -519,7 +519,7 @@ function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, setOpen: 
   }, [open, ref, setOpen])
 }
 
-/** Thread title as a button; opens the list of threads with "New chat" at the bottom. */
+/** Topic title as a button; opens the list of topics with "New topic" at the bottom. */
 function ThreadPicker({ chats, current, onPick, onNew }: { chats: AgentSession[]; current: AgentSession | null; onPick: (id: string) => void; onNew: () => void }) {
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLDivElement>(null)
@@ -529,24 +529,28 @@ function ThreadPicker({ chats, current, onPick, onNew }: { chats: AgentSession[]
     <div ref={box} className="threadpicker">
       <button className="threadbtn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="listbox" title={current?.title}>
         {current && live(current) && <span className="dot live" />}
-        <span className="title">{current?.title ?? 'New chat'}</span>
+        <span className="title">{current?.title ?? 'New topic'}</span>
         <span className="caret">▾</span>
       </button>
       {open && (
-        <div className="threadlist" role="listbox" aria-label="Chat threads">
+        <div className="threadlist" role="listbox" aria-label="Topics">
           {chats.map((c) => (
             <button key={c.id} role="option" aria-selected={c === current} className={c === current ? 'on' : ''} onClick={() => { onPick(c.id); setOpen(false) }}>
               {live(c) && <span className="dot live" />}
-              <span className="title" title={c.title}>{c.title ?? 'Chat'}</span>
+              <span className="title" title={c.title}>{c.title ?? 'Topic'}</span>
               <span className="muted small">{threadTime(c.createdAt)}</span>
             </button>
           ))}
-          <button className="newthread" onClick={() => { onNew(); setOpen(false) }}>＋ New chat</button>
+          <button className="newthread" onClick={() => { onNew(); setOpen(false) }}>＋ New topic</button>
         </div>
       )}
     </div>
   )
 }
+
+/** A project's chats (topics), newest first. */
+export const projectTopics = (sessions: AgentSession[], projectId: string) =>
+  sessions.filter((s) => s.projectId === projectId && s.role === 'chat' && !s.taskId).sort((a, b) => b.createdAt - a.createdAt)
 
 /** "Claude Code · Opus ▾": the project chat's agent and model, picked in a popover. */
 function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
@@ -570,17 +574,27 @@ function ModelChip({ project, activeModel }: { project: AppState['projects'][num
   )
 }
 
-/** Project-level conversation: a closable aside next to every tab, or `embedded` in the task screen's chat panel. */
-export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }: { projectId: string; state: AppState; onOpenTask: (key: string) => void; onClose?: () => void; embedded?: boolean }) {
-  const chats = state.sessions.filter((s) => s.projectId === projectId && s.role === 'chat').sort((a, b) => b.createdAt - a.createdAt)
-  const [chatId, setChatId] = useState<string | null>(null)
+/**
+ * Project-level conversation: a closable aside next to every tab, or `embedded` in the task screen's chat panel. The open
+ * topic (`chatId`) is App's; a missing or deleted one falls back to the newest.
+ */
+export function ProjectChat({ projectId, state, chatId, onPick, onOpenTask, onClose, embedded }: {
+  projectId: string
+  state: AppState
+  chatId: string | null
+  onPick: (id: string) => void
+  onOpenTask: (key: string) => void
+  onClose?: () => void
+  embedded?: boolean
+}) {
+  const chats = projectTopics(state.sessions, projectId)
   const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
   const project = state.projects.find((p) => p.id === projectId)
   const canvases = state.canvases.filter((c) => c.projectId === projectId && c.taskId === null).sort((a, b) => b.updatedAt - a.updatedAt)
 
   const startNew = async (text?: string, att?: Attachment[]) => {
     const id = await mag.newChat(projectId)
-    setChatId(id)
+    onPick(id)
     if (text !== undefined) await mag.send(id, text, att)
   }
 
@@ -589,8 +603,8 @@ export function ProjectChat({ projectId, state, onOpenTask, onClose, embedded }:
   return (
     <Box className={embedded ? 'projectchat embedded' : 'projectchat'}>
       <div className="pchead">
-        <ThreadPicker chats={chats} current={chat} onPick={setChatId} onNew={() => void startNew()} />
-        <button className="iconbtn" onClick={() => startNew()} aria-label="New chat" title="New chat">✎</button>
+        <ThreadPicker chats={chats} current={chat} onPick={onPick} onNew={() => void startNew()} />
+        <button className="iconbtn" onClick={() => startNew()} aria-label="New topic" title="New topic">✎</button>
         <CanvasMenu canvases={canvases} />
         {onClose && <button className="iconbtn" onClick={onClose} aria-label="Close chat" title="Close">✕</button>}
       </div>

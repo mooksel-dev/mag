@@ -481,4 +481,11 @@ export class Store {
     this.changed()
     return full
   }
+
+  /** Removes a session; canvases drawn in it and events stay. */
+  deleteSession(sid: string) {
+    this.session(sid)
+    this.data.sessions = this.data.sessions.filter((s) => s.id !== sid)
+    this.changed()
+  }
 }

@@ -119,6 +119,10 @@ export interface MagApi {
   send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
   /** New project chat; returns its session id. */
   newChat(projectId: string): Promise<string>
+  /** The user's title for a project chat (topic); the generated title no longer replaces it. */
+  renameChat(sessionId: string, title: string): Promise<void>
+  /** Deletes a project chat (topic) with its history; its agent stops first. */
+  deleteChat(sessionId: string): Promise<void>
   /** A canvas's content: the HTML page or the diagram. */
   getCanvas(id: string): Promise<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null>
   /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */

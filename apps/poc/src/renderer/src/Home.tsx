@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   agentState,
   inbox,
@@ -9,10 +9,12 @@ import {
   type InboxKind,
   type PipelineStage,
   type Project,
+  type AgentSession,
   type Task,
 } from '@mag/core'
 import type { AppState, CrashReport } from '../../preload/api'
-import { ago, crashMarkdown, inputPreview, prLabel, prName } from './format'
+import { projectTopics } from './Chat'
+import { ago, crashMarkdown, inputPreview, prLabel, prName, threadTime } from './format'
 import { AgentDot, useNow } from './Tasks'
 
 const mag = window.mag
@@ -36,10 +38,14 @@ const PILLS: Record<InboxKind, [string, string]> = {
 
 const RECENT = 15
 
-export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewTask, onImport }: {
+export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOpenKey, onStage, onNewTask, onImport }: {
   project: Project
   tasks: Task[]
   state: AppState
+  /** The topic open in the chat aside, if the user picked one. */
+  topicId: string | null
+  /** Show the topic in the chat aside. */
+  onOpenTopic: (id: string) => void
   onOpen: (id: string) => void
   onOpenKey: (key: string) => void
   /** Open the Tasks view that shows this stage. */
@@ -59,6 +65,7 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewT
     mag.lastCrash().then(setCrash, () => {})
   }, [])
   const waiting = items.length + (crash ? 1 : 0)
+  const topics = projectTopics(state.sessions, project.id)
 
   return (
     <section className="page home">
@@ -81,13 +88,16 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewT
         ))}
       </div>
 
-      <div className="card">
-        <h2>Waiting on you <span className="muted">{waiting}</span></h2>
-        {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
-        {waiting ? items.map((i) =>
-          i.kind === 'approval' ? <ApprovalRow key={i.approvalId} item={i} onOpen={onOpen} />
-          : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} now={now} onOpen={onOpen} />,
-        ) : <p className="muted">Nothing is waiting on you.</p>}
+      <div className="col">
+        <div className="card">
+          <h2>Waiting on you <span className="muted">{waiting}</span></h2>
+          {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
+          {waiting ? items.map((i) =>
+            i.kind === 'approval' ? <ApprovalRow key={i.approvalId} item={i} onOpen={onOpen} />
+            : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} now={now} onOpen={onOpen} />,
+          ) : <p className="muted">Nothing is waiting on you.</p>}
+        </div>
+        <Topics topics={topics} openId={topicId} now={now} onOpen={onOpenTopic} onNew={() => mag.newChat(project.id).then(onOpenTopic)} />
       </div>
 
       <div className="side">
@@ -114,6 +124,73 @@ export function Home({ project, tasks, state, onOpen, onOpenKey, onStage, onNewT
         </div>
       </div>
     </section>
+  )
+}
+
+/** Project chats as topics: open one in the chat aside, rename it inline, delete it. */
+function Topics({ topics, openId, now, onOpen, onNew }: { topics: AgentSession[]; openId: string | null; now: number; onOpen: (id: string) => void; onNew: () => void }) {
+  // The aside shows the newest topic when none is picked (or the picked one is gone).
+  const shown = topics.find((t) => t.id === openId) ?? topics[0]
+  return (
+    <div className="card">
+      <div className="cardhead">
+        <h2>Topics <span className="muted">{topics.length}</span></h2>
+        <div className="grow" />
+        <button className="small" onClick={onNew}>+ New topic</button>
+      </div>
+      {topics.length ? topics.map((t) => <TopicRow key={t.id} topic={t} open={t === shown} now={now} onOpen={() => onOpen(t.id)} />) : <p className="muted">No topics yet.</p>}
+    </div>
+  )
+}
+
+function TopicRow({ topic, open, now, onOpen }: { topic: AgentSession; open: boolean; now: number; onOpen: () => void }) {
+  const title = topic.title ?? 'Topic'
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(title)
+  // Esc cancels: the blur that follows must not save.
+  const cancelled = useRef(false)
+  const startEdit = () => {
+    cancelled.current = false
+    setDraft(title)
+    setEditing(true)
+  }
+  const save = () => {
+    setEditing(false)
+    if (cancelled.current) return
+    const t = draft.trim()
+    if (t && t !== title) void mag.renameChat(topic.id, t)
+  }
+  const remove = () => {
+    if (confirm(`Delete topic "${title}"? Its history is lost.`)) void mag.deleteChat(topic.id)
+  }
+  return (
+    <div className={`topicrow${open ? ' on' : ''}`} onClick={editing ? undefined : onOpen}>
+      {topic.status === 'running' && <span className="dot live" />}
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          aria-label="Topic title"
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              cancelled.current = true
+              e.currentTarget.blur()
+            }
+          }}
+        />
+      ) : (
+        <span className="title" title={title}>{title}</span>
+      )}
+      <span className="grow" />
+      <span className="muted small">{threadTime(topic.createdAt, now)}</span>
+      <button className="iconbtn" aria-label="Rename topic" title="Rename" onClick={act(startEdit)}>✎</button>
+      <button className="iconbtn" aria-label="Delete topic" title="Delete" onClick={act(remove)}>🗑</button>
+    </div>
   )
 }
 

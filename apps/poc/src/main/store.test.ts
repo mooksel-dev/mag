@@ -198,3 +198,17 @@ test('a restart ends live processes: running turns go idle, background tasks are
   assert.equal(turn.live, undefined)
   assert.deepEqual(turn.items, [])
 })
+
+test('deleteSession removes only the session; project canvases and events stay', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Topic' })
+  const other = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const c = store.saveCanvas({ projectId: p.id, taskId: null, sessionId: s.id, title: 'mock', kind: 'html', html: '<p>' })
+  store.logEvent({ projectId: p.id, taskId: null, taskKey: null, kind: 'architecture', text: 'x' })
+  store.deleteSession(s.id)
+  assert.deepEqual(store.data.sessions.map((x) => x.id), [other.id])
+  assert.ok(store.data.canvases[c.id])
+  assert.equal(store.data.events.length, 1)
+  assert.throws(() => store.deleteSession(s.id), /No session/)
+})
