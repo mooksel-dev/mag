@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {} }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -114,6 +114,7 @@ app.whenReady().then(async () => {
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)
   actions.completeStep = (id) => orch.completeStep(id)
+  actions.addRepo = (id, ref) => orch.addRepo(id, ref)
   const tracker = createTrackerService(store, { startImport: (id) => orch.importTicket(id) })
 
   protocol.handle('mag-file', (req) => {

@@ -15,6 +15,7 @@ import {
   openPrs,
   projectColor,
   repoWorkName,
+  stepRepoNames,
   resolveChoice,
   runningAgents,
   subtaskProgress,
@@ -244,6 +245,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
   onOpenKey: (key: string) => void
 }) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
+  const project = state.projects.find((p) => p.id === task.projectId)
   const children = subtasksOf(task.id, tasks)
   const legacy = isLegacy(task)
   // Steps (T-28): each with its own developer session and PRs. A legacy task's subtasks are a checklist.
@@ -326,7 +328,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
           )}
           {singleStep && (
             <div className="sublist stepline">
-              <SubtaskRow sub={children[0]} steps canMove={() => false} onMove={() => {}} />
+              <SubtaskRow sub={children[0]} steps project={project} canMove={() => false} onMove={() => {}} />
             </div>
           )}
           {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
@@ -367,7 +369,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
         <div className="taskbody">
           {shownTab === 'document' &&
             (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
-          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} steps={stepMode} />}
+          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} steps={stepMode} project={project} />}
           {shownTab === 'diff' && <DiffTab diagrams={diagrams} />}
           {shownTab === 'canvases' &&
             (canvases.length ? (
@@ -416,7 +418,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
  * The task's steps in order. Steps: status follows the lifecycle (read-only icon); todo steps can be edited and swap
  * places. A legacy checklist: the user can tick, edit and reorder any step.
  */
-function SubtaskList({ parent, subs, tasks, steps }: { parent: Task; subs: Task[]; tasks: Task[]; steps: boolean }) {
+function SubtaskList({ parent, subs, tasks, steps, project }: { parent: Task; subs: Task[]; tasks: Task[]; steps: boolean; project?: Project }) {
   const move = (i: number, dir: 'up' | 'down') => {
     const ids = subs.map((t) => t.id)
     const j = dir === 'up' ? i - 1 : i + 1
@@ -428,7 +430,7 @@ function SubtaskList({ parent, subs, tasks, steps }: { parent: Task; subs: Task[
     <>
       <div className="sublist">
         {subs.map((t, i) => (
-          <SubtaskRow key={t.id} sub={t} steps={steps} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
+          <SubtaskRow key={t.id} sub={t} steps={steps} project={project} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
         ))}
       </div>
       <p className="muted small">
@@ -444,7 +446,9 @@ function SubtaskList({ parent, subs, tasks, steps }: { parent: Task; subs: Task[
 /** Clicking a checklist subtask's status icon steps todo → in progress → done → todo. */
 const nextStatus = (s: Task['status']): SubtaskStatus => SUBTASK_STATUSES[(SUBTASK_STATUSES.indexOf(s as SubtaskStatus) + 1) % SUBTASK_STATUSES.length]
 
-function SubtaskRow({ sub, steps, canMove, onMove }: { sub: Task; steps: boolean; canMove: (dir: 'up' | 'down') => boolean; onMove: (dir: 'up' | 'down') => void }) {
+function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task; steps: boolean; project?: Project; canMove: (dir: 'up' | 'down') => boolean; onMove: (dir: 'up' | 'down') => void }) {
+  // The repositories the groomer planned for the step (T-50); an older step works in all of them and shows none.
+  const repos = steps && project ? stepRepoNames(sub, project) : undefined
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(sub.title)
   const [note, setNote] = useState(sub.description)
@@ -501,6 +505,7 @@ function SubtaskRow({ sub, steps, canMove, onMove }: { sub: Task; steps: boolean
           </div>
           <span className="subextra">
             {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
+            {repos && <span className="muted small" title="Repositories the step changes; only they get a worktree">{repos.length ? repos.join(', ') : 'no code'}</span>}
             {steps && <PrPills prs={taskPrs(sub)} />}
             {/* Sub-ticket of a tracker (T-10) goes here. */}
             {steps && <span className="subticket" />}

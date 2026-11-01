@@ -426,6 +426,7 @@ export class Store {
       needsInput: null,
       work: null,
       ...(parent && { startManually: n.startManually ?? false }),
+      ...(parent && n.repos && { repos: n.repos }),
       ...(!parent && n.tracker && { tracker: n.tracker }),
       nextSubNo: 1,
       archivedAt: null,

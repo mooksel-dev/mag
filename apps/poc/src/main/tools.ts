@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, prRollup, repoWorkName, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type RepoWork, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -22,6 +22,8 @@ export interface ToolActions {
   cancel(taskId: string, reason: string | null): Promise<void>
   /** Marks a step done and removes its worktrees; the task is done once every step is. */
   completeStep(stepId: string): Promise<void>
+  /** A developer's add_repo: a worktree of one more project repository in its step. */
+  addRepo(stepId: string, ref: string): Promise<RepoWork>
 }
 
 /**
@@ -48,6 +50,15 @@ function stepsArg(v: unknown): { title: string; note: string; startManually: boo
     if (!title) throw new Error('Every step needs a title')
     return { title, note: typeof x.note === 'string' ? x.note.replace(/\s+/g, ' ').trim() : '', startManually: x.start_manually === true }
   })
+}
+
+/** Repositories of a step from a tool argument: names or paths of project repositories, stored as paths in project order. */
+function reposArg(v: unknown, project: Project): string[] {
+  if (!Array.isArray(v)) throw new Error('repos must be an array of repository names or paths')
+  const unknown = v.filter((r) => typeof r !== 'string' || !projectRepo(project, r))
+  if (unknown.length) throw new Error(`Not a repository of the project: ${unknown.join(', ')}; one of ${repoNames(project).join(', ') || '(none)'}`)
+  const paths = v.map((r) => projectRepo(project, r as string)!)
+  return project.repos.filter((r) => paths.includes(r))
 }
 
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -107,6 +118,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
               note: t.description || undefined,
               status: t.status,
               startManually: legacy ? undefined : !!t.startManually,
+              repos: legacy ? undefined : stepRepoNames(t, project),
               prs: t.work?.repos.flatMap((r) => (r.prUrl ? [`${r.prUrl} (${r.prState ?? 'unknown'})`] : [])),
               current: t.id === step?.id || undefined,
             })),
@@ -148,7 +160,8 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         canEditSteps()
         const title = String(args.title ?? '').trim()
         if (!title) throw new Error('title is required')
-        const sub = store.createTask({ projectId: project.id, parentId: task.id, title, type: task.type, description: note(args.note), status: 'todo', startManually: args.start_manually === true })
+        const repos = args.repos === undefined ? undefined : reposArg(args.repos, project)
+        const sub = store.createTask({ projectId: project.id, parentId: task.id, title, type: task.type, description: note(args.note), status: 'todo', startManually: args.start_manually === true, repos })
         return `Created ${sub.key}.`
       }
 
@@ -158,6 +171,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (typeof args.title === 'string' && args.title.trim()) patch.title = args.title.trim()
         if (typeof args.note === 'string') patch.description = note(args.note)
         if (typeof args.start_manually === 'boolean') patch.startManually = args.start_manually
+        if (args.repos !== undefined) patch.repos = reposArg(args.repos, project)
         store.updateTask(sub.id, patch)
         return `Updated ${sub.key}.`
       }
@@ -200,6 +214,18 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         await actions.completeStep(step.id)
         const next = currentStep(task.id, store.data.tasks)
         return `${step.key} is done.${next ? ` Next: ${next.key}, in a new session.` : ' Every step is done.'} Stop here.`
+      }
+
+      case 'add_repo': {
+        if (role && role !== 'developer') throw new Error('add_repo is for the developer of a step')
+        if (isLegacy(task)) throw new Error(`${task.key} is a legacy task: every repository has its worktree already`)
+        const step = runStep(store, ctx)
+        if (step?.status !== 'in_progress') throw new Error('No step is in progress')
+        const ref = String(args.repo ?? '').trim()
+        if (!ref) throw new Error(`Pass repo: one of ${repoNames(project).join(', ')}`)
+        const r = await actions.addRepo(step.id, ref)
+        const work = store.task(step.id).work!
+        return `${repoWorkName(work, r)}: worktree ${r.worktree} on branch ${r.branch}. Change it there, never in the main checkout; it gets its own PR like the other repos of ${step.key}.`
       }
 
       case 'set_pr': {
