@@ -417,7 +417,7 @@ function NodeDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
     const n = findNode(all, id)
     return n ? <button key={id} className="link" title={title} onClick={() => onReveal(id)}>{n.name}</button> : null
   }
-  const meta = [path.map((a) => a.name).join(' › '), node.kind, LANES.find((l) => l.layer === node.layer)?.label, node.path].filter(Boolean)
+  const meta = [path.map((a) => a.name).join(' › '), node.kind, LANES.find((l) => l.layer === node.layer)?.label, node.paths?.join(', ') ?? node.path].filter(Boolean)
 
   return (
     <div className="moddetails">
@@ -502,7 +502,7 @@ function DiffDetails({ all, flows, node, onReveal, onOpen, onFlow }: {
     const n = findNode(all, id)
     return n ? <button className="link" onClick={() => onReveal(id)}>{n.name}</button> : <span>{id}</span>
   }
-  const meta = [path.map((a) => a.name).join(' › '), node.kind, LANES.find((l) => l.layer === node.layer)?.label, node.path].filter(Boolean)
+  const meta = [path.map((a) => a.name).join(' › '), node.kind, LANES.find((l) => l.layer === node.layer)?.label, node.paths?.join(', ') ?? node.path].filter(Boolean)
   const groups = (list: CallGroup[], arrow: 'in' | 'out') =>
     list.length ? (
       list.map((g) => (

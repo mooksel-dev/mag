@@ -2,6 +2,9 @@
 
 export type ArchLayer = 'app' | 'service' | 'client' | 'lib'
 
+/** 'system': an app, an outside runtime or a 3rd-party service; 'module': a part of one (T-57.2). */
+export type ArchLevel = 'system' | 'module'
+
 /** How an element of a task diagram changes; no mark = unchanged context. */
 export type DiffMark = 'add' | 'mod' | 'del'
 
@@ -37,7 +40,11 @@ export interface ArchNode {
   kind?: string
   /** Modules inside an app. */
   layer?: ArchLayer
-  /** Folder or file, relative to the repo. */
+  /** System or a module of one; recorded architectures have it on every module (T-57.2). */
+  level?: ArchLevel
+  /** Folders, files or globs relative to the repo: the code it owns. A file belongs to the most specific match (T-57.2). */
+  paths?: string[]
+  /** Before T-57.2: one folder or file, relative to the repo. Diagrams still use it. */
   path?: string
   /** One or two sentences: what it is responsible for. */
   description: string
@@ -55,6 +62,17 @@ export interface ArchDiagram {
   summary: string
   modules: ArchNode[]
   updatedAt: number
+}
+
+/** Gives modules new ids (`from` → `to`), in the uses pointing at them too. */
+export function renameIds<N extends { id: string; uses: { to: string }[]; children?: N[] }>(nodes: N[], ids: Map<string, string>): N[] {
+  if (!ids.size) return nodes
+  return nodes.map((n) => ({
+    ...n,
+    id: ids.get(n.id) ?? n.id,
+    uses: n.uses.map((u) => (ids.has(u.to) ? { ...u, to: ids.get(u.to)! } : u)),
+    ...(n.children && { children: renameIds(n.children, ids) }),
+  }))
 }
 
 /** Layering rules of the mag pattern. null = allowed. */

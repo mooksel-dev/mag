@@ -13,6 +13,9 @@ export const isTest = (path: string) => TEST.test(path)
 
 const adapterOf = (path: string) => ADAPTERS.find((a) => a.matches(path))
 
+/** A source file: one an adapter reads or of a language without an adapter yet. */
+export const isCode = (path: string) => !!adapterOf(path) || CODE.test(path)
+
 interface Parsed {
   elements: ParsedElement[]
   imports: { spec: string; line: number }[]

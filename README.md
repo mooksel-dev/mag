@@ -70,6 +70,9 @@ changes per layer with service interfaces first, and developers must pass `check
 The **Architecture** tab is drawn by an AI architect: **Analyze with AI** runs a read-only agent over the repo, which
 classifies modules into these layers (whatever the folders are called), writes their interfaces and concerns, and saves
 the result via `set_architecture`. The app only renders it: lanes per layer, `uses` as arrows, layering breaks in red.
+Each module has a `level` (system: apps and outside runtimes; module: their parts) and `paths`, the code it owns; every
+code file must be in exactly one module (the most specific path wins), and `set_architecture` lists the files left
+over. A module that owns the same code under a new id gets its previous id back, so diagrams and diffs keep pointing at it.
 It re-runs after every merged PR once a diagram exists.
 
 Developer agents need `git` and an authenticated `gh` CLI. Worktrees live in userData/worktrees.

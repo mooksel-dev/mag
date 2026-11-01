@@ -8,11 +8,16 @@ const ARCH_MODULE = {
   type: 'object',
   required: ['id', 'name', 'description', 'uses'],
   properties: {
-    id: { type: 'string', description: 'kebab-case, unique in the whole tree, stable across runs' },
+    id: { type: 'string', description: 'kebab-case, unique in the whole tree, stable across runs: the previous id from get_architecture for a module that still exists' },
     name: { type: 'string' },
     kind: { type: 'string', description: 'Top level: Electron app, React web, HTTP API, worker, database, 3rd-party API, CLI…' },
+    level: { type: 'string', enum: ['system', 'module'], description: 'system: an app, an outside runtime or a 3rd-party service (the top level); module: a part of one. Default by depth.' },
     layer: { type: 'string', enum: ['app', 'service', 'client', 'lib'], description: 'Modules inside an app.' },
-    path: { type: 'string' },
+    paths: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'The code it owns: folders, files or globs relative to the repository, e.g. "apps/web", "src/billing/*.ts". A file belongs to the most specific match, so an app gives its folder and its inner modules their parts of it. Every code file must be in exactly one module; never give one path to two modules. None for outside runtimes.',
+    },
     description: { type: 'string', description: 'One or two sentences of responsibility.' },
     interface: {
       type: 'array',
@@ -409,7 +414,7 @@ export const TOOL_DEFS = [
     name: 'set_architecture',
     scope: 'project',
     description:
-      'Record the architecture of the project as a tree of modules. Replaces the previous one. Top level: apps and outside runtimes (database, 3rd-party API, agent CLI…); inside an app: modules by layer (app, service, client, lib), nested as deep as it helps.',
+      'Record the architecture of the project as a tree of modules. Replaces the previous one. Top level: apps and outside runtimes (database, 3rd-party API, agent CLI…); inside an app: modules by layer (app, service, client, lib), nested as deep as it helps. A new id for a module that owns the same code as a previous one is changed back to the previous id. The answer lists code files no module owns: add them and call again.',
     inputSchema: {
       type: 'object',
       required: ['summary', 'modules'],
