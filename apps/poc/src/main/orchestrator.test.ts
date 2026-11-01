@@ -246,3 +246,50 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.ok(spec.disallowedTools?.includes('Edit'))
   assert.match(spec.appendSystemPrompt ?? '', /ticket_url/)
 })
+
+test('renameChat: project topics only, a non-empty title, kept over the first message and the generated title', async () => {
+  const { store, orch, project, task } = setup()
+  const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  assert.throws(() => orch.renameChat(groomer.id, 'x'), /not a project topic/)
+  const id = orch.newChat(project.id)
+  assert.equal(store.session(id).title, 'New topic')
+  assert.throws(() => orch.renameChat(id, '  \n '), /needs a title/)
+  orch.renameChat(id, '  Pricing   ideas ')
+  assert.equal(store.session(id).title, 'Pricing ideas')
+
+  let titleRuns = 0
+  fake.start = () => {
+    titleRuns++
+    return { kill() {}, done: new Promise<void>(() => {}) }
+  }
+  try {
+    await orch.send(id, 'what should we charge?')
+    const live = opened.at(-1)!
+    live.emit({ type: 'message', text: 'Let us see.' })
+    live.emit({ type: 'turn.done', ok: true })
+    await tick()
+  } finally {
+    fake.start = () => {
+      throw new Error('groomers and developers on Claude Code run on a live process')
+    }
+  }
+  assert.equal(titleRuns, 0)
+  assert.equal(store.session(id).title, 'Pricing ideas')
+})
+
+test('deleteChat: project topics only; closes the live process, then removes the topic', async () => {
+  const { store, orch, project, task } = setup()
+  const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(orch.deleteChat(groomer.id), /not a project topic/)
+  const id = orch.newChat(project.id)
+  await orch.send(id, 'hi')
+  const live = opened.at(-1)!
+  live.emit({ type: 'background', tasks: [{ id: 'b1', name: 'Monitor' }] })
+  let existedAtClose: boolean | null = null
+  live.onClose = () => (existedAtClose = store.data.sessions.some((s) => s.id === id))
+  await orch.deleteChat(id)
+  assert.equal(live.closed, true)
+  assert.equal(existedAtClose, true)
+  assert.equal(store.data.sessions.some((s) => s.id === id), false)
+  assert.equal(store.data.sessions.some((s) => s.id === groomer.id), true)
+})

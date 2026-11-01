@@ -81,6 +81,19 @@ export function App({ projectId }: { projectId: string }) {
     setChatOpen(v)
     try { localStorage.setItem('mag.chatOpen', v ? '1' : '0') } catch { /* ignore */ }
   }
+  // The open topic, per project; ProjectChat falls back to the newest when it is missing or deleted.
+  const topicKey = `mag.topic.${projectId}`
+  const [topicId, setTopicId] = useState<string | null>(() => {
+    try { return localStorage.getItem(topicKey) } catch { return null }
+  })
+  const pickTopic = (id: string) => {
+    setTopicId(id)
+    try { localStorage.setItem(topicKey, id) } catch { /* ignore */ }
+  }
+  const openTopic = (id: string) => {
+    pickTopic(id)
+    toggleChat(true)
+  }
 
   useEffect(() => {
     mag.getState().then((s) => {
@@ -149,9 +162,9 @@ export function App({ projectId }: { projectId: string }) {
           </header>
           <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => go('home')}>
             {task ? (
-              <TaskView key={task.id} task={task} tasks={tasks} state={state} onNav={showView} onOpenKey={openKey} />
+              <TaskView key={task.id} task={task} tasks={tasks} state={state} topicId={topicId} onPickTopic={pickTopic} onNav={showView} onOpenKey={openKey} />
             ) : tab === 'home' ? (
-              <Home project={project} tasks={tasks} state={state} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onImport={() => { showView('backlog'); setFocusNewTask('import') }} />
+              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={openStage} onNewTask={() => { showView('backlog'); setFocusNewTask('task') }} onImport={() => { showView('backlog'); setFocusNewTask('import') }} />
             ) : tab === 'tasks' ? (
               <TasksPage project={project} tasks={tasks} sessions={state.sessions} view={view} onView={setView} onOpen={setTaskId} focusNewTask={focusNewTask} />
             ) : tab === 'architecture' ? (
@@ -163,7 +176,7 @@ export function App({ projectId }: { projectId: string }) {
         </main>
         {chatOpen && !task && (
           <ErrorBoundary key={project.id} screen="Project chat" appVersion={state.appVersion}>
-            <ProjectChat projectId={project.id} state={state} onOpenTask={openKey} onClose={() => toggleChat(false)} />
+            <ProjectChat projectId={project.id} state={state} chatId={topicId} onPick={pickTopic} onOpenTask={openKey} onClose={() => toggleChat(false)} />
           </ErrorBoundary>
         )}
         </div>
@@ -221,7 +234,15 @@ function sessionGroups(steps: Task[], sessions: AgentSession[]): SessionGroup[] 
   return groups.filter((g) => g.sessions.length || g.step)
 }
 
-function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks: Task[]; state: AppState; onNav: (view: TasksView) => void; onOpenKey: (key: string) => void }) {
+function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }: {
+  task: Task
+  tasks: Task[]
+  state: AppState
+  topicId: string | null
+  onPickTopic: (id: string) => void
+  onNav: (view: TasksView) => void
+  onOpenKey: (key: string) => void
+}) {
   const sessions = state.sessions.filter((s) => s.taskId === task.id)
   const children = subtasksOf(task.id, tasks)
   const legacy = isLegacy(task)
@@ -380,7 +401,7 @@ function TaskView({ task, tasks, state, onNav, onOpenKey }: { task: Task; tasks:
           {chatMode === 'task' && session && <span className="chatmodel">{session.role} · {session.activeModel ?? 'default'}</span>}
         </div>
         {chatMode === 'project' ? (
-          <ProjectChat key={task.projectId} projectId={task.projectId} state={state} onOpenTask={onOpenKey} embedded />
+          <ProjectChat key={task.projectId} projectId={task.projectId} state={state} chatId={topicId} onPick={onPickTopic} onOpenTask={onOpenKey} embedded />
         ) : session ? (
           <Chat session={session} sessions={state.sessions} onOpenTask={onOpenKey} />
         ) : (

@@ -293,7 +293,35 @@ export class Orchestrator {
   /** Empty project chat; the first send starts the agent. */
   newChat(projectId: string) {
     this.store.project(projectId)
-    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New chat' }).id
+    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
+  }
+
+  private projectChat(sessionId: string) {
+    const session = this.store.session(sessionId)
+    if (session.role !== 'chat' || session.taskId) throw new Error(`Session ${sessionId} is not a project topic`)
+    return session
+  }
+
+  /** The user's title for a topic; the generated title never replaces it. */
+  renameChat(sessionId: string, title: string) {
+    const session = this.projectChat(sessionId)
+    const t = title.replace(/\s+/g, ' ').trim()
+    if (!t) throw new Error('A topic needs a title')
+    session.title = t
+    session.titleGenerated = true
+    this.store.changed()
+  }
+
+  /** Deletes a topic for good: its turn and live process end first (with their background tasks and approvals). */
+  async deleteChat(sessionId: string) {
+    const session = this.projectChat(sessionId)
+    // The end of the run must not start a title run for a topic that is gone.
+    session.titleGenerated = true
+    const run = this.runs.get(sessionId)
+    run?.kill()
+    await Promise.all([run?.done, this.closeLive(sessionId)])
+    this.store.deleteSession(sessionId)
+    log.info('agent', 'topic deleted', { session: sessionId })
   }
 
   /** Start (or restart) grooming in a new background session. */
@@ -452,7 +480,8 @@ export class Orchestrator {
     const session = this.store.session(sessionId)
     if (this.runs.has(sessionId)) throw new Error('Agent is still working')
     session.items.push({ kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
-    if (session.role === 'chat' && !session.items.some((i, n) => i.kind === 'user' && n < session.items.length - 1))
+    // A topic the user renamed keeps its title.
+    if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => i.kind === 'user' && n < session.items.length - 1))
       session.title = (text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
     // A Claude Code slash command goes to the CLI as is; the composer doesn't attach files to one.
     const command = session.agent === 'claude-code' && text.startsWith('/')
