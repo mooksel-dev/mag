@@ -1,9 +1,9 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, todoTasks, withTicket, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
 import { changedRepos } from './git.ts'
-import { TOOL_DEFS, toolForRole } from './tool-defs.ts'
+import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
   taskId?: string
@@ -82,20 +82,56 @@ function findingsArg(v: unknown): ReviewFinding[] {
   })
 }
 
+/** Tickets from a tool argument: [{ url, key? }] (a plain string is a URL); some agent CLIs pass the array as a JSON string. */
+function ticketsArg(v: unknown): TicketRef[] {
+  let raw = v ?? []
+  if (typeof raw === 'string') {
+    try {
+      raw = raw.trim().startsWith('[') ? JSON.parse(raw) : [raw]
+    } catch {
+      throw new Error('tickets must be an array of { url, key? }')
+    }
+  }
+  if (!Array.isArray(raw)) throw new Error('tickets must be an array of { url, key? }')
+  return raw.reduce<TicketRef[]>((all, x: unknown) => {
+    const o = (typeof x === 'string' ? { url: x } : (x ?? {})) as Record<string, unknown>
+    return withTicket(all, ticketRef(String(o.url ?? ''), typeof o.key === 'string' ? o.key : null))
+  }, [])
+}
+
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 
 function taskType(v: unknown): TaskType {
+  if (v === undefined || v === null || v === '') return 'dev'
   if (!TYPES.includes(v as TaskType)) throw new Error(`type must be one of ${TYPES.join(', ')}`)
   return v as TaskType
+}
+
+/**
+ * A project chat planning a work it owns (T-55.5): the owner tools take the work's key, and the call runs as in that
+ * work. Only the topic that owns the work may; a work planned by its groomer is the groomer's.
+ */
+function ownerContext(store: Store, ctx: ToolContext, name: string, args: Record<string, unknown>, role: string | undefined): ToolContext {
+  if (ctx.taskId || role !== 'chat' || !(OWNER_TOOLS as readonly string[]).includes(name)) return ctx
+  const key = typeof args.work === 'string' ? args.work.trim() : ''
+  if (!key) {
+    if (name === 'show_diagram' || name === 'show_canvas') return ctx
+    throw new Error(`${name} needs work: the key of a work this topic owns, e.g. T-3`)
+  }
+  const work = store.data.tasks.find((t) => t.projectId === ctx.projectId && !t.parentId && t.key.toLowerCase() === key.toLowerCase())
+  if (!work) throw new Error(`No work ${key}`)
+  if (work.ownerSessionId !== ctx.sessionId) throw new Error(`${work.key} is not planned in this topic${work.ownerSessionId ? ' (its owner is another session)' : ''}: only its owner changes its plan`)
+  return { ...ctx, taskId: work.id }
 }
 
 export type ToolHandler = (ctx: ToolContext, name: string, args: Record<string, unknown>) => Promise<string>
 
 export function createTools(store: Store, actions: ToolActions): ToolHandler {
-  return async (ctx, name, args) => {
-    const role = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.role : undefined
+  return async (callCtx, name, args) => {
+    const role = callCtx.sessionId ? store.data.sessions.find((s) => s.id === callCtx.sessionId)?.role : undefined
     const def = TOOL_DEFS.find((d) => d.name === name)
     if (def && role && !toolForRole(def, role)) throw new Error(`${name} is not available to the ${role} agent`)
+    const ctx = ownerContext(store, callCtx, name, args, role)
     const projectId = ctx.taskId ? store.task(ctx.taskId).projectId : (ctx.projectId ?? '')
     const shared = sharedTool(store, actions, store.project(projectId), ctx, name, args)
     if (shared !== undefined) return shared
@@ -159,7 +195,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
             },
             diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c), ...placementOut(store, project, task.id, c) })),
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
-            tracker: task.tracker ?? undefined,
+            tickets: task.tickets?.length ? task.tickets : undefined,
           },
           null,
           2,
@@ -328,24 +364,6 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         return actions.setReview(stepId, verdict, findings)
       }
 
-      case 'get_import': {
-        if (!task.tracker) throw new Error(`${task.key} is not linked to a ticket`)
-        const { key, url, kind } = task.tracker
-        return JSON.stringify({ key, url, kind }, null, 2)
-      }
-
-      case 'set_brief': {
-        const link = task.tracker
-        if (!link) throw new Error(`${task.key} is not linked to a ticket`)
-        const title = String(args.title ?? '').replace(/\s+/g, ' ').trim()
-        const brief = String(args.brief ?? '').trim()
-        if (!title || !brief) throw new Error('title and brief are required')
-        const url = typeof args.url === 'string' && args.url.trim() ? args.url.trim() : null
-        if (url && !/^https:\/\/\S+$/.test(url)) throw new Error('url must be an https link')
-        store.updateTask(task.id, { title, description: brief, tracker: { ...link, url: link.url ?? url, importedAt: Date.now() } })
-        return `Brief of ${task.key} written. Stop here.`
-      }
-
       default:
         throw new Error(`Unknown tool ${name}`)
     }
@@ -502,6 +520,7 @@ function sharedTool(
             parent: t.parentId ? keyOf(t.parentId) : undefined,
             needsInput: t.needsInput ?? undefined,
             prs: t.work?.repos.flatMap((r) => (r.prUrl ? [`${r.prUrl} (${r.prState ?? 'unknown'})`] : [])),
+            tickets: t.tickets?.length ? t.tickets.map((x) => x.url) : undefined,
             cancelReason: t.cancelReason ?? undefined,
           })),
         },
@@ -515,24 +534,28 @@ function sharedTool(
       return JSON.stringify({ ...t, parent: t.parentId && keyOf(t.parentId), doc: store.data.docs[t.id] ?? '(empty)' }, null, 2)
     }
 
-    case 'create_task': {
+    case 'create_work': {
       const md = typeof args.doc === 'string' ? args.doc : ''
       const plan = args.plan === true
       const steps = stepsArg(args.steps)
+      const title = String(args.title ?? '').replace(/\s+/g, ' ').trim()
+      if (!title) throw new Error('title is required')
       if (plan && !md.trim()) throw new Error('plan: true needs the full doc')
       if (plan && !steps.length) throw new Error('plan: true needs steps: at least one { title, note?, start_manually? }')
-      // The link is checked first: a bad URL or a ticket linked elsewhere creates nothing.
-      const ticketUrl = typeof args.ticket_url === 'string' && args.ticket_url.trim() ? args.ticket_url : null
-      const tracker = ticketUrl ? ticketLink(tasks, null, ticketUrl) : undefined
+      // The links are checked first: a bad one creates nothing.
+      const tickets = ticketsArg(args.tickets)
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      const owner = session?.role === 'chat' ? session.id : undefined
       const t = store.createTask({
         projectId: project.id,
-        title: String(args.title),
+        title,
         type: taskType(args.type),
         description: String(args.description ?? ''),
-        status: plan ? 'todo' : undefined,
-        tracker,
-        // The topic that discussed it owns the work: its fork reviews the PRs first (T-55.1).
-        ownerSessionId: ctx.sessionId && store.data.sessions.find((s) => s.id === ctx.sessionId)?.role === 'chat' ? ctx.sessionId : undefined,
+        // The topic that creates a work plans it (T-55.5): no groomer, it is in planning from the start.
+        status: plan ? 'todo' : owner ? 'grooming' : undefined,
+        tickets,
+        // The topic that discussed it owns the work: it plans it, and its fork reviews the PRs first (T-55.1).
+        ownerSessionId: owner,
       })
       // `tasks` was read before the new task existed, so it is the plan ahead of it.
       if (md.trim()) store.data.docs[t.id] = md
@@ -540,15 +563,18 @@ function sharedTool(
       else if (md.trim()) store.changed()
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
       const moved = adopted(store, t.id, md)
-      return plan ? `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.${moved}` : `Created ${t.key} in the backlog.${moved}`
+      if (plan) return `Created ${t.key} in todo (priority ${todoTasks(tasks).length + 1}); the user starts it.${moved}`
+      return owner
+        ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user moves it to todo when the plan is ready.${moved}`
+        : `Created ${t.key} in the backlog.${moved}`
     }
 
-    case 'link_ticket': {
+    case 'add_ticket': {
       const t = byKey(args.key)
-      if (t.parentId) throw new Error(`${t.key} is a step; link its task ${keyOf(t.parentId)} instead`)
-      const tracker = ticketLink(tasks, t, String(args.url ?? ''))
-      store.updateTask(t.id, { tracker })
-      return `Linked ${t.key} to ${tracker.key}.`
+      if (t.parentId) throw new Error(`${t.key} is a step; add the ticket to its work ${keyOf(t.parentId)}`)
+      const ticket = ticketRef(String(args.url ?? ''), typeof args.ticket_key === 'string' ? args.ticket_key : null)
+      store.updateTask(t.id, { tickets: withTicket(t.tickets, ticket) })
+      return `${t.key} is about ${ticket.key ?? ticket.url} now (${store.task(t.id).tickets!.length} ticket(s)).`
     }
 
     case 'update_task': {

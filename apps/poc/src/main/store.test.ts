@@ -89,15 +89,21 @@ test('T-26 migration: groomed and planned become todo in queue order, in_review 
   assert.deepEqual(again.data.tasks, store.data.tasks, 'idempotent')
 })
 
-test('T-37 migration: no integration on tracker scopes and links; scopes without a base go', () => {
+test('T-55.5 migration: the tracker link becomes tickets; no tracker settings', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
-  const projects = [{ id: 'p', name: 'p', repos: [], trackers: [{ integrationId: 'atl', kind: 'jira', scope: 'OLD' }, { integrationId: 'atl', kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] }]
-  const tracker = { integrationId: 'atl', kind: 'jira', key: 'ABC-1', url: null, importedAt: 5 }
-  const tasks = [{ id: 't', projectId: 'p', key: 'T-1', parentId: null, title: 't', type: 'dev', status: 'backlog', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0, tracker }]
+  const projects = [{ id: 'p', name: 'p', repos: [], trackers: [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }] }]
+  const base = { projectId: 'p', parentId: null, title: 't', type: 'dev', status: 'backlog', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0 }
+  const tasks = [
+    { ...base, id: 'a', key: 'T-1', tracker: { kind: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1', importedAt: 5 } },
+    { ...base, id: 'b', key: 'T-2', tracker: { kind: 'jira', key: 'ABC-2', url: null, importedAt: null } },
+    { ...base, id: 'c', key: 'T-3', tracker: null },
+  ]
   writeFileSync(file, JSON.stringify({ projects, tasks, sessions: [] }))
   const store = new Store(file)
-  assert.deepEqual(store.project('p').trackers, [{ kind: 'jira', scope: 'ABC', base: 'https://acme.atlassian.net' }])
-  assert.deepEqual(store.task('t').tracker, { kind: 'jira', key: 'ABC-1', url: null, importedAt: 5 })
+  assert.equal('trackers' in store.project('p'), false)
+  assert.deepEqual(store.task('a').tickets, [{ url: 'https://acme.atlassian.net/browse/ABC-1', key: 'ABC-1' }])
+  assert.equal(store.task('b').tickets, undefined, 'no URL, no ticket')
+  assert.ok(['a', 'b', 'c'].every((id) => !('tracker' in store.task(id))))
 })
 
 test('project windows and recent projects persist', () => {

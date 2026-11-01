@@ -55,120 +55,48 @@ export interface Project {
   color?: string | null
   /** Done and canceled tasks are archived this many days after they finished; 0 = never. Missing = DEFAULT_AUTO_ARCHIVE_DAYS. */
   autoArchiveDays?: number
-  /** Tracker projects / teams tickets are imported from (T-10). Missing = none. */
-  trackers?: TrackerScope[]
   createdAt: number
 }
 
 export const DEFAULT_AUTO_ARCHIVE_DAYS = 14
 
-export type TrackerKind = 'jira' | 'linear'
+/**
+ * A ticket a work is about (T-55.5): only a link. mag knows no tracker: reading, searching and commenting are the
+ * agent's, through whatever the user's environment has (MCP, CLI); what it may write there is the playbook's.
+ */
+export interface TicketRef {
+  /** The ticket's web link. */
+  url: string
+  /** Its key as the tracker shows it (e.g. ABC-12), when known. */
+  key?: string
+  /** When an agent last commented in the ticket, if it ever did. */
+  commentedAt?: number | null
+}
+
+/** A key like ABC-12 (Jira, Linear and the like) in the last segments of a ticket URL. */
+const URL_KEY = /(?:^|[/=])([A-Za-z][A-Za-z0-9_]*-\d+)(?=$|[/?#&])/
 
 /**
- * A tracker project (Jira) or team (Linear) whose bare ticket keys become links (T-10, T-37). How the agent reads the
- * ticket (MCP, acli, …) is up to the agent; mag only knows the link.
+ * The ticket a link names: any https URL; `key` if given, else one like ABC-12 the URL shows, else none.
+ * Throws when the text is not an https link.
  */
-export interface TrackerScope {
-  kind: TrackerKind
-  /** Jira project key or Linear team key, e.g. "ABC": the prefix of its ticket keys. */
-  scope: string
-  /** Jira site (https://acme.atlassian.net) or Linear workspace (acme); see trackerBase. */
-  base: string
+export function ticketRef(url: string, key?: string | null): TicketRef {
+  const u = url.trim()
+  if (!/^https:\/\/[^/?#\s]+\S*$/i.test(u)) throw new Error(`Not a ticket link: ${url || '(empty)'}; pass its https URL`)
+  const k = key?.trim() || URL_KEY.exec(u.replace(/^https:\/\/[^/]+/i, ''))?.[1]?.toUpperCase()
+  return k ? { url: u, key: k } : { url: u }
 }
 
-/** The ticket a top-level task is linked to: imported (T-10) or linked by URL (T-36). Read-only context: mag never writes to the tracker. */
-export interface TrackerLink {
-  kind: TrackerKind
-  /** Ticket key, e.g. "ABC-12". */
-  key: string
-  /** null only for tickets imported by bare key before T-37, until the tracker agent reports the link. */
-  url: string | null
-  /** When the tracker agent wrote the brief; null while the import runs, after it failed, or for a plain link. */
-  importedAt: number | null
+/** What a ticket shows as: its key, else its link without https://. */
+export function ticketLabel(t: TicketRef): string {
+  return t.key ?? t.url.replace(/^https:\/\//i, '').replace(/\/+$/, '')
 }
 
-/**
- * The base of a tracker as typed in Settings → Trackers: the origin of any Jira site URL (a bare host gets https://),
- * the workspace of a Linear slug or linear.app/<ws>/… URL. null when it is neither.
- */
-export function trackerBase(kind: TrackerKind, text: string): string | null {
-  const t = text.trim()
-  if (kind === 'linear') {
-    const ws = /^(?:(?:https?:\/\/)?linear\.app\/)?([A-Za-z0-9][A-Za-z0-9_-]*)(?:[/?#]\S*)?$/i.exec(t)?.[1]
-    return ws ? ws.toLowerCase() : null
-  }
-  const host = /^(?:(https?):\/\/)?([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)(?:[/?#]\S*)?$/i.exec(t)
-  return host ? `${(host[1] ?? 'https').toLowerCase()}://${host[2].toLowerCase()}` : null
-}
-
-/** The web link of a ticket: <site>/browse/KEY on Jira, linear.app/<workspace>/issue/KEY on Linear. */
-export function ticketUrl(kind: TrackerKind, base: string, key: string): string {
-  return kind === 'jira' ? `${base.replace(/\/+$/, '')}/browse/${key}` : `https://linear.app/${base}/issue/${key}`
-}
-
-const TICKET_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
-
-/** The scope of a ticket key: the first one of `kind` (any kind if omitted) whose key is the ticket's prefix. */
-function scopeOf(key: string, scopes: TrackerScope[], kind?: TrackerKind): TrackerScope | undefined {
-  const prefix = key.slice(0, key.lastIndexOf('-')).toUpperCase()
-  return scopes.find((s) => (!kind || s.kind === kind) && s.scope.trim().toUpperCase() === prefix)
-}
-
-/**
- * The ticket a Jira URL (…/browse/ABC-12 or ?selectedIssue=ABC-12) or a Linear URL (linear.app/<ws>/issue/ENG-12/…)
- * names, whatever the tracker scopes. The url is canonical. null for anything else.
- */
-export function parseTicketUrl(text: string): { kind: TrackerKind; key: string; url: string } | null {
-  // Core has no URL global: origin, path and query by hand.
-  const url = /^(https?:\/\/[^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(#\S*)?$/i.exec(text.trim())
-  if (!url) return null
-  const [, origin, path = '', query = ''] = url
-  const found = (kind: TrackerKind, raw: string | undefined, link: (key: string) => string) => {
-    if (!raw || !TICKET_KEY.test(raw)) return null
-    const key = raw.toUpperCase()
-    return { kind, key, url: link(key) }
-  }
-  if (/^https?:\/\/linear\.app$/i.test(origin)) {
-    const m = /^\/([^/]+)\/issue\/([^/]+)/.exec(path)
-    return found('linear', m?.[2], (key) => `https://linear.app/${m![1]}/issue/${key}`)
-  }
-  const raw = /\/browse\/([^/]+)/.exec(path)?.[1] ?? /[?&]selectedIssue=([^&]+)/.exec(query)?.[1]
-  return found('jira', raw, (key) => `${origin}/browse/${key}`)
-}
-
-/**
- * The ticket a pasted link or key names, within the project's tracker scopes: a ticket URL (see parseTicketUrl) or a
- * bare key whose prefix is a scope, linked through the scope's base. The url is canonical. null when nothing matches a scope.
- */
-export function parseTrackerRef(text: string, scopes: TrackerScope[]): { scope: TrackerScope; key: string; url: string } | null {
-  const ref = text.trim()
-  if (TICKET_KEY.test(ref)) {
-    const key = ref.toUpperCase()
-    const scope = scopeOf(key, scopes)
-    return scope ? { scope, key, url: ticketUrl(scope.kind, scope.base, key) } : null
-  }
-  const ticket = parseTicketUrl(ref)
-  const scope = ticket && scopeOf(ticket.key, scopes, ticket.kind)
-  return ticket && scope ? { scope, key: ticket.key, url: ticket.url } : null
-}
-
-/** The project's top-level task already linked to this ticket, if any. */
-export function linkedTask(tasks: Task[], key: string): Task | null {
-  const k = key.trim().toUpperCase()
-  return tasks.find((t) => !t.parentId && t.tracker?.key.toUpperCase() === k) ?? null
-}
-
-/**
- * The link a ticket URL gives `task` (null = a task about to be created) among the project's `tasks`, no import, no
- * tracker settings needed. Throws when the text is not a Jira or Linear ticket URL, or the ticket is already linked to
- * another task (one ticket, one task).
- */
-export function ticketLink(tasks: Task[], task: Task | null, text: string): TrackerLink {
-  const ticket = parseTicketUrl(text)
-  if (!ticket) throw new Error('Not a Jira or Linear ticket link')
-  const linked = linkedTask(tasks, ticket.key)
-  if (linked && linked.id !== task?.id) throw new Error(`${ticket.key} is already linked to ${linked.key}`)
-  return { kind: ticket.kind, key: ticket.key, url: ticket.url, importedAt: null }
+/** The work's tickets with `t` added; the same URL (or key) once, the newer one wins. */
+export function withTicket(tickets: TicketRef[] | undefined, t: TicketRef): TicketRef[] {
+  const same = (x: TicketRef) => x.url === t.url || (!!x.key && x.key === t.key)
+  const old = (tickets ?? []).find(same)
+  return [...(tickets ?? []).filter((x) => !same(x)), old?.commentedAt ? { ...t, commentedAt: old.commentedAt } : t]
 }
 
 /** Project colors, readable on light and dark backgrounds. */
@@ -534,8 +462,8 @@ export interface Task {
   archivedAt: number | null
   /** Why the user canceled the task, if they said. */
   cancelReason?: string | null
-  /** Top-level tasks imported from a tracker: the ticket (T-10). */
-  tracker?: TrackerLink | null
+  /** Top-level tasks: the tickets the work is about, as links (T-55.5); [] or missing = none. */
+  tickets?: TicketRef[]
   /**
    * Top-level tasks: the session where the work was discussed and planned (the chat topic that created it, or its
    * groomer). Its fork reviews the steps' PRs first (T-55.1). Missing or gone: a fresh reviewer reads the doc.
@@ -547,8 +475,8 @@ export interface Task {
   updatedAt: number
 }
 
-/** chat = project-level conversation, not tied to a task. tracker = reads a ticket into a task (import). */
-export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect' | 'tracker'
+/** chat = project-level conversation, not tied to a task. */
+export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
 export type AgentKind = 'claude-code' | 'codex'
 
 /** Which provider runs a role and on which model. */
@@ -572,8 +500,8 @@ export interface AgentInfo {
   models: AgentModel[]
 }
 
-/** Roles the user can configure; reviewer follows developer. tracker defaults to the provider's cheap model (see orchestrator). */
-export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect', 'tracker']
+/** Roles the user can configure; reviewer follows developer. */
+export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect']
 
 export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null }
 
@@ -710,7 +638,7 @@ export interface BackgroundTask {
 
 /**
  * Sessions that run on a long-lived process (T-40): project chats, groomers and developers on Claude Code. Others
- * (Codex, the tracker) run a process per turn.
+ * (Codex, reviewers) run a process per turn.
  */
 export function liveSession(s: Pick<AgentSession, 'role' | 'agent'>): boolean {
   return s.agent === 'claude-code' && (s.role === 'chat' || s.role === 'groomer' || s.role === 'developer')
@@ -1033,7 +961,7 @@ export interface InboxItem {
   task: Task | null
   kind: InboxKind
   text: string
-  /** Session the item comes from: the approval's session, or the task's groomer/developer/tracker/reviewer that ran last. */
+  /** Session the item comes from: the approval's session, or the task's groomer/developer/reviewer that ran last. */
   session?: AgentSession
   /** review_look and ready_to_merge: the agent review of the current step, when it covers its PRs as they are. */
   review?: AgentReview
@@ -1043,8 +971,8 @@ export interface InboxItem {
 
 const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'ready_to_start']
 
-const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'tracker', 'reviewer']
-const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', tracker: 'Import failed', reviewer: 'Review failed' }
+const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'reviewer']
+const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', reviewer: 'Review failed' }
 
 /** The task's agent session that ran last (a step's reviewer runs again after its developer). */
 export function lastTaskSession(taskId: string, sessions: AgentSession[]): AgentSession | undefined {
@@ -1057,8 +985,7 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   if (task.parentId || task.archivedAt || task.status === 'canceled') return null
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
-  // A failed import is moot once the task is unlinked: nothing to retry.
-  if (last?.status === 'error' && (last.role !== 'tracker' || !!task.tracker)) return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
+  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }

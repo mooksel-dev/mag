@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TrackerLink } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TicketRef } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -55,8 +55,8 @@ export interface NewTask {
   startManually?: boolean
   /** Steps: the repositories it changes (see Task.repos). */
   repos?: string[]
-  /** Top-level tasks: the ticket it is imported from. */
-  tracker?: TrackerLink
+  /** Top-level tasks: the tickets it is about (see Task.tickets). */
+  tickets?: TicketRef[]
   /** Top-level tasks: the session that discussed and planned it (see Task.ownerSessionId). */
   ownerSessionId?: string
 }
@@ -103,19 +103,14 @@ export interface MagApi {
   /** Runs the agent review of the current step's PRs again (after a failed one). */
   review(taskId: string): Promise<void>
   /**
-   * Import a tracker ticket by URL or key into a new backlog task; the tracker agent writes its brief in the background.
-   * An unknown ref or a ticket already imported comes back as `error`.
+   * A new work about the ticket a link names (any https link); a groomer plans it in the background and owns it.
+   * Something that is not a link comes back as `error`.
    */
-  importTicket(projectId: string, ref: string): Promise<{ taskId: string } | { error: string }>
-  /** Run the tracker agent's import again on a linked task (no agent running), e.g. after it failed. */
-  retryImport(taskId: string): Promise<void>
-  /**
-   * Link a top-level task to the Jira or Linear ticket a URL names (replacing its link), no import and no settings.
-   * A URL that names no ticket, or a ticket linked to another task, comes back as `error`.
-   */
-  linkTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
-  /** Drop the task's ticket link. */
-  unlinkTicket(taskId: string): Promise<void>
+  workFromTicket(projectId: string, url: string): Promise<{ taskId: string } | { error: string }>
+  /** Add a ticket to a top-level task by its link; something that is not a link comes back as `error`. */
+  addTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
+  /** Drop one of the task's tickets, by its URL. */
+  removeTicket(taskId: string, url: string): Promise<void>
   /** Move a backlog or grooming task to todo; it needs at least one step. */
   moveToTodo(taskId: string): Promise<void>
   /** Check open PRs for merges and new comments right away. */

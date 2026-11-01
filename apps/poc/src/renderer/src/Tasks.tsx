@@ -26,7 +26,7 @@ import {
   type TasksView,
 } from '@mag/core'
 import { ago } from './format'
-import { PrPills, TicketPill } from './LinkPill'
+import { PrPills, TicketPill, TicketPills } from './LinkPill'
 import { StartButton } from './LocalMode'
 
 const mag = window.mag
@@ -69,56 +69,59 @@ export function SubtaskIcon({ status }: { status: TaskStatus }) {
 }
 
 /**
- * The task header's ticket: its pill with a ⋯ menu (Change link, Unlink), or a quiet "Link ticket" without one. Both
- * open a URL field: Enter links, Esc cancels, an unknown URL or a ticket linked elsewhere shows under it.
+ * The work's tickets in its header (T-55.5): a pill per ticket with a ⋯ menu (Remove), and a quiet "+ Ticket" that opens
+ * a URL field: Enter adds, Esc cancels, something that is not a link shows under it.
  */
-export function TicketLink({ task }: { task: Task }) {
+export function TicketLinks({ task }: { task: Task }) {
   const [editing, setEditing] = useState(false)
-  const [menu, setMenu] = useState(false)
+  const [menu, setMenu] = useState<string | null>(null)
   const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const edit = () => { setUrl(task.tracker?.url ?? ''); setError(null); setMenu(false); setEditing(true) }
+  const edit = () => { setUrl(''); setError(null); setMenu(null); setEditing(true) }
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim() || busy) return
     setBusy(true)
-    const r = await mag.linkTicket(task.id, url.trim()).finally(() => setBusy(false))
+    const r = await mag.addTicket(task.id, url.trim()).finally(() => setBusy(false))
     if ('error' in r) return setError(r.error)
     setEditing(false)
   }
-  if (editing)
-    return (
-      <form className="ticketlink" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
-        <input
-          autoFocus
-          value={url}
-          onChange={(e) => { setUrl(e.target.value); setError(null) }}
-          onBlur={() => !url.trim() && setEditing(false)}
-          placeholder="Jira or Linear ticket URL"
-          aria-label="Ticket URL"
-          aria-invalid={!!error}
-        />
-        {error && <span className="err small" role="alert">{error}</span>}
-      </form>
-    )
-  if (!task.tracker) return <button className="link small" title="Link a Jira or Linear ticket by its URL" onClick={edit}>Link ticket</button>
   return (
-    <span className="ticketlink">
-      <TicketPill task={task} />
-      <span className="menu">
-        <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu} title="Ticket link" onClick={() => setMenu((m) => !m)}>⋯</button>
-        {menu && (
-          <>
-            <div className="menuscrim" onClick={() => setMenu(false)} />
-            <div className="menulist small" role="menu">
-              <button role="menuitem" onClick={edit}>Change link</button>
-              <button role="menuitem" onClick={() => { setMenu(false); void mag.unlinkTicket(task.id) }}>Unlink</button>
-            </div>
-          </>
-        )}
-      </span>
-    </span>
+    <>
+      {(task.tickets ?? []).map((t) => (
+        <span key={t.url} className="ticketlink">
+          <TicketPill ticket={t} />
+          <span className="menu">
+            <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu === t.url} title="Ticket link" onClick={() => setMenu((m) => (m === t.url ? null : t.url))}>⋯</button>
+            {menu === t.url && (
+              <>
+                <div className="menuscrim" onClick={() => setMenu(null)} />
+                <div className="menulist small" role="menu">
+                  <button role="menuitem" onClick={() => { setMenu(null); void mag.removeTicket(task.id, t.url) }}>Remove</button>
+                </div>
+              </>
+            )}
+          </span>
+        </span>
+      ))}
+      {editing ? (
+        <form className="ticketlink" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+          <input
+            autoFocus
+            value={url}
+            onChange={(e) => { setUrl(e.target.value); setError(null) }}
+            onBlur={() => !url.trim() && setEditing(false)}
+            placeholder="Ticket link (any tracker)"
+            aria-label="Ticket URL"
+            aria-invalid={!!error}
+          />
+          {error && <span className="err small" role="alert">{error}</span>}
+        </form>
+      ) : (
+        <button className="link small" title="Add a ticket this work is about, by its link" onClick={edit}>{task.tickets?.length ? '+ Ticket' : 'Add ticket'}</button>
+      )}
+    </>
   )
 }
 
@@ -136,7 +139,7 @@ export function MoveToTodoButton({ task, tasks, sessions, small }: { task: Task;
   )
 }
 
-export type NewTaskFocus = 'task' | 'import' | null
+export type NewTaskFocus = 'task' | 'ticket' | null
 
 const VIEWS: [TasksView, string][] = [['active', 'Active'], ['backlog', 'Backlog'], ['archive', 'Archive']]
 
@@ -148,7 +151,7 @@ export function TasksPage({ project, tasks, sessions, view, onView, onOpen, focu
   view: TasksView
   onView: (v: TasksView) => void
   onOpen: (id: string) => void
-  /** Focus the new-task title or the import field (from Home). */
+  /** Focus the new-task title or the ticket link field (from Home). */
   focusNewTask: NewTaskFocus
 }) {
   const counts = viewCounts(tasks)
@@ -330,7 +333,7 @@ export function TaskRow({ task, tasks, sessions, now, onOpen, order, drag, actio
           {order !== undefined && <span className="ordno muted small">{order}</span>}
           <span className="key">{task.key}</span>
           <span className="title grow">{task.title}</span>
-          <TicketPill task={task} compact />
+          <TicketPills task={task} compact />
           <AgentDot state={agentState(task, sessions, tasks)} now={now} />
           <PrPills prs={prs} />
           {extra}
@@ -432,13 +435,13 @@ function ArchiveView({ tasks, sessions, now, onOpen }: RowProps) {
   )
 }
 
-/** A new backlog task: typed in, or imported from a tracker ticket (T-10). */
+/** A new backlog task: typed in, or a work started from a ticket link (T-55.5). */
 function NewTask({ projectId, focus, onOpen }: { projectId: string; focus: NewTaskFocus; onOpen: (id: string) => void }) {
-  const [importing, setImporting] = useState(focus === 'import')
+  const [fromTicket, setFromTicket] = useState(focus === 'ticket')
   const [title, setTitle] = useState('')
   const [type, setType] = useState<TaskType>('dev')
   const [description, setDescription] = useState('')
-  if (importing) return <ImportTicket projectId={projectId} onOpen={onOpen} onClose={() => setImporting(false)} />
+  if (fromTicket) return <WorkFromTicket projectId={projectId} onOpen={onOpen} onClose={() => setFromTicket(false)} />
   return (
     <form className="newtask" onSubmit={async (e) => { e.preventDefault(); if (!title.trim()) return; await mag.createTask({ projectId, title: title.trim(), type, description }); setTitle(''); setDescription('') }}>
       <input autoFocus={focus === 'task'} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task title" aria-label="Task title" />
@@ -448,22 +451,22 @@ function NewTask({ projectId, focus, onOpen }: { projectId: string; focus: NewTa
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What and why, as briefly as you like" aria-label="Task description" rows={2} />
       <span className="newtaskactions">
         <button type="submit">Add to backlog</button>
-        <button type="button" title="Import a Jira or Linear ticket by its URL or key" onClick={() => setImporting(true)}>Import from tracker</button>
+        <button type="button" title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={() => setFromTicket(true)}>From a ticket</button>
       </span>
     </form>
   )
 }
 
-/** A ticket URL or key → a new backlog task, which opens; the tracker agent writes its brief in the background. */
-function ImportTicket({ projectId, onOpen, onClose }: { projectId: string; onOpen: (id: string) => void; onClose: () => void }) {
-  const [ref, setRef] = useState('')
+/** A ticket link → a new work, which opens; a groomer reads the ticket and plans it in the background. */
+function WorkFromTicket({ projectId, onOpen, onClose }: { projectId: string; onOpen: (id: string) => void; onClose: () => void }) {
+  const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!ref.trim() || busy) return
+    if (!url.trim() || busy) return
     setBusy(true)
-    const r = await mag.importTicket(projectId, ref.trim()).finally(() => setBusy(false))
+    const r = await mag.workFromTicket(projectId, url.trim()).finally(() => setBusy(false))
     if ('error' in r) return setError(r.error)
     onOpen(r.taskId)
   }
@@ -471,18 +474,18 @@ function ImportTicket({ projectId, onOpen, onClose }: { projectId: string; onOpe
     <form className="newtask importtask" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
       <input
         autoFocus
-        value={ref}
-        onChange={(e) => { setRef(e.target.value); setError(null) }}
-        placeholder="Ticket URL or key, e.g. https://acme.atlassian.net/browse/ABC-12 or ENG-7"
-        aria-label="Ticket URL or key"
+        value={url}
+        onChange={(e) => { setUrl(e.target.value); setError(null) }}
+        placeholder="Ticket link, e.g. https://acme.atlassian.net/browse/ABC-12"
+        aria-label="Ticket URL"
         aria-invalid={!!error}
       />
       <span className="newtaskactions">
-        <button type="submit" className="primary" disabled={!ref.trim() || busy}>Import</button>
+        <button type="submit" className="primary" disabled={!url.trim() || busy}>Start</button>
         <button type="button" onClick={onClose}>New task instead</button>
       </span>
       {error ? <span className="err small" role="alert">{error}</span>
-        : <span className="muted small">mag only reads the ticket: the tracker agent writes its description, comments, sub-tickets and linked pages into the brief. Trackers are set up in Settings → Trackers.</span>}
+        : <span className="muted small">mag keeps only the link. A groomer reads the ticket any way your environment has (MCP, CLI) and plans the work; to plan it yourself, discuss it in a project chat instead.</span>}
     </form>
   )
 }

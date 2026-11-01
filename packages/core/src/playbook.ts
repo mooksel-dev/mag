@@ -7,7 +7,7 @@ export type PlaybookSection = 'plan' | 'step' | 'review' | 'tracker'
 export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['plan', 'step', 'review', 'tracker']
 
 export interface Playbook {
-  /** How to plan a work: information → problem → options with diagrams → plan. Groomer. */
+  /** How to plan a work: information → problem → options with diagrams → plan. The owner: the chat that made it, or its groomer. */
   plan: string
   /** How to do a step: tests, self-review, the PR and its description. Developer. */
   step: string
@@ -20,7 +20,8 @@ export interface Playbook {
 }
 
 export const DEFAULT_PLAYBOOK: Playbook = {
-  plan: `1. Call get_task, then read the relevant code in the project repos (read-only).
+  plan: `1. Gather what there is: the work and its tickets (read every ticket, as the tracker section says), the relevant
+   code in the project repos (read-only), docs and earlier decisions.
 2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
 3. Problem check. Restate the problem in one or two sentences. Look for evidence that it is real: the code path, the
    ticket, logs, a reproduction from reading the code. Call out a wrong framing ("the brief asks for X, but the cause
@@ -62,9 +63,12 @@ the doc or a step.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
 2. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?`,
-  tracker: `Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP server, a CLI like acli through Bash, …
-Bash is for reading only. Change nothing in the tracker (no comments, transitions, edits) unless the user explicitly
-asks. If you cannot read a ticket, say what is missing (e.g. no Atlassian MCP, acli not logged in).`,
+  tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
+server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
+comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
+Atlassian MCP, acli not logged in).
+Asked "what is on me?": search the trackers you can reach for open tickets assigned to the user, and list them with key,
+title, status and link, saying which already have a work in mag (list_tasks shows tickets).`,
   reviewRounds: 2,
 }
 

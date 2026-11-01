@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { Diagram, TaskWork } from '@mag/core'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
+import { toolsFor } from './tool-defs.ts'
 
 const setup = () => {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-tools-')), 'db.json'))
@@ -70,32 +71,38 @@ test('checkpoint: a groomer plans steps only after the user answered it in its c
   assert.deepEqual(store.data.tasks.filter((t) => t.parentId === task.id).map((t) => t.title), ['a', 'b', 'c'])
 })
 
-test('create_task with plan: true needs steps', async () => {
+test('create_work with plan: true needs steps', async () => {
   const { store, project, tools } = setup()
   const ctx = { projectId: project.id }
-  await assert.rejects(tools(ctx, 'create_task', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true }), /needs steps/)
-  await tools(ctx, 'create_task', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true, steps: [{ title: 'One' }, { title: 'Two', start_manually: true }] })
+  await assert.rejects(tools(ctx, 'create_work', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true }), /needs steps/)
+  await tools(ctx, 'create_work', { title: 'X', type: 'dev', description: 'd', doc: '# Doc', plan: true, steps: [{ title: 'One' }, { title: 'Two', start_manually: true }] })
   const x = store.data.tasks.find((t) => t.title === 'X')!
   assert.equal(x.status, 'todo')
   assert.deepEqual(store.data.tasks.filter((t) => t.parentId === x.id).map((t) => [t.title, t.startManually]), [['One', false], ['Two', true]])
 })
 
-test('create_task ticket_url and link_ticket: one ticket, one task', async () => {
+test('create_work tickets and add_ticket: links only, any tracker, a ticket in several works (T-55.5)', async () => {
   const { store, project, tools } = setup()
   const ctx = { projectId: project.id }
-  assert.equal(await tools(ctx, 'create_task', { title: 'X', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/abc-12' }), 'Created T-2 in the backlog.')
+  const jira = 'https://acme.atlassian.net/browse/abc-12'
+  assert.equal(await tools(ctx, 'create_work', { title: 'X', description: 'd', tickets: [{ url: jira }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }] }), 'Created T-2 in the backlog.')
   const x = store.data.tasks.find((t) => t.key === 'T-2')!
-  assert.deepEqual(x.tracker, { kind: 'jira', key: 'ABC-12', url: 'https://acme.atlassian.net/browse/ABC-12', importedAt: null })
+  assert.equal(x.type, 'dev', 'type defaults to dev')
+  assert.deepEqual(x.tickets, [{ url: jira, key: 'ABC-12' }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }])
+  await tools(ctx, 'create_work', { title: 'Y', description: 'd', tickets: JSON.stringify([jira]) })
+  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-3')!.tickets, [{ url: jira, key: 'ABC-12' }], 'the same ticket in another work')
+  assert.equal(store.data.tasks.find((t) => t.title === 'Big')!.tickets, undefined, 'a work without a ticket')
   const count = store.data.tasks.length
-  await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
-  await assert.rejects(tools(ctx, 'create_task', { title: 'Y', type: 'dev', description: 'd', ticket_url: 'ABC-13' }), /Not a Jira or Linear ticket link/)
+  await assert.rejects(tools(ctx, 'create_work', { title: 'Z', description: 'd', tickets: [{ url: 'ABC-13' }] }), /Not a ticket link: ABC-13/)
   assert.equal(store.data.tasks.length, count, 'nothing created')
 
-  assert.equal(await tools(ctx, 'link_ticket', { key: 't-1', url: 'https://linear.app/acme/issue/ENG-7/slug' }), 'Linked T-1 to ENG-7.')
-  assert.deepEqual(store.data.tasks.find((t) => t.key === 'T-1')!.tracker, { kind: 'linear', key: 'ENG-7', url: 'https://linear.app/acme/issue/ENG-7', importedAt: null })
-  await assert.rejects(tools(ctx, 'link_ticket', { key: 'T-1', url: 'https://acme.atlassian.net/browse/ABC-12' }), /ABC-12 is already linked to T-2/)
+  assert.match(await tools(ctx, 'add_ticket', { key: 't-1', url: 'https://linear.app/acme/issue/ENG-7/slug' }), /T-1 is about ENG-7 now \(1 ticket/)
+  await tools(ctx, 'add_ticket', { key: 'T-1', url: 'https://linear.app/acme/issue/ENG-7/slug' })
+  await tools(ctx, 'add_ticket', { key: 'T-1', url: 'https://jira.example.com/issue/1', ticket_key: 'OPS-1' })
+  assert.deepEqual(store.task(store.data.tasks.find((t) => t.key === 'T-1')!.id).tickets, [{ url: 'https://linear.app/acme/issue/ENG-7/slug', key: 'ENG-7' }, { url: 'https://jira.example.com/issue/1', key: 'OPS-1' }])
   const step = store.createTask({ projectId: project.id, parentId: x.id, title: 's', type: 'dev', description: '' })
-  await assert.rejects(tools(ctx, 'link_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; link its task T-2 instead/)
+  await assert.rejects(tools(ctx, 'add_ticket', { key: step.key, url: 'https://linear.app/acme/issue/ENG-8' }), /is a step; add the ticket to its work T-2/)
+  assert.deepEqual(JSON.parse(await tools(ctx, 'list_tasks', {})).tasks.find((t: { key: string }) => t.key === 'T-2').tickets, [jira, 'https://github.com/o/r/issues/5'])
 })
 
 test('steps change only while grooming: never in a task in progress', async () => {
@@ -144,25 +151,10 @@ test('set_pr writes to the step; a second live PR for a repo is an error', async
   assert.equal(info.work.dir, '/nowhere/w')
 })
 
-test('tracker tools: get_import and set_brief for the tracker only; get_task shows the ticket', async () => {
-  const { store, project, tools } = setup()
-  const link = { kind: 'jira' as const, key: 'ABC-12', url: null, importedAt: null }
-  const task = store.createTask({ projectId: project.id, title: 'ABC-12', type: 'dev', description: '', tracker: link })
-  const tracker = store.createSession({ projectId: project.id, taskId: task.id, role: 'tracker', agent: 'claude-code', status: 'running' })
-  const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'running' })
-  const call = (name: string, args: Record<string, unknown> = {}, sessionId = tracker.id) => tools({ taskId: task.id, sessionId }, name, args)
-
-  assert.deepEqual(JSON.parse(await call('get_import')), { key: 'ABC-12', url: null, kind: 'jira' })
-  await assert.rejects(call('update_doc', { markdown: 'x' }), /not available to the tracker agent/)
-  await assert.rejects(call('set_brief', { title: 'T', brief: 'B' }, groomer.id), /not available to the groomer agent/)
-  await assert.rejects(call('set_brief', { title: 'T', brief: ' ' }), /required/)
-  await assert.rejects(call('set_brief', { title: 'T', brief: 'B', url: 'javascript:alert(1)' }), /https/)
-
-  await call('set_brief', { title: ' Fix  login ', brief: '# Login\nbroken', url: 'https://acme.atlassian.net/browse/ABC-12' })
-  const t = store.task(task.id)
-  assert.deepEqual([t.title, t.description, t.tracker?.url], ['Fix login', '# Login\nbroken', 'https://acme.atlassian.net/browse/ABC-12'])
-  assert.ok(t.tracker?.importedAt)
-  assert.equal(JSON.parse(await call('get_task', {}, groomer.id)).tracker.key, 'ABC-12')
+test('get_task shows the work\'s tickets', async () => {
+  const { store, task, call } = setup()
+  store.updateTask(task.id, { tickets: [{ url: 'https://acme.atlassian.net/browse/ABC-12', key: 'ABC-12' }] })
+  assert.deepEqual(JSON.parse(await call('get_task')).tickets, [{ url: 'https://acme.atlassian.net/browse/ABC-12', key: 'ABC-12' }])
 })
 
 test('set_architecture records a module tree, drops unknown and self uses, rejects repeated ids', async () => {
@@ -342,11 +334,64 @@ test('the reviewer reads the task but changes nothing', async () => {
     await assert.rejects(call(name, { markdown: 'x', url: 'https://github.com/o/r/pull/1', reason: 'x', title: 'x' }, reviewer.id), /not available to the reviewer/)
 })
 
-test('create_task from a topic makes the topic the owner of the work', async () => {
+test('create_work from a topic: the topic owns the work and plans it, no groomer (T-55.5)', async () => {
   const { store, project, tools } = setup()
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
-  await tools({ projectId: project.id, sessionId: topic.id }, 'create_task', { title: 'Owned', type: 'dev', description: 'd' })
-  await tools({ projectId: project.id }, 'create_task', { title: 'Orphan', type: 'dev', description: 'd' })
-  assert.equal(store.data.tasks.find((t) => t.title === 'Owned')!.ownerSessionId, topic.id)
-  assert.equal(store.data.tasks.find((t) => t.title === 'Orphan')!.ownerSessionId, undefined)
+  assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'create_work', { title: 'Owned', description: 'd' }), /you own it and plan it here: pass work: "T-2"/)
+  await tools({ projectId: project.id }, 'create_work', { title: 'Orphan', type: 'dev', description: 'd' })
+  const owned = store.data.tasks.find((t) => t.title === 'Owned')!
+  assert.deepEqual([owned.ownerSessionId, owned.status], [topic.id, 'grooming'])
+  const orphan = store.data.tasks.find((t) => t.title === 'Orphan')!
+  assert.deepEqual([orphan.ownerSessionId, orphan.status], [undefined, 'backlog'])
+})
+
+test('owner tools in a project chat: the topic plans the works it owns, passing work (T-55.5)', async () => {
+  const { store, project, tools } = setup()
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  const other = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  const chat = (name: string, args: Record<string, unknown>, sessionId = topic.id) => tools({ projectId: project.id, sessionId }, name, args)
+  await chat('create_work', { title: 'Owned', description: 'd' })
+  // No user message in the topic yet: the groomer's checkpoint is not the owner's.
+  assert.equal(await chat('create_subtask', { work: 't-2', title: 'One', repos: [] }), 'Created T-2.1.')
+  await chat('create_subtask', { work: 'T-2', title: 'Two' })
+  assert.equal(await chat('reorder_subtasks', { work: 'T-2', keys: ['T-2.2', 'T-2.1'] }), 'Order: T-2.2, T-2.1.')
+  await chat('update_subtask', { work: 'T-2', key: 'T-2.1', note: 'the core' })
+  await chat('delete_subtask', { work: 'T-2', key: 'T-2.2' })
+  const owned = store.data.tasks.find((t) => t.key === 'T-2')!
+  assert.deepEqual(store.data.tasks.filter((t) => t.parentId === owned.id).map((t) => [t.key, t.description]), [['T-2.1', 'the core']])
+
+  const diagram = { type: 'state', entity: 'Work', states: [{ id: 'a', label: 'A', initial: true, diff: 'add' }], transitions: [] }
+  const shown = await chat('show_diagram', { work: 'T-2', title: 'States', diagram, role: 'plan', step: 'T-2.1' })
+  assert.match(shown, /in the plan of T-2.1/)
+  const id = /Diagram (\S+) /.exec(shown)![1]
+  assert.equal(store.data.canvases[id].taskId, owned.id, 'the drawing belongs to the work')
+  assert.ok(topic.items.some((i) => i.kind === 'canvas' && i.canvas.id === id), 'and shows in the topic')
+  assert.match(await chat('get_diagrams', { work: 'T-2', step: 'T-2.1' }), /"States"/)
+  assert.match(await chat('place_diagram', { work: 'T-2', id, role: 'none' }), /unplaced/)
+  const free = await chat('show_diagram', { title: 'Sketch', diagram })
+  assert.equal(store.data.canvases[/Diagram (\S+) /.exec(free)![1]].taskId, null, 'without work: the project\'s')
+  assert.match(await chat('update_doc', { work: 'T-2', markdown: `# Plan\n[s](canvas:${id})` }), /Document updated/)
+  assert.equal(store.data.docs[owned.id], `# Plan\n[s](canvas:${id})`)
+  await chat('set_needs_input', { work: 'T-2', reason: 'Plan ready for review' })
+  assert.equal(store.task(owned.id).needsInput, 'Plan ready for review')
+
+  await assert.rejects(chat('create_subtask', { title: 'x' }), /needs work/)
+  await assert.rejects(chat('create_subtask', { work: 'T-9', title: 'x' }), /No work T-9/)
+  await assert.rejects(chat('create_subtask', { work: 'T-2', title: 'x' }, other.id), /T-2 is not planned in this topic/)
+  await assert.rejects(chat('create_subtask', { work: 'T-1', title: 'x' }), /T-1 is not planned in this topic/)
+  await assert.rejects(tools({ projectId: project.id }, 'create_subtask', { work: 'T-2', title: 'x' }), /needs a task/, 'only a chat')
+})
+
+test('toolsFor: a project chat lists the owner tools with work; task runs list them as they are (T-55.5)', () => {
+  const chat = toolsFor('project', 'chat')
+  const names = chat.map((t) => t.name)
+  for (const n of ['create_work', 'add_ticket', 'create_subtask', 'place_diagram', 'get_diagrams', 'show_diagram']) assert.ok(names.includes(n), n)
+  for (const n of ['get_import', 'set_brief', 'link_ticket', 'create_task', 'set_pr', 'complete_step']) assert.ok(!names.includes(n), n)
+  const sub = chat.find((t) => t.name === 'create_subtask')!.inputSchema as { properties: Record<string, unknown>; required: string[] }
+  assert.deepEqual(sub.required, ['work', 'title'])
+  const show = chat.find((t) => t.name === 'show_diagram')!.inputSchema as { properties: Record<string, unknown>; required: string[] }
+  assert.ok(show.properties.work && !show.required.includes('work'))
+  assert.ok(!toolsFor('project', 'architect').some((t) => t.name === 'create_subtask'))
+  const groomer = toolsFor('task', 'groomer').find((t) => t.name === 'create_subtask')!.inputSchema as { properties: Record<string, unknown> }
+  assert.equal(groomer.properties.work, undefined)
 })

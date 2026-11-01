@@ -122,8 +122,8 @@ export class Store {
       p.archRun ??= null
       p.agents ??= {}
       p.integrations ??= {}
-      // T-37: no integration per scope; a scope without its site / workspace can't link a bare key.
-      p.trackers = (p.trackers ?? []).filter((s) => !!s.base).map(({ kind, scope, base }) => ({ kind, scope, base }))
+      // T-55.5: mag has no tracker settings; a ticket is a link.
+      delete (p as { trackers?: unknown }).trackers
       if (p.archRun?.status === 'running') p.archRun.status = 'error'
     }
     for (const t of this.data.tasks) {
@@ -131,7 +131,12 @@ export class Store {
       delete (t as { dependsOn?: unknown }).dependsOn
       if ((t.type as string) === 'story') t.type = 'dev'
       t.rank ??= t.createdAt
-      if (t.tracker) delete (t.tracker as { integrationId?: unknown }).integrationId
+      // T-55.5: the one tracker link (T-10, T-36) becomes the work's tickets; a link without a URL (an old import by key) goes.
+      const old = (t as { tracker?: { key?: string; url?: string | null } | null }).tracker
+      if (old !== undefined) {
+        if (!t.parentId && old?.url) t.tickets = [old.key ? { url: old.url, key: old.key } : { url: old.url }]
+        delete (t as { tracker?: unknown }).tracker
+      }
     }
     for (const c of Object.values(this.data.canvases)) c.kind ??= 'html'
     for (const s of this.data.sessions) {
@@ -404,7 +409,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, trackers: [], createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, nextTaskNo: 1, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
@@ -451,7 +456,7 @@ export class Store {
       work: null,
       ...(parent && { startManually: n.startManually ?? false }),
       ...(parent && n.repos && { repos: n.repos }),
-      ...(!parent && n.tracker && { tracker: n.tracker }),
+      ...(!parent && n.tickets?.length && { tickets: n.tickets }),
       ...(!parent && n.ownerSessionId && { ownerSessionId: n.ownerSessionId }),
       nextSubNo: 1,
       archivedAt: null,

@@ -1,7 +1,7 @@
 // Minimal stdio MCP server (newline-delimited JSON-RPC). Spawned by the agent CLI,
 // forwards tool calls to the app's local API for one task or project.
 import { createInterface } from 'node:readline'
-import { TOOL_DEFS, toolForRole } from './tool-defs'
+import { toolsFor } from './tool-defs'
 
 const API = process.env.MAG_API
 const TOKEN = process.env.MAG_TOKEN
@@ -9,7 +9,7 @@ const TASK_ID = process.env.MAG_TASK_ID
 const PROJECT_ID = process.env.MAG_PROJECT_ID
 const SESSION_ID = process.env.MAG_SESSION_ID
 const ROLE = process.env.MAG_ROLE
-const TOOLS = TOOL_DEFS.filter((t) => (t.scope === 'any' || t.scope === (TASK_ID ? 'task' : 'project')) && toolForRole(t, ROLE)).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+const TOOLS = toolsFor(TASK_ID ? 'task' : 'project', ROLE)
 
 const send = (msg: object) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n')
 

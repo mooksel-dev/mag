@@ -123,16 +123,6 @@ test('inbox: agent_failed only from the task agent that ran last', () => {
   assert.deepEqual(inbox('p', [t], [session('t', 'chat', 'error')]), [], 'other roles do not count')
 })
 
-test('inbox: a failed import is agent_failed until a later groomer runs', () => {
-  const t: Task = { ...task('t', 'backlog'), tracker: { kind: 'jira', key: 'ABC-1', url: 'https://x.atlassian.net/browse/ABC-1', importedAt: null } }
-  assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error')]).map((i) => [i.kind, i.text]), [['agent_failed', 'Import failed']])
-  assert.deepEqual(inbox('p', [t], [session('t', 'tracker', 'error'), session('t', 'groomer', 'idle')]), [])
-})
-
-test('inbox: a failed import is moot once unlinked', () => {
-  assert.deepEqual(inbox('p', [task('t', 'backlog')], [session('t', 'tracker', 'error')]), [])
-})
-
 test('inbox: pending approvals from task sessions and chats come first, one per item', () => {
   const approval = (id: string, status: 'pending' | 'allowed' | 'denied' | 'expired') =>
     ({ kind: 'approval', id, tool: 'execute', server: 'Cloudflare', input: {}, status, at: 0 }) as const

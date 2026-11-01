@@ -144,11 +144,6 @@ form.ticketlink { flex-direction: column; align-items: stretch; gap: 2px; }
 form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .ticketlink .iconbtn { width: 22px; height: 22px; }
 .menulist.small { width: 160px; }
-.trackerlist { display: flex; flex-direction: column; gap: 6px; font-weight: 400; }
-.trackerrow, .trackeradd { display: flex; gap: 8px; align-items: center; font-weight: 400; flex-wrap: wrap; }
-.trackeradd input { width: 120px; }
-.trackeradd input.trackerbase { width: 220px; }
-.trackeradd input[aria-invalid='true'] { border-color: var(--danger-fg); }
 
 .taskview { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); }
 .taskmain { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
@@ -179,7 +174,6 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .subname { font-weight: 500; }
 .subrow.done .subname { color: var(--muted); text-decoration: line-through; }
 .subextra { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
-.subticket:empty { display: none; }
 .stepline { margin-top: 10px; }
 .workgroup h2 { display: flex; align-items: center; gap: 8px; }
 .subedit { grid-column: 4 / -1; display: flex; gap: 8px; min-width: 0; }
