@@ -231,6 +231,33 @@ export function repoWorkName(work: TaskWork, r: RepoWork): string {
   return baseName(r.worktree === work.dir ? r.repo : r.worktree)
 }
 
+/** Short names of the project's repositories, in order: their base names, made unique as for worktree folders. */
+export function repoNames(project: Pick<Project, 'repos'>): string[] {
+  return repoDirNames(project.repos)
+}
+
+/** The project repository `ref` names: its short name (see repoNames) or its path. undefined if it is none of them. */
+export function projectRepo(project: Pick<Project, 'repos'>, ref: string): string | undefined {
+  const r = ref.trim().replace(/[/\\]+$/, '')
+  const names = repoNames(project)
+  return project.repos.find((p, i) => p.replace(/[/\\]+$/, '') === r || names[i] === r)
+}
+
+/**
+ * Repositories a step works in (T-50): the ones the groomer gave it, else (older steps) every project repository.
+ * Repositories removed from the project since are left out.
+ */
+export function stepRepos(step: Pick<Task, 'repos'>, project: Pick<Project, 'repos'>): string[] {
+  return step.repos ? project.repos.filter((r) => step.repos!.includes(r)) : project.repos
+}
+
+/** Short names (see repoNames) of the repositories a step was planned with; undefined for an older step (every repository). */
+export function stepRepoNames(step: Pick<Task, 'repos'>, project: Pick<Project, 'repos'>): string[] | undefined {
+  if (!step.repos) return undefined
+  const names = repoNames(project)
+  return project.repos.flatMap((r, i) => (step.repos!.includes(r) ? [names[i]] : []))
+}
+
 /** The repo work a developer means by `ref`: its short name (see repoWorkName), the repository path or the worktree path. */
 export function findRepoWork(work: TaskWork, ref: string): RepoWork | undefined {
   const r = ref.trim().replace(/[/\\]+$/, '')
@@ -345,6 +372,11 @@ export interface Task {
   work: TaskWork | null
   /** Steps: the step waits for the user's Start instead of starting when the previous one is done (releases in parts). */
   startManually?: boolean
+  /**
+   * Steps: the project repositories (paths) the step changes, set by the groomer (T-50); only they get a worktree.
+   * Missing = every project repository (steps planned before T-50); [] = a step without code.
+   */
+  repos?: string[]
   /** Number of the next subtask key (T-12.<n>). Only grows, so a deleted subtask's number is never reused. */
   nextSubNo: number
   /** Set when a done or canceled task is archived; a flag, the status stays. */

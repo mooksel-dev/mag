@@ -35,6 +35,13 @@ const ARCH_MODULE = {
   },
 }
 
+const STEP_REPOS = {
+  type: 'array',
+  items: { type: 'string' },
+  description:
+    'Project repositories the step changes: names (folder names) or paths from get_task project.repos; [] for a step without code. Only they get a worktree; leave it out and the step gets every repository.',
+}
+
 const DIFF = { type: 'string', enum: ['add', 'mod', 'del'], description: 'Change: add, mod or del. Leave it out for unchanged context.' }
 const DATA_DIFF = {
   type: 'string',
@@ -188,7 +195,7 @@ export const TOOL_DEFS = [
     name: 'get_task',
     scope: 'task',
     description:
-      'Get the current task: title, type, status, description, subtasks (its steps in order, with status, startManually, PRs and current: true on the step being worked on), project repos, the work (your step\'s dir and per repo: worktree, branch, PR) and the doc template for this task type.',
+      'Get the current task: title, type, status, description, subtasks (its steps in order, with status, startManually, repos (missing = every repository), PRs and current: true on the step being worked on), project repos, the work (your step\'s dir and per repo: worktree, branch, PR) and the doc template for this task type.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -234,6 +241,7 @@ export const TOOL_DEFS = [
         title: { type: 'string' },
         note: { type: 'string', description: 'Optional one line; the task doc carries the details.' },
         start_manually: { type: 'boolean', description: 'The step waits for the user to press Start instead of starting when the previous one is done (releases in parts).' },
+        repos: STEP_REPOS,
       },
       required: ['title'],
     },
@@ -241,7 +249,7 @@ export const TOOL_DEFS = [
   {
     name: 'update_subtask',
     scope: 'task',
-    description: 'Groomer only: change the title, note or start_manually of a step while re-grooming.',
+    description: 'Groomer only: change the title, note, start_manually or repos of a step while re-grooming.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,6 +257,7 @@ export const TOOL_DEFS = [
         title: { type: 'string' },
         note: { type: 'string' },
         start_manually: { type: 'boolean' },
+        repos: STEP_REPOS,
       },
       required: ['key'],
     },
@@ -295,6 +304,17 @@ export const TOOL_DEFS = [
     scope: 'task',
     description: 'Developer only: close your step when it needs no code change. Fails if any repo of the step has commits of its own; those go through a PR.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_repo',
+    scope: 'task',
+    description:
+      'Developer only: you need to change a project repository your step has no worktree of (the plan missed it). Creates its worktree on the step branch in your step dir and returns its path; then it is a repo of your step like the others.',
+    inputSchema: {
+      type: 'object',
+      properties: { repo: { type: 'string', description: 'Repository name (its folder name, as in get_task) or path.' } },
+      required: ['repo'],
+    },
   },
   {
     name: 'set_pr',

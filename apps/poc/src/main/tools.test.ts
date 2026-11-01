@@ -19,6 +19,13 @@ const setup = () => {
       calls.push(`complete ${store.task(id).key}`)
       store.updateTask(id, { status: 'done' })
     },
+    addRepo: async (id, ref) => {
+      calls.push(`add ${ref} to ${store.task(id).key}`)
+      const r = { repo: '/nowhere/api', branch: 'mag/t-1-1', worktree: '/nowhere/w/api', prUrl: null, prState: null }
+      const w = store.task(id).work!
+      store.updateTask(id, { work: { ...w, repos: [...w.repos, r] } })
+      return r
+    },
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'grooming' })
@@ -202,4 +209,33 @@ test('show_diagram: one flowchart per method of; the same one is revised by id',
   await call('show_diagram', { id: c.id, title: 'groom() v2', diagram: flow('tasks#groom') })
   await call('show_diagram', { title: 'list()', diagram: flow('tasks#list') })
   assert.deepEqual([store.data.canvases[c.id].version, Object.keys(store.data.canvases).length], [2, 2])
+})
+
+test('steps get repos from the groomer: names or paths of project repos; get_task lists them (T-50)', async () => {
+  const { store, project, task, call } = setup()
+  store.updateProject(project.id, { repos: ['/w/app', '/w/api'] })
+  await call('create_subtask', { title: 'a', repos: ['api', '/w/app/'] })
+  await call('create_subtask', { title: 'b', repos: [] })
+  await call('create_subtask', { title: 'c' })
+  await assert.rejects(call('create_subtask', { title: 'd', repos: ['web'] }), /Not a repository of the project: web; one of app, api/)
+  const [a, b, c] = store.data.tasks.filter((t) => t.parentId === task.id)
+  assert.deepEqual([a.repos, b.repos, c.repos], [['/w/app', '/w/api'], [], undefined], 'paths in project order; missing = every repository')
+  await call('update_subtask', { key: c.key, repos: ['app'] })
+  await assert.rejects(call('update_subtask', { key: c.key, repos: 'app' }), /must be an array/)
+  assert.deepEqual(store.task(c.id).repos, ['/w/app'])
+  const info = JSON.parse(await call('get_task'))
+  assert.deepEqual(info.subtasks.map((s: { repos?: string[] }) => s.repos), [['app', 'api'], [], ['app']])
+})
+
+test('add_repo: the developer of a step in progress only', async () => {
+  const { store, task, call, calls } = setup()
+  await call('create_subtask', { title: 'a' })
+  const [a] = store.data.tasks.filter((t) => t.parentId === task.id)
+  await assert.rejects(call('add_repo', { repo: 'api' }), /for the developer of a step/)
+  store.updateTask(task.id, { status: 'in_progress' })
+  store.updateTask(a.id, { status: 'in_progress', work: work() })
+  const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  await assert.rejects(call('add_repo', {}, dev.id), /Pass repo/)
+  assert.match(await call('add_repo', { repo: 'api' }, dev.id), /^api: worktree \/nowhere\/w\/api on branch mag\/t-1-1\./)
+  assert.deepEqual(calls, ['add api to T-1.1'])
 })

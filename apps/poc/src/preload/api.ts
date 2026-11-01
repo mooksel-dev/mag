@@ -53,6 +53,8 @@ export interface NewTask {
   status?: TaskStatus
   /** Steps: wait for the user's Start (see Task.startManually). */
   startManually?: boolean
+  /** Steps: the repositories it changes (see Task.repos). */
+  repos?: string[]
   /** Top-level tasks: the ticket it is imported from. */
   tracker?: TrackerLink
 }

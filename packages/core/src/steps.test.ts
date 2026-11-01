@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, canMoveToTodo, currentStep, inbox, isLegacy, openPrs, projectState, stepBranch, stepDir, stepRollup, taskChangeEvents, taskPrs, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { agentState, canMoveToTodo, currentStep, inbox, isLegacy, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
   id,
@@ -89,4 +89,22 @@ test('taskChangeEvents: a step merged is logged, other step status changes are n
   const s = step('a', 'in_progress', 1, { work: work({ prUrl: 'u', prState: 'merged' }) })
   assert.deepEqual(taskChangeEvents(s, { ...s, status: 'done' }).map((e) => e.text), ['merged'])
   assert.deepEqual(taskChangeEvents({ ...s, status: 'todo', work: null }, { ...s, work: null }), [])
+})
+
+test('stepRepos: the step\'s own repositories in project order, else every one; removed repositories are left out (T-50)', () => {
+  const project = { repos: ['/w/app', '/w/api', '/x/app'] }
+  assert.deepEqual(stepRepos(step('a', 'todo', 1), project), project.repos, 'an older step works in every repository')
+  assert.deepEqual(stepRepos(step('a', 'todo', 1, { repos: [] }), project), [], 'a step without code')
+  assert.deepEqual(stepRepos(step('a', 'todo', 1, { repos: ['/x/app', '/gone', '/w/app'] }), project), ['/w/app', '/x/app'])
+  assert.deepEqual(stepRepoNames(step('a', 'todo', 1, { repos: ['/x/app', '/w/api'] }), project), ['api', 'app-2'])
+  assert.equal(stepRepoNames(step('a', 'todo', 1), project), undefined)
+})
+
+test('projectRepo: a project repository by short name or path', () => {
+  const project = { repos: ['/w/app', '/w/api', '/x/app'] }
+  assert.deepEqual(repoNames(project), ['app', 'api', 'app-2'])
+  assert.equal(projectRepo(project, ' api '), '/w/api')
+  assert.equal(projectRepo(project, 'app-2'), '/x/app')
+  assert.equal(projectRepo(project, '/x/app/'), '/x/app')
+  assert.equal(projectRepo(project, 'web'), undefined)
 })

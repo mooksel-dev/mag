@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, repoDirNames, repoWorkName, resolveChoice, stepBranch, stepDir, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type RepoWork, type Task, type TaskWork, type TrackerLink } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -61,7 +61,9 @@ Your output is the task document, not chat. Work like this:
    Each step runs in its own developer session from fresh base, with at most one PR per changed repository; the next
    step starts when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc
    carries the details. A small task is one step. Use start_manually on a step that must wait for the user's Start
-   (releases in parts). When re-grooming, change the existing steps with update_subtask / delete_subtask /
+   (releases in parts). Give every step repos: the project repositories it changes (names or paths as get_task lists
+   them), [] for a step without code; only those get a worktree, the developer reads the others and can add one with
+   add_repo if the plan missed it. When re-grooming, change the existing steps with update_subtask / delete_subtask /
    reorder_subtasks instead of creating duplicates (get_task lists them).
 9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
    approves with Approve → todo, or asks for changes in chat; after changes, ask for review again. You never move the
@@ -75,9 +77,15 @@ const workLines = (work: TaskWork) => work.repos.map((r) => `- ${repoWorkName(wo
 /** Developer of one step (T-28). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
   const base = project.baseBranch
+  const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
+  const repos = work.repos.length
+    ? `The step changes these repositories; each has its own git worktree there, on its own branch:\n${workLines(work).join('\n')}`
+    : 'The plan gives this step no repository to change.'
+  const rest = others.length
+    ? `\nRead the other project repositories in their main checkout, never change them there: ${others.join(', ')}. To change one, call add_repo(repo) first; it gets a worktree in this step.`
+    : ''
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
-Your cwd and worktrees are for this step only; base is fresh ${base}. Every project repository has its own git worktree there, on its own branch:
-${workLines(work).join('\n')}
+Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
 1. Read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
    The target picture is the task's diagrams (get_diagrams); your part is what your step links in the doc.
 2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
@@ -141,8 +149,8 @@ architecture, priorities, reviewing what agents did. You can read the code (read
 How mag works: backlog task -> grooming: the groomer agent writes the task doc, asks questions and splits it into
 steps (subtasks; at least one) -> todo: groomed and ready to work; the order of todo tasks is only the user's
 priority -> in progress: the user starts a todo task with Start, and its steps run one after another. Each step gets a
-new developer session from fresh base, its own branch and worktree per repository, and at most one PR per changed
-repository; a step is done when its PRs are merged (or, without code, when its developer closes it), and the next one
+new developer session from fresh base, its own branch and a worktree per repository it changes, and at most one PR per
+changed repository; a step is done when its PRs are merged (or, without code, when its developer closes it), and the next one
 starts on its own unless it is marked start manually (then it waits for the user's Start) -> done when every step is
 done. Any number of tasks can be in progress in parallel. Any task not done yet can be canceled. Done and canceled
 tasks can be archived; mag archives them after some days.
@@ -337,7 +345,8 @@ export class Orchestrator {
 
   /**
    * Start a todo task (the user's Start) or restart one in progress, on its current step: a todo step gets a worktree +
-   * branch per repository from fresh base and a new developer session; a step in progress resumes its session.
+   * branch from fresh base per repository it changes (see stepRepos) and a new developer session; a step in progress
+   * resumes its session.
    * `message`, if given, is what the resumed session is told (shown in its chat). Legacy tasks run as one whole.
    */
   async develop(taskId: string, message?: string) {
@@ -353,7 +362,7 @@ export class Orchestrator {
       const last = this.lastSession(taskId, 'developer')
       if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
       const dir = task.work?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
-      this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`) })
+      this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`, project.repos) })
       const session = last ?? this.newSession(taskId, 'developer')
       if (!(await this.prepareWorktrees(session))) return
       return this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
@@ -364,7 +373,7 @@ export class Orchestrator {
     if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
     this.store.updateTask(taskId, { status: 'in_progress', needsInput: null })
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
-    this.store.updateTask(step.id, { status: 'in_progress', work: this.workFor(step.work, project, dir, stepBranch(step.key)) })
+    this.store.updateTask(step.id, { status: 'in_progress', work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project)) })
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
     if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
@@ -422,15 +431,38 @@ export class Orchestrator {
     rmdir(work.dir, () => {})
   }
 
-  /** A workspace in `dir`: the existing work, plus a worktree on `branch` for every project repository it does not cover yet. */
-  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string): TaskWork {
+  /** A workspace in `dir`: the existing work, plus a worktree on `branch` for every repository of `repos` it does not cover yet. */
+  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[]): TaskWork {
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
     const known = prev?.repos ?? []
-    const fresh = project.repos.filter((r) => !known.some((w) => w.repo === r))
+    const fresh = repos.filter((r) => project.repos.includes(r) && !known.some((w) => w.repo === r))
     const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
     const added = fresh.map((repo, i) => ({ repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null }))
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
+  }
+
+  /**
+   * The developer's add_repo (T-50): a project repository (by name or path) the plan left out of the step gets a
+   * worktree on the step's branch, mid-step, and joins the step's repos. A repository the step has already is prepared
+   * again. Throws, recording nothing, if the worktree fails.
+   */
+  async addRepo(stepId: string, ref: string): Promise<RepoWork> {
+    const step = this.store.task(stepId)
+    if (!step.parentId || step.status !== 'in_progress' || !step.work) throw new Error(`${step.key} is not a step in progress`)
+    const project = this.store.project(step.projectId)
+    const repo = projectRepo(project, ref)
+    if (!repo) throw new Error(`${ref} is not a repository of the project; one of ${repoNames(project).join(', ')}`)
+    const planned = (work: TaskWork) => this.workFor(work, project, work.dir, stepBranch(step.key), [repo])
+    const r = planned(step.work).repos.find((w) => w.repo === repo)
+    if (!r) throw new Error(`${step.key} has no room for another worktree`)
+    await prepareWorktree(repo, project.baseBranch, r.branch, r.worktree)
+    // The work may have changed during the git calls (a PR recorded); add to what it is now.
+    const now = this.store.task(stepId)
+    const repos = now.repos && !now.repos.includes(repo) ? [...now.repos, repo] : now.repos
+    this.store.updateTask(stepId, { work: planned(now.work ?? step.work), ...(repos !== now.repos && { repos }) })
+    log.info('agent', `${step.key}: worktree added for ${repo}`)
+    return r
   }
 
   /** What a developer session works on: its step, or a legacy session's task. */
@@ -438,11 +470,15 @@ export class Orchestrator {
     return this.store.task(session.stepId ?? session.taskId!)
   }
 
-  /** (Re)creates every worktree of the session's step (or legacy task) that is missing; false (and the session in error) if one fails. */
+  /**
+   * (Re)creates the dir and every worktree of the session's step (or legacy task) that is missing; false (and the
+   * session in error) if one fails. A step without repositories still gets its dir: the developer's cwd.
+   */
   private async prepareWorktrees(session: AgentSession): Promise<boolean> {
     const task = this.store.task(session.taskId!)
     const project = this.store.project(task.projectId)
-    for (const r of this.ownerOf(session).work?.repos ?? []) {
+    const work = this.ownerOf(session).work
+    for (const r of work?.repos ?? []) {
       if (!project.repos.includes(r.repo) || r.prState === 'merged') continue
       try {
         await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
@@ -454,6 +490,8 @@ export class Orchestrator {
         return false
       }
     }
+    // After the worktrees: a pre-T-22 task's dir is its worktree.
+    if (work) mkdirSync(work.dir, { recursive: true })
     return true
   }
 
@@ -587,7 +625,7 @@ export class Orchestrator {
       const work = owner.work
       return {
         cwd: work.dir,
-        // Repositories without a worktree in the task (pre-T-22 tasks) stay readable from their main checkout.
+        // Repositories without a worktree (not in the step's repos, or a pre-T-22 task) stay readable from their main checkout.
         addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r)), this.paths.attachmentsDir],
         appendSystemPrompt:
           (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +

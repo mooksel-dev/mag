@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -292,4 +293,52 @@ test('deleteChat: project topics only; closes the live process, then removes the
   assert.equal(existedAtClose, true)
   assert.equal(store.data.sessions.some((s) => s.id === id), false)
   assert.equal(store.data.sessions.some((s) => s.id === groomer.id), true)
+})
+
+/** A git repository with one commit on main, no remote. */
+function gitRepo(path: string) {
+  mkdirSync(path, { recursive: true })
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: path, stdio: 'ignore' })
+  git('init', '-q', '-b', 'main')
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init')
+  return path
+}
+
+test('develop: worktrees only for the step\'s repos; add_repo adds one mid-step (T-50)', async () => {
+  const { dir, store, orch, project, task } = setup()
+  const app = gitRepo(join(dir, 'repos', 'app'))
+  const api = gitRepo(join(dir, 'repos', 'api'))
+  store.updateProject(project.id, { repos: [app, api] })
+  store.updateTask(task.id, { status: 'todo' })
+  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [api] })
+  await orch.develop(task.id)
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.branch]), [[api, 'mag/t-1-1']])
+  assert.ok(existsSync(work.repos[0].worktree))
+  const spec = specs.at(-1)!
+  assert.ok(spec.addDirs?.includes(app), 'the other repo stays readable in its main checkout')
+  assert.match(spec.appendSystemPrompt!, new RegExp(`never change them there: ${app}\\. To change one, call add_repo`))
+
+  await assert.rejects(orch.addRepo(step.id, 'web'), /web is not a repository of the project; one of app, api/)
+  const added = await orch.addRepo(step.id, 'app')
+  assert.equal(added.worktree, join(work.dir, 'app'))
+  assert.ok(existsSync(added.worktree))
+  const now = store.task(step.id)
+  assert.deepEqual(now.work!.repos.map((r) => r.repo), [api, app])
+  assert.deepEqual(now.repos, [api, app], 'the step records the repo it changes now')
+  assert.deepEqual(await orch.addRepo(step.id, app), added, 'a repo the step has already')
+  assert.equal(store.task(step.id).work!.repos.length, 2)
+})
+
+test('develop: a step without repos gets its dir and no worktree', async () => {
+  const { store, orch, project, task, dir } = setup()
+  store.updateTask(task.id, { status: 'todo' })
+  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos, [])
+  assert.ok(existsSync(work.dir))
+  assert.match(specs.at(-1)!.appendSystemPrompt!, /The plan gives this step no repository to change\.\nRead the other project repositories/)
+  await assert.rejects(orch.addRepo(step.id, dir), /is not a git repository/)
+  assert.deepEqual(store.task(step.id).work!.repos, [], 'a failed worktree records nothing')
 })
