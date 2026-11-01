@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_CHOICE, TASK_KEY_RE, resolveChoice, rewriteKeys, subtaskKey, type ModelChoice } from './index.ts'
+import { DEFAULT_CHOICE, DEFAULT_TEMPLATES, TASK_KEY_RE, resolveChoice, rewriteKeys, subtaskKey, type ModelChoice } from './index.ts'
 
 const opus: ModelChoice = { agent: 'claude-code', model: 'opus' }
 const haiku: ModelChoice = { agent: 'claude-code', model: 'haiku' }
@@ -42,4 +42,13 @@ test('rewriteKeys does one pass', () => {
 
 test('rewriteKeys with an empty map returns the text', () => {
   assert.equal(rewriteKeys('T-2', {}), 'T-2')
+})
+
+test('dev template: options link their sketches, plan steps list changes and diagrams per repo (T-54)', () => {
+  const t = DEFAULT_TEMPLATES.dev
+  const options = t.slice(t.indexOf('# Options'), t.indexOf('# Changes'))
+  const plan = t.slice(t.indexOf('# Plan'), t.indexOf('# Assumptions'))
+  assert.match(options, /links its sketch diagrams: \[title\]\(canvas:<id>\)/)
+  assert.match(plan, /per repository it changes: what changes there and the diagrams of that change/)
+  assert.match(plan, /in <repo>: <what> \(\[title\]\(canvas:<id>\)/)
 })

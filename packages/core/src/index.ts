@@ -1043,7 +1043,7 @@ One or two sentences, plus the evidence that it is real.
 Only if any.
 
 # Options
-Every sensible way to fix it: idea, cost, the trade-offs that set it apart. Recommendation, then the choice and why the others lost. Omit when there is only one sensible way.
+Every sensible way to fix it: idea, cost, the trade-offs that set it apart. An option that changes code links its sketch diagrams: [title](canvas:<id>). Recommendation, then the choice and why the others lost. Omit when there is only one sensible way.
 
 # Changes
 ## Infra
@@ -1060,7 +1060,7 @@ Hooks, components, pages, handlers, workers that change.
 Diff diagrams are recorded with show_diagram; link them here: [title](canvas:<id>).
 
 # Plan
-Short numbered steps.
+Numbered steps. Each step that changes code says, per repository it changes: what changes there and the diagrams of that change, e.g. "1. <step title> — in <repo>: <what> ([title](canvas:<id>), …)". A step without structural changes in a repo says so in one line.
 
 # Assumptions
 `,

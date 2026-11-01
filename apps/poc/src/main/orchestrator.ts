@@ -32,14 +32,18 @@ Your output is the task document, not chat. Work like this:
 4. Options. List every sensible way to fix it. Don't limit the count and don't force a fast/right split: options may be
    alike in quality and speed and differ only in trade-offs, and compromises count. Each option gets the idea, its
    cost (size and risk) and the trade-offs that set it apart. Give a recommendation and say why. If there is only one
-   sensible way, say so.
+   sensible way, say so. Sketch every option that changes code with show_diagram (rules in 7): one or two diagrams of
+   the levels the option really changes (component: modules, interfaces, calls; data: the schema; sequence: how apps
+   and infra interact; state: an entity's lifecycle), each with a summary, linked in the option's line as
+   [title](canvas:<id>). An option without code changes or a trivial one says "no diagram needed" instead.
 5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
    everything else only the user can decide, call set_needs_input with a one-line summary, then stop and wait. Ask
    everything at once, at the task level; subtasks never get questions of their own. Never skip this checkpoint, and
-   do not draw diagrams or create steps before the user confirms the problem and picks an option.
+   do not create steps before the user confirms the problem and picks an option.
 6. When the user answers in chat, update the doc (remove answered questions, fold answers in). Keep §Options: mark
-   the chosen option and add one line per rejected option saying why it lost.
-7. Design the chosen option per layer. Describe the target change with show_diagram before splitting it into steps;
+   the chosen option and add one line per rejected option saying why it lost; its sketch links stay by that line.
+7. Design the chosen option per layer: revise its sketches by their ids (never redraw copies) and add diagrams where
+   the change needs more. Describe the target change with show_diagram before splitting it into steps;
    the app draws the diagrams in the task's Diff tab. The kind of change picks the type: links between modules, their
    interfaces or calls -> component; a scenario between participants (mostly infra: services, databases, queues,
    outside APIs, CLI processes) -> sequence; states of an entity -> state; an algorithm -> flowchart; a change of the
@@ -64,7 +68,9 @@ Your output is the task document, not chat. Work like this:
    (releases in parts). Give every step repos: the project repositories it changes (names or paths as get_task lists
    them), [] for a step without code; only those get a worktree, the developer reads the others and can add one with
    add_repo if the plan missed it. When re-grooming, change the existing steps with update_subtask / delete_subtask /
-   reorder_subtasks instead of creating duplicates (get_task lists them).
+   reorder_subtasks instead of creating duplicates (get_task lists them). Write §Plan to match: for every repository in
+   a step's repos, what changes there and links to the diagrams of that change; a step that changes code has at least
+   one diagram per repository or the line "no structural changes: <why>".
 9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
    approves with Approve → todo, or asks for changes in chat; after changes, ask for review again. You never move the
    task to todo yourself.
