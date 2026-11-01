@@ -7,6 +7,8 @@ export interface RunSpec {
   prompt: string
   /** Agent-native session id to continue. */
   resumeId?: string
+  /** With resumeId: continue in a new session that starts as a copy of it; the original stays as it was. Claude Code only. */
+  forkSession?: boolean
   /** Provider model id or alias; omitted = the provider's default. */
   model?: string
   appendSystemPrompt?: string

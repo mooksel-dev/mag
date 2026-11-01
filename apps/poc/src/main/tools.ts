@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type RepoWork, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
+import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, SUBTASK_STATUSES, activeSections, backlogTasks, canArchive, canCancel, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, nextPlanRank, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketLink, todoTasks, validateDiagram, walkArch, type ArchNode, type ArchUse, type Canvas, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import type { Store } from './store'
@@ -24,6 +24,8 @@ export interface ToolActions {
   completeStep(stepId: string): Promise<void>
   /** A developer's add_repo: a worktree of one more project repository in its step. */
   addRepo(stepId: string, ref: string, worktree?: boolean): Promise<RepoWork>
+  /** The reviewer's verdict on the step under review (T-55.1); returns what to tell it. */
+  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string
 }
 
 /**
@@ -59,6 +61,25 @@ function reposArg(v: unknown, project: Project): string[] {
   if (unknown.length) throw new Error(`Not a repository of the project: ${unknown.join(', ')}; one of ${repoNames(project).join(', ') || '(none)'}`)
   const paths = v.map((r) => projectRepo(project, r as string)!)
   return project.repos.filter((r) => paths.includes(r))
+}
+
+/** Review findings from a tool argument: [{ text, where? }]; some agent CLIs pass the array as a JSON string. */
+function findingsArg(v: unknown): ReviewFinding[] {
+  let raw = v ?? []
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw)
+    } catch {
+      throw new Error('findings must be an array of { text, where? }')
+    }
+  }
+  if (!Array.isArray(raw)) throw new Error('findings must be an array of { text, where? }')
+  return raw.map((x: Record<string, unknown>) => {
+    const text = String(x?.text ?? '').trim()
+    if (!text) throw new Error('Every finding needs a text')
+    const where = typeof x.where === 'string' && x.where.trim() ? x.where.trim() : undefined
+    return where ? { text, where } : { text }
+  })
 }
 
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -256,8 +277,20 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         store.updateTask(step?.id ?? task.id, { work: next })
         const missing = next.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed')).map((r) => repoWorkName(next, r))
         return review
-          ? `PR recorded. Every changed repo has a PR: the user merges${step ? `, and ${step.key} is done once every PR is merged` : ''}; you will be resumed if they leave comments.`
+          ? step
+            ? `PR recorded. Every changed repo has a PR: once you stop, an agent reviews ${step.key} first and you are resumed with its findings if it asks for changes; then the user merges, and ${step.key} is done once every PR is merged. You will be resumed if they leave comments.`
+            : 'PR recorded. Every changed repo has a PR: the user merges; you will be resumed if they leave comments.'
           : `PR recorded for ${repoWorkName(next, target)}. Still without a PR: ${missing.join(', ') || 'none'}; open one per changed repo.`
+      }
+
+      case 'set_review': {
+        const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
+        if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
+        const verdict = args.verdict as ReviewVerdict
+        if (!REVIEW_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${REVIEW_VERDICTS.join(', ')}`)
+        const findings = findingsArg(args.findings)
+        if (verdict !== 'merge' && !findings.length) throw new Error(`A ${verdict} verdict needs findings: what and where`)
+        return actions.setReview(stepId, verdict, findings)
       }
 
       case 'get_import': {
@@ -398,6 +431,8 @@ function sharedTool(
         description: String(args.description ?? ''),
         status: plan ? 'todo' : undefined,
         tracker,
+        // The topic that discussed it owns the work: its fork reviews the PRs first (T-55.1).
+        ownerSessionId: ctx.sessionId && store.data.sessions.find((s) => s.id === ctx.sessionId)?.role === 'chat' ? ctx.sessionId : undefined,
       })
       // `tasks` was read before the new task existed, so it is the plan ahead of it.
       if (md.trim()) store.data.docs[t.id] = md

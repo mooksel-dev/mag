@@ -592,6 +592,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .inboxrow:hover .title { color: var(--accent); }
 .inboxrow button { font-size: 12px; padding: 4px 10px; }
 .inboxrow .blockers { color: var(--danger-fg); }
+.inboxrow .findings { margin: 2px 0 0; padding-left: 16px; color: var(--muted); }
 .home .q { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
 .home .ev { padding: 3px 0; }
 .home button.link.key { padding: 0; }

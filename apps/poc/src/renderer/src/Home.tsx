@@ -35,6 +35,7 @@ const PILLS: Record<InboxKind, [string, string]> = {
   agent_failed: ['red', 'Agent failed'],
   check_failed: ['red', 'PR check failed'],
   question: ['amber', 'Question'],
+  review_look: ['amber', 'Look here'],
   ready_to_merge: ['green', 'Ready to merge'],
   ready_to_start: ['amber', 'Waits for Start'],
 }
@@ -249,7 +250,7 @@ function ApprovalRow({ item, onOpen }: { item: InboxItem; onOpen: (id: string) =
 }
 
 function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task }; state: AppState; now: number; onOpen: (id: string) => void }) {
-  const { task, kind, text } = item
+  const { task, kind, text, review } = item
   const [color, label] = PILLS[kind]
   const prs = taskPrs(task, state.tasks)
   const step = isLegacy(task) ? null : currentStep(task.id, state.tasks)
@@ -257,15 +258,16 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
   const pr = (kind === 'check_failed' ? prs.find((r) => r.checkError) : prs.find((r) => r.prState !== 'merged'))?.prUrl ?? prs[0]?.prUrl
   const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
   const restart = () => {
-    const last = state.sessions.filter((s) => s.taskId === task.id && (s.role === 'groomer' || s.role === 'developer' || s.role === 'tracker')).at(-1)
+    const last = item.session
     if (last?.role === 'tracker') return mag.retryImport(task.id)
+    if (last?.role === 'reviewer') return mag.review(task.id)
     // A task in progress is never groomed again: its developer goes on.
     if (last?.role !== 'groomer' || task.status === 'in_progress') return mag.develop(task.id)
     return mag.groom(task.id)
   }
   const sub =
     kind === 'check_failed' && pr ? `${prName(pr)} · ${text}`
-    : kind === 'ready_to_merge' && open.length ? `${open.map(prName).join(', ')} · merge ${open.length > 1 ? 'them' : 'it'} yourself; comments go back to the agent`
+    : kind === 'ready_to_merge' && open.length ? `${review ? `${text} · ` : ''}${open.map(prName).join(', ')} · merge ${open.length > 1 ? 'them' : 'it'} yourself; comments go back to the agent`
     : text
 
   return (
@@ -277,13 +279,19 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
         <div className="muted small">{sub}</div>
         {/* A question of the step's local checks (T-50) is answered right here. */}
         {kind === 'question' && step && <LocalChecks step={step} project={state.projects.find((p) => p.id === task.projectId)} compact />}
+        {/* The agent review's findings (T-55.1): where to look before merging. */}
+        {review && review.findings.length > 1 && (
+          <ul className="findings small">
+            {review.findings.slice(1).map((f, i) => <li key={i}>{f.where && <code>{f.where}</code>} {f.text}</li>)}
+          </ul>
+        )}
       </div>
       <AgentDot state={agentState(task, state.sessions, state.tasks)} now={now} />
       {kind === 'agent_failed' && <><button onClick={act(() => onOpen(task.id))}>Open</button><button className="primary" onClick={act(restart)}>Restart</button></>}
       {kind === 'check_failed' && <>{pr && <button onClick={act(() => mag.open(pr))}>Open PR ↗</button>}<button className="primary" onClick={act(() => mag.checkPrs())}>Check again</button></>}
       {kind === 'question' && <button className="primary" onClick={act(() => onOpen(task.id))}>Answer</button>}
       {kind === 'ready_to_start' && <button className="primary" onClick={act(() => mag.startStep(task.id))}>Start</button>}
-      {kind === 'ready_to_merge' &&
+      {(kind === 'ready_to_merge' || kind === 'review_look') &&
         open.map((url) => <button key={url} className="primary" onClick={act(() => mag.open(url))}>{open.length > 1 ? prLabel(url) : 'Open PR ↗'}</button>)}
     </div>
   )

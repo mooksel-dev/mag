@@ -428,6 +428,7 @@ export class Store {
       ...(parent && { startManually: n.startManually ?? false }),
       ...(parent && n.repos && { repos: n.repos }),
       ...(!parent && n.tracker && { tracker: n.tracker }),
+      ...(!parent && n.ownerSessionId && { ownerSessionId: n.ownerSessionId }),
       nextSubNo: 1,
       archivedAt: null,
       createdAt: now,
