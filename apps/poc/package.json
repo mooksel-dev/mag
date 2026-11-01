@@ -15,6 +15,7 @@
     "@mag/agents": "workspace:*",
     "@mag/arch": "workspace:*",
     "@mag/core": "workspace:*",
+    "@mag/diff": "workspace:*",
     "dompurify": "^3.4.17",
     "elkjs": "^0.12.1",
     "marked": "^16.4.2",

@@ -1,8 +1,9 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import type { TaskWork } from '@mag/core'
+import type { FileDiff } from '@mag/diff'
 
 const exec = promisify(execFile)
 
@@ -138,3 +139,108 @@ export async function prFeedback(url: string): Promise<PrFeedback[]> {
 export function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
 }
+
+/** Every file of the commit `sha`, with its blob sha (T-57). */
+export async function treeAt(repo: string, sha: string): Promise<{ path: string; blob: string }[]> {
+  const { stdout } = await exec('git', ['ls-tree', '-r', '-z', '--full-tree', sha], { cwd: repo, maxBuffer: 64 * 1024 * 1024 })
+  return stdout
+    .split('\0')
+    .filter(Boolean)
+    .map((e) => {
+      const tab = e.indexOf('\t')
+      const [, type, blob] = e.slice(0, tab).split(' ')
+      return { type, blob, path: e.slice(tab + 1) }
+    })
+    .filter((e) => e.type === 'blob')
+    .map(({ path, blob }) => ({ path, blob }))
+}
+
+/** Contents of blobs by sha, read in one `git cat-file --batch`. */
+export function blobs(repo: string, shas: string[]): Promise<Map<string, string>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['cat-file', '--batch'], { cwd: repo })
+    const chunks: Buffer[] = []
+    child.stdout.on('data', (c: Buffer) => chunks.push(c))
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`git cat-file exited with ${code}`))
+      const buf = Buffer.concat(chunks)
+      const out = new Map<string, string>()
+      let at = 0
+      while (at < buf.length) {
+        const nl = buf.indexOf(10, at)
+        if (nl < 0) break
+        const [sha, type, size] = buf.subarray(at, nl).toString().split(' ')
+        if (type === 'missing') {
+          at = nl + 1
+          continue
+        }
+        const n = Number(size)
+        out.set(sha, buf.subarray(nl + 1, nl + 1 + n).toString('utf8'))
+        at = nl + 1 + n + 1
+      }
+      resolve(out)
+    })
+    child.stdin.end(shas.join('\n') + '\n')
+  })
+}
+
+/** Changed files between two commits with zero-context hunks; renames detected (T-57). */
+export async function diffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
+  const { stdout } = await exec('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=0', base, head], { cwd: repo, maxBuffer: 256 * 1024 * 1024 })
+  return parseDiff(stdout)
+}
+
+/** A unified diff, as `git diff --unified=0` prints it, into files and hunks. */
+export function parseDiff(text: string): FileDiff[] {
+  const out: FileDiff[] = []
+  let cur: { old: string | null; new: string | null; renameFrom?: string; renameTo?: string; hunks: FileDiff['hunks'] } | null = null
+  const flush = () => {
+    if (!cur) return
+    const from = cur.renameFrom ?? cur.old
+    const to = cur.renameTo ?? cur.new
+    if (to && from && (cur.renameFrom || from !== to)) out.push({ path: to, oldPath: from, status: 'rename', hunks: cur.hunks })
+    else if (to && !from) out.push({ path: to, status: 'add', hunks: cur.hunks })
+    else if (from && !to) out.push({ path: from, status: 'del', hunks: cur.hunks })
+    else if (to) out.push({ path: to, status: 'mod', hunks: cur.hunks })
+    cur = null
+  }
+  const strip = (p: string) => (p === '/dev/null' ? null : p.replace(/^[ab]\//, '').replace(/\t$/, ''))
+  // Lines of the current hunk still to come: a removed line may itself start with "--- ".
+  let left = 0
+  for (const line of text.split('\n')) {
+    if (left > 0 && /^[-+ ]/.test(line)) {
+      left--
+      continue
+    }
+    if (line.startsWith('\\')) continue
+    left = 0
+    if (line.startsWith('diff --git ')) {
+      flush()
+      // Paths from the header for diffs without ---/+++ (pure renames, mode changes, binaries); the lines below win.
+      const m = line.match(/^diff --git a\/(.+) b\/(.+)$/)
+      cur = { old: m?.[1] ?? null, new: m?.[2] ?? null, hunks: [] }
+    } else if (!cur) continue
+    else if (line.startsWith('new file mode')) cur.old = null
+    else if (line.startsWith('deleted file mode')) cur.new = null
+    else if (line.startsWith('rename from ')) cur.renameFrom = line.slice(12)
+    else if (line.startsWith('rename to ')) cur.renameTo = line.slice(10)
+    else if (line.startsWith('--- ')) cur.old = strip(line.slice(4))
+    else if (line.startsWith('+++ ')) cur.new = strip(line.slice(4))
+    else if (line.startsWith('@@ ')) {
+      const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
+      if (!h) continue
+      const hunk = { oldStart: +h[1], oldLines: h[2] === undefined ? 1 : +h[2], newStart: +h[3], newLines: h[4] === undefined ? 1 : +h[4] }
+      cur.hunks.push(hunk)
+      left = hunk.oldLines + hunk.newLines
+    }
+  }
+  flush()
+  return out
+}
+
+/** The commit `ref` points to. */
+export const revParse = (repo: string, ref: string) => run('git', ['rev-parse', '--verify', `${ref}^{commit}`], repo)
+
+/** Where `head` branched off `base`. */
+export const mergeBase = (repo: string, base: string, head: string) => run('git', ['merge-base', base, head], repo)
