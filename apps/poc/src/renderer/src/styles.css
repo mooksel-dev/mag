@@ -693,3 +693,15 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .agentstate.working .pdot { background: var(--green-fg); }
 .agentstate.waiting .pdot { background: var(--amber-fg); }
 .agentstate.waiting { color: var(--amber-fg); }
+
+/* Local mode (T-50): the Start popup and the cards of local checks. */
+.startpop { position: relative; display: inline-block; }
+.startlist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 6; width: 280px; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); text-align: left; }
+.startrepo { display: flex; gap: 8px; align-items: center; padding: 3px 2px; cursor: pointer; }
+.startlist > button { align-self: flex-end; margin-top: 4px; }
+.localchecks { display: flex; flex-direction: column; gap: 6px; }
+.localchecks.compact { margin-top: 6px; }
+.localcheck { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.localcheck .localbtns { display: flex; gap: 6px; }
+.localcheck .localbtns button, .localchecks.compact .banner button { margin-left: 0; }
+.localerror { flex-basis: 100%; font-size: 12px; color: var(--danger-fg); }

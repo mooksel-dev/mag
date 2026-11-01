@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   agentState,
+  currentStep,
   inbox,
+  isLegacy,
   pipelineCounts,
   runningAgents,
   taskPrs,
@@ -16,6 +18,7 @@ import type { AppState, CrashReport } from '../../preload/api'
 import { projectTopics } from './Chat'
 import { ago, crashMarkdown, inputPreview, prLabel, prName, threadTime } from './format'
 import { AgentDot, useNow } from './Tasks'
+import { LocalChecks } from './LocalMode'
 
 const mag = window.mag
 
@@ -249,6 +252,7 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
   const { task, kind, text } = item
   const [color, label] = PILLS[kind]
   const prs = taskPrs(task, state.tasks)
+  const step = isLegacy(task) ? null : currentStep(task.id, state.tasks)
   // The PR whose check failed, else the first one still open.
   const pr = (kind === 'check_failed' ? prs.find((r) => r.checkError) : prs.find((r) => r.prState !== 'merged'))?.prUrl ?? prs[0]?.prUrl
   const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
@@ -271,6 +275,8 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
       <div className="grow">
         <div className="title">{task.title}</div>
         <div className="muted small">{sub}</div>
+        {/* A question of the step's local checks (T-50) is answered right here. */}
+        {kind === 'question' && step && <LocalChecks step={step} project={state.projects.find((p) => p.id === task.projectId)} compact />}
       </div>
       <AgentDot state={agentState(task, state.sessions, state.tasks)} now={now} />
       {kind === 'agent_failed' && <><button onClick={act(() => onOpen(task.id))}>Open</button><button className="primary" onClick={act(restart)}>Restart</button></>}

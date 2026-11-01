@@ -23,7 +23,7 @@ export interface ToolActions {
   /** Marks a step done and removes its worktrees; the task is done once every step is. */
   completeStep(stepId: string): Promise<void>
   /** A developer's add_repo: a worktree of one more project repository in its step. */
-  addRepo(stepId: string, ref: string): Promise<RepoWork>
+  addRepo(stepId: string, ref: string, worktree?: boolean): Promise<RepoWork>
 }
 
 /**
@@ -223,8 +223,9 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (step?.status !== 'in_progress') throw new Error('No step is in progress')
         const ref = String(args.repo ?? '').trim()
         if (!ref) throw new Error(`Pass repo: one of ${repoNames(project).join(', ')}`)
-        const r = await actions.addRepo(step.id, ref)
+        const r = await actions.addRepo(step.id, ref, args.worktree === true)
         const work = store.task(step.id).work!
+        if (r.local) return `${repoWorkName(work, r)}: the main checkout ${r.worktree}, on branch ${r.branch} (the task works there locally). Change it there; it gets its own PR like the other repos of ${step.key}.`
         return `${repoWorkName(work, r)}: worktree ${r.worktree} on branch ${r.branch}. Change it there, never in the main checkout; it gets its own PR like the other repos of ${step.key}.`
       }
 

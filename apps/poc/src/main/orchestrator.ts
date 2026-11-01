@@ -1,12 +1,12 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type ModelChoice, type Project, type RepoWork, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, type AgentEvent, type AgentInfo, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type Task, type TaskWork, type TrackerLink } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, changedRepos, prepareWorktree, removeWorktree, slug, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { log } from './log.ts'
 
@@ -72,17 +72,30 @@ Stay within the brief: do not add work nobody asked for. An idea outside it goes
 not into the doc or a subtask.
 Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
 
-const workLines = (work: TaskWork) => work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+const workLines = (work: TaskWork) =>
+  work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (${r.local ? "local: the user's main checkout, not a worktree; " : ''}branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+
+/** Local repositories where the user's uncommitted files stayed (their Ignore, T-50). */
+const foreignLines = (work: TaskWork) =>
+  work.repos.flatMap((r) =>
+    r.foreignFiles?.length
+      ? [`\nIn ${repoWorkName(work, r)} these files had the user's uncommitted changes before the step: never stage, commit or revert them: ${r.foreignFiles.join(', ')}.`]
+      : [],
+  )
+
+/** The developer's first message when the user chose Discuss on local checks (T-50). */
+const discussText = (checks: LocalCheck[], base: string) =>
+  `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
 
 /** Developer of one step (T-28). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
   const base = project.baseBranch
   const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
   const repos = work.repos.length
-    ? `The step changes these repositories; each has its own git worktree there, on its own branch:\n${workLines(work).join('\n')}`
+    ? `The step changes these repositories, each on its own branch ${work.repos.some((r) => r.local) ? 'in a git worktree there or (local) right in the main checkout' : 'in its own git worktree there'}:\n${workLines(work).join('\n')}${foreignLines(work).join('')}`
     : 'The plan gives this step no repository to change.'
   const rest = others.length
-    ? `\nRead the other project repositories in their main checkout, never change them there: ${others.join(', ')}. To change one, call add_repo(repo) first; it gets a worktree in this step.`
+    ? `\nRead the other project repositories in their main checkout, never change them there: ${others.join(', ')}. To change one, call add_repo(repo) first; it gets a worktree (or the main checkout, if the task works there locally) in this step.`
     : ''
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
 Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
@@ -348,8 +361,10 @@ export class Orchestrator {
    * branch from fresh base per repository it changes (see stepRepos) and a new developer session; a step in progress
    * resumes its session.
    * `message`, if given, is what the resumed session is told (shown in its chat). Legacy tasks run as one whole.
+   * `localRepos` (the Start popup, T-50): repositories the task's steps work on in the main checkout; restarts and later
+   * steps keep the task's. Before a step's first session its local repositories are checked (see prepareLocal).
    */
-  async develop(taskId: string, message?: string) {
+  async develop(taskId: string, message?: string, localRepos?: string[]) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
     if (task.status !== 'todo' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only todo or in progress tasks are developed`)
@@ -371,13 +386,146 @@ export class Orchestrator {
     if (!step) throw new Error(`${task.key} has no step to develop; groom it into steps first`)
     const last = this.lastStepSession(step.id)
     if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
-    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null })
+    const local = localRepos ? project.repos.filter((r) => localRepos.includes(r)) : (task.localRepos ?? [])
+    this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, ...(localRepos && { localRepos: local }) })
+    // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
+    if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
-    this.store.updateTask(step.id, { status: 'in_progress', work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project)) })
+    this.store.updateTask(step.id, { status: 'in_progress', waitingFor: null, work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local) })
+    // Once per step, before its first session: a restart leaves the main checkouts as they are.
+    const ready = last ? { discuss: [] } : await this.prepareLocal(step.id)
+    if (!ready) return
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
-    if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
-    return this.run(session, message ?? `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`)
+    const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
+    const talk = ready.discuss.length ? `${intro}\n\n${discussText(ready.discuss, project.baseBranch)}` : undefined
+    const text = [talk, message].filter(Boolean).join('\n\n')
+    if (text) session.items.push({ kind: 'user', text, at: Date.now() })
+    return this.run(session, text || intro)
+  }
+
+  /** Every task but the step: who else may hold a local repository. */
+  private others(stepId: string) {
+    return this.store.data.tasks.filter((t) => t.id !== stepId)
+  }
+
+  /**
+   * What keeps the step from working in `repo`'s main checkout (T-50), null if nothing: another step holds it, or it
+   * has uncommitted changes or is on a branch other than base, unless it is on the step's branch already.
+   */
+  async checkLocal(step: Task, repo: string): Promise<LocalCheck | null> {
+    const holder = localHolder(repo, this.others(step.id))
+    if (holder) return { repo, busyBy: holder.key, dirty: [], branch: null }
+    const branch = await currentBranch(repo)
+    if (branch === stepBranch(step.key)) return null
+    const dirty = await dirtyFiles(repo)
+    const other = branch === this.store.project(step.projectId).baseBranch ? null : branch || 'a detached HEAD'
+    return dirty.length || other ? { repo, busyBy: null, dirty, branch: other } : null
+  }
+
+  /**
+   * The local check before a step's first session: every local repository of the step is checked, then (all clear) put
+   * on the step's branch. A problem becomes a question to the user (localChecks, see resolveLocal) and the step does not
+   * start: null, like a failed checkout. Repositories the user chose to discuss are left as they are and returned.
+   */
+  private async prepareLocal(stepId: string): Promise<{ discuss: LocalCheck[] } | null> {
+    const step = this.store.task(stepId)
+    const project = this.store.project(step.projectId)
+    const discuss = (step.localChecks ?? []).filter((c) => c.discuss)
+    const local = (step.work?.repos ?? []).filter((r) => r.local && project.repos.includes(r.repo) && !discuss.some((c) => c.repo === r.repo))
+    const checks: LocalCheck[] = []
+    let r: RepoWork | undefined
+    try {
+      for (r of local) {
+        const check = await this.checkLocal(step, r.repo)
+        if (check) checks.push(check)
+      }
+      if (checks.length) {
+        this.askLocal(stepId, [...discuss, ...checks])
+        return null
+      }
+      for (r of local) await checkoutLocal(r.repo, project.baseBranch, r.branch)
+    } catch (e) {
+      log.error('agent', `local checkout for ${step.key} in ${r?.repo} failed`, e)
+      this.store.updateTask(step.parentId!, { needsInput: `Could not check out ${r?.branch} in ${r?.repo}: ${(e as Error).message}` })
+      return null
+    }
+    this.store.updateTask(stepId, { localChecks: [] })
+    return { discuss }
+  }
+
+  /** Records the step's local checks; the task needs the user while any is open. */
+  private askLocal(stepId: string, checks: LocalCheck[]) {
+    const step = this.store.task(stepId)
+    this.store.updateTask(stepId, { localChecks: checks })
+    const open = openLocalChecks({ localChecks: checks })
+    const names = open.map((c) => repoDirNames([c.repo])[0])
+    this.store.updateTask(step.parentId!, { needsInput: open.length ? `${names.join(', ')}: ${open.length > 1 ? 'need' : 'needs'} your choice` : null })
+  }
+
+  /**
+   * The user's answer to a local check of a step (T-50). worktree: the repository leaves the task's localRepos and gets
+   * a worktree (also the way out of Wait); wait: the step starts once the step holding it is done or canceled; stash,
+   * ignore (the files stay, off-limits to the agent) and switch: the main checkout goes on the step's branch now, and a
+   * failure comes back on the card; discuss: the developer talks it through with the user first. With no question
+   * left, the step starts.
+   */
+  async resolveLocal(stepId: string, repo: string, choice: LocalChoice): Promise<void> {
+    const step = this.store.task(stepId)
+    if (!step.parentId || step.status !== 'in_progress' || !step.work) throw new Error(`${step.key} is not a step in progress`)
+    const task = this.store.task(step.parentId)
+    const project = this.store.project(step.projectId)
+    const check = openLocalChecks(step).find((c) => c.repo === repo)
+    const waiting = step.waitingFor?.repo === repo
+    if (!check && !(waiting && choice === 'worktree')) throw new Error(`${step.key} has no question about ${repo}`)
+    if (check && !localOptions(check).includes(choice)) throw new Error(`${choice} is not an answer to ${localCheckText(check, project.baseBranch)}`)
+    const r = step.work.repos.find((w) => w.repo === repo)
+    if (!r) throw new Error(`${step.key} does not work in ${repo}`)
+    const repoPatch = (patch: Partial<RepoWork>) => {
+      const work = this.store.task(stepId).work!
+      return { ...work, repos: work.repos.map((w) => (w.repo === repo ? { ...w, ...patch } : w)) }
+    }
+    let patch: Partial<Task> = {}
+    if (choice === 'worktree') {
+      const local = (task.localRepos ?? []).filter((x) => x !== repo)
+      this.store.updateTask(task.id, { localRepos: local })
+      const work = this.store.task(stepId).work!
+      const rest = { ...work, repos: work.repos.filter((w) => w.repo !== repo) }
+      patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local), ...(waiting && { waitingFor: null }) }
+    } else if (choice === 'wait') patch = { waitingFor: { key: check!.busyBy!, repo } }
+    else if (choice !== 'discuss') {
+      // Another step may have taken the checkout since the card came up.
+      const holder = localHolder(repo, this.others(stepId))
+      const failed = (c: LocalCheck) => this.askLocal(stepId, (this.store.task(stepId).localChecks ?? []).map((x) => (x.repo === repo ? c : x)))
+      if (holder) return failed({ repo, busyBy: holder.key, dirty: [], branch: null })
+      try {
+        if (choice === 'stash') await stash(repo, `mag: before ${step.key}`)
+        await checkoutLocal(repo, project.baseBranch, r.branch)
+      } catch (e) {
+        log.warn('agent', `${step.key}: ${choice} in ${repo} failed: ${(e as Error).message}`)
+        return failed({ ...check!, error: (e as Error).message })
+      }
+      if (choice === 'ignore') patch = { work: repoPatch({ foreignFiles: check!.dirty }) }
+    }
+    log.info('agent', `${step.key}: ${choice} for ${repo}`)
+    const checks = (this.store.task(stepId).localChecks ?? []).flatMap((c) =>
+      c.repo !== repo ? [c] : choice === 'discuss' ? [{ ...c, discuss: true, error: undefined }] : [],
+    )
+    this.store.updateTask(stepId, patch)
+    this.askLocal(stepId, checks)
+    const now = this.store.task(stepId)
+    if (openLocalChecks(now).length || now.waitingFor) return
+    return this.develop(task.id)
+  }
+
+  /** Steps that waited for the given steps (done or canceled now) try to start again; a problem is a new question. */
+  private wakeWaiting(keys: string[]) {
+    for (const s of this.store.data.tasks.filter((t) => t.parentId && t.status !== 'done' && t.waitingFor && keys.includes(t.waitingFor.key))) {
+      const task = this.store.task(s.parentId!)
+      if (task.status !== 'in_progress') continue
+      log.info('agent', `${s.key}: ${s.waitingFor!.key} let ${s.waitingFor!.repo} go`)
+      this.develop(task.id).catch((e) => this.store.updateTask(task.id, { needsInput: `Could not start ${s.key}: ${(e as Error).message}` }))
+    }
   }
 
   /** The tracker agent reads the task's ticket in a new background session and writes the brief (set_brief). */
@@ -408,6 +556,7 @@ export class Orchestrator {
     if (!step.parentId) throw new Error(`${step.key} is not a step`)
     this.store.updateTask(stepId, { status: 'done' })
     log.info('agent', `${step.key} done`)
+    this.wakeWaiting([step.key])
     const sessions = this.store.data.sessions.filter((s) => s.stepId === stepId)
     if (!sessions.some((s) => this.isRunning(s.id))) {
       await Promise.all(sessions.map((s) => this.closeLive(s.id)))
@@ -424,21 +573,28 @@ export class Orchestrator {
     }
   }
 
-  /** Removes a task's or step's worktrees, then its dir once empty. */
+  /** Removes a task's or step's worktrees, then its dir once empty. A main checkout (local) stays as it is, on its branch. */
   private async removeWork(work: TaskWork | null) {
     if (!work) return
-    for (const r of work.repos) await removeWorktree(r.repo, r.worktree)
+    for (const r of work.repos) if (!r.local) await removeWorktree(r.repo, r.worktree)
     rmdir(work.dir, () => {})
   }
 
-  /** A workspace in `dir`: the existing work, plus a worktree on `branch` for every repository of `repos` it does not cover yet. */
-  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[]): TaskWork {
+  /**
+   * A workspace in `dir`: the existing work, plus a worktree on `branch` for every repository of `repos` it does not
+   * cover yet; one of `localRepos` works in its main checkout instead (T-50).
+   */
+  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[], localRepos: string[] = []): TaskWork {
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
     const known = prev?.repos ?? []
     const fresh = repos.filter((r) => project.repos.includes(r) && !known.some((w) => w.repo === r))
     const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
-    const added = fresh.map((repo, i) => ({ repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null }))
+    const added = fresh.map((repo, i): RepoWork =>
+      localRepos.includes(repo)
+        ? { repo, branch, worktree: repo, local: true, prUrl: null, prState: null, checkError: null }
+        : { repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null },
+    )
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
   }
 
@@ -446,22 +602,36 @@ export class Orchestrator {
    * The developer's add_repo (T-50): a project repository (by name or path) the plan left out of the step gets a
    * worktree on the step's branch, mid-step, and joins the step's repos. A repository the step has already is prepared
    * again. Throws, recording nothing, if the worktree fails.
+   * A repository the task works on locally (T-50) goes on the step's branch in its main checkout instead, unless
+   * `worktree` (the user said so); a local check problem comes back as the error, for the developer to ask the user.
    */
-  async addRepo(stepId: string, ref: string): Promise<RepoWork> {
+  async addRepo(stepId: string, ref: string, worktree = false): Promise<RepoWork> {
     const step = this.store.task(stepId)
     if (!step.parentId || step.status !== 'in_progress' || !step.work) throw new Error(`${step.key} is not a step in progress`)
     const project = this.store.project(step.projectId)
     const repo = projectRepo(project, ref)
     if (!repo) throw new Error(`${ref} is not a repository of the project; one of ${repoNames(project).join(', ')}`)
-    const planned = (work: TaskWork) => this.workFor(work, project, work.dir, stepBranch(step.key), [repo])
+    const local = worktree ? [] : (this.store.task(step.parentId).localRepos ?? [])
+    // worktree: a repository the step had in its main checkout (not set up, e.g. after Discuss) moves to a worktree.
+    const kept = (work: TaskWork) => (worktree ? { ...work, repos: work.repos.filter((w) => !(w.repo === repo && w.local)) } : work)
+    const planned = (work: TaskWork) => this.workFor(kept(work), project, work.dir, stepBranch(step.key), [repo], local)
     const r = planned(step.work).repos.find((w) => w.repo === repo)
     if (!r) throw new Error(`${step.key} has no room for another worktree`)
-    await prepareWorktree(repo, project.baseBranch, r.branch, r.worktree)
+    if (!r.local) await prepareWorktree(repo, project.baseBranch, r.branch, r.worktree)
+    else {
+      // Also a local repository the step has already: after Discuss, it goes on the step's branch once the user agrees.
+      const check = await this.checkLocal(step, repo)
+      if (check)
+        throw new Error(
+          `${localCheckText(check, project.baseBranch)}. The task works on it in the main checkout: ask the user what to do (e.g. they commit or stash, or you call add_repo with worktree: true) and don't touch it before they decide.`,
+        )
+      await checkoutLocal(repo, project.baseBranch, r.branch)
+    }
     // The work may have changed during the git calls (a PR recorded); add to what it is now.
     const now = this.store.task(stepId)
     const repos = now.repos && !now.repos.includes(repo) ? [...now.repos, repo] : now.repos
     this.store.updateTask(stepId, { work: planned(now.work ?? step.work), ...(repos !== now.repos && { repos }) })
-    log.info('agent', `${step.key}: worktree added for ${repo}`)
+    log.info('agent', `${step.key}: ${r.local ? 'main checkout' : 'worktree'} added for ${repo}`)
     return r
   }
 
@@ -479,7 +649,8 @@ export class Orchestrator {
     const project = this.store.project(task.projectId)
     const work = this.ownerOf(session).work
     for (const r of work?.repos ?? []) {
-      if (!project.repos.includes(r.repo) || r.prState === 'merged') continue
+      // A main checkout (local) is set up once, before the step's first session (see prepareLocal).
+      if (r.local || !project.repos.includes(r.repo) || r.prState === 'merged') continue
       try {
         await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
       } catch (e) {
@@ -571,7 +742,9 @@ export class Orchestrator {
     this.store.updateTask(taskId, { status: 'canceled', cancelReason: reason, needsInput: null })
     log.info('agent', `${task.key} canceled`, { reason })
     await Promise.all([...runs.map((r) => r.done), ...sessions.map((s) => this.closeLive(s.id))])
-    for (const t of [task, ...subtasksOf(taskId, this.store.data.tasks)]) await this.removeWork(t.work)
+    const steps = subtasksOf(taskId, this.store.data.tasks)
+    this.wakeWaiting(steps.map((s) => s.key))
+    for (const t of [task, ...steps]) await this.removeWork(t.work)
   }
 
   private newSession(taskId: string, role: AgentRole, stepId: string | null = null) {
@@ -625,8 +798,9 @@ export class Orchestrator {
       const work = owner.work
       return {
         cwd: work.dir,
-        // Repositories without a worktree (not in the step's repos, or a pre-T-22 task) stay readable from their main checkout.
-        addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r)), this.paths.attachmentsDir],
+        // Repositories without a worktree (not in the step's repos, or a pre-T-22 task) stay readable from their main
+        // checkout; the step works in its local ones there.
+        addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r && w.worktree !== r)), this.paths.attachmentsDir],
         appendSystemPrompt:
           (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +
           ticketLine(task) +

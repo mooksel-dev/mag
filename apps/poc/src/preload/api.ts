@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TrackerLink } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskStatus, TaskType, TrackerLink } from '@mag/core'
 
 export interface AppState {
   projects: Project[]
@@ -89,8 +89,13 @@ export interface MagApi {
   setSubtaskStatus(subtaskId: string, status: SubtaskStatus): Promise<void>
   /** Set the order of a task's subtasks; `ids` lists each of them exactly once. */
   reorderSubtasks(parentId: string, ids: string[]): Promise<void>
-  /** Start a todo task, or restart the developer of the current step of a task in progress. */
-  develop(taskId: string): Promise<void>
+  /**
+   * Start a todo task, or restart the developer of the current step of a task in progress. `localRepos` (the Start
+   * popup): repositories its steps work on in the main checkout instead of a worktree.
+   */
+  develop(taskId: string, localRepos?: string[]): Promise<void>
+  /** The user's answer to a local check of a step (see LocalCheck); the step starts when none is left. */
+  resolveLocal(stepId: string, repo: string, choice: LocalChoice): Promise<void>
   /** Start the next step of a task in progress that waits for the user's Start. */
   startStep(taskId: string): Promise<void>
   /**

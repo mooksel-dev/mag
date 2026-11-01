@@ -12,6 +12,7 @@ import {
   inbox,
   integrationMode,
   isLegacy,
+  openLocalChecks,
   openPrs,
   projectColor,
   repoWorkName,
@@ -46,6 +47,7 @@ import { DiffTab, diagramsOf } from './DiffTab'
 import { prLabel } from './format'
 import { PrPill, PrPills } from './LinkPill'
 import { ErrorBoundary } from './ErrorBoundary'
+import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
@@ -315,7 +317,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
             <div className="grow" />
             {canGroom && <button onClick={() => mag.groom(task.id)}>{task.status === 'backlog' ? 'Groom' : 'Re-groom'}</button>}
             {(task.status === 'backlog' || task.status === 'grooming') && <MoveToTodoButton task={task} tasks={tasks} sessions={sessions} />}
-            {canDevelop && <button onClick={() => mag.develop(task.id)}>{developLabel}</button>}
+            {canDevelop && (task.status === 'todo' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
             <ArchiveButton task={task} />
             <CancelButton task={task} />
           </div>
@@ -331,7 +333,9 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
               <SubtaskRow sub={children[0]} steps project={project} canMove={() => false} onMove={() => {}} />
             </div>
           )}
-          {task.needsInput && <div className="banner">Agent needs you: {task.needsInput}</div>}
+          {/* Local checks of the step (T-50) ask on their own cards. */}
+          {task.needsInput && !(step && openLocalChecks(step).length) && <div className="banner">Agent needs you: {task.needsInput}</div>}
+          {step && <LocalChecks step={step} project={project} />}
           {importFailed && (
             <div className="banner">
               Import of {task.tracker!.key} failed: the tracker agent wrote no brief. See its session in the chat panel.
@@ -525,7 +529,11 @@ function RepoList({ work }: { work: TaskWork }) {
         <div key={r.repo} className="reporow">
           <span className="reponame">{repoWorkName(work, r)}</span>
           <code className="grow">{r.branch}</code>
-          <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
+          {r.local ? (
+            <button className="link" title={`Works right in the main checkout ${r.repo}`} onClick={() => mag.open(r.repo)}>local</button>
+          ) : (
+            <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
+          )}
           {r.prUrl ? <PrPill pr={r} /> : <span className="muted">no PR</span>}
           {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
         </div>

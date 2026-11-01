@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, canMoveToTodo, currentStep, inbox, isLegacy, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
+import { agentState, canMoveToTodo, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type TaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: TaskStatus, patch: Partial<Task> = {}): Task => ({
   id,
@@ -107,4 +107,44 @@ test('projectRepo: a project repository by short name or path', () => {
   assert.equal(projectRepo(project, 'app-2'), '/x/app')
   assert.equal(projectRepo(project, '/x/app/'), '/x/app')
   assert.equal(projectRepo(project, 'web'), undefined)
+})
+
+test('taskRepos: repositories of the steps not done yet, in project order (T-50)', () => {
+  const project = { repos: ['/w/app', '/w/api', '/w/web'] }
+  const tasks = [task('T', 'todo'), step('a', 'done', 1, { repos: ['/w/web'] }), step('b', 'todo', 2, { repos: ['/w/api'] }), step('c', 'todo', 3, { repos: ['/w/app', '/w/api'] })]
+  assert.deepEqual(taskRepos('T', tasks, project), ['/w/app', '/w/api'])
+  assert.deepEqual(taskRepos('T', [task('T', 'todo'), step('a', 'todo', 1)], project), project.repos, 'an older step: every repository')
+  assert.deepEqual(taskRepos('T', [task('T', 'todo'), step('a', 'todo', 1, { repos: [] })], project), [])
+})
+
+test('localOptions / localCheckText: the card of a local check (T-50)', () => {
+  const check = { repo: '/w/app', busyBy: null, dirty: [] as string[], branch: null as string | null }
+  assert.deepEqual(localOptions({ ...check, busyBy: 'T-2.1', dirty: ['a'] }), ['worktree', 'wait'], 'busy wins')
+  assert.deepEqual(localOptions({ ...check, dirty: ['a'], branch: 'x' }), ['stash', 'ignore', 'worktree', 'discuss'])
+  assert.deepEqual(localOptions({ ...check, branch: 'x' }), ['switch', 'worktree', 'discuss'])
+  assert.deepEqual(localOptions(check), [])
+  assert.equal(localCheckText({ ...check, busyBy: 'T-2.1' }, 'main'), 'app is used locally by T-2.1')
+  assert.equal(localCheckText({ ...check, branch: 'x' }, 'main'), 'app is on branch x, not main')
+  assert.equal(localCheckText({ ...check, dirty: ['a', 'b'], branch: 'x' }, 'main'), 'app has uncommitted changes: a, b; it is on branch x')
+  assert.equal(localCheckText({ ...check, dirty: ['1', '2', '3', '4', '5', '6', '7'] }, 'main'), 'app has uncommitted changes: 1, 2, 3, 4, 5 and 2 more')
+  assert.deepEqual(openLocalChecks({ localChecks: [{ ...check, branch: 'x', discuss: true }, { ...check, repo: '/w/api', branch: 'y' }] }).map((c) => c.repo), ['/w/api'])
+})
+
+test('localHolder: a step working in the main checkout holds it until done or canceled (T-50)', () => {
+  const local = work({ repo: '/w/app', worktree: '/w/app', local: true })
+  const holding = step('a', 'in_progress', 1, { work: local })
+  assert.equal(localHolder('/w/app', [task('T', 'in_progress'), holding])?.id, 'a')
+  assert.equal(localHolder('/w/api', [task('T', 'in_progress'), holding]), null)
+  assert.equal(localHolder('/w/app', [task('T', 'in_progress'), { ...holding, status: 'done' }]), null)
+  assert.equal(localHolder('/w/app', [task('T', 'canceled'), holding]), null)
+  assert.equal(localHolder('/w/app', [task('T', 'in_progress'), step('a', 'in_progress', 1, { work: work({ repo: '/w/app' }) })]), null, 'a worktree holds nothing')
+  assert.equal(localHolder('/w/app', [task('T', 'in_progress'), { ...holding, waitingFor: { key: 'X', repo: '/w/app' } }]), null, 'a waiting step')
+  const asking = { ...holding, localChecks: [{ repo: '/w/app', busyBy: null, dirty: ['f'], branch: null }] }
+  assert.equal(localHolder('/w/app', [task('T', 'in_progress'), asking]), null, 'a step still asking about it')
+})
+
+test('agentState: a step waiting for another one\'s local repository (T-50)', () => {
+  const T = task('T', 'in_progress')
+  const tasks = [T, step('a', 'in_progress', 1, { waitingFor: { key: 'T-9.1', repo: '/w/app' } })]
+  assert.deepEqual(agentState(T, [], tasks), { kind: 'waiting', reason: 'Waiting for T-9.1 (app)' })
 })

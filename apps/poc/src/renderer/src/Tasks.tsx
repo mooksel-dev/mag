@@ -27,6 +27,7 @@ import {
 } from '@mag/core'
 import { ago } from './format'
 import { PrPills, TicketPill } from './LinkPill'
+import { StartButton } from './LocalMode'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -188,7 +189,7 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
   return (
     <>
       <Section title="In progress" list={s.inProgress} empty="No task in progress." {...row} />
-      <Section title="Todo" note="ready to start; order is priority; drag or ▲▼ to reorder" list={s.todo} empty="Nothing in todo." ordered {...row} />
+      <Section title="Todo" note="ready to start; order is priority; drag or ▲▼ to reorder" list={s.todo} empty="Nothing in todo." ordered project={project} {...row} />
       <Section title="Grooming" list={s.grooming} rowActions={(t) => <span className="rowactions"><MoveToTodoButton task={t} tasks={tasks} sessions={sessions} small /></span>} {...row} />
       <Section
         title="Recently finished"
@@ -201,8 +202,10 @@ function ActiveView({ project, tasks, sessions, now, onOpen }: { project: Projec
   )
 }
 
-function Section({ title, note, list, empty, ordered, action, rowActions, ...row }: {
+function Section({ title, note, list, empty, ordered, action, rowActions, project, ...row }: {
   title: string
+  /** Ordered (todo) sections: the project, for the Start popup's repositories. */
+  project?: Project
   note?: string
   list: Task[]
   empty?: string
@@ -247,7 +250,7 @@ function Section({ title, note, list, empty, ordered, action, rowActions, ...row
               drag={ordered ? { dragging: dragId === t.id, onStart: () => setDragId(t.id), onEnd: () => setDragId(null), canDrop: () => canDrop(t), onDrop: () => void drop(t) } : undefined}
               actions={ordered ? (
                 <span className="todoactions">
-                  <StartButton task={t} sessions={row.sessions} />
+                  <TodoStart task={t} tasks={row.tasks} sessions={row.sessions} project={project} />
                   <Moves task={t} tasks={row.tasks} />
                 </span>
               ) : rowActions?.(t)}
@@ -261,15 +264,11 @@ function Section({ title, note, list, empty, ordered, action, rowActions, ...row
   )
 }
 
-/** Starts development of a todo task. Not while it waits on the user or an agent of it is running. */
-function StartButton({ task, sessions }: { task: Task; sessions: AgentSession[] }) {
+/** Starts development of a todo task (the Start popup). Not while it waits on the user or an agent of it is running. */
+function TodoStart({ task, tasks, sessions, project }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project?: Project }) {
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
   const why = task.needsInput ? `Needs input: ${task.needsInput}` : busy ? 'An agent is running on this task' : `Start a developer on ${task.key}`
-  return (
-    <button className="small" disabled={!!task.needsInput || busy} title={why} onClick={() => mag.develop(task.id)}>
-      Start
-    </button>
-  )
+  return <StartButton task={task} tasks={tasks} project={project} className="small" disabled={!!task.needsInput || busy} title={why} />
 }
 
 function Moves({ task, tasks }: { task: Task; tasks: Task[] }) {

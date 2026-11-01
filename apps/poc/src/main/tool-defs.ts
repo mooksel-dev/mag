@@ -309,10 +309,13 @@ export const TOOL_DEFS = [
     name: 'add_repo',
     scope: 'task',
     description:
-      'Developer only: you need to change a project repository your step has no worktree of (the plan missed it). Creates its worktree on the step branch in your step dir and returns its path; then it is a repo of your step like the others.',
+      'Developer only: you need to change a project repository your step has no worktree of (the plan missed it). Creates its worktree on the step branch in your step dir and returns its path; then it is a repo of your step like the others. If the task works on that repository locally, it puts the main checkout on the step branch instead, or fails with what is in the way (uncommitted changes, another branch, another step there): then ask the user. Also call it for a local repository of your step once the user has settled such a problem with you.',
     inputSchema: {
       type: 'object',
-      properties: { repo: { type: 'string', description: 'Repository name (its folder name, as in get_task) or path.' } },
+      properties: {
+        repo: { type: 'string', description: 'Repository name (its folder name, as in get_task) or path.' },
+        worktree: { type: 'boolean', description: 'A worktree even if the task works on this repository locally. Only when the user said so.' },
+      },
       required: ['repo'],
     },
   },
