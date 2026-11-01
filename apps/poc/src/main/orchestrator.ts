@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type TrackerLink } from '@mag/core'
+import { MAG_MCP_ID, canCancel, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type TrackerLink, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -21,62 +21,15 @@ interface Paths {
   logsDir: string
 }
 
-const GROOMER_PROMPT = `You are grooming a task in "mag", a task-centric workspace.
-Your output is the task document, not chat. Work like this:
-1. Call get_task, then read the relevant code in the project repos (read-only).
-2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
-3. Problem check. Restate the problem in one or two sentences. Look for evidence that it is real: the code path, the
-   ticket, logs, a reproduction from reading the code. Call out a wrong framing ("the brief asks for X, but the cause
-   is Y"). Write the result in §Problem with the evidence. If the problem is not real, write why in §Problem,
-   recommend canceling and call set_needs_input; never cancel the task yourself.
-4. Options. List every sensible way to fix it. Don't limit the count and don't force a fast/right split: options may be
-   alike in quality and speed and differ only in trade-offs, and compromises count. Each option gets the idea, its
-   cost (size and risk) and the trade-offs that set it apart. Give a recommendation and say why. If there is only one
-   sensible way, say so. Sketch every option that changes code with show_diagram (rules in 7): one or two diagrams of
-   the levels the option really changes (component: modules, interfaces, calls; data: the schema; sequence: how apps
-   and infra interact; state: an entity's lifecycle), each with a summary, linked in the option's line as
-   [title](canvas:<id>). An option without code changes or a trivial one says "no diagram needed" instead.
-5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
-   everything else only the user can decide, call set_needs_input with a one-line summary, then stop and wait. Ask
-   everything at once, at the task level; subtasks never get questions of their own. Never skip this checkpoint, and
-   do not create steps before the user confirms the problem and picks an option.
-6. When the user answers in chat, update the doc (remove answered questions, fold answers in). Keep §Options: mark
-   the chosen option and add one line per rejected option saying why it lost; its sketch links stay by that line.
-7. Design the chosen option per layer: revise its sketches by their ids (never redraw copies) and add diagrams where
-   the change needs more. Describe the target change with show_diagram before splitting it into steps;
-   the app draws the diagrams in the task's Diff tab. The kind of change picks the type: links between modules, their
-   interfaces or calls -> component; a scenario between participants (mostly infra: services, databases, queues,
-   outside APIs, CLI processes) -> sequence; states of an entity -> state; an algorithm -> flowchart; a change of the
-   data schema (collections, tables, fields, types in the core model, formats of files or API payloads) -> data. Draw
-   as many as the change needs, several of one type too, each a separate named diagram. For component take the
-   modules from get_architecture (same ids): mark the changed ones and their changed interface lines, uses and calls
-   with diff (add, mod, del) and give their neighbours without a mark as context. Fill summary: one or two sentences
-   on what changes in substance. One method or call per line, always; never group them with "/", "," or "+"
-   ("get / set" is two lines). An interface is methods with signatures "name(args): Result - what it does", not prose. A
-   changed method or call is a pair: the old line del, the new line add. A method moved between modules is a move
-   line in the module it moved to, with from: the id of the module it left. For data give every field on its own
-   line; a changed field is a del line and an add line, a field moved to another entity is move with from
-   "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of:
-   "<moduleId>#<method>", summary and changes (one per line); for a new method replacing an old one set replaces.
-   Link the diagrams in the doc as [title](canvas:<id>), a node as canvas:<id>#<node-id>, with the id show_diagram
-   returned; the app renders them in place. Revise a diagram by its id. UI mockups and other visuals without a type
-   go through show_canvas, linked the same way.
-8. Split the work into execution steps with create_subtask, in order; at least one, or the task cannot move to todo.
-   Each step runs in its own developer session from fresh base, with at most one PR per changed repository; the next
-   step starts when the previous one is merged. A step's title and note (one line) say what ships in it; the task doc
-   carries the details. A small task is one step. Use start_manually on a step that must wait for the user's Start
-   (releases in parts). Give every step repos: the project repositories it changes (names or paths as get_task lists
-   them), [] for a step without code; only those get a worktree, the developer reads the others and can add one with
-   add_repo if the plan missed it. When re-grooming, change the existing steps with update_subtask / delete_subtask /
-   reorder_subtasks instead of creating duplicates (get_task lists them). Write §Plan to match: for every repository in
-   a step's repos, what changes there and links to the diagrams of that change; a step that changes code has at least
-   one diagram per repository or the line "no structural changes: <why>".
-9. Hand over for review: when nothing is open, call set_needs_input("Plan ready for review") and stop. The user
-   approves with Approve → todo, or asks for changes in chat; after changes, ask for review again. You never move the
-   task to todo yourself.
-Stay within the brief: do not add work nobody asked for. An idea outside it goes to the user as a question,
-not into the doc or a subtask.
-Never edit code. Keep chat replies to one or two sentences; the doc carries the detail.`
+/** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
+const groomerPrompt = (playbook: Playbook) => `You are grooming a task in "mag", a task-centric workspace. Your output is the task document, not chat.
+Plan it following the project's playbook:
+${playbook.plan}
+Diagrams of a change go through show_diagram (its description has the rules); link each in the doc as [title](canvas:<id>)
+with the id it returns, and revise a diagram by its id.
+mag enforces: steps (create_subtask, reorder_subtasks) come only after the user has answered you in this chat; you never
+move the task to todo or cancel it yourself, and you never edit code.
+Keep chat replies to one or two sentences; the doc carries the detail.`
 
 const workLines = (work: TaskWork) =>
   work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (${r.local ? "local: the user's main checkout, not a worktree; " : ''}branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
@@ -93,7 +46,7 @@ const foreignLines = (work: TaskWork) =>
 const discussText = (checks: LocalCheck[], base: string) =>
   `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
 
-/** Developer of one step (T-28). */
+/** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
   const base = project.baseBranch
   const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
@@ -105,19 +58,15 @@ const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) =>
     : ''
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
 Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
-1. Read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
-   The target picture is the task's diagrams (get_diagrams); your part is what your step links in the doc.
-2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
-3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
-4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
-   gh pr create --base ${base} --head <branch> --title ... --body ...
-   Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL
-   and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
-5. At the end, append to §Progress in the doc (update_doc): what was done in ${step.key} and what changed against the plan.
-6. If the plan no longer fits reality, do not rewrite it on your own: call set_needs_input with a one-line reason,
-   explain it in this chat and stop. The same for a decision only the user can make. When the user has decided here,
-   update the doc (§Progress and the affected part of the plan) and continue; step titles and notes stay as they are.
-Never merge. Never push to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}".
+First read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
+The target picture is the task's diagrams (get_diagrams); your part is what your step links in the doc.
+Then work following the project's playbook:
+${playbookOf(project).step}
+After opening a PR, call set_pr with its URL and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
+If the plan no longer fits reality, do not rewrite it on your own: call set_needs_input with a one-line reason,
+explain it in this chat and stop. The same for a decision only the user can make. When the user has decided here,
+update the doc (§Decisions, §Progress and the affected part of the plan) and continue; step titles and notes stay as they are.
+Never merge and never push to ${base}: mag blocks both. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.`
 }
 
@@ -128,15 +77,12 @@ const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
 Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
 ${repos.join('\n')}
-1. Call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\n   get_task lists the subtasks: the plan as a checklist. Call set_subtask_status(key, "in_progress") when you start a step\n   and set_subtask_status(key, "done") as soon as it is finished; the user watches them live.' : ''}
-2. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
-3. Review your own diff in every repo you changed (git diff ${base}...HEAD) like a strict reviewer and fix what you find.
-4. In every repo with changes: commit with clear messages, git push -u origin <branch>, then
-   gh pr create --base ${base} --head <branch> --title ... --body ...
-   Body: short summary, how you tested, and any assumptions you were not sure about. Then call set_pr with the URL
-   and the repo. One PR per changed repo; a repo without changes gets no PR.
-5. If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
-Never merge. Never push to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}".
+First call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\nget_task lists the subtasks: the plan as a checklist. Call set_subtask_status(key, "in_progress") when you start a step\nand set_subtask_status(key, "done") as soon as it is finished; the user watches them live.' : ''}
+Then work following the project's playbook:
+${playbookOf(project).step}
+After opening a PR, call set_pr with its URL and the repo. One PR per changed repo; a repo without changes gets no PR.
+If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
+Never merge and never push to ${base}: mag blocks both. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.`
 }
 
@@ -181,8 +127,9 @@ tasks can be archived; mag archives them after some days.
   a complete doc (Problem / Changes per layer / Plan, following the project's doc template), plan: true and its
   steps (at least one). It goes to todo and starts nothing: the user starts it with Start. Anything that still has
   open questions goes to the backlog and through start_grooming instead.
-- Record outcomes so they outlive this chat: decisions and conventions in update_notes, plan changes in
-  update_task / update_task_doc.
+- Record outcomes so they outlive this chat: what the user decided about a task goes under §Decisions in its doc
+  (update_task_doc; it overrides the project's playbook for that task), project-wide conventions in update_notes,
+  plan changes in update_task / update_task_doc.
 - One answer per turn: make the tool calls first, then reply once at the end. Don't answer before recording and
   again after it; say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that task; archive_task when they ask to clean up.
@@ -191,13 +138,14 @@ tasks can be archived; mag archives them after some days.
   a new one. Prefer showing over describing.
 - Refer to tasks by key (T-12, subtask T-12.3); the app turns keys into links.
 - Be concise: short answers, markdown only where it helps. The user hates filler.
-- Jira / Linear tickets: read them any way you have (the tracker's MCP server, a CLI like acli through Bash, …).
-  Bash is for reading only: never change files, and change nothing in the tracker unless the user explicitly asks.
-  Asked to create a task from a ticket link, read the ticket, write the brief yourself and call create_task with its
-  URL as ticket_url; link_ticket links an existing task. If you cannot read it, say what is missing (e.g. no
-  Atlassian MCP, acli not logged in).
+- Tickets: asked to create a task from a ticket link, read the ticket, write the brief yourself and call create_task
+  with its URL as ticket_url; link_ticket links an existing task. Bash is for reading only: never change files.
+  What you may do in the tracker is in the playbook below.
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
-  crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.`
+  crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.
+
+Tickets, by the project's playbook:
+${playbookOf(project).tracker}`
 
 const TRACKER_NAMES = { jira: 'Jira', linear: 'Linear' } as const
 
@@ -222,7 +170,7 @@ Keep chat replies to one line.`
  * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
  * so the whole job is said here, every round.
  */
-const reviewPrompt = (task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean) => {
+const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string) => {
   const prs = work.repos.filter((r) => heads[r.repo]).map((r) => `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, code in ${r.worktree}`)
   const prev = step.review
   const again =
@@ -232,10 +180,12 @@ const reviewPrompt = (task: Task, step: Task, work: TaskWork, heads: Record<stri
   return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
 ${prs.join('\n')}
 ${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
-1. Read get_task, get_doc and get_diagrams; this step's part is what the doc links for it. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
-2. Check the PRs against the decisions and this step's plan: does it do what was agreed, and nothing outside the step? Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
-3. Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
-Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.`
+First read get_task, get_doc and get_diagrams; this step's part is what the doc links for it. Then review following the project's playbook:
+${playbookOf(project).review}
+Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
+Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
+
+${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
 }
 
 const findingLines = (findings: ReviewFinding[]) => findings.map((f) => `- ${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
@@ -244,11 +194,18 @@ const findingLines = (findings: ReviewFinding[]) => findings.map((f) => `- ${f.w
 const reviewFeedback = (review: AgentReview, many: boolean) =>
   `The agent review of your PR${many ? 's' : ''} (round ${review.round}) asks for changes:\n${findingLines(review.findings)}\nAddress them: change the code, run tests, push; the review runs again on the new commits. Nothing about them goes to GitHub. If a finding is wrong, say why here and call set_needs_input.`
 
-/** Groomers and developers of a task imported from a tracker: the ticket is context, not a place to write. */
-const ticketLine = (task: Task) =>
+/** Groomers and developers of a task linked to a ticket: the ticket is context; the playbook says what they may do there. */
+const ticketLine = (project: Project, task: Task) =>
   task.tracker
-    ? `\n\nLinked ticket ${task.tracker.key}${task.tracker.url ? ` (${task.tracker.url})` : ''} — read-only context. Read it any way you have if you need more. Do not change anything in the tracker unless the user asks in chat.`
+    ? `\n\nLinked ticket ${task.tracker.key}${task.tracker.url ? ` (${task.tracker.url})` : ''}: context for the work. Tickets, by the project's playbook:\n${playbookOf(project).tracker}`
     : ''
+
+/** A prompt block after what comes before it; nothing when empty. */
+const blocks = (text: string) => (text ? `\n\n${text}` : '')
+
+/** What mag never lets an agent run, whatever its prompt says (T-55.2): a merge, and a push to the base branch. */
+const NEVER_MERGE = 'Bash(gh pr merge:*)'
+const noPushTo = (base: string) => [`Bash(git push * ${base})`, `Bash(git push * ${base} *)`, `Bash(git push *:${base})`, `Bash(git push *:${base} *)`, `Bash(git push *refs/heads/${base}*)`]
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
@@ -322,7 +279,7 @@ export class Orchestrator {
         model: c.model ?? undefined,
         addDirs: project.repos.slice(1),
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
-        appendSystemPrompt: ARCHITECT_PROMPT,
+        appendSystemPrompt: ARCHITECT_PROMPT + blocks(contextBlocks({ notes: project.notes })),
         mcpConfigPath,
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
@@ -770,7 +727,7 @@ export class Orchestrator {
     this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now() })
     this.reviewTried.set(stepId, key)
     log.info('agent', `${step.key}: agent review round ${round}`, { withContext })
-    const text = reviewPrompt(task, fresh, fresh.work!, now, round, withContext)
+    const text = reviewPrompt(this.store.project(task.projectId), task, fresh, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '')
     session.items.push({ kind: 'user', text, at: Date.now() })
     return this.run(session, text)
   }
@@ -804,7 +761,7 @@ export class Orchestrator {
     const review: AgentReview = { verdict, findings, round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })
-    return reviewOutcome(review) === 'developer'
+    return reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) === 'developer'
       ? 'Recorded: the findings go to the developer, and you review again once they push. Stop here.'
       : 'Recorded: the user gets your verdict. Stop here.'
   }
@@ -827,7 +784,7 @@ export class Orchestrator {
       }
       return
     }
-    if (reviewOutcome(review) !== 'developer') return
+    if (reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) !== 'developer') return
     const many = (step.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     // A developer in a turn (the user talks to it) keeps it; the user sees the verdict instead.
     if (!this.resumeDeveloper(step, reviewFeedback(review, many))) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
@@ -926,10 +883,10 @@ export class Orchestrator {
       return {
         cwd: first,
         addDirs: [...rest, this.paths.attachmentsDir, this.paths.logsDir],
-        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + (project.notes ? `\n\nProject notes:\n${project.notes}` : '') + arch,
-        // Bash reads tickets through CLIs like acli (T-37); read only by the prompt.
+        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(contextBlocks({ notes: project.notes })),
+        // Bash reads tickets through CLIs like acli (T-37); read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
       }
     }
     const task = this.store.task(session.taskId)
@@ -943,19 +900,19 @@ export class Orchestrator {
       }
     }
     const owner = this.ownerOf(session)
+    const doc = this.store.data.docs[task.id] ?? ''
+    // A snapshot as of the session's first run: a resumed session keeps its first system prompt; get_doc has the rest.
+    const context = (stepKey?: string) => blocks(contextBlocks({ decisions: docDecisions(doc, stepKey), notes: project.notes }))
     if (session.role === 'reviewer') {
       const work = owner.work
       return {
         cwd: work?.dir ?? first,
         addDirs: work ? project.repos : rest,
-        // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job itself is in the message.
-        appendSystemPrompt:
-          `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` +
-          (project.notes ? `\n\nProject notes:\n${project.notes}` : '') +
-          arch,
-        // Bash for gh pr view / diff and git; read only by the prompt.
+        // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job and the decisions are in the message.
+        appendSystemPrompt: `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` + arch + blocks(contextBlocks({ notes: project.notes })),
+        // Bash for gh pr view / diff and git; read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
       }
     }
     if (session.role === 'developer' && owner.work) {
@@ -967,22 +924,25 @@ export class Orchestrator {
         addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r && w.worktree !== r)), this.paths.attachmentsDir],
         appendSystemPrompt:
           (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +
-          ticketLine(task) +
+          ticketLine(project, task) +
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
-            : ''),
+            : '') +
+          context(owner.parentId ? owner.key : undefined),
         allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
+        disallowedTools: [NEVER_MERGE, ...noPushTo(project.baseBranch)],
       }
     }
     return {
       cwd: first,
       addDirs: [...rest, this.paths.attachmentsDir],
       appendSystemPrompt:
-        GROOMER_PROMPT +
-        ticketLine(task) +
+        groomerPrompt(playbookOf(project)) +
+        ticketLine(project, task) +
         (project.enforceArchitecture
           ? `\n\n${ARCH_RULES}\nCall get_architecture for the recorded design and check_architecture for rule checks on the code. In the doc, design changes per layer: infra first if it changes, then clients and services with their interfaces (signatures + semantics), then the app layer.`
-          : ''),
+          : '') +
+        context(),
       allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
       disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
     }

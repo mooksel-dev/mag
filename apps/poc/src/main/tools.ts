@@ -114,6 +114,15 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       if (task.parentId) throw new Error('Subtasks cannot have subtasks')
       if (task.status !== 'backlog' && task.status !== 'grooming') throw new Error(`${task.key} is ${task.status}; its steps change only while grooming`)
     }
+    /**
+     * The checkpoint (T-55.2): a groomer plans steps only after the user has answered it in its chat (confirmed the
+     * problem, picked an option). Other roles plan with the user already.
+     */
+    const pastCheckpoint = () => {
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (session?.role === 'groomer' && task.status === 'grooming' && !session.items.some((i) => i.kind === 'user'))
+        throw new Error('Checkpoint first: steps come after the user confirms the problem and picks an option. Put that under Open questions, call set_needs_input and stop; plan the steps once the user has answered in this chat.')
+    }
     /** A step of the task, while grooming. */
     const ownSubtask = (key: unknown) => {
       canEditSteps()
@@ -179,6 +188,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'create_subtask': {
         canEditSteps()
+        pastCheckpoint()
         const title = String(args.title ?? '').trim()
         if (!title) throw new Error('title is required')
         const repos = args.repos === undefined ? undefined : reposArg(args.repos, project)
@@ -217,6 +227,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'reorder_subtasks': {
         canEditSteps()
+        pastCheckpoint()
         const ordered = (Array.isArray(args.keys) ? args.keys : []).map(subtask)
         store.reorderSubtasks(task.id, ordered.map((t) => t.id))
         return `Order: ${ordered.map((t) => t.key).join(', ')}.`
