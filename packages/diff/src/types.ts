@@ -89,9 +89,12 @@ export type Level = 'critical' | 'high' | 'medium' | 'low' | 'noise'
 
 /** One change over the vocabulary. */
 export interface Change {
-  /** element: its ref (at head; at base when deleted); edge: `from -> to`; file: `<repo>:<path>`. */
+  /**
+   * element: its ref (at head; at base when deleted), or `<module>#<method>` for a planned one base does not have;
+   * edge: `from -> to`; file: `<repo>:<path>`; module (plans only): its id.
+   */
   key: string
-  kind: 'element' | 'edge' | 'file'
+  kind: 'element' | 'edge' | 'file' | 'module'
   diff: DiffMark
   /** The element's or file's module; for an edge, `from`. */
   module: string | null
@@ -126,6 +129,30 @@ export interface ChangeSet {
   deterministic: boolean
   /** Changed source files no adapter reads. */
   unparsed: string[]
+}
+
+/**
+ * Where a plan diagram disagrees with the code at base (T-57.3). unknown-module: an id the architecture does not have
+ * and the diagram does not add; no-path: an added module without the code it will own; not-in-base: an unchanged,
+ * changed or removed method, call or dependency that base does not have; exists: an add of what base has already.
+ */
+export type PlanWarningCode = 'unknown-module' | 'no-path' | 'not-in-base' | 'exists'
+
+export interface PlanWarning {
+  code: PlanWarningCode
+  /** The diagram module it is about. */
+  module: string
+  /** The interface line, `-> <to>` for a dependency, or `-> <to>#<method>` for a call; none for the module itself. */
+  item?: string
+  message: string
+}
+
+/** A plan diagram over the code at base: the changes it plans and where it disagrees with base. */
+export interface PlanCheck {
+  /** The skeletons it was checked against. */
+  base: { repo: string; sha: string }[]
+  changes: Change[]
+  warnings: PlanWarning[]
 }
 
 /** Language adapter: elements and imports of one file, whatever its module. */

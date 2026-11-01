@@ -1,9 +1,11 @@
 import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
-import { carryIds, createDiff, formatChangeSet, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
+import { carryIds, formatChangeSet, formatPlanWarnings, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
-import { blobs, changedRepos, diffHunks, mergeBase, revParse, treeAt } from './git.ts'
+import { changedRepos, mergeBase, revParse, treeAt } from './git.ts'
+import { log } from './log.ts'
+import { baseShas, checkPlan, diagramRepos, diff } from './plan-check.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -385,8 +387,6 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
   }
 }
 
-const diff = createDiff({ treeAt, blobs, diffHunks })
-
 /** get_pr_changes for one repo: its branch against where it left the base (T-57.1). */
 async function prChanges(work: TaskWork, r: RepoWork, base: string, vocabulary: ReturnType<typeof vocabularyOf>): Promise<string> {
   const name = repoWorkName(work, r)
@@ -476,6 +476,26 @@ function adopted(store: Store, taskId: string, md: string): string {
 
 /** "+2 ~1 −0", or "no changes". */
 const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'no changes'
+
+/**
+ * A Component diagram against the fresh base of its repositories (T-57.3): records the commits on the diagram and says
+ * where it disagrees with the code. Warnings, not errors: the diagram is saved either way. Empty when nothing to say.
+ */
+async function againstBase(store: Store, project: Project, canvas: Canvas): Promise<string> {
+  if (canvas.diagram?.type !== 'component' || !project.architecture) return ''
+  try {
+    const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
+    const shas = await baseShas(project, diagramRepos(project, canvas, step))
+    const check = await checkPlan(project, canvas.diagram, shas)
+    if (!check) return ''
+    store.setCanvasBase(canvas.id, shas)
+    if (!check.warnings.length) return ` It agrees with ${project.baseBranch}.`
+    return `\nSaved, but it disagrees with the code at ${project.baseBranch} (${check.base.map((b) => `${b.repo}@${b.sha.slice(0, 8)}`).join(', ')}). Fix the diagram and revise it by id, or say in the doc why it is right:\n${formatPlanWarnings(check.warnings)}`
+  } catch (e) {
+    log.warn('tools', `plan check of ${canvas.id} failed: ${(e as Error).message}`)
+    return ''
+  }
+}
 
 /** Unowned files listed in the answer of set_architecture; the rest is a count. */
 const UNOWNED_SHOWN = 30
@@ -764,7 +784,8 @@ function sharedTool(
         placement,
       })
       showInChat(store, ctx, canvas)
-      return `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
+      const saved = `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
+      return againstBase(store, project, canvas).then((note) => saved + note)
     }
   }
   return undefined

@@ -1,13 +1,14 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, taskDiagrams, stepDiagrams, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
+import { diagramDrift, driftText } from './plan-check.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -46,6 +47,10 @@ const foreignLines = (work: TaskWork) =>
 /** The developer's first message when the user chose Discuss on local checks (T-50). */
 const discussText = (checks: LocalCheck[], base: string) =>
   `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
+
+/** The developer's first message when base moved under the step's plan (T-57.3): mag waits for the user. */
+const driftNote = (drift: string, base: string) =>
+  `${base} has moved since the plan of this step was drawn, and the plan no longer agrees with it here:\n${drift}\nmag is waiting for the user: before anything else, tell them in a few lines what each means for the plan and what you propose; don't change code until they answer.`
 
 /** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
@@ -422,10 +427,33 @@ export class Orchestrator {
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
-    const talk = ready.discuss.length ? `${intro}\n\n${discussText(ready.discuss, project.baseBranch)}` : undefined
+    // Once per step, like the local checks: base moved under its plan since it was drawn.
+    const drift = last ? '' : await this.planDrift(step)
+    const notes = [ready.discuss.length ? discussText(ready.discuss, project.baseBranch) : '', drift ? driftNote(drift, project.baseBranch) : ''].filter(Boolean)
+    const talk = notes.length ? [intro, ...notes].join('\n\n') : undefined
     const text = [talk, message].filter(Boolean).join('\n\n')
     if (text) session.items.push({ kind: 'user', text, at: Date.now() })
+    if (drift) this.store.updateTask(taskId, { needsInput: `${step.key}: ${project.baseBranch} moved under its plan; see the developer chat` })
     return this.run(session, text || intro)
+  }
+
+  /**
+   * The step's plan diagrams against fresh base (T-57.3): what they no longer agree on since they were checked, as
+   * text; empty when base has not moved or the move does not touch them. A check that fails is skipped.
+   */
+  private async planDrift(step: Task): Promise<string> {
+    const task = this.store.task(step.parentId!)
+    const project = this.store.project(task.projectId)
+    const plans = stepDiagrams(taskDiagrams(task, this.store.data.docs[task.id], Object.values(this.store.data.canvases)), step.id).filter((c) => c.role === 'plan')
+    const drift: Parameters<typeof driftText>[0] = []
+    for (const canvas of plans) {
+      const warnings = await diagramDrift(project, canvas).catch((e) => {
+        log.warn('agent', `${step.key}: plan check of ${canvas.id} failed: ${(e as Error).message}`)
+        return []
+      })
+      if (warnings.length) drift.push({ canvas, warnings })
+    }
+    return driftText(drift)
   }
 
   /** Every task but the step: who else may hold a local repository. */

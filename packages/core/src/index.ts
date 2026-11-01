@@ -1164,6 +1164,8 @@ export interface Canvas {
   repo?: string | null
   /** role 'fact': the plan diagram it is the fact of (T-55.4). */
   planOf?: string | null
+  /** A Component diagram: the base commit per repository (path) it was last checked against (T-57.3). */
+  baseSha?: Record<string, string> | null
   version: number
   updatedAt: number
 }

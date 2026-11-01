@@ -436,6 +436,16 @@ export class Store {
     return canvas
   }
 
+  /** Records the base commits a diagram was checked against (T-57.3); the content and its version stay. */
+  setCanvasBase(canvasId: string, baseSha: Record<string, string>): Canvas {
+    const prev = this.data.canvases[canvasId]
+    if (!prev) throw new Error(`No canvas ${canvasId}`)
+    const canvas = { ...prev, baseSha }
+    this.data.canvases[canvasId] = canvas
+    this.changed()
+    return canvas
+  }
+
   /**
    * The canvases among `ids` that belong to no task yet (drawn in the project chat) move into the task: a doc that
    * links them makes them part of its work. Returns the ones moved.
