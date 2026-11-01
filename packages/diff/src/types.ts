@@ -187,9 +187,16 @@ export interface Coverage {
 /** Language adapter: elements and imports of one file, whatever its module. */
 export interface LangAdapter {
   lang: string
+  /** Its files are code only when they declare something (YAML, JSON): they need no module and are never unparsed. */
+  data?: boolean
   matches(path: string): boolean
   elements(path: string, src: string): ParsedElement[]
   imports(path: string, src: string): { spec: string; line: number }[]
+  /**
+   * A repo path, `ext:<package>` or null for an import of `from`, given every file of the tree. Without it, imports
+   * resolve as in TypeScript: relative to the file, workspace packages, outside packages.
+   */
+  resolve?(from: string, spec: string, files: Set<string>): string | null
 }
 
 /** An element as an adapter sees it, before it gets a repo, path and module. */
