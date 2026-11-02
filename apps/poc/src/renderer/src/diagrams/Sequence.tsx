@@ -13,10 +13,11 @@ const KIND_NAMES = { call: 'call', reply: 'reply', async: 'async message' }
  * arrow, a reply a dashed one, an async message has an open head; bars on the lifelines show who is busy. Hover or
  * click a participant to see its messages; `focus` (a #node link) selects one.
  */
-export function SequenceView({ diagram, focus }: { diagram: SequenceDiagram; focus?: string }) {
+export function SequenceView({ diagram, focus, onSelect }: { diagram: SequenceDiagram; focus?: string; onSelect?: (id: string | null) => void }) {
   const layout = useMemo(() => layoutSequence(diagram), [JSON.stringify(diagram)])
   const [hover, setHover] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(focus ?? null)
+  useEffect(() => onSelect?.(selected), [selected])
   const svg = useRef<SVGSVGElement>(null)
   const uid = useId()
 

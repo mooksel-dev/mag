@@ -55,7 +55,7 @@ const flagged = (all: DNode[], n: DNode) => !!n.concern || n.uses.some((u) => ru
 const NO_FLOWS: FlowItem[] = []
 
 /** Opens the flow of a method: the module's id and the method. */
-type OpenFlow = (module: string, method: string) => void
+export type OpenFlow = (module: string, method: string) => void
 
 /**
  * One level of a module tree: click a module with inner modules to go inside, breadcrumbs lead back. Arrows carry
@@ -63,7 +63,17 @@ type OpenFlow = (module: string, method: string) => void
  * colored by its diff marks instead of layering. `focus`: a module to show on its level and select (a #node link).
  * `flows`: the task's flows of methods; a method with one gets "flow ›", which opens the flow in place.
  */
-export function ComponentView({ modules, diff = false, summary, focus, flows = NO_FLOWS }: { modules: DNode[]; diff?: boolean; summary?: string; focus?: string; flows?: FlowItem[] }) {
+export function ComponentView({ modules, diff = false, summary, focus, flows = NO_FLOWS, onSelect, onFlow }: {
+  modules: DNode[]
+  diff?: boolean
+  summary?: string
+  focus?: string
+  flows?: FlowItem[]
+  /** Told the module selected, null when none. */
+  onSelect?: (id: string | null) => void
+  /** Opens a method's flow somewhere else (the diff window's next diagram) instead of in place. */
+  onFlow?: OpenFlow
+}) {
   const at = (id: string | undefined) => (id ? pathTo(modules, id) : [])
   const [level, setLevel] = useState<string | null>(() => at(focus).at(-2)?.id ?? null)
   const [selected, setSelected] = useState<string | null>(() => (at(focus).length ? focus! : null))
@@ -108,15 +118,16 @@ export function ComponentView({ modules, diff = false, summary, focus, flows = N
     setSelected(id)
     setFlowId(null)
   }
+  useEffect(() => onSelect?.(selected), [selected])
   /** Opens the flow of a method in place; its module stays selected on its level for the way back. */
   const openFlow: OpenFlow | undefined = diff && flows.length
-    ? (module, method) => {
+    ? onFlow ?? ((module, method) => {
         const f = flowOf(flows, module, method)
         if (!f || !pathTo(modules, module).length) return
         reveal(module)
         setHover(null)
         setFlowId(f.id)
-      }
+      })
     : undefined
   // A new anchor on the same view (another #node link to it).
   useEffect(() => {

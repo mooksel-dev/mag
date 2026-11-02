@@ -3,7 +3,7 @@
 // lead from modules, interface lines, uses and entities to the other diagrams of the set. A flowchart's `of` reads as a
 // logic link from its method, so diagrams drawn before links still hang together.
 import { methodName, walkArch } from './arch.ts'
-import { LINK_KINDS, parseFlowRef, type Diagram, type DiagramLink, type DNode } from './diagram.ts'
+import { LINK_KINDS, diagramSummary, parseFlowRef, type Diagram, type DiagramLink, type DiffCount, type DNode } from './diagram.ts'
 import type { Canvas } from './index.ts'
 
 type Member = Pick<Canvas, 'id' | 'projectId' | 'taskId' | 'kind' | 'diagram' | 'role' | 'option' | 'stepId' | 'title' | 'root'>
@@ -83,29 +83,7 @@ const modulesOf = (d: Diagram) => {
 
 /** The diagrams of a set the root reaches by links and flowcharts' of; all of them when it has no root. */
 export function reached<C extends Member>(set: C[]): Set<string> {
-  const root = setRoot(set)
-  if (!root) return new Set(set.map((c) => c.id))
-  const seen = new Set([root.id])
-  const queue = [root]
-  const visit = (c: C) => {
-    if (seen.has(c.id)) return
-    seen.add(c.id)
-    queue.push(c)
-  }
-  while (queue.length) {
-    const c = queue.shift()!
-    for (const { link } of diagramLinks(c.diagram!)) {
-      const to = set.find((x) => x.id === link.to)
-      if (to) visit(to)
-    }
-    // A flowchart of a method of a module this diagram draws.
-    const modules = modulesOf(c.diagram!)
-    for (const x of set) {
-      const ref = x.diagram!.type === 'flowchart' && x.diagram!.of ? parseFlowRef(x.diagram!.of) : null
-      if (ref && modules.has(ref.module)) visit(x)
-    }
-  }
-  return seen
+  return setRoot(set) ? new Set(setOrder(set).keys()) : new Set(set.map((c) => c.id))
 }
 
 const name = (c: Pick<Canvas, 'id' | 'title'>) => `"${c.title}" (${c.id})`
@@ -161,4 +139,127 @@ export function remapLinks(d: Diagram, ids: Map<string, string>): Diagram {
     })
   if (copy.type === 'data') copy.entities.forEach((e) => fix(e.links))
   return copy
+}
+
+// The one diff window (povnyi-diff-nabir-pov-iazanykh.2, Decision 6): the levels a set shows, the way from its root
+// to a diagram for the breadcrumbs, and what a node opens.
+
+/** The levels of the diff window, top down. */
+export type SetLevelKey = 'system' | 'modules' | 'data' | 'scenarios' | 'logic'
+export const SET_LEVELS: SetLevelKey[] = ['system', 'modules', 'data', 'scenarios', 'logic']
+
+export interface SetLevel<C> {
+  level: SetLevelKey
+  diagrams: { canvas: C; count: DiffCount }[]
+}
+
+const LEVEL_OF: Record<Diagram['type'], SetLevelKey> = { component: 'modules', data: 'data', sequence: 'scenarios', state: 'scenarios', flowchart: 'logic' }
+
+const changed = (c: DiffCount) => c.add + c.mod + c.del + c.move > 0
+
+/**
+ * The diagrams of a set by level: the root is the system level, the other Component diagrams the modules, then data,
+ * scenarios (sequence and state) and the logic of methods. A level shows only diagrams that change something; the
+ * root always shows (Decision 4). In the order the root reaches them by links, then as drawn.
+ */
+export function setLevels<C extends Member>(set: C[]): SetLevel<C>[] {
+  const root = setRoot(set)
+  const order = [...setOrder(set).keys()]
+  const rank = (c: C) => {
+    const i = order.indexOf(c.id)
+    return i < 0 ? order.length + set.indexOf(c) : i
+  }
+  const sorted = [...set].sort((a, b) => rank(a) - rank(b))
+  return SET_LEVELS.map((level) => ({
+    level,
+    diagrams: sorted
+      .filter((c) => (c === root ? level === 'system' : LEVEL_OF[c.diagram!.type] === level))
+      .map((canvas) => ({ canvas, count: diagramSummary(canvas.diagram!) }))
+      .filter((d) => d.canvas === root || changed(d.count)),
+  })).filter((l) => l.diagrams.length > 0)
+}
+
+/** A link a node opens: where it starts on the node (the module, `<module>#<method>`, `<module> -> <to>`, an entity) and where it leads. */
+export interface NodeLink extends LinkFrom {
+  /** Read from a flowchart's of, not drawn as a link. */
+  implicit?: boolean
+}
+
+/** Every link of a diagram, the flowcharts of its modules' methods (their of) among them as logic links. */
+function allLinks<C extends Member>(set: C[], c: C): NodeLink[] {
+  const out: NodeLink[] = diagramLinks(c.diagram!)
+  const modules = modulesOf(c.diagram!)
+  for (const x of set) {
+    const ref = x.diagram!.type === 'flowchart' && x.diagram!.of ? parseFlowRef(x.diagram!.of) : null
+    if (!ref || !modules.has(ref.module) || out.some((l) => l.link.to === x.id)) continue
+    out.push({ from: `${ref.module}#${ref.method}`, link: { to: x.id, kind: 'logic' }, implicit: true })
+  }
+  return out
+}
+
+/**
+ * The links a node of a diagram of the set opens: a module's own, its interface lines' and its uses'; an entity's.
+ * Without `node`, every link of the diagram.
+ */
+export function linksAt<C extends Member>(set: C[], canvasId: string, node?: string): NodeLink[] {
+  const c = set.find((x) => x.id === canvasId)
+  if (!c) return []
+  const links = allLinks(set, c)
+  return node === undefined ? links : links.filter((l) => l.from === node || l.from.startsWith(`${node}#`) || l.from.startsWith(`${node} -> `))
+}
+
+/** The ids of a set's diagrams in the order its root reaches them by links (breadth first), the root first. */
+function setOrder<C extends Member>(set: C[]): Map<string, TrailStep | null> {
+  const root = setRoot(set)
+  const parent = new Map<string, TrailStep | null>()
+  if (!root) return parent
+  parent.set(root.id, null)
+  const queue = [root]
+  while (queue.length) {
+    const c = queue.shift()!
+    for (const { from, link } of allLinks(set, c)) {
+      const to = set.find((x) => x.id === link.to)
+      if (!to || parent.has(to.id)) continue
+      parent.set(to.id, { id: c.id, via: from })
+      queue.push(to)
+    }
+  }
+  return parent
+}
+
+/** A step of the breadcrumbs: a diagram, and the node of the previous one whose link led here. */
+export interface TrailStep {
+  id: string
+  via?: string
+}
+
+/**
+ * The way from the root to a diagram of the set by links, for the breadcrumbs: the root first, each next diagram with
+ * the node of the previous one that links to it. A diagram the root does not reach stands alone.
+ */
+export function setTrail<C extends Member>(set: C[], id: string): TrailStep[] {
+  const parent = setOrder(set)
+  if (!parent.has(id)) return [{ id }]
+  const out: TrailStep[] = []
+  for (let at: string | undefined = id; at; ) {
+    const p = parent.get(at)
+    out.unshift(p ? { id: at, via: p.via } : { id: at })
+    at = p?.id
+  }
+  return out
+}
+
+/** The files a node of a fact diagram rests on: a module's interface lines and uses, in the order drawn. */
+export function nodeFiles(d: Diagram, node: string): string[] {
+  const out = new Set<string>()
+  if (d.type === 'component')
+    walkArch(d.modules, (n: DNode) => {
+      if (n.id !== node) return
+      n.interface?.forEach((l) => l.files?.forEach((f) => out.add(f)))
+      n.uses.forEach((u) => {
+        u.files?.forEach((f) => out.add(f))
+        u.calls.forEach((c) => c.files?.forEach((f) => out.add(f)))
+      })
+    })
+  return [...out]
 }

@@ -19,7 +19,7 @@ const MISSING: Record<MissingUnit['rule'], string> = {
 const LevelBadge = ({ level }: { level: Level }) => <span className={`factlevel lv-${level}`}>{level}</span>
 
 /** The diffs of files the user opened, loaded from the step's PR on the first click. */
-function useHunks(stepId: string, view: FactView | null | undefined) {
+export function useHunks(stepId: string, view: FactView | null | undefined) {
   const [open, setOpen] = useState<Record<string, string[] | string | null>>({})
   useEffect(() => setOpen({}), [view])
   const toggle = (f: FileChange) => {
@@ -39,10 +39,10 @@ function useHunks(stepId: string, view: FactView | null | undefined) {
   return { toggle, lines: (f: FileChange) => open[fileKey(f)] }
 }
 
-type Hunks = ReturnType<typeof useHunks>
+export type Hunks = ReturnType<typeof useHunks>
 
 /** A changed file: its path opens its diff inline. */
-function FileLink({ f, hunks }: { f: FileChange; hunks: Hunks }) {
+export function FileLink({ f, hunks }: { f: FileChange; hunks: Hunks }) {
   const lines = hunks.lines(f)
   return (
     <div className="factline">

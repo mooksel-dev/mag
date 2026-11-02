@@ -453,7 +453,6 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .diffrow:hover { background: var(--hover); }
 .diffrow .type { width: 80px; flex: none; font-size: 12px; color: var(--muted); }
 .diffrow .title { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diffopen .canvashead { padding: 0 0 10px; border-bottom: none; }
 .diffgroups { display: flex; flex-direction: column; gap: 22px; }
 .diffgroups section { display: flex; flex-direction: column; gap: 10px; }
 .diffhead { align-self: flex-start; font-weight: 600; font-size: 13px; color: var(--text); }
@@ -748,3 +747,20 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .finding .pill { min-width: 70px; text-align: center; }
 .reviewpublish { margin-top: 8px; }
 .finding input[type='checkbox'] { margin: 0; align-self: center; }
+/* one window over a diagram set (povnyi-diff-nabir-pov-iazanykh.2): levels, the diagram open, the node selected */
+.diffset { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.diffset > .canvashead { padding: 0 0 6px; border-bottom: none; flex-wrap: wrap; }
+.setcrumbs { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.setcrumbs button.link:disabled { color: var(--text); font-weight: 600; cursor: default; }
+.setbody { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 12px; align-items: start; min-height: 0; }
+.setlevels { display: flex; flex-direction: column; gap: 10px; border-right: 1px solid var(--line); padding-right: 10px; }
+.setlevel { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.setitem { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 5px 8px; border: none; border-radius: 6px; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.setitem:hover { background: var(--hover); }
+.setitem.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.setitem .title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.setmain { min-width: 0; overflow: auto; }
+.setside { position: sticky; top: 0; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface); font-size: 12px; overflow-wrap: anywhere; max-height: calc(100vh - 140px); overflow: auto; }
+.setside .label { font-weight: 600; margin-top: 4px; }
+.setfinding { padding-left: 8px; border-left: 2px solid var(--line); }
+.popset { padding: 12px; overflow: auto; }

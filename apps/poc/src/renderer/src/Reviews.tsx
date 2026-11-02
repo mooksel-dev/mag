@@ -8,6 +8,7 @@ import {
   prRepoName,
   projectReviews,
   reviewRunning,
+  setOf,
   type PrVerdict,
   type Project,
   type ReviewFinding,
@@ -16,6 +17,8 @@ import {
 import type { AppState, PrCheck } from '../../preload/api'
 import { Markdown } from './Chat'
 import { DIAGRAM_NAMES } from './diagrams/DiagramView'
+import { diagramsOf } from './DiffTab'
+import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ago } from './format'
 import { TicketLinks, useNow } from './Tasks'
@@ -166,7 +169,11 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
   const toggle = (i: number) => setPicks((p) => (p.has(i) ? new Set([...p].filter((x) => x !== i)) : new Set([...p, i])))
   const running = reviewRunning(work, state.sessions)
   // The fact, and any other diagram of the review (an intent of an older review shows as a plain one).
-  const diagrams = state.canvases.filter((c) => c.taskId === work.id && c.kind === 'diagram' && c.diagram)
+  const diagrams = diagramsOf(state.canvases.filter((c) => c.taskId === work.id))
+  // The fact set in one window (povnyi-diff-nabir-pov-iazanykh.2); the rest as a list.
+  const factRoot = diagrams.find((d) => d.role === 'fact')
+  const fact = factRoot ? setOf(factRoot, diagrams) : []
+  const rest = diagrams.filter((d) => !fact.includes(d))
   const diagramsKey = diagrams.map((d) => `${d.id}@${d.version}`).join(',')
   const owner = state.sessions.find((s) => s.id === work.ownerSessionId)
   const act = (f: () => Promise<unknown>) => () => {
@@ -224,11 +231,12 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
       )}
       <section>
         <h2>Diff</h2>
-        {diagrams.length > 0 && (
+        {fact.length > 0 && <DiffSetView key={fact[0].id} set={fact} step={work} findings={r.findings} />}
+        {rest.length > 0 && (
           <div className="difflistrows">
-            {diagrams.map((d) => (
+            {rest.map((d) => (
               <div key={d.id} role="button" tabIndex={0} className="diffrow" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: d.id })} onKeyDown={(e) => e.key === 'Enter' && mag.openWindow({ kind: 'canvas', canvasId: d.id })}>
-                <span className="type">{d.role === 'fact' ? 'Fact · ' : ''}{DIAGRAM_NAMES[d.diagram!.type]}</span>
+                <span className="type">{DIAGRAM_NAMES[d.diagram.type]}</span>
                 <span className="title">{d.title}</span>
                 <span className="muted small">v{d.version}</span>
                 <span className="link">⧉</span>
