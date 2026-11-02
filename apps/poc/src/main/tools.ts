@@ -564,6 +564,11 @@ async function setArchitecture(store: Store, project: Project, args: Record<stri
   return notes.join(' ')
 }
 
+/** The idea a topic discusses leaves the list once that topic owns a work: the work carries it on. */
+function ideaBecameWork(store: Store, topicId: string) {
+  for (const i of store.data.ideas.filter((x) => x.topicId === topicId)) store.deleteIdea(i.id)
+}
+
 /** Puts a card of the canvas into the run's chat. */
 function showInChat(store: Store, ctx: ToolContext, canvas: Canvas) {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
@@ -647,6 +652,7 @@ function sharedTool(
       }
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
       const moved = adopted(store, t.id, md)
+      if (owner) ideaBecameWork(store, owner)
       if (plan) return `Created ${t.key}, ready; the user starts it.${moved}`
       return owner
         ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user approves the plan when it is ready.${moved}`
@@ -666,6 +672,7 @@ function sharedTool(
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       if (session?.role !== 'chat') throw new Error('reopen_work is for a project chat')
       const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
+      ideaBecameWork(store, session.id)
       return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user approves the plan when it is ready.`
     }
 

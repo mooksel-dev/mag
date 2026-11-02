@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { workSections, ideaPrompt, ideaText, projectIdeas, agentState, inbox, openWorkCount, pipelineCounts, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, openWorkCount, pipelineCounts, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -107,6 +107,15 @@ test('inbox: one item per task, by priority', () => {
   )
 })
 
+test('inbox: a finished work and its steps wait on nobody', () => {
+  const tasks = [
+    task('done', 'done', 0, { needsInput: 'q', work: work({ prUrl: 'u', prState: 'open' }) }),
+    task('donestep', 'in_progress', 0, { parentId: 'done', work: work({ prUrl: 'u2', prState: 'open' }) }),
+    task('gone', 'canceled'),
+  ]
+  assert.deepEqual(inbox('p', tasks, [session('done', 'developer', 'error'), session('gone', 'groomer', 'error')]), [])
+})
+
 test('inbox: ready to merge counts the PRs still open', () => {
   const two = task('t', 'in_progress', 0, { work: work({ prUrl: 'u1', prState: 'open' }, { prUrl: 'u2', prState: 'open' }) })
   assert.equal(inbox('p', [two], [])[0]?.text, '2 PRs are ready to merge')
@@ -210,4 +219,14 @@ test('ideas: per project, newest first; a text is required; the prompt that star
   assert.throws(() => ideaText(' '), /An idea needs a text/)
   assert.match(ideaPrompt({ text: 'dup retry', source: 'T-3.1' }), /idea \(found in T-3\.1\):\n\ndup retry\n\n.*reopen_work/s)
   assert.ok(!ideaPrompt({ text: 'x' }).includes('found in'))
+  assert.match(ideaPrompt({ text: 'x' }, true), /^Let's start a work from the idea we discussed here:\n\nx\n/)
+  assert.match(ideaContext({ text: 'dup retry', source: 'T-3.1' }), /^## The idea this topic discusses\n.*\(found in T-3\.1\).*\n\ndup retry$/s)
+})
+
+test('ideaTitle: the first non-empty line, cut', () => {
+  assert.equal(ideaTitle({ text: '\n  Cache rates  \nwhy: the API is slow' }), 'Cache rates')
+  const long = ideaTitle({ text: 'x'.repeat(300) })
+  assert.equal(long.length, 100)
+  assert.ok(long.endsWith('…'))
+  assert.equal(ideaTitle({ text: 'y'.repeat(100) }), 'y'.repeat(100))
 })

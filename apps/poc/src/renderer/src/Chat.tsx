@@ -553,7 +553,7 @@ export const projectTopics = (sessions: AgentSession[], projectId: string) =>
   sessions.filter((s) => s.projectId === projectId && s.role === 'chat' && !s.taskId).sort((a, b) => b.createdAt - a.createdAt)
 
 /** "Claude Code · Opus ▾": the project chat's agent and model, picked in a popover. */
-function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
+export function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
   const agents = useAgents()
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLDivElement>(null)

@@ -47,6 +47,7 @@ const api: MagApi = {
   addIdea: (projectId, text) => ipcRenderer.invoke('idea:add', projectId, text),
   updateIdea: (ideaId, text) => ipcRenderer.invoke('idea:update', ideaId, text),
   deleteIdea: (ideaId) => ipcRenderer.invoke('idea:delete', ideaId),
+  discussIdea: (ideaId) => ipcRenderer.invoke('idea:discuss', ideaId),
   startIdea: (ideaId) => ipcRenderer.invoke('idea:start', ideaId),
   checkPrs: () => ipcRenderer.invoke('pr:checkNow'),
   open: (target) => ipcRenderer.invoke('shell:open', target),

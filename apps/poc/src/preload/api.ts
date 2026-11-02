@@ -142,7 +142,12 @@ export interface MagApi {
   addIdea(projectId: string, text: string): Promise<void>
   updateIdea(ideaId: string, text: string): Promise<void>
   deleteIdea(ideaId: string): Promise<void>
-  /** A new topic that starts a work from the idea; the idea leaves the list. Returns the topic's session id. */
+  /** The idea's own topic for its discussion, created the first time. Returns its session id. */
+  discussIdea(ideaId: string): Promise<string>
+  /**
+   * Starts a work from the idea in its topic, or in a new one without a discussion (the idea leaves the list at once;
+   * a discussed one when the work is created). Returns the topic's session id.
+   */
   startIdea(ideaId: string): Promise<string>
   /** Check open PRs for merges and new comments right away. */
   checkPrs(): Promise<void>

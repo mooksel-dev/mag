@@ -48,6 +48,7 @@ import { PrPill, PrPills } from './LinkPill'
 import { ErrorBoundary } from './ErrorBoundary'
 import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
+import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
 import { AgentDot, ApproveButton, CancelButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow } from './Tasks'
@@ -64,8 +65,8 @@ const loadFlag = (k: string, d: boolean) => {
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-type Tab = 'home' | 'tasks' | 'architecture' | 'settings'
-const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', architecture: 'Architecture', settings: 'Settings' }
+type Tab = 'home' | 'tasks' | 'ideas' | 'architecture' | 'settings'
+const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
 
 /** One project's window; the project is fixed for the window's lifetime. */
 export function App({ projectId }: { projectId: string }) {
@@ -73,6 +74,8 @@ export function App({ projectId }: { projectId: string }) {
   const [tab, setTab] = useState<Tab>('home')
   const [picker, setPicker] = useState<PickerMode | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
+  /** The idea open on the Ideas tab. */
+  const [ideaId, setIdeaId] = useState<string | null>(null)
   /** Tasks opens with the ticket link field (Home → From a ticket). */
   const [fromTicket, setFromTicket] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
@@ -124,9 +127,12 @@ export function App({ projectId }: { projectId: string }) {
   const inboxCount = inbox(project.id, tasks, state.sessions).length
   const openCount = openWorkCount(tasks)
   /** Leaving a tab closes the ticket link field. */
-  const go = (t: Tab) => { setTab(t); setTaskId(null); setFromTicket(false) }
+  const go = (t: Tab) => { setTab(t); setTaskId(null); setIdeaId(null); setFromTicket(false) }
   const openKey = (key: string) => setTaskId(taskByKey(tasks, key)?.id ?? null)
-  const screen = task ? `Task ${task.key}` : TAB_NAMES[tab]
+  const ideaCount = state.ideas.filter((i) => i.projectId === project.id).length
+  // An open idea has its discussion beside it instead of the chat aside.
+  const ideaOpen = tab === 'ideas' && state.ideas.some((i) => i.id === ideaId && i.projectId === project.id)
+  const screen = task ? `Task ${task.key}` : ideaOpen ? 'Idea' : TAB_NAMES[tab]
   const chatBusy = state.sessions.some((s) => s.projectId === project.id && s.role === 'chat' && s.status === 'running')
 
   return (
@@ -152,11 +158,12 @@ export function App({ projectId }: { projectId: string }) {
               Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
             </button>
             <button className={tab === 'tasks' && !task ? 'on' : ''} onClick={() => go('tasks')}>Tasks <span className="cnt">{openCount}</span></button>
+            <button className={tab === 'ideas' && !task ? 'on' : ''} onClick={() => go('ideas')}>Ideas <span className="cnt">{ideaCount}</span></button>
             <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => go('architecture')}>Architecture</button>
             <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => go('settings')}>Settings</button>
             <div className="grow" />
             <ThemeSwitch mode={theme} onChange={setTheme} />
-            {!chatOpen && !task && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
+            {!chatOpen && !task && !ideaOpen && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
           </header>
           <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => go('home')}>
             {task ? (
@@ -165,6 +172,8 @@ export function App({ projectId }: { projectId: string }) {
               <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={() => go('tasks')} onFromTicket={() => { go('tasks'); setFromTicket(true) }} />
             ) : tab === 'tasks' ? (
               <TasksPage key={String(fromTicket)} project={project} tasks={tasks} sessions={state.sessions} onOpen={setTaskId} fromTicket={fromTicket} />
+            ) : tab === 'ideas' ? (
+              <IdeasPage project={project} state={state} ideaId={ideaId} onOpenIdea={setIdeaId} onOpenKey={openKey} onOpenTopic={openTopic} />
             ) : tab === 'architecture' ? (
               <Architecture key={project.id} project={project} />
             ) : (
@@ -172,7 +181,7 @@ export function App({ projectId }: { projectId: string }) {
             )}
           </ErrorBoundary>
         </main>
-        {chatOpen && !task && (
+        {chatOpen && !task && !ideaOpen && (
           <ErrorBoundary key={project.id} screen="Project chat" appVersion={state.appVersion}>
             <ProjectChat projectId={project.id} state={state} chatId={topicId} onPick={pickTopic} onOpenTask={openKey} onClose={() => toggleChat(false)} />
           </ErrorBoundary>
