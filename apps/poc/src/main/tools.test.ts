@@ -44,7 +44,7 @@ const setup = () => {
       calls.push(`review_pr ${url} by ${by}`)
       return { taskId: 'r', job: 'Review it.' }
     },
-    reviewFact: async (id) => (calls.push(`fact of ${store.task(id).key}`), 'Intent ↔ fact'),
+    reviewFact: async (id) => (calls.push(`fact of ${store.task(id).key}`), 'Fact'),
     setPrReview: (id, r) => (calls.push(`pr review ${store.task(id).key}: ${r.verdict} ${r.findings.map((f) => `${f.level}|${f.where ?? ''}|${f.node ?? ''}|${f.text}`).join(';')}`), 'Recorded.'),
   }
   const tools = createTools(store, actions)
@@ -522,7 +522,7 @@ test('reopen_work: a project chat continues a done work it then owns (T-55.6)', 
   assert.equal(store.task(task.id).status, 'planning')
 })
 
-test("a review of a teammate's PR: its topic draws the intent, reads intent ↔ fact and records findings by level", async () => {
+test("a review of a teammate's PR: its topic reads the fact, without an intent, and records findings by level", async () => {
   const { store, project, task, tools, calls } = setup()
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
   const other = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
@@ -533,21 +533,20 @@ test("a review of a teammate's PR: its topic draws the intent, reads intent ↔ 
   assert.equal(await own('review_pr', { url: 'https://github.com/acme/api/pull/418' }), 'Review it.')
   assert.deepEqual(calls, [`review_pr https://github.com/acme/api/pull/418 by ${topic.id}`])
 
+  // No intent any more (reviews-prybraty-spysok-pr-i.1): the review draws only its fact, which mag starts.
   const diagram: Diagram = { type: 'component', summary: 'Retries are idempotent.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'mod', uses: [] }] }
-  assert.match(await own('show_diagram', { title: 'Intent', diagram, role: 'intent' }), /as the intent/)
-  const intent = Object.values(store.data.canvases).find((c) => c.title === 'Intent')!
-  assert.deepEqual([intent.role, intent.taskId, intent.stepId], ['intent', review.id, null])
-  // Intent is a review's: a work with a plan has steps instead.
-  await assert.rejects(tools({ taskId: task.id, sessionId: undefined }, 'show_diagram', { title: 'x', diagram, role: 'intent' }), /role intent is for a review/)
+  await assert.rejects(own('show_diagram', { title: 'Intent', diagram, role: 'intent' }), /role must be one of option, plan, none/)
+  await assert.rejects(own('place_diagram', { id: 'x', role: 'intent' }), /role must be one of option, plan, none/)
+  const fact = store.saveCanvas({ projectId: project.id, taskId: review.id, sessionId: null, title: 'Fact', kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: null, planOf: null } })
 
-  assert.equal(await own('get_pr_changes'), 'Intent ↔ fact')
+  assert.equal(await own('get_pr_changes'), 'Fact')
   await own('set_pr_review', {
     problem: 'Timeouts double-charge',
     approach: 'Idempotency key: right',
     verdict: 'request_changes',
-    findings: [{ text: 'Key from the body', where: 'api/charge.go:88', level: 'blocker', node: `canvas:${intent.id}#charge` }, { text: 'Name', level: 'nit' }],
+    findings: [{ text: 'Key from the body', where: 'api/charge.go:88', level: 'blocker', node: `canvas:${fact.id}#charge` }, { text: 'Name', level: 'nit' }],
   })
-  assert.deepEqual(calls.slice(1), [`fact of ${review.key}`, `pr review ${review.key}: request_changes blocker|api/charge.go:88|canvas:${intent.id}#charge|Key from the body;nit|||Name`])
+  assert.deepEqual(calls.slice(1), [`fact of ${review.key}`, `pr review ${review.key}: request_changes blocker|api/charge.go:88|canvas:${fact.id}#charge|Key from the body;nit|||Name`])
 
   await assert.rejects(own('set_pr_review', { problem: '', approach: '', verdict: 'approve', findings: [{ text: 'x', level: 'blocker' }] }), /blocker and approve/)
   await assert.rejects(own('set_pr_review', { problem: '', approach: '', verdict: 'comment', findings: [{ text: 'x' }] }), /needs its level/)

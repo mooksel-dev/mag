@@ -10,7 +10,7 @@ import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { changes, check, factReport, seed } from './core/services/fact/index.ts'
-import { factCanvas, factRecord, localGit, reviewComponents, reviewFactCanvas, reviewSource, reviewTarget, stepComponents, stepTargets } from './fact.ts'
+import { factCanvas, factRecord, localGit, reviewFactCanvas, reviewSource, reviewTarget, stepComponents, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -229,8 +229,8 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
   const before = r.verdict
     ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
         newer
-          ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the intent and fact diagrams and revise them where the new commits change them.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
-          : 'Look again: whether each finding still holds; keep the intent and fact diagrams and revise them.'
+          ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact diagram and revise it where the new commits change it.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
+          : 'Look again: whether each finding still holds; keep the fact diagram and revise it.'
       }`
     : ''
   const where = pr.outside
@@ -1090,8 +1090,9 @@ export class Orchestrator {
   }
 
   /**
-   * Intent ↔ fact of a review's PR at its head (get_pr_changes), recorded on the review. Once it has an intent, mag
-   * starts the fact diagram as a copy of it for the topic to revise under the diff. Returns what the topic reads.
+   * The fact of a review's PR at its head (get_pr_changes), recorded on the review; no plan to compare
+   * (reviews-prybraty-spysok-pr-i.1). mag starts the fact diagram over the modules that own the changed code for the
+   * topic to draw under the diff. Returns what the topic reads.
    */
   async reviewFactOf(workId: string): Promise<string> {
     const work = this.store.task(workId)
@@ -1099,22 +1100,20 @@ export class Orchestrator {
     if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
     const project = this.store.project(work.projectId)
     const canvases = Object.values(this.store.data.canvases)
-    const intent = reviewComponents(canvases, workId, 'intent')
-    const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work), intent)
+    const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work))
     const same = work.fact?.heads[pr.repo] === pr.head
     let canvas = reviewFactCanvas(work, canvases)
     let started = same ? (work.fact?.canvasVersion ?? null) : null
-    if (!canvas && intent.length) {
-      const diagram = seed(`${pr.url}`, intent, changed.files, pr.outside ? null : project.architecture, 'intent')
+    if (!canvas) {
+      const diagram = seed(`${pr.url}`, [], changed.files, pr.outside ? null : project.architecture)
       if (diagram) {
-        const planOf = intent.length === 1 ? intent[0].id : null
-        canvas = this.store.saveCanvas({ projectId: project.id, taskId: workId, sessionId: null, title: `${work.key}: fact`, kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: pr.repo, planOf } })
+        canvas = this.store.saveCanvas({ projectId: project.id, taskId: workId, sessionId: null, title: `${work.key}: fact`, kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: pr.repo, planOf: null } })
         started = canvas.version
       }
     }
-    const fact = check(project, changed, canvas, intent)
+    const fact = check(project, changed, canvas, null)
     this.store.updateTask(workId, { fact: factRecord(fact, { [pr.repo]: pr.head }, started) })
-    return factReport(fact, started, 'intent')
+    return factReport(fact, started)
   }
 
   /** The topic's set_pr_review: the review of the PR at the head mag gave it. Nothing goes to GitHub. */

@@ -1,4 +1,5 @@
-// The fact service knows no step and no git: changes from any source, against any intent (reviews-ahent-reviuit-pr-timeitiv.1).
+// The fact service knows no step and no git: changes from any source, against a plan or none (reviews-ahent-reviuit-pr-timeitiv.1,
+// reviews-prybraty-spysok-pr-i.1).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Canvas, ComponentDiagram, Project } from '@mag/core'
@@ -23,7 +24,7 @@ const source: ChangeSource = {
 
 const target = { repo: 'o/app', name: 'app', at: 'gh:o/app#7', base: 'aaaaaaa', head: 'bbbbbbb' }
 
-const INTENT: ComponentDiagram = {
+const PLAN: ComponentDiagram = {
   type: 'component',
   summary: 'users gets list',
   modules: [
@@ -34,36 +35,65 @@ const INTENT: ComponentDiagram = {
 
 const canvas = (id: string, diagram: ComponentDiagram, version = 1) => ({ id, title: id, version, diagram }) as unknown as Canvas
 
-test('changes: files of any source, owned by the architecture and the modules the intent adds', async () => {
+test('changes: files of any source, owned by the architecture and the modules the plan adds', async () => {
   const none = await changes(project, [target], source)
   assert.deepEqual(none.files.map((f) => [f.repo, f.path, f.module]), [['app', 'src/api/users.ts', 'api'], ['app', 'src/jobs/sync.ts', null]])
   assert.deepEqual(none.repos, [{ repo: 'o/app', name: 'app', baseSha: 'aaaaaaa', headSha: 'bbbbbbb' }])
-  const withIntent = await changes(project, [target], source, [canvas('intent', INTENT)])
-  assert.deepEqual(withIntent.files.map((f) => f.module), ['api', 'jobs'])
+  const withPlan = await changes(project, [target], source, [canvas('plan', PLAN)])
+  assert.deepEqual(withPlan.files.map((f) => f.module), ['api', 'jobs'])
 })
 
-test('seed and check: the fact starts as a copy of the intent and is checked against files and intent', async () => {
-  const intent = [canvas('intent', INTENT)]
-  const changed = await changes(project, [target], source, intent)
-  const start = seed('o/app#7', intent, changed.files, project.architecture)!
-  assert.deepEqual(start.modules, INTENT.modules)
+test('seed and check: the fact starts as a copy of the plan and is checked against files and plan', async () => {
+  const plan = [canvas('plan', PLAN)]
+  const changed = await changes(project, [target], source, plan)
+  const start = seed('o/app#7', plan, changed.files, project.architecture)!
+  assert.deepEqual(start.modules, PLAN.modules)
   assert.match(start.summary ?? '', /^Fact of o\/app#7, started as a copy/)
 
-  const unchecked = check(project, changed, null, intent)
+  const unchecked = check(project, changed, null, plan)
   assert.equal(unchecked.blockers[0], 'there is no fact diagram of the PRs yet')
 
   const drawn: ComponentDiagram = {
-    ...INTENT,
+    ...PLAN,
     modules: [
-      { ...INTENT.modules[0], interface: [{ text: 'list(): User[]', diff: 'add', files: ['src/api/users.ts'] }] },
-      { ...INTENT.modules[1], interface: [{ text: 'sync(): void', diff: 'add', files: ['src/jobs/sync.ts'] }] },
+      { ...PLAN.modules[0], interface: [{ text: 'list(): User[]', diff: 'add', files: ['src/api/users.ts'] }] },
+      { ...PLAN.modules[1], interface: [{ text: 'sync(): void', diff: 'add', files: ['src/jobs/sync.ts'] }] },
     ],
   }
-  const fact = check(project, changed, canvas('fact', drawn, 2), intent)
+  const fact = check(project, changed, canvas('fact', drawn, 2), plan)
   assert.deepEqual(fact.coverage!.unshown, [])
   assert.deepEqual(fact.comparison.items.map((i) => i.status), ['match', 'match', 'match'])
   assert.deepEqual(fact.blockers, [])
-  assert.match(factReport(fact, 1), /Fact diagram: \[fact\]\(canvas:fact\) \(v2\), revised\./)
+  assert.match(factReport(fact, 1), /## Plan ↔ fact \(mag\)[\s\S]*Fact diagram: \[fact\]\(canvas:fact\) \(v2\), revised\./)
+})
+
+test("check without a plan (a teammate's PR): coverage and grounding only, no plan ↔ fact (reviews-prybraty-spysok-pr-i.1)", async () => {
+  const changed = await changes(project, [target], source)
+  const start = seed('o/app#7', [], changed.files, project.architecture)!
+  // The architecture's api, then src/jobs by its folder: no module owns it.
+  assert.deepEqual(start.modules.map((m) => [m.id, m.path]), [['api', undefined], ['src-jobs', 'src/jobs']])
+  assert.match(start.summary ?? '', /no plan diagram/)
+
+  // Everything on the fact would be unplanned against an empty plan; without one nothing is compared.
+  const drawn: ComponentDiagram = {
+    ...PLAN,
+    modules: [
+      { ...PLAN.modules[0], interface: [{ text: 'list(): User[]', diff: 'add', files: ['src/api/users.ts'] }] },
+      { ...PLAN.modules[1], interface: [{ text: 'sync(): void', diff: 'add', files: ['src/jobs/sync.ts'] }] },
+    ],
+  }
+  const fact = check(project, changed, canvas('fact', drawn, 2), null)
+  assert.deepEqual([fact.plan, fact.comparison.items], [null, []])
+  assert.deepEqual(fact.blockers, [])
+  const empty = check(project, changed, canvas('fact', drawn, 2), []).comparison.items
+  assert.ok(empty.length && empty.every((i) => i.status === 'unplanned'))
+  const report = factReport(fact, 1)
+  assert.match(report, /^## Fact \(mag\)\n/)
+  assert.match(report, /### The fact is complete: it shows every changed code file and rests on the PR\./)
+  assert.doesNotMatch(report, /Plan|plan ↔ fact/)
+
+  const unshown = factReport(check(project, changed, canvas('fact', start, 1), null), 1)
+  assert.match(unshown, /started by mag: nothing on it rests on the PR yet[\s\S]*### The fact is not complete yet\n  - app:src\/api\/users\.ts \(api\) is changed/)
 })
 
 test('hunk: through the source, between commit shas only', async () => {
@@ -72,12 +102,12 @@ test('hunk: through the source, between commit shas only', async () => {
 })
 
 test('changes: a repository outside the project reads by its folders, not the project architecture (reviews-ahent-reviuit-pr-timeitiv.3)', async () => {
-  const outside = await changes(project, [{ ...target, outside: true }], source, [canvas('intent', INTENT)])
+  const outside = await changes(project, [{ ...target, outside: true }], source, [canvas('plan', PLAN)])
   assert.equal(outside.outside, true)
-  // The intent's jobs module (src/jobs) first, then the folders: src/api is a folder module, not the project's api.
+  // The plan's jobs module (src/jobs) first, then the folders: src/api is a folder module, not the project's api.
   assert.deepEqual(outside.files.map((f) => [f.path, f.module]), [['src/api/users.ts', 'src-api'], ['src/jobs/sync.ts', 'jobs']])
-  const fact = check(project, outside, canvas('fact', INTENT, 2), [canvas('intent', INTENT)])
+  const fact = check(project, outside, canvas('fact', PLAN, 2), [canvas('plan', PLAN)])
   assert.equal(fact.outside, true)
-  assert.match(factReport(fact, null, 'intent'), /Without the project architecture: the repository is outside the project/)
+  assert.match(factReport(fact, null), /Without the project architecture: the repository is outside the project/)
   assert.equal((await changes(project, [target], source)).outside, false)
 })

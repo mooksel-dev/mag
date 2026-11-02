@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { CANVAS_ROLES, DEFAULT_TEMPLATES, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -39,7 +39,7 @@ export interface ToolActions {
   answerDeveloper(stepId: string, text: string): Promise<void>
   /** A topic's review_pr: the review of a teammate's PR, owned by `by`; returns the job for its turn. */
   reviewPr(projectId: string, url: string, by: string): Promise<{ taskId: string; job: string }>
-  /** Intent ↔ fact of a review's PR (its get_pr_changes); starts the fact diagram once there is an intent. */
+  /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
   reviewFact(workId: string): Promise<string>
   /** The owner topic's set_pr_review; returns what to tell it. */
   setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string
@@ -454,7 +454,7 @@ function taskDiagrams(store: Store, taskId: string): Canvas[] {
 }
 
 /** Roles an agent places a diagram in; none takes it out of the groups. Facts come with the PR review (T-55.4). */
-const PLACE_ROLES = ['option', 'plan', 'intent', 'none'] as const
+const PLACE_ROLES = ['option', 'plan', 'none'] as const
 
 /**
  * A diagram's placement from tool arguments (T-55.3): role option with option, role plan with step and an optional
@@ -470,11 +470,6 @@ function placementArg(store: Store, task: Task | null, project: Project, args: R
   if (!(PLACE_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${PLACE_ROLES.join(', ')}`)
   const none = { role: null, option: null, stepId: null, repo: null, planOf: null }
   if (role === 'none') return none
-  if (role === 'intent') {
-    if (text(args.option) || text(args.step) || text(args.repo)) throw new Error('An intent diagram has no option, step or repo')
-    if (!task || !isReview(task)) throw new Error("role intent is for a review of a teammate's PR: what its ticket and description ask for")
-    return { ...none, role: 'intent' }
-  }
   if (role === 'option') {
     if (text(args.step) || text(args.repo)) throw new Error('An option diagram has no step or repo')
     if (!text(args.option)) throw new Error('role option needs option: its name as in §Options, e.g. "A"')
@@ -498,7 +493,8 @@ function placementArg(store: Store, task: Task | null, project: Project, args: R
 function placementOut(store: Store, project: Project, taskId: string, c: Canvas) {
   const keyOf = (id: string | null | undefined) => (id ? store.data.tasks.find((t) => t.id === id)?.key : undefined)
   return {
-    role: c.role ?? undefined,
+    // A role of an older model (intent) reads as none.
+    role: c.role && CANVAS_ROLES.includes(c.role) ? c.role : undefined,
     option: c.option ?? undefined,
     step: keyOf(c.stepId),
     repo: c.repo ? repoName(project, c.repo) : undefined,
@@ -509,10 +505,9 @@ function placementOut(store: Store, project: Project, taskId: string, c: Canvas)
 /** The short name of a project repository (see repoNames); the path of one removed since. */
 const repoName = (project: Project, path: string) => repoNames(project)[project.repos.indexOf(path)] ?? path
 
-/** " as option A", " as the intent", " in the plan of T-1.2 (api)", " in the fact of T-1.2", or " (unplaced)". */
+/** " as option A", " in the plan of T-1.2 (api)", " in the fact of T-1.2", or " (unplaced)". */
 function placedAs(store: Store, project: Project, p: CanvasPlacement): string {
   if (p.role === 'option') return ` as option ${p.option}`
-  if (p.role === 'intent') return ' as the intent'
   if (p.role === 'fact' && !p.stepId) return ' as the fact'
   if (p.role !== 'plan' && p.role !== 'fact') return ' (unplaced)'
   const key = store.data.tasks.find((t) => t.id === p.stepId)?.key
@@ -558,8 +553,8 @@ async function reviewFactCheck(store: Store, project: Project, work: Task, canva
     const fact = await reviewFact(project, work, Object.values(store.data.canvases), head)
     if (fact.canvas?.id !== canvas.id) return ''
     store.updateTask(work.id, { fact: factRecord(fact, work.fact!.heads, work.fact!.canvasVersion) })
-    if (!fact.blockers.length) return ' It shows every changed code file, rests on the PR and agrees with the intent.'
-    return `\n${factReport(fact, work.fact!.canvasVersion, 'intent')}`
+    if (!fact.blockers.length) return ' It shows every changed code file and rests on the PR.'
+    return `\n${factReport(fact, work.fact!.canvasVersion)}`
   } catch (e) {
     log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
     return ''

@@ -5,7 +5,6 @@ import {
   PR_VERDICT_LABELS,
   findingCounts,
   findingsByLevel,
-  parsePrUrl,
   prRepoName,
   projectReviews,
   reviewRunning,
@@ -14,7 +13,7 @@ import {
   type ReviewFinding,
   type Task,
 } from '@mag/core'
-import type { AppState, AwaitingPr, PrCheck } from '../../preload/api'
+import type { AppState, PrCheck } from '../../preload/api'
 import { Markdown } from './Chat'
 import { DIAGRAM_NAMES } from './diagrams/DiagramView'
 import { FactPanel } from './FactPanel'
@@ -28,8 +27,7 @@ const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { block
 const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending: '…', skipping: '–', cancel: '–' }
 
 /** The review's line in a list: the agent at work, its verdict, or not reviewed yet. */
-function reviewStatus(work: Task | undefined, state: AppState): string {
-  if (!work) return 'not reviewed'
+function reviewStatus(work: Task, state: AppState): string {
   if (work.status !== 'in_progress') return 'closed'
   if (reviewRunning(work, state.sessions)) return 'the agent is reviewing…'
   const r = work.prReview
@@ -40,20 +38,10 @@ function reviewStatus(work: Task | undefined, state: AppState): string {
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
 const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'].includes(f.level ?? 'should_fix')
 
-/** "app#418", from a PR link. */
-const prShort = (url: string) => {
-  try {
-    const p = parsePrUrl(url)
-    return `${p.repo}#${p.number}`
-  } catch {
-    return url
-  }
-}
-
 /**
- * The Reviews tab (reviews-ahent-reviuit-pr-timeitiv.2): on the left the PRs of the project's repositories that wait
- * for the user's review, a field for any PR link, and the reviews mag has; on the right the review open. A review is a
- * work of its own, owned by a project topic; nothing goes to GitHub without the user's button.
+ * The Reviews tab (reviews-ahent-reviuit-pr-timeitiv.2): on the left a field for a PR link and the user's reviews (no
+ * list of PRs waiting for review: reviews-prybraty-spysok-pr-i.1); on the right the review open. A review is a work of
+ * its own, owned by a project topic; nothing goes to GitHub without the user's button.
  */
 export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopic, onOpenKey }: {
   project: Project
@@ -68,20 +56,8 @@ export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopi
   const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
   const reviews = projectReviews(tasks)
-  const [awaiting, setAwaiting] = useState<{ prs: AwaitingPr[]; errors: string[] } | null>(null)
-  const [nonce, setNonce] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState<string | null>(null)
-  useEffect(() => {
-    let gone = false
-    setAwaiting(null)
-    mag.awaitingReviews(project.id).then(
-      (a) => !gone && setAwaiting(a),
-      (e) => !gone && setAwaiting({ prs: [], errors: [String((e as Error).message ?? e)] }),
-    )
-    return () => void (gone = true)
-  }, [project.id, nonce])
-  const byUrl = (url: string) => reviews.find((r) => r.prReview?.pr.url.toLowerCase() === url.toLowerCase())
   const start = (url: string) => {
     setError(null)
     setStarting(url)
@@ -95,56 +71,32 @@ export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopi
       (e) => (setStarting(null), setError(String((e as Error).message ?? e))),
     )
   }
-  const others = reviews.filter((r) => !awaiting?.prs.some((p) => p.url.toLowerCase() === r.prReview?.pr.url.toLowerCase()))
   const open = reviews.find((r) => r.id === reviewId)
   return (
     <section className="page reviews">
       <div className="reviewlist">
         <div className="tasksbar">
           <h1>Reviews</h1>
-          <span className="grow" />
-          <button className="link small" title="Ask GitHub again" onClick={() => setNonce(nonce + 1)}>↻</button>
         </div>
         <PasteLink busy={!!starting} onReview={start} />
         {error && <div className="banner">{error}</div>}
-        <h2 className="small">Waiting for your review</h2>
-        {awaiting === null ? (
-          <p className="muted small">Asking GitHub…</p>
-        ) : awaiting.prs.length ? (
-          awaiting.prs.map((p) => {
-            const work = byUrl(p.url)
-            return (
-              <div key={p.url} className={`reviewrow${work && work.id === reviewId ? ' on' : ''}`} role="button" tabIndex={0} onClick={() => work && onOpenReview(work.id)} onKeyDown={(e) => e.key === 'Enter' && work && onOpenReview(work.id)}>
-                <div className="grow">
-                  <div className="title"><span className="key">{prShort(p.url)}</span> {p.title}</div>
-                  <div className="muted small">@{p.author} · {reviewStatus(work, state)}</div>
-                </div>
-                {!work && <button className="small" disabled={starting === p.url} onClick={(e) => (e.stopPropagation(), start(p.url))}>Review</button>}
+        {reviews.length > 0 ? (
+          reviews.map((w) => (
+            <div key={w.id} className={`reviewrow${w.id === reviewId ? ' on' : ''}`} role="button" tabIndex={0} onClick={() => onOpenReview(w.id)} onKeyDown={(e) => e.key === 'Enter' && onOpenReview(w.id)}>
+              <div className="grow">
+                <div className="title">{w.title}</div>
+                <div className="muted small">{w.prReview && `@${w.prReview.pr.author} · `}{reviewStatus(w, state)} · {ago(w.updatedAt, now)}</div>
               </div>
-            )
-          })
+            </div>
+          ))
         ) : (
-          <p className="muted small">No PR waits for your review in this project's repositories.</p>
-        )}
-        {awaiting?.errors.map((e) => <p key={e} className="muted small">GitHub: {e}</p>)}
-        {others.length > 0 && (
-          <>
-            <h2 className="small">Reviews</h2>
-            {others.map((w) => (
-              <div key={w.id} className={`reviewrow${w.id === reviewId ? ' on' : ''}`} role="button" tabIndex={0} onClick={() => onOpenReview(w.id)} onKeyDown={(e) => e.key === 'Enter' && onOpenReview(w.id)}>
-                <div className="grow">
-                  <div className="title">{w.title}</div>
-                  <div className="muted small">{w.prReview && `@${w.prReview.pr.author} · `}{reviewStatus(w, state)} · {ago(w.updatedAt, now)}</div>
-                </div>
-              </div>
-            ))}
-          </>
+          <p className="muted small">No reviews yet.</p>
         )}
       </div>
       {open ? (
         <ReviewView key={open.id} work={open} project={project} state={state} now={now} onOpenTopic={onOpenTopic} onOpenKey={onOpenKey} />
       ) : (
-        <p className="muted reviewempty">Pick a PR, or paste a link: an agent reads the PR and its ticket, draws the intent and the fact, and lists findings by level. Nothing goes to GitHub without your button.</p>
+        <p className="muted reviewempty">Paste a PR link, or ask in chat: an agent reads the PR and its ticket, draws the fact, and checks it against the problem and the project's agreements, with findings by level. Nothing goes to GitHub without your button.</p>
       )}
     </section>
   )
@@ -197,7 +149,7 @@ function NodeLink({ node }: { node: string }) {
   return <button className="link small" title="Open the diagram" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: id })}>{node.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ⧉</button>
 }
 
-/** A review's page: the PR, what the agent understood, intent ↔ fact, CI and the findings by level. */
+/** A review's page: the PR, what the agent understood, its fact, CI and the findings by level. */
 function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
   work: Task
   project: Project
@@ -213,7 +165,8 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
   useEffect(() => setPicks(new Set((r?.findings ?? []).flatMap((f, i) => (pickedByDefault(f) ? [i] : [])))), [r?.at])
   const toggle = (i: number) => setPicks((p) => (p.has(i) ? new Set([...p].filter((x) => x !== i)) : new Set([...p, i])))
   const running = reviewRunning(work, state.sessions)
-  const diagrams = state.canvases.filter((c) => c.taskId === work.id && c.kind === 'diagram' && c.diagram && (c.role === 'intent' || c.role === 'fact'))
+  // The fact, and any other diagram of the review (an intent of an older review shows as a plain one).
+  const diagrams = state.canvases.filter((c) => c.taskId === work.id && c.kind === 'diagram' && c.diagram)
   const diagramsKey = diagrams.map((d) => `${d.id}@${d.version}`).join(',')
   const owner = state.sessions.find((s) => s.id === work.ownerSessionId)
   const act = (f: () => Promise<unknown>) => () => {
@@ -256,7 +209,7 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
           }))}>Connect repo</button>
         </div>
       )}
-      {running && !r.verdict && <p className="muted">The agent is reviewing: PR and ticket, problem, approach, intent, fact, findings.</p>}
+      {running && !r.verdict && <p className="muted">The agent is reviewing: PR and ticket, problem, fact, findings.</p>}
       {r.problem && (
         <section>
           <h2>Problem</h2>
@@ -265,7 +218,7 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
       )}
       {r.approach && (
         <section>
-          <h2>Approach</h2>
+          <h2>Does it solve it</h2>
           <Markdown text={r.approach} onOpenTask={onOpenKey} />
         </section>
       )}
@@ -275,7 +228,7 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
           <div className="difflistrows">
             {diagrams.map((d) => (
               <div key={d.id} role="button" tabIndex={0} className="diffrow" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: d.id })} onKeyDown={(e) => e.key === 'Enter' && mag.openWindow({ kind: 'canvas', canvasId: d.id })}>
-                <span className="type">{d.role === 'intent' ? 'Intent' : 'Fact'} · {DIAGRAM_NAMES[d.diagram!.type]}</span>
+                <span className="type">{d.role === 'fact' ? 'Fact · ' : ''}{DIAGRAM_NAMES[d.diagram!.type]}</span>
                 <span className="title">{d.title}</span>
                 <span className="muted small">v{d.version}</span>
                 <span className="link">⧉</span>

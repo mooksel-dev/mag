@@ -16,13 +16,14 @@ export interface Playbook {
   /** What the first reviewer checks a step's PRs against. Reviewer. */
   review: string
   /**
-   * How to review a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): PR and ticket → problem → approach → intent →
-   * fact → findings by level → verdict. The project topic that owns the review.
+   * How to review a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2; reviews-prybraty-spysok-pr-i.1): PR and ticket →
+   * problem → fact → findings against the problem and the project's agreements → verdict. No plan of the agent's own.
+   * The project topic that owns the review.
    */
   prReview: string
   /**
-   * How a reviewer draws the fact of code changes: a revision of the intent diagram under the diff. Shared by every
-   * review that reads a diff: a step's PRs (intent: its plan) and a teammate's PR (intent: what its ticket asks).
+   * How a reviewer draws the fact of code changes under the diff: a revision of a step's plan diagram, or, for a
+   * teammate's PR (no plan), drawn over the modules that own the changed code. Shared by every review that reads a diff.
    */
   fact: string
   /** What agents may do in a ticket tracker. Every role that sees tickets. */
@@ -97,28 +98,33 @@ what and where.`,
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
-  prReview: `1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
+  prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
+have done it: no diagram of your own design and no list of differences from it.
+1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
    comments with gh api, reading only) and its diff (gh pr diff, or git in the repository).
 2. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it with
    add_ticket. Without access to the tracker, say what is missing and work from the description.
 3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
    framing or a problem that is not real.
-4. Approach: is this the right way to fix it? Name better alternatives with their cost and trade-offs; sketch one with
-   show_diagram (no role) when it changes modules or interfaces.
-5. Intent: draw what the ticket and the description ask for, from them and not from the diff, as diagrams of the change
-   at the level of the architecture (show_diagram, role intent).
-6. Fact: get_pr_changes starts the fact diagram as a copy of the intent; revise it under the diff, as the fact section
-   says. Intent ↔ fact shows what is missing, done otherwise or done beyond the ticket.
-7. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
-8. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
+4. Fact: get_pr_changes starts the fact diagram over the modules that own the changed code; draw what the PR did under
+   the diff, as the fact section says.
+5. Check the fact and the code:
+   - Does the change solve the problem, all of it, and nothing it was not asked to do?
+   - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
+     (CLAUDE.md, AGENTS.md, README, the code around it), the architecture rules (layers, modules, interfaces)?
+   - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests.
+   Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
+6. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
+7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
    question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
-   diagram) when it applies. Verdict: request_changes with any blocker, approve when you would merge it yourself,
-   comment otherwise.
+   diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and
+   whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
+   otherwise.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.`,
-  fact: `Revise the fact diagram (a copy of the intent: a step's plan, or what a teammate's PR is meant to do) under the
-diff, by its id and the same module ids.
-- Done as intended: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the intent: add
-  it, with module ids from get_architecture.
+  fact: `Revise the fact diagram under the diff, by its id and the same module ids. A step's fact starts as a copy of its
+plan; a teammate's PR has no plan, so its fact starts as the modules that own the changed code, unmarked.
+- Done as planned: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the plan, or
+  anything a teammate's PR did: add it, with module ids from get_architecture.
 - Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module
   (<repo>:<path> when several repos change that path). Nothing that is not in the diff.
 - Keep it at the level of the architecture: modules, their public interface and the dependencies between them.
