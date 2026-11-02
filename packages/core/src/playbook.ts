@@ -37,6 +37,20 @@ export interface Playbook {
   reviewRounds: number
 }
 
+/**
+ * What every review checks in the code besides the problem and the agreements (povnyi-diff-nabir-pov-iazanykh.3,
+ * Decision 13; the lesson of duff-brewery#297, where GetContent got a signing ceremony id and an upsert had no unique
+ * index): shared by the review of a step and of a teammate's PR.
+ */
+const CODE_CHECKS = `Checks of the code, each a finding when it fails:
+- The contract of every new or changed call: its arguments match the signature and the documentation of what it
+  calls (which id exactly, which units, what nil or empty means). Read the callee; a name alike is no proof.
+- Data: every upsert, ensure or "create if missing" rests on a unique index on its key (else two concurrent calls
+  make two records); a new field has a migration or a default for the records there are; a relation holds (the key it
+  points at is that entity's).
+- Read but unused: a value read and checked, then not used (a sign of a mixed-up argument, e.g. a document found by
+  one id, its content read by another).`
+
 export const DEFAULT_PLAYBOOK: Playbook = {
   stance: `- Lead the work. You hold the problem, the options and the plan; the user reviews, helps decide and approves. End
   every reply with your next move, and make it yourself unless it needs the user.
@@ -76,8 +90,13 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    (an option, a step's plan) are one set: one is its root (root: true, the system level or the top component
    diagram), and every other is reached from it through links (links on a module, interface line, use or entity: kind
    detail, data, scenario or logic; a flowchart's of counts as logic). Every changed module with changed data, a
-   scenario or the logic of a method links to that diagram. UI mockups and other visuals without a type go through
-   show_canvas.
+   scenario or the logic of a method links to that diagram; the flowchart of a private method is linked from the step
+   of the flowchart that calls it. A data diagram shows stored data only (collections, tables, their fields, indexes
+   and unique keys), each entity with module, its owner, and a relation for each reference field (user_id, *_id, a
+   composite key) to the entity it points at, unchanged ones too; between modules or systems cross: true. Arguments
+   of calls, interfaces and clients go in the signature of an interface line, never on a data diagram. Mocks and
+   test-only types are on no diagram; a rename is one line, move with from. UI mockups and other visuals without a
+   type go through show_canvas.
 8. Split the work into execution steps with create_subtask, in order; at least one. A step's title and note (one line)
    say what ships in it; the doc carries the details. A small task is one step. Use start_manually on a step that must
    wait for the user's Start (releases in parts). Give every step repos: the project repositories it changes, [] for a
@@ -102,7 +121,9 @@ what and where.`,
 2. Draw the fact: revise the step's fact set (a copy of its plan set) under the diff, as the fact section says.
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
-4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
+4. Check the code, as the checks of the code below say.
+5. Something worth doing that is outside the step and need not block it: add_idea, not a finding.
+${CODE_CHECKS}`,
   prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
 have done it: no diagram of your own design and no list of differences from it.
 1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
@@ -117,7 +138,8 @@ have done it: no diagram of your own design and no list of differences from it.
    - Does the change solve the problem, all of it, and nothing it was not asked to do?
    - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
      (CLAUDE.md, AGENTS.md, README, the code around it), the architecture rules (layers, modules, interfaces)?
-   - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests.
+   - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests, and the checks
+     of the code below.
    Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
 6. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
 7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
@@ -125,7 +147,8 @@ have done it: no diagram of your own design and no list of differences from it.
    diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and
    whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
    otherwise.
-Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.`,
+Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
+${CODE_CHECKS}`,
   fact: `Revise the fact set under the diff: its diagrams by their ids, with the same module ids, and new ones where the
 diff needs them. A step's fact starts as a copy of its plan set with its links; a teammate's PR has no plan, so its fact
 starts as one diagram of the modules that own the changed code, unmarked.
@@ -140,10 +163,16 @@ starts as one diagram of the modules that own the changed code, unmarked.
   files of all of them.
 - Show every changed code file: only the files a line gives count, a module mark alone shows none.
 - Show every change get_pr_changes lists by kind: a public method is its own interface line of its module; its changed
-  logic a flowchart linked kind logic (or with of), or trivialLogic "логіка тривіальна: <why>"; a model an entity with
-  its fields on a data diagram; a dependency added or removed a use marked add or del. What is not worth a diagram (a
-  utility, an internal type, a dependency of no weight) goes in notes on a diagram of the set, one line with why. mag
-  blocks merge on the ones it is sure of and warns on the rest.`,
+  logic a flowchart linked kind logic (or with of), or trivialLogic "логіка тривіальна: <why>"; the changed logic of a
+  private method a flowchart with of <module>#<method>, linked from the step of the flowchart that calls it; a model
+  an entity with its fields on a data diagram; an index an index of its entity, marked; a dependency added or removed
+  a use marked add or del. What is not worth a diagram (a utility, trivial logic, a dependency of no weight) goes in
+  notes on a diagram of the set, one line with why. mag blocks merge on the ones it is sure of and warns on the rest.
+- The data diagram: stored data only, each entity with module and a relation for each reference field, as the plan
+  section says; arguments of calls, interfaces, clients and mocks are not data.
+- No noise: mocks, fakes, test harnesses and test-only types are on no diagram and in no line ("testify mock added" is
+  not a change of the design). A renamed method, entity or field is one line, move with from (a method
+  "<module>#<old name>", a field "<entity>.<old name>"), never a del and an add.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no

@@ -298,6 +298,25 @@ test('show_diagram validates, saves a diagram canvas and lists it in get_task an
   assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
 })
 
+test('show_diagram warns where a data diagram breaks the rules of the diff: owner, stored data, relations (povnyi-diff-nabir-pov-iazanykh.3)', async () => {
+  const { call } = setup()
+  const out = await call('show_diagram', {
+    title: 'Data',
+    diagram: {
+      type: 'data',
+      entities: [
+        { id: 'jobs', name: 'dar_jobs', kind: 'collection', fields: [{ name: 'user_id', type: 'string' }, { name: 'sent_at', type: 'time', diff: 'add' }] },
+        { id: 'MockClient', name: 'MockClient', kind: 'struct', module: 'sendgrid', fields: [] },
+      ],
+      relations: [],
+    },
+  })
+  assert.match(out, /Saved, but fix it and revise it by id:\n- Entity MockClient: mocks, fakes and test-only types/)
+  assert.match(out, /- Entity jobs has no module/)
+  assert.match(out, /- Field "user_id" of jobs refers to another entity/)
+  assert.match(out, /- Entity MockClient \(struct\): not stored data\?/)
+})
+
 test('show_diagram: one flowchart per method of; the same one is revised by id', async () => {
   const { store, call } = setup()
   const flow = (of: string) => ({ type: 'flowchart', of, summary: 'Queue first.', changes: ['Queues the job'], nodes: [{ id: 's', label: 'Start', shape: 'start' }], edges: [] })

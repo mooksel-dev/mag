@@ -138,21 +138,28 @@ export interface PlanWarning {
 
 /**
  * A change of one kind a fact has to show (povnyi-diff-nabir-pov-iazanykh.1, Decision 8), read from the hunk headers
- * and changed lines git gives, no code parsed. method: a public function or method; model: a public type or a schema
- * (a table, a Prisma model, a proto message…); dependency: an import of another module added or removed.
+ * and changed lines git gives, no code parsed. method: a function or method, public, or private with logic
+ * (povnyi-diff-nabir-pov-iazanykh.3); model: stored data, a type with persistence tags or an ORM base, or a schema (a
+ * table, a Prisma model, a proto message…); index: an index or unique key created, changed or dropped; dependency: an
+ * import of another module added or removed.
  */
 export interface ChangedUnit {
   /** The repository's name. */
   repo: string
   file: string
-  kind: 'method' | 'model' | 'dependency'
-  /** method / model: its name; dependency: the module (or package) imported. */
+  kind: 'method' | 'model' | 'index' | 'dependency'
+  /** method / model: its name; index: the table it is on, else the declaration it is in; dependency: the module (or package) imported. */
   name: string
   /** The module that owns the file; null when none does. */
   module: string | null
   diff: 'add' | 'mod' | 'del'
   /** method: lines of its body changed, not only its signature (the logic rule). */
   bodyChanged?: boolean
+  /**
+   * method: public by its language's convention, so a line of its module's interface; a private one only needs its
+   * logic shown (a flowchart linked from the step that calls it), so it is a unit only when its body has logic.
+   */
+  public?: boolean
   /**
    * high: named by a hunk header or a changed declaration or import line, a missing one blocks merge; low: a guess
    * (no name, a package outside the project, a removed import), a warning only (Decision 9).
@@ -162,10 +169,10 @@ export interface ChangedUnit {
   line: number
 }
 
-/** A changed unit the fact set neither shows nor explains: method, model, logic (no flowchart, not trivial) or dependency. */
+/** A changed unit the fact set neither shows nor explains: method, model, index, logic (no flowchart, not trivial) or dependency. */
 export interface MissingUnit {
   unit: ChangedUnit
-  rule: 'method' | 'model' | 'logic' | 'dependency'
+  rule: 'method' | 'model' | 'index' | 'logic' | 'dependency'
 }
 
 export interface Completeness {

@@ -106,7 +106,7 @@ export interface FactView {
   /** null without a fact diagram. */
   coverage: Coverage | null
   unverified: Grounding['unverified']
-  /** Changed methods, models, logic and dependencies the fact set neither shows nor explains; high ones block merge. */
+  /** Changed methods, models, indexes, logic and dependencies the fact set neither shows nor explains; high ones block merge. */
   missing: MissingUnit[]
   /** Where the fact set does not hang together: root, links, orphans. */
   warnings: string[]

@@ -1,21 +1,23 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { fieldMoves, type DataDiagram, type DataMark, type DEntity } from '@mag/core'
 import { DiffLegend } from './DiffLegend'
-import { DATA_HEAD, DATA_NOTE, DATA_ROW, DATA_SUB, FONT, LABEL_LINE, fieldKey, layoutData, movePath, pathOf, type DataLayout } from '../graphLayout'
+import { DATA_HEAD, DATA_NOTE, DATA_ROW, DATA_SUB, FONT, GROUP_HEAD, LABEL_LINE, fieldKey, indexText, layoutData, movePath, pathOf, type DataLayout } from '../graphLayout'
 
 const DIFF_NAMES: Record<DataMark, string> = { add: 'added', mod: 'changed', del: 'removed', move: 'moved' }
 const SIGNS: Record<DataMark, string> = { add: '+', mod: '~', del: '−', move: '↷' }
 const SEVS = ['d-add', 'd-mod', 'd-del', 'd-none', 'd-move'] as const
 
-/** An entity's own change: its mark, else 'mod' when one of its fields changes or moves out. */
+/** An entity's own change: its mark, else 'mod' when one of its fields or indexes changes or a field moves out. */
 function entityDiff(e: DEntity, movedOut: Set<string>): DataMark | undefined {
-  return e.diff ?? (e.fields.some((f) => f.diff || movedOut.has(fieldKey(e.id, f.name))) ? 'mod' : undefined)
+  return e.diff ?? (e.fields.some((f) => f.diff || movedOut.has(fieldKey(e.id, f.name))) || e.indexes?.some((i) => i.diff) ? 'mod' : undefined)
 }
 
 /**
- * Collections, tables and types with their fields, left to right. A changed field is coloured by its mark; a field
- * that moved is purple at both ends, struck out at the source, with a dashed line between them. Hover or click an
- * entity to see its relations; `focus` (a #entity link) selects one and scrolls to it.
+ * Collections and tables with their fields and indexes, left to right, each in the box of the module that owns it
+ * (povnyi-diff-nabir-pov-iazanykh.3). A changed field or index is coloured by its mark; a field that moved is purple
+ * at both ends, struck out at the source, with a dashed line between them; a relation between modules (cross: by
+ * value, no foreign key) is dashed. Hover or click an entity to see its relations; `focus` (a #entity link) selects
+ * one and scrolls to it.
  */
 export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; focus?: string; onSelect?: (id: string | null) => void }) {
   const [layout, setLayout] = useState<DataLayout | null>(null)
@@ -62,7 +64,7 @@ export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; f
   return (
     <div className="graphview">
       <div className="archlegend muted small">
-        <span>Hover or click an entity to see its relations.</span>
+        <span>Hover or click an entity to see its relations; a dashed relation holds by value, between modules.</span>
         <DiffLegend move />
       </div>
       {error && <div className="violation error">Layout failed: {error}</div>}
@@ -76,13 +78,19 @@ export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; f
               </marker>
             ))}
           </defs>
+          {layout.groups.map((g) => (
+            <g key={g.module} className="dgroup">
+              <rect x={g.x} y={g.y} width={g.w} height={g.h} rx={8} />
+              <text x={g.x + 12} y={g.y + GROUP_HEAD / 2 + 4}>{g.module}</text>
+            </g>
+          ))}
           {layout.relations.map((p) => {
             const r = diagram.relations[p.index]
             const sev = `d-${r.diff ?? 'none'}`
             const dim = touches(r.from, r.to) ? '' : ' dim'
             return (
               <g key={p.index}>
-                <path className={`gedge ${sev}${dim}`} d={pathOf(p.points)} markerEnd={`url(#${marker(sev)})`} />
+                <path className={`gedge ${sev}${r.cross ? ' cross' : ''}${dim}`} d={pathOf(p.points)} markerEnd={`url(#${marker(sev)})`} />
                 {p.labelAt && (
                   <g className={`glabel ${sev}${dim}`}>
                     <rect x={p.labelAt.x} y={p.labelAt.y} width={p.labelAt.w} height={p.labelAt.h} rx={3} />
@@ -107,7 +115,7 @@ export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; f
                 onMouseLeave={() => setHover((h) => (h === e.id ? null : h))}
                 onClick={(ev) => (ev.stopPropagation(), setSelected((s) => (s === e.id ? null : e.id)))}
               >
-                <title>{`${mark ? `${DIFF_NAMES[mark]} · ` : ''}${e.name} (${e.kind})`}</title>
+                <title>{`${mark ? `${DIFF_NAMES[mark]} · ` : ''}${e.name} (${e.kind})${e.module ? ` · ${e.module}` : ''}`}</title>
                 <rect className="shape" x={box.x} y={box.y} width={box.w} height={box.h} rx={6} />
                 <text className="dname" x={box.x + 10} y={box.y + DATA_HEAD / 2 + 3} fontSize={FONT}>{e.name}</text>
                 {box.sub.map((l, i) => (
@@ -129,6 +137,18 @@ export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; f
                       {row.notes.map((l, j) => (
                         <text key={j} className="fnote" x={box.x + 22} y={row.y + DATA_ROW + DATA_NOTE * (j + 0.5) - 2}>{l}</text>
                       ))}
+                    </g>
+                  )
+                })}
+                {box.indexRows.length > 0 && <line className="dsep" x1={box.x} x2={box.x + box.w} y1={box.indexRows[0].y - 3} y2={box.indexRows[0].y - 3} />}
+                {(e.indexes ?? []).map((ix, i) => {
+                  const row = box.indexRows[i]
+                  return (
+                    <g key={`ix${i}`} className={`dfield dindex f-${ix.diff ?? 'none'}`}>
+                      <title>{`${ix.diff ? `${DIFF_NAMES[ix.diff]} · ` : ''}${indexText(ix)}`}</title>
+                      {ix.diff && <rect className="band" x={box.x + 1} y={row.y} width={box.w - 2} height={DATA_ROW} />}
+                      {ix.diff && <text className="fsign" x={box.x + 10} y={row.y + DATA_ROW / 2}>{SIGNS[ix.diff]}</text>}
+                      <text className="fname" x={box.x + 22} y={row.y + DATA_ROW / 2}>{indexText(ix)}</text>
                     </g>
                   )
                 })}

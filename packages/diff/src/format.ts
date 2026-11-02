@@ -31,18 +31,28 @@ export function formatFiles(repo: string, baseSha: string, headSha: string, file
 const UNIT_MARK: Record<ChangedUnit['diff'], string> = { add: '+', mod: '~', del: '-' }
 
 /**
- * The changed public methods, models and dependencies of a PR (povnyi-diff-nabir-pov-iazanykh.1) as agents read them:
- * each is a line on a diagram of the fact set, or a note there says why not. Sure ones first; unsure ones apart.
+ * The changed methods, models, indexes and dependencies of a PR (povnyi-diff-nabir-pov-iazanykh.1, .3) as agents read
+ * them: each is a line on a diagram of the fact set (a private method's logic a flowchart), or a note there says why
+ * not. Sure ones first; unsure ones apart.
  */
 export function formatUnits(units: ChangedUnit[]): string {
   if (!units.length) return ''
   const line = (u: ChangedUnit) =>
     u.kind === 'dependency'
       ? `  ${UNIT_MARK[u.diff]} ${u.module} -> ${u.name} (${u.repo}:${u.file}:${u.line})`
-      : `  ${UNIT_MARK[u.diff]} ${u.module ?? NO_MODULE} ${u.name || '(no name)'} (${u.repo}:${u.file}:${u.line})${u.bodyChanged && u.diff !== 'del' ? ', logic changes' : ''}`
-  const out = ['Changed methods, models and dependencies (mag reads them from the hunk headers and changed lines; the fact set shows each, a changed logic with a flowchart or trivialLogic, or a note says why not):']
-  for (const [kind, title] of [['method', 'Public methods'], ['model', 'Models'], ['dependency', 'Dependencies between modules']] as const) {
-    const of = units.filter((u) => u.kind === kind && u.confidence === 'high')
+      : `  ${UNIT_MARK[u.diff]} ${u.module ?? NO_MODULE} ${u.name || '(no name)'} (${u.repo}:${u.file}:${u.line})${u.bodyChanged && u.diff !== 'del' ? ', logic changes' : ''}${u.public === false ? ', private' : ''}`
+  const out = [
+    'Changed methods, models, indexes and dependencies (mag reads them from the hunk headers and changed lines; the fact set shows each, a changed logic with a flowchart or trivialLogic, or a note says why not):',
+  ]
+  const groups: [string, (u: ChangedUnit) => boolean][] = [
+    ['Public methods', (u) => u.kind === 'method' && u.public !== false],
+    ['Private methods with logic (a flowchart with of <module>#<method>, linked from the step that calls it; no interface line)', (u) => u.kind === 'method' && u.public === false],
+    ['Models (stored data)', (u) => u.kind === 'model'],
+    ['Indexes', (u) => u.kind === 'index'],
+    ['Dependencies between modules', (u) => u.kind === 'dependency'],
+  ]
+  for (const [title, is] of groups) {
+    const of = units.filter((u) => is(u) && u.confidence === 'high')
     if (of.length) out.push(`${title}:`, ...of.map(line))
   }
   const low = units.filter((u) => u.confidence === 'low')

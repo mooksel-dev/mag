@@ -200,8 +200,8 @@ export async function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], direct
   return { w: out.width ?? 0, h: out.height ?? 0, nodes: [...placed.values()], edges: placedEdges }
 }
 
-// Data diagram: an entity is a box with a header (its name, then a line each for kind, old id, note) and one row per
-// field.
+// Data diagram: an entity is a box with a header (its name, then a line each for kind, old id, note), one row per
+// field and one per index; entities stand in a box of the module that owns them (povnyi-diff-nabir-pov-iazanykh.3).
 export const DATA_HEAD = 22
 export const DATA_SUB = 14
 export const DATA_ROW = 18
@@ -226,6 +226,17 @@ export interface PlacedEntity {
   /** Lines under the name: the kind, "was <old id>" for a moved entity, the note. */
   sub: string[]
   rows: PlacedRow[]
+  /** One row per index, after the fields: its top and its text. */
+  indexRows: { y: number; text: string }[]
+}
+
+/** The box of a module that owns entities: its id, where it stands. */
+export interface PlacedGroup {
+  module: string
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
 export interface PlacedRelation {
@@ -240,16 +251,27 @@ export interface DataLayout {
   h: number
   entities: PlacedEntity[]
   relations: PlacedRelation[]
+  groups: PlacedGroup[]
 }
+
+/** The line of an index: "unique (user_id, inbox_id, domain)" or "index (alias)". */
+export const indexText = (i: NonNullable<DataDiagram['entities'][number]['indexes']>[number]) => `${i.unique ? 'unique' : 'index'} (${i.fields.join(', ')})`
+/** The height of the label on top of a module's box. */
+export const GROUP_HEAD = 22
 
 /** Key of a field in fieldNotes. */
 export const fieldKey = (entity: string, field: string) => `${entity}\u0000${field}`
 
-/** The note line of a field: its own note, where a moved field came from, where a field moved to. */
+/** The note line of a field: its own note, its old name, where a moved field came from, where a field moved to. */
 export function fieldNotes(d: DataDiagram): Map<string, string> {
   const notes = new Map<string, string>()
   const add = (k: string, text: string) => notes.set(k, notes.has(k) ? `${notes.get(k)} · ${text}` : text)
-  for (const e of d.entities) for (const f of e.fields) if (f.note) add(fieldKey(e.id, f.name), f.note)
+  for (const e of d.entities)
+    for (const f of e.fields) {
+      if (f.note) add(fieldKey(e.id, f.name), f.note)
+      // Renamed in its entity (Decision 12): from is "<this entity>.<old name>".
+      if (f.diff === 'move' && f.from?.startsWith(`${e.id}.`) && !e.fields.some((x) => `${e.id}.${x.name}` === f.from)) add(fieldKey(e.id, f.name), `renamed from ${f.from.slice(e.id.length + 1)}`)
+    }
   for (const m of fieldMoves(d)) {
     add(fieldKey(m.to.entity, m.to.field), `moved from ${m.from.entity}.${m.from.field}`)
     add(fieldKey(m.from.entity, m.from.field), `moved to ${m.to.entity}.${m.to.field}`)
@@ -281,25 +303,52 @@ export async function layoutData(d: DataDiagram): Promise<DataLayout> {
       y += row.h
       return row
     })
-    return { id: e.id, w: Math.max(180, Math.round(wide + PAD.x * 2)), h: y + 6, sub, rows }
+    if (e.indexes?.length) y += 6
+    const indexRows = (e.indexes ?? []).map((i) => {
+      const text = indexText(i)
+      wide = Math.max(wide, (text.length + 3) * MONO * MONO_CHAR)
+      const row = { y, text }
+      y += DATA_ROW
+      return row
+    })
+    return { id: e.id, w: Math.max(180, Math.round(wide + PAD.x * 2)), h: y + 6, sub, rows, indexRows }
   })
   const byId = new Map(sized.map((s) => [s.id, s]))
   const ports = new Map<number, string>()
   const labels = d.relations.map((r) => measureLabel(relationText(r)))
+  const node = (s: (typeof sized)[number]): ElkNode => {
+    const e = d.entities.find((x) => x.id === s.id)!
+    const own = d.relations.flatMap((r, i) => {
+      const at = r.field && r.from === s.id ? e.fields.findIndex((f) => f.name === r.field) : -1
+      if (at < 0) return []
+      const id = `p${i}`
+      ports.set(i, id)
+      return [{ id, width: 0, height: 0, x: s.w, y: s.rows[at].y + DATA_ROW / 2, layoutOptions: { 'elk.port.side': 'EAST' } }]
+    })
+    return { id: s.id, width: s.w, height: s.h, ports: own, layoutOptions: { 'elk.portConstraints': own.length ? 'FIXED_POS' : 'UNDEFINED' } }
+  }
+  // Entities of one module stand in its box; the boxes and the entities without a module are laid out together.
+  const modules = [...new Set(d.entities.map((e) => e.module).filter((m): m is string => !!m))]
+  const moduleOf = new Map(d.entities.map((e) => [e.id, e.module]))
+  const group = (m: string) => `\u0000group:${m}`
   const graph: ElkNode = {
     id: 'root',
-    layoutOptions: { ...LAYERED, 'elk.direction': 'RIGHT', 'elk.layered.spacing.nodeNodeBetweenLayers': '70' },
-    children: sized.map((s) => {
-      const e = d.entities.find((x) => x.id === s.id)!
-      const own = d.relations.flatMap((r, i) => {
-        const at = r.field && r.from === s.id ? e.fields.findIndex((f) => f.name === r.field) : -1
-        if (at < 0) return []
-        const id = `p${i}`
-        ports.set(i, id)
-        return [{ id, width: 0, height: 0, x: s.w, y: s.rows[at].y + DATA_ROW / 2, layoutOptions: { 'elk.port.side': 'EAST' } }]
-      })
-      return { id: s.id, width: s.w, height: s.h, ports: own, layoutOptions: { 'elk.portConstraints': own.length ? 'FIXED_POS' : 'UNDEFINED' } }
-    }),
+    layoutOptions: {
+      ...LAYERED,
+      'elk.direction': 'RIGHT',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '70',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'elk.json.shapeCoords': 'ROOT',
+      'elk.json.edgeCoords': 'ROOT',
+    },
+    children: [
+      ...modules.map((m) => ({
+        id: group(m),
+        layoutOptions: { 'elk.padding': `[top=${GROUP_HEAD + 8},left=14,bottom=14,right=14]` },
+        children: sized.filter((s) => moduleOf.get(s.id) === m).map(node),
+      })),
+      ...sized.filter((s) => !moduleOf.get(s.id)).map(node),
+    ],
     edges: [
       ...d.relations.flatMap((r, i) =>
         byId.has(r.from) && byId.has(r.to)
@@ -310,10 +359,19 @@ export async function layoutData(d: DataDiagram): Promise<DataLayout> {
     ],
   }
   const out = await elk.layout(graph)
-  const entities = (out.children ?? []).map((c): PlacedEntity => {
-    const s = byId.get(c.id)!
-    return { id: s.id, x: c.x ?? 0, y: c.y ?? 0, w: s.w, h: s.h, sub: s.sub, rows: s.rows.map((r) => ({ ...r, y: (c.y ?? 0) + r.y })) }
-  })
+  const groups: PlacedGroup[] = []
+  const entities: PlacedEntity[] = []
+  for (const c of out.children ?? []) {
+    if (c.id.startsWith(group(''))) groups.push({ module: c.id.slice(group('').length), x: c.x ?? 0, y: c.y ?? 0, w: c.width ?? 0, h: c.height ?? 0 })
+    for (const x of c.id.startsWith(group('')) ? (c.children ?? []) : [c]) {
+      const s = byId.get(x.id)!
+      const top = x.y ?? 0
+      entities.push({ id: s.id, x: x.x ?? 0, y: top, w: s.w, h: s.h, sub: s.sub, rows: s.rows.map((r) => ({ ...r, y: top + r.y })), indexRows: s.indexRows.map((r) => ({ ...r, y: top + r.y })) })
+    }
+  }
+  // In the order of the diagram, as before modules.
+  const order = new Map(d.entities.map((e, i) => [e.id, i]))
+  entities.sort((a, b) => order.get(a.id)! - order.get(b.id)!)
   const relations = ((out.edges ?? []) as ElkExtendedEdge[])
     .filter((oe) => oe.id.startsWith('r'))
     .map((oe): PlacedRelation => {
@@ -322,7 +380,7 @@ export async function layoutData(d: DataDiagram): Promise<DataLayout> {
       const l = labels[index]
       return { index, points: routeOf(oe), labelAt: ol ? { x: ol.x ?? 0, y: ol.y ?? 0, w: l.w, h: l.h, lines: l.lines } : undefined }
     })
-  return { w: out.width ?? 0, h: out.height ?? 0, entities, relations }
+  return { w: out.width ?? 0, h: out.height ?? 0, entities, relations, groups }
 }
 
 /**

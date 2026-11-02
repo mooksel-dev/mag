@@ -2,7 +2,9 @@
 import { moduleResolver } from './vocabulary.ts'
 import type { FileChange, FileKind, GitSource, Repo, Vocabulary } from './types.ts'
 
-const TEST = /(^|\/)(__tests__|__mocks__|__snapshots__|tests?|spec|testdata|fixtures|[^/]*Tests)\/|\.(test|spec|stories)\.[^./]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py)$|\.snap$/
+// Mocks, fakes and test harnesses are tests too (povnyi-diff-nabir-pov-iazanykh.3, Decision 12): never on a diagram.
+const TEST =
+  /(^|\/)(__tests__|__mocks__|__snapshots__|tests?|spec|testdata|testutils?|fixtures|mocks?|fakes|[^/]*Tests)\/|\.(test|spec|stories|mock)\.[^./]+$|(^|\/)test_[^/]+\.py$|_(test|mock)\.(go|py)$|(^|\/)mocks?(_[^/]*)?\.go$|(^|\/)(Mock|Fake)[A-Z][^/]*\.swift$|\.snap$/
 const STYLE = /\.(css|scss|sass|less|styl|pcss)$/i
 const LOCK = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|Package\.resolved|Podfile\.lock|\.terraform\.lock\.hcl)$/
 const GENERATED = /(^|\/)(dist|build|out|generated|__generated__)\/|\.(min\.(js|css)|generated\.[^./]+|pb\.go|map)$|_pb2(_grpc)?\.pyi?$|\.g\.dart$/

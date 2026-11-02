@@ -1,4 +1,4 @@
-import { CANVAS_ROLES, DEFAULT_TEMPLATES, FACT_NOTE_KINDS, setKey, setOf, validateLinks, type FactNote, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { CANVAS_ROLES, DEFAULT_TEMPLATES, FACT_NOTE_KINDS, diagramWarnings, setKey, setOf, validateLinks, type FactNote, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, formatUnits, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -591,11 +591,17 @@ function notesArg(v: unknown): FactNote[] | undefined {
   })
 }
 
-/** Where a set the diagram is in does not hang together, as a note of show_diagram's answer; '' when it does. */
+/**
+ * Where the diagram breaks a rule of the diff (diagramWarnings) and the set it is in does not hang together, as notes
+ * of show_diagram's answer; '' when neither.
+ */
 function setNote(store: Store, canvas: Canvas): string {
-  if (!setKey(canvas)) return ''
-  const warnings = validateLinks(setOf(canvas, Object.values(store.data.canvases)))
-  return warnings.length ? `\nThe set of this diagram does not hang together yet:\n${warnings.map((w) => `- ${w}`).join('\n')}` : ''
+  const own = diagramWarnings(canvas.diagram!)
+  const set = setKey(canvas) ? validateLinks(setOf(canvas, Object.values(store.data.canvases))) : []
+  const list = (ws: string[]) => ws.map((w) => `- ${w}`).join('\n')
+  return (
+    (own.length ? `\nSaved, but fix it and revise it by id:\n${list(own)}` : '') + (set.length ? `\nThe set of this diagram does not hang together yet:\n${list(set)}` : '')
+  )
 }
 
 /** Unowned files listed in the answer of set_architecture; the rest is a count. */

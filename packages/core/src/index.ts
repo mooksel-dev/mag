@@ -10,6 +10,7 @@ import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLeve
 export * from './arch.ts'
 export * from './canvases.ts'
 export * from './diagram.ts'
+export * from './diagram-rules.ts'
 export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'

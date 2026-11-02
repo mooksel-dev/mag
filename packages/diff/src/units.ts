@@ -178,6 +178,12 @@ function declOf(lang: Lang, line: string, header = false): Decl | null {
   }
 }
 
+/** A declaration line as compared between base and head: spaces collapsed, a Go method without its receiver. */
+const sameDecl = (lang: Lang, text: string) => {
+  const t = text.trim().replace(/\s+/g, ' ')
+  return lang === 'go' ? t.replace(/^func \([^)]*\) ?/, 'func ') : t
+}
+
 const COMMENT: Record<string, RegExp> = { py: /^(#|$)/, sql: /^(--|$)/, tf: /^(#|\/\/|\/\*|\*|$)/ }
 const isComment = (lang: Lang, text: string) => (COMMENT[lang] ?? /^(\/\/|\/\*|\*|$)/).test(text.trim())
 
@@ -234,8 +240,8 @@ function importTarget(lang: Lang, file: string, spec: string, vocabulary: Vocabu
     return m ? { module: m } : null
   }
   if (lang === 'ts' && (spec.startsWith('node:') || BUILTIN.has(spec) || BUILTIN.has(spec.split('/')[0]))) return null
-  if (lang === 'go' && !spec.split('/')[0].includes('.')) return null
-  // A path inside the project: the module whose folder the import names, the longest that fits.
+  // A path inside the project: the module whose folder the import names, the longest that fits. A Go module may be
+  // named without a dot (`duff-brewery/internal/…`), so the standard library is what fits no module.
   const path = lang === 'py' ? spec.replace(/\./g, '/') : spec
   let best: { id: string; len: number } | null = null
   for (const m of vocabulary.modules)
@@ -244,6 +250,7 @@ function importTarget(lang: Lang, file: string, spec: string, vocabulary: Vocabu
       if (fits && (!best || p.length > best.len)) best = { id: m.id, len: p.length }
     }
   if (best) return { module: best.id }
+  if (lang === 'go' && !spec.split('/')[0].includes('.')) return null
   // A workspace package (`@scope/name`): the one module of a package folder named so.
   if (lang === 'ts' && spec.startsWith('@')) {
     const name = pkgOf(spec).split('/')[1]
@@ -274,11 +281,39 @@ function usesAlready(architecture: ArchNode[]): (from: string, to: string) => bo
   return (from, to) => edges.some(([a, b]) => near(a, from) && near(b, to))
 }
 
+/** Lines that mark stored data, per language: persistence tags of a field, ORM decorators, bases and calls. */
+const STORED: Partial<Record<Lang, RegExp>> = {
+  go: /`[^`]*\b(bson|db|gorm|dynamodbav|dynamo|sql|pg|bun|xorm|firestore|datastore|spanner):"/,
+  ts: /@(Entity|Column|PrimaryColumn|PrimaryGeneratedColumn|CreateDateColumn|UpdateDateColumn|ManyToOne|OneToMany|ManyToMany|OneToOne|JoinColumn|Schema|Prop|Table)\b|\bnew\s+(mongoose\.)?Schema\b|\b(pgTable|mysqlTable|sqliteTable)\s*\(|\bsequelize\.define\b|\bDataTypes\./,
+  py: /\b(Column|mapped_column|relationship|ForeignKey)\(|\bmodels\.\w+(Field|Key)\(|\bMapped\[|[(,\s](DeclarativeBase|SQLModel|models\.Model|Document|DynamicDocument)\s*[,)]|\btable\s*=\s*True|__tablename__|\b(Indexed|Link)\[/,
+  swift: /@Model\b|\bNSManagedObject\b|@NSManaged\b|@Attribute\b|@Relationship\b|\b(PersistableRecord|FetchableRecord|TableRecord)\b/,
+}
+/** A changed line that creates, changes or drops an index or a unique key: the calls, decorators and options of ORMs and drivers… */
+const INDEX_CALL =
+  /\b(IndexModel|IndexView|createIndex(es)?|CreateIndex(es)?|ensureIndex(es)?|EnsureIndex(es)?|create_index|add_index|remove_index|drop_index|dropIndex(es)?|DropIndex|uniqueIndex|addIndex|removeIndex|SetUnique|UniqueConstraint)\b|@@(index|unique|id)\b|@(Index|Unique)\b|\b(index|unique|db_index)\s*=\s*True\b|\b(index|unique)\s*:\s*true\b|\b(global|local)_secondary_index\b|\bIndex\(\s*['"]|gorm:"[^"]*\bindex\b|\s@unique\b/
+/** … and the statements of SQL, any case. */
+const INDEX_SQL = /\b(create|drop)\s+(unique\s+)?index\b|\balter\s+table\b.*\b(add|drop)\s+(constraint\b.*\bunique|unique|index|key)\b/i
+const isIndex = (text: string) => INDEX_CALL.test(text) || INDEX_SQL.test(text)
+/** The table a SQL index line is on. */
+const INDEX_ON = /\bon\s+[`"[]?([\w.]+)/i
 /**
- * The units a PR's changed code files change (Decision 8): each public function or method whose declaration or body
- * changes (bodyChanged: not only its signature), each public type, table or schema model, and each import of another
- * module added or removed, over the vocabulary of `architecture`. A dependency the architecture has already, or one
- * inside a module, is no change between modules. Hunks need their header and lines (diffHunks gives both locally).
+ * A body line with logic: a branch, a loop, an error handled, by its keyword. Operators (`&&`, `?:`) are left out: in a
+ * UI component they choose what to render, no logic worth a flowchart.
+ */
+const BRANCH = /(^|[^\w$.])(if|else|elif|for|foreach|while|switch|case|select|guard|catch|except|try|match|unless|until)([^\w$]|$)/
+/** A body line that calls something (not a keyword: `if (`, `for (`). */
+const CALL = /[\w$)\]]\s*\(/
+/** A mock, fake or stub: never a unit (Decision 12). */
+const MOCK = /^(Mock|Fake|Stub)[A-Z_]|^(mock|fake|stub)[A-Z_]|(Mock|Fake|Stub)$/
+
+/**
+ * The units a PR's changed code files change (Decisions 8, 11–12): each function or method whose declaration or body
+ * changes (bodyChanged: not only its signature), public ones as lines of their module's interface, private ones only
+ * when their changed body has logic (a branch: sure, a call: a guess); each stored type (persistence tags, an ORM base
+ * or decorator), table or schema model, each index added, changed or dropped; and each import of another module added
+ * or removed, over the vocabulary of `architecture`. A dependency the architecture has already, or one inside a
+ * module, is no change between modules. Mocks are none. Hunks need their header and lines (diffHunks gives both
+ * locally, with no context; context lines, as a PR's diff has them, only say where a change is).
  */
 export function changedUnits(files: FileChange[], architecture: ArchNode[], vocabulary: Vocabulary): ChangedUnit[] {
   const moduleOf = moduleResolver(vocabulary)
@@ -286,8 +321,9 @@ export function changedUnits(files: FileChange[], architecture: ArchNode[], voca
   const known = usesAlready(architecture)
   const chain = chains(architecture)
   const depth = (id: string) => chain.get(id)?.length ?? 0
-  const units = new Map<string, ChangedUnit & { signs: Set<string> }>()
-  const deps = new Map<string, ChangedUnit & { signs: Set<string> }>()
+  type Acc = ChangedUnit & { signs: Set<string>; decls?: Record<string, Set<string>>; branch?: boolean; call?: boolean }
+  const units = new Map<string, Acc>()
+  const deps = new Map<string, Acc>()
 
   for (const f of files) {
     if (f.kind !== 'code') continue
@@ -295,30 +331,65 @@ export function changedUnits(files: FileChange[], architecture: ArchNode[], voca
     const schema = SCHEMA.has(lang)
     const sure = READ.has(lang) || schema ? 'high' : 'low'
     const owner = f.module ?? moduleOf(f.path)
+    const storedLine = STORED[lang]
     const unit = (kind: ChangedUnit['kind'], name: string, confidence: ChangedUnit['confidence'], line: number) => {
       const key = `${f.repo}:${f.path}#${kind}:${name}`
       let u = units.get(key)
       if (!u) units.set(key, (u = { repo: f.repo, file: f.path, kind, name, module: owner, diff: 'mod', confidence, line, signs: new Set() }))
       return u
     }
-    /** A change at `line` of a declaration: of its own line (sign: + or -) or of its body. */
-    const touch = (d: Decl, confidence: ChangedUnit['confidence'], line: number, sign: string | null) => {
-      if (d.kind === 'other' || !d.public) return
-      const u = unit(d.kind === 'type' ? 'model' : 'method', d.name, confidence, line)
-      if (sign) u.signs.add(sign)
-      else if (d.kind === 'function') u.bodyChanged = true
+    /** Types of the file read stored: by a tag, base or decorator on a line in them, changed or not. */
+    const storedTypes = new Set<string>()
+    /** Functions of the file with a branch on an unchanged line: a change of their body changes logic. */
+    const branchy = new Set<string>()
+    /** A change at `line` of a declaration: of its own line (sign: + or -) or of its body (`text`). */
+    const touch = (d: Decl, line: number, sign: string | null, text: string) => {
+      if (d.kind === 'other' || MOCK.test(d.name)) return
+      // A type is a model here; one of code is dropped after the file unless it is stored (Decision 11).
+      const u = unit(d.kind === 'type' ? 'model' : 'method', d.name, sure, line)
+      if (d.kind === 'function') u.public = d.public
+      if (sign) {
+        u.signs.add(sign)
+        ;((u.decls ??= {})[sign] ??= new Set()).add(sameDecl(lang, text))
+      } else if (d.kind === 'function') {
+        u.bodyChanged = true
+        if (BRANCH.test(text)) u.branch = true
+        else if (CALL.test(text)) u.call = true
+      }
     }
     let schemaNamed = false
     const fileLines: number[] = []
 
     for (const h of f.hunks as Hunk[]) {
       let ctx = h.header?.trim() ? declOf(lang, h.header, true) : null
+      if (ctx?.kind === 'type' && storedLine?.test(h.header!)) storedTypes.add(ctx.name)
       let oldNo = h.oldStart
       let newNo = h.newStart
+      /** A decorator line (`@Entity()`, `@Model`) marking the declaration after it stored. */
+      let decorated = false
+      /** A line of persistence: inside a type, that type is stored; a decorator before one, the next declaration. */
+      const mark = (at: Decl | null, text: string) => {
+        if (at && indentOf(text) > at.indent) {
+          if (at.kind === 'type') storedTypes.add(at.name)
+        } else if (text.trim().startsWith('@')) decorated = true
+      }
       for (const raw of h.lines ?? []) {
         const sign = raw[0]
-        if (sign !== '+' && sign !== '-') continue
         const text = raw.slice(1)
+        if (sign !== '+' && sign !== '-') {
+          // A context line: where the changes are, never a change itself.
+          if (sign !== ' ') continue
+          oldNo++
+          newNo++
+          const d = declOf(lang, text)
+          if (d) {
+            ctx = d
+            if (d.kind === 'type' && (decorated || storedLine?.test(text))) storedTypes.add(d.name)
+            decorated = false
+          } else if (storedLine?.test(text)) mark(ctx, text)
+          else if (ctx?.kind === 'function' && indentOf(text) > ctx.indent && BRANCH.test(text)) branchy.add(ctx.name)
+          continue
+        }
         const at = sign === '-' ? oldNo++ : newNo++
         if (isComment(lang, text)) continue
         fileLines.push(at)
@@ -336,18 +407,26 @@ export function changedUnits(files: FileChange[], architecture: ArchNode[], voca
           }
           continue
         }
+        if (isIndex(text) && !MOCK.test(ctx?.name ?? '')) {
+          const on = lang === 'sql' ? text.match(INDEX_ON)?.[1]?.replace(/[`"\]]/g, '') : undefined
+          unit('index', on ?? ctx?.name ?? f.path.split('/').at(-1)!.replace(/\.[^.]+$/, ''), sure, at).signs.add(sign)
+        }
         const d = declOf(lang, text)
         if (d) {
           ctx = d
           if (d.kind === 'type' && schema) schemaNamed = true
-          touch(d, sure, at, lang === 'sql' ? sqlSign(text, sign) : sign)
+          if (d.kind === 'type' && (decorated || storedLine?.test(text))) storedTypes.add(d.name)
+          decorated = false
+          touch(d, at, lang === 'sql' ? sqlSign(text, sign) : sign, text)
           continue
         }
+        if (storedLine?.test(text) && text.trim().startsWith('@')) mark(ctx, text)
         const closing = /^[}\])]/.test(text.trim())
         if (ctx && (indentOf(text) > ctx.indent || (closing && indentOf(text) === ctx.indent))) {
           if (ctx.kind === 'type' && schema) schemaNamed = true
-          touch(ctx, sure, at, null)
-        } else if (indentOf(text) > 0 && !closing && !schema) {
+          if (ctx.kind === 'type' && storedLine?.test(text)) storedTypes.add(ctx.name)
+          touch(ctx, at, null, text)
+        } else if (indentOf(text) > 0 && !closing && !schema && !decorated) {
           // Code under no declaration mag can name: a guess, a warning only.
           unit('method', '', 'low', at)
         } else ctx = null
@@ -356,12 +435,27 @@ export function changedUnits(files: FileChange[], architecture: ArchNode[], voca
     // A schema file changed where no table, model or message is named still changes the model.
     if (schema && !schemaNamed && fileLines.length && (lang !== 'tf' || f.hunks.some((h) => /_table"/.test(h.header ?? '') || (h.lines ?? []).some((l) => /_table"/.test(l)))))
       unit('model', f.path.split('/').at(-1)!.replace(/\.[^.]+$/, ''), 'high', fileLines[0])
+    // A type of code is a model only when it is stored (Decision 11): arguments, interfaces and clients are not.
+    for (const [key, u] of units) {
+      if (u.file !== f.path || u.repo !== f.repo) continue
+      if (u.kind === 'model' && READ.has(lang) && !storedTypes.has(u.name)) units.delete(key)
+      if (u.kind === 'method' && branchy.has(u.name)) u.branch = true
+    }
   }
 
   const out: ChangedUnit[] = []
-  for (const { signs, ...u } of units.values()) {
+  for (const { signs, decls, branch, call, ...u } of units.values()) {
     // A declaration line only added is a new unit, only removed a removed one; both, or the body only, a change.
     const diff = signs.has('+') && !signs.has('-') ? 'add' : signs.has('-') && !signs.has('+') ? 'del' : 'mod'
+    // The same declaration but for its receiver (`func (c *Client) Get` → `func (c *client) Get`): no change of it.
+    if (u.kind === 'method' && !u.bodyChanged && decls?.['+'] && decls['-'] && [...decls['+']].join('\n') === [...decls['-']].join('\n')) continue
+    if (u.kind === 'method' && u.public === false) {
+      // A private method is a unit for its logic only: a body changed with a branch, changed or around the change
+      // (sure), or a call (a guess).
+      if (!u.bodyChanged || diff === 'del' || (!branch && !call)) continue
+      out.push({ ...u, diff, bodyChanged: true, confidence: branch ? u.confidence : 'low' })
+      continue
+    }
     out.push({ ...u, diff, ...(u.kind === 'method' && { bodyChanged: !!u.bodyChanged }) })
   }
   for (const { signs, ...u } of deps.values()) {

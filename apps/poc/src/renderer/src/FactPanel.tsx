@@ -13,6 +13,7 @@ const MISSING: Record<MissingUnit['rule'], string> = {
   method: 'no interface line, no note',
   logic: 'no flowchart, no trivialLogic, no note',
   model: 'no entity on a data diagram, no note',
+  index: 'no changed index on a data diagram, no note',
   dependency: 'no use marked on the set, no note',
 }
 
