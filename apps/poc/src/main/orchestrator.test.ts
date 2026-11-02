@@ -714,7 +714,7 @@ test('review: the reviewer draws the fact and reads plan ↔ fact; merge is refu
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact diagram \(below\) is yours to draw[\s\S]*Every changed line, dependency and call gives files[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
+  assert.match(run.spec.prompt, /The fact set \(below\) is yours to draw[\s\S]*Every changed line, dependency and call gives files[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unshown: 0, unverified: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, canvasVersion: null, at: 1 } })
   assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
@@ -893,7 +893,7 @@ test("a teammate's PR: mag starts its fact without a plan; the verdict goes to N
   // No plan to copy: mag starts the fact over the modules that own the changed code, and compares it with nothing.
   const report = await orch.reviewFactOf(work.id)
   const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
-  assert.match(report, /^## Fact \(mag\)\nFact diagram: \[[^\]]+\]\(canvas:\w+\) \(v1\), started by mag: nothing on it rests on the PR yet\.[\s\S]*src\/charge\.ts[\s\S]*### The fact is not complete yet/)
+  assert.match(report, /^## Fact \(mag\)\nFact set: root \[[^\]]+\]\(canvas:\w+\) \(v1\), started by mag: nothing on it rests on the PR yet\.[\s\S]*src\/charge\.ts[\s\S]*### The fact is not complete yet/)
   assert.doesNotMatch(report, /Intent|Plan ↔ fact/)
   assert.deepEqual([fact.stepId, fact.repo, fact.planOf, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, app, null, fact.id, { [app]: head }])
   assert.match((fact.diagram as { summary: string }).summary, /no plan diagram/)

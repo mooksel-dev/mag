@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { CompareItem, Coverage, FileChange, Grounding, HunkRef } from '@mag/diff/types'
+import type { CompareItem, Coverage, FileChange, Grounding, HunkRef, MissingUnit } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -99,11 +99,17 @@ export interface FactView {
   items: CompareItem[]
   blockers: string[]
   plans: FactCanvas[]
-  /** The step's fact diagram; null before the review starts one. */
+  /** The root of the fact set; null before the review starts one. */
   fact: FactCanvas | null
+  /** Every diagram of the fact set, the root among them (povnyi-diff-nabir-pov-iazanykh.1). */
+  set: FactCanvas[]
   /** null without a fact diagram. */
   coverage: Coverage | null
   unverified: Grounding['unverified']
+  /** Changed methods, models, logic and dependencies the fact set neither shows nor explains; high ones block merge. */
+  missing: MissingUnit[]
+  /** Where the fact set does not hang together: root, links, orphans. */
+  warnings: string[]
   /** Read without the project's architecture (a PR outside the project): modules are folders. */
   outside: boolean
   at: number

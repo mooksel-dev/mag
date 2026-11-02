@@ -1,9 +1,10 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parsePrUrl, type PostReview, type TaskWork } from '@mag/core'
-import type { FileDiff, Hunk } from '@mag/diff'
+import { FUNCNAME_DRIVERS, funcnameAttributes, type FileDiff, type Hunk } from '@mag/diff'
 import type { PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
@@ -306,9 +307,22 @@ export async function diffHunks(repo: string, base: string, head: string): Promi
   return parseDiff(await diffText(repo, base, head))
 }
 
-/** The zero-context diff between two commits as git prints it, renames detected: the text diffHunks parses. */
+/**
+ * git options that name the declaration of each hunk in its header with mag's diff drivers (povnyi-diff-nabir-pov-iazanykh.1,
+ * Decision 9): an attributes file of mag's own and the drivers' xfuncname, never written into the user's repository.
+ * Their own .gitattributes still wins.
+ */
+export function funcnameConfig(): string[] {
+  // git ignores a missing attributes file: written again when the system cleaned the temporary folder.
+  const file = join(tmpdir(), `mag-diff-attributes-${process.pid}`)
+  if (!existsSync(file)) writeFileSync(file, funcnameAttributes())
+  return ['-c', `core.attributesFile=${file}`, ...FUNCNAME_DRIVERS.flatMap((d) => (d.xfuncname ? ['-c', `diff.${d.name}.xfuncname=${d.xfuncname}`] : []))]
+}
+
+/** The zero-context diff between two commits as git prints it, renames detected, hunk headers by mag's drivers: the text diffHunks parses. */
 export async function diffText(repo: string, base: string, head: string): Promise<string> {
-  const { stdout } = await exec('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=0', base, head], { cwd: repo, maxBuffer: 256 * 1024 * 1024 })
+  const args = ['-c', 'core.quotePath=false', ...funcnameConfig(), 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=0', base, head]
+  const { stdout } = await exec('git', args, { cwd: repo, maxBuffer: 256 * 1024 * 1024 })
   return stdout
 }
 
@@ -336,7 +350,10 @@ function parseDiffSections(text: string): { path: string; lines: string[] }[] {
   return parts.map((part) => ({ path: parseDiff(part)[0]?.path ?? '', lines: part.split('\n') }))
 }
 
-/** A unified diff, as `git diff --unified=0` prints it, into files and hunks. */
+/**
+ * A unified diff, as `git diff --unified=0` prints it, into files and hunks; each hunk with the declaration its header
+ * names and its changed lines.
+ */
 export function parseDiff(text: string): FileDiff[] {
   const out: FileDiff[] = []
   let cur: { old: string | null; new: string | null; renameFrom?: string; renameTo?: string; hunks: FileDiff['hunks'] } | null = null
@@ -353,9 +370,11 @@ export function parseDiff(text: string): FileDiff[] {
   const strip = (p: string) => (p === '/dev/null' ? null : p.replace(/^[ab]\//, '').replace(/\t$/, ''))
   // Lines of the current hunk still to come: a removed line may itself start with "--- ".
   let left = 0
+  let hunk: Hunk | null = null
   for (const line of text.split('\n')) {
     if (left > 0 && /^[-+ ]/.test(line)) {
       left--
+      if (line[0] !== ' ') hunk!.lines!.push(line)
       continue
     }
     if (line.startsWith('\\')) continue
@@ -373,9 +392,9 @@ export function parseDiff(text: string): FileDiff[] {
     else if (line.startsWith('--- ')) cur.old = strip(line.slice(4))
     else if (line.startsWith('+++ ')) cur.new = strip(line.slice(4))
     else if (line.startsWith('@@ ')) {
-      const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
+      const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: (.*))?$/)
       if (!h) continue
-      const hunk = { oldStart: +h[1], oldLines: h[2] === undefined ? 1 : +h[2], newStart: +h[3], newLines: h[4] === undefined ? 1 : +h[4] }
+      hunk = { oldStart: +h[1], oldLines: h[2] === undefined ? 1 : +h[2], newStart: +h[3], newLines: h[4] === undefined ? 1 : +h[4], ...(h[5]?.trim() && { header: h[5] }), lines: [] }
       cur.hunks.push(hunk)
       left = hunk.oldLines + hunk.newLines
     }

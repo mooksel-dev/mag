@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react'
 import { isReview, prHeads, type Task } from '@mag/core'
-import type { Change, FileChange, Level } from '@mag/diff/types'
+import type { Change, FileChange, Level, MissingUnit } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 import { STATUS_ICON, STATUS_LABEL, fileKey, filesOf, hunksOf, mark, rows, statusCounts, unverified, what, type FactItem } from './factView'
 
 const mag = window.mag
 
 const short = (sha: string) => sha.slice(0, 7)
+
+/** What a missing unit lacks on the fact set. */
+const MISSING: Record<MissingUnit['rule'], string> = {
+  method: 'no interface line, no note',
+  logic: 'no flowchart, no trivialLogic, no note',
+  model: 'no entity on a data diagram, no note',
+  dependency: 'no use marked on the set, no note',
+}
 
 const LevelBadge = ({ level }: { level: Level }) => <span className={`factlevel lv-${level}`}>{level}</span>
 
@@ -78,20 +86,30 @@ function Row({ item, view, hunks }: { item: FactItem; view: FactView; hunks: Hun
   )
 }
 
-/** Which changed code files the step's fact diagram shows; those it does not, first. */
+/**
+ * Which changed code files the step's fact set shows; those it does not, first. Then the changed methods, models,
+ * logic and dependencies it neither shows nor explains: the sure ones block merge, the unsure ones only warn
+ * (povnyi-diff-nabir-pov-iazanykh.1), and where the set does not hang together.
+ */
 export function CoverageView({ view, hunks }: { view: FactView; hunks: Hunks }) {
   const [rest, setRest] = useState(false)
   const cover = view.coverage
   const other = view.files.filter((f) => f.kind !== 'code')
+  const sure = view.missing.filter((m) => m.unit.confidence === 'high')
+  const unsure = view.missing.filter((m) => m.unit.confidence === 'low')
+  const set = view.set.length > 1 ? ` and ${view.set.length - 1} more diagram${view.set.length > 2 ? 's' : ''} of its set` : ''
   return (
     <div className="factcoverage">
       <div className="diffsub">
-        Coverage <span className="muted small">· {view.fact ? `which changed code files ${view.fact.title} (v${view.fact.version}) shows` : 'no fact diagram yet'}</span>
+        Coverage <span className="muted small">· {view.fact ? `which changed code files ${view.fact.title} (v${view.fact.version})${set} shows` : 'no fact diagram yet'}</span>
       </div>
       <div className="chips">
         {cover && <span className="diffchip">shown {cover.shown.length}</span>}
         {cover && <span className={`diffchip${cover.unshown.length ? ' s-missing' : ''}`}>not shown {cover.unshown.length}</span>}
         <span className={`diffchip${view.unverified.length ? ' s-missing' : ''}`}>unverified lines {view.unverified.length}</span>
+        {view.fact && <span className={`diffchip${sure.length ? ' s-missing' : ''}`} title="Changed public methods, models, logic and dependencies the fact set neither shows nor explains">missing changes {sure.length}</span>}
+        {unsure.length > 0 && <span className="diffchip" title="mag is not sure of these: a warning, not a blocker">maybe missing {unsure.length}</span>}
+        {view.warnings.length > 0 && <span className="diffchip s-missing" title={view.warnings.join('\n')}>set warnings {view.warnings.length}</span>}
         {view.outside && <span className="diffchip" title="The repository is outside the project: its modules are its folders">without the project architecture</span>}
         {other.length > 0 && (
           <button className="diffchip link" onClick={() => setRest(!rest)}>
@@ -119,6 +137,24 @@ export function CoverageView({ view, hunks }: { view: FactView; hunks: Hunks }) 
           </tbody>
         </table>
       )}
+      {view.missing.length > 0 && (
+        <table className="facttable">
+          <tbody>
+            {[...sure, ...unsure].map((m, i) => (
+              <tr key={i}>
+                <td className={`factstatus${m.unit.confidence === 'high' ? ' s-missing' : ''}`}>{m.unit.confidence === 'high' ? '✗' : '?'}</td>
+                <td className="muted small">{m.rule}</td>
+                <td className="muted small">{m.unit.module ?? 'no module'}</td>
+                <td>
+                  {m.unit.kind === 'dependency' ? `${m.unit.diff === 'add' ? '+' : '−'} ${m.unit.module} → ${m.unit.name}` : `${m.unit.diff === 'add' ? '+' : m.unit.diff === 'del' ? '−' : '~'} ${m.unit.name || '(code under no named declaration)'}`}{' '}
+                  <span className="muted small">{MISSING[m.rule]} · {m.unit.repo}:{m.unit.file}:{m.unit.line}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {view.warnings.length > 0 && <ul className="muted small">{view.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>}
     </div>
   )
 }
@@ -141,9 +177,9 @@ function Body({ step, view }: { step: Task; view: FactView }) {
             <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
           </>
         ) : review ? (
-          'The fact shows every changed code file and rests on the PR.'
+          'The fact shows every changed code file, method, model, logic and dependency and rests on the PR.'
         ) : (
-          'Merge is allowed: the fact shows every changed code file, rests on the PR and agrees with the plan.'
+          'Merge is allowed: the fact shows every changed code file, method, model, logic and dependency, rests on the PR and agrees with the plan.'
         )}
       </div>
       {!review && <Comparison view={view} hunks={hunks} />}

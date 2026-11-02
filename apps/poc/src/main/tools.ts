@@ -1,7 +1,7 @@
-import { CANVAS_ROLES, DEFAULT_TEMPLATES, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { CANVAS_ROLES, DEFAULT_TEMPLATES, FACT_NOTE_KINDS, setKey, setOf, validateLinks, type FactNote, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
-import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
+import { carryIds, formatFiles, formatUnits, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
 import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
@@ -234,7 +234,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         const list = step ? stepDiagrams(all, step.id) : all
         if (!list.length) return step ? `${step.key} has no diagrams of its own; get_diagrams without step lists all of ${task.key}.` : 'This task has no diagrams.'
         return JSON.stringify(
-          list.map((c) => ({ id: c.id, title: c.title, version: c.version, changes: changes(c), ...placementOut(store, project, task.id, c), diagram: c.diagram })),
+          list.map((c) => ({ id: c.id, title: c.title, version: c.version, changes: changes(c), ...placementOut(store, project, task.id, c), root: c.root || undefined, notes: c.notes?.length ? c.notes : undefined, diagram: c.diagram })),
           null,
           2,
         )
@@ -442,7 +442,8 @@ async function prChanges(project: Project, work: TaskWork, r: RepoWork): Promise
   try {
     const target = await branchTarget(project, r.repo, name, dir, await revParse(dir, inWorktree ? 'HEAD' : r.branch))
     if (target.base === target.head) return `${name}: no commits of its own on ${r.branch}.`
-    return formatFiles(name, target.base, target.head, (await factChanges(project, [target], localGit)).files)
+    const changed = await factChanges(project, [target], localGit)
+    return [formatFiles(name, target.base, target.head, changed.files), formatUnits(changed.units)].filter(Boolean).join('\n\n')
   } catch (e) {
     return `${name}: cannot diff ${r.branch} (${e instanceof Error ? e.message.split('\n')[0] : e}).`
   }
@@ -524,19 +525,20 @@ function adopted(store: Store, taskId: string, md: string): string {
 const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'no changes'
 
 /**
- * A revision of a fact diagram against its step's PRs (T-58): mag checks it again (coverage, grounding, plan ↔ fact),
- * records it on the step for the merge threshold, and says what the reviewer has left to fix.
+ * A revision of a diagram of a fact set against its step's PRs (T-58; the whole set since povnyi-diff-nabir-pov-iazanykh.1):
+ * mag checks the set again (coverage, grounding, completeness, links, plan ↔ fact), records it on the step for the
+ * merge threshold, and says what the reviewer has left to fix.
  */
 async function factCheck(store: Store, project: Project, canvas: Canvas): Promise<string> {
   const work = !canvas.stepId && canvas.taskId ? store.data.tasks.find((t) => t.id === canvas.taskId) : undefined
-  if (work && isReview(work)) return reviewFactCheck(store, project, work, canvas)
+  if (work && isReview(work)) return reviewFactCheck(store, project, work)
   const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
-  if (!step?.fact || canvas.diagram?.type !== 'component') return ''
+  if (!step?.fact) return ''
   try {
     const fact = await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases))
-    if (fact.canvas?.id !== canvas.id) return ''
     store.updateTask(step.id, { fact: factRecord(fact, step.fact.heads, step.fact.canvasVersion) })
-    if (!fact.blockers.length) return ' It shows every changed code file, rests on the PR and agrees with the plan: merge is allowed.'
+    if (!fact.blockers.length && !fact.warnings.length && !fact.completeness?.missing.length)
+      return ' The fact set shows every changed code file, method, model, logic and dependency, rests on the PR, hangs together and agrees with the plan: merge is allowed.'
     return `\n${factReport(fact, step.fact.canvasVersion)}`
   } catch (e) {
     log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
@@ -544,21 +546,42 @@ async function factCheck(store: Store, project: Project, canvas: Canvas): Promis
   }
 }
 
-/** A revision of a review's fact diagram (reviews-ahent-reviuit-pr-timeitiv.2): checked again and recorded, as for a step. */
-async function reviewFactCheck(store: Store, project: Project, work: Task, canvas: Canvas): Promise<string> {
+/** A revision of a review's fact set (reviews-ahent-reviuit-pr-timeitiv.2): checked again and recorded, as for a step. */
+async function reviewFactCheck(store: Store, project: Project, work: Task): Promise<string> {
   const pr = work.prReview?.pr
   const head = pr && work.fact?.heads[pr.repo]
-  if (!head || canvas.diagram?.type !== 'component') return ''
+  if (!head) return ''
   try {
     const fact = await reviewFact(project, work, Object.values(store.data.canvases), head)
-    if (fact.canvas?.id !== canvas.id) return ''
     store.updateTask(work.id, { fact: factRecord(fact, work.fact!.heads, work.fact!.canvasVersion) })
-    if (!fact.blockers.length) return ' It shows every changed code file and rests on the PR.'
+    if (!fact.blockers.length && !fact.warnings.length && !fact.completeness?.missing.length)
+      return ' The fact set shows every changed code file, method, model, logic and dependency, rests on the PR and hangs together.'
     return `\n${factReport(fact, work.fact!.canvasVersion)}`
   } catch (e) {
-    log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
+    log.warn('tools', `fact check of ${work.key} failed: ${(e as Error).message}`)
     return ''
   }
+}
+
+/** The notes a fact diagram carries (show_diagram's notes): each a kind, a name and why; a file is optional. */
+function notesArg(v: unknown): FactNote[] | undefined {
+  if (v === undefined || v === null) return undefined
+  if (!Array.isArray(v)) throw new Error('notes must be a list of { kind, name, file?, why }')
+  return v.map((n, i) => {
+    const text = (x: unknown) => (typeof x === 'string' ? x.trim() : '')
+    const kind = text(n?.kind) as FactNote['kind']
+    if (!FACT_NOTE_KINDS.includes(kind)) throw new Error(`notes[${i}]: kind must be one of ${FACT_NOTE_KINDS.join(', ')}`)
+    if (!text(n?.name)) throw new Error(`notes[${i}]: name is the method, model or module as get_pr_changes names it`)
+    if (!text(n?.why)) throw new Error(`notes[${i}]: why is one line on why it is not worth a diagram`)
+    return { kind, name: text(n.name), ...(text(n.file) && { file: text(n.file) }), why: text(n.why) }
+  })
+}
+
+/** Where a set the diagram is in does not hang together, as a note of show_diagram's answer; '' when it does. */
+function setNote(store: Store, canvas: Canvas): string {
+  if (!setKey(canvas)) return ''
+  const warnings = validateLinks(setOf(canvas, Object.values(store.data.canvases)))
+  return warnings.length ? `\nThe set of this diagram does not hang together yet:\n${warnings.map((w) => `- ${w}`).join('\n')}` : ''
 }
 
 /** Unowned files listed in the answer of set_architecture; the rest is a count. */
@@ -841,22 +864,32 @@ function sharedTool(
       const id = args.id ? String(args.id) : undefined
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       const reviewer = session?.role === 'reviewer'
+      const task = ctx.taskId ? store.task(ctx.taskId) : null
+      const prev = id ? store.data.canvases[id] : undefined
+      const none = { option: null, repo: null, planOf: null }
+      let placement: CanvasPlacement | undefined
       if (reviewer) {
-        const own = id ? store.data.canvases[id] : undefined
-        if (own?.role !== 'fact' || !own.stepId || own.stepId !== session.stepId) throw new Error('A reviewer revises only the fact diagram of the step under review: pass its id from the review message')
-        if (diagram.type !== 'component') throw new Error('The fact diagram is a component diagram')
-      }
-      // A reviewer's revision keeps the fact diagram where it is.
-      const placement = reviewer ? undefined : placementArg(store, ctx.taskId ? store.task(ctx.taskId) : null, project, args)
-      // One flow per method: a second flowchart of the same method is revised by id instead.
+        // A reviewer draws the fact set of the step under review (povnyi-diff-nabir-pov-iazanykh.1): revises its diagrams, adds new ones to it.
+        if (prev && (prev.role !== 'fact' || prev.stepId !== session.stepId)) throw new Error('A reviewer revises only the fact set of the step under review: pass the id of one of its diagrams, or none to add one to it')
+        placement = prev ? undefined : { ...none, role: 'fact', stepId: session.stepId! }
+      } else if (task && isReview(task) && !prev && args.role === undefined) {
+        // The topic of a review draws its fact set: a new diagram without a role joins it.
+        placement = { ...none, role: 'fact', stepId: null, repo: task.prReview?.pr.repo ?? null }
+      } else placement = placementArg(store, task, project, args)
+      const role = placement?.role ?? prev?.role
+      const notes = notesArg(args.notes)
+      if (notes && role !== 'fact') throw new Error('notes are for a fact diagram: why a change of the code is not drawn')
+      const root = typeof args.root === 'boolean' ? args.root : undefined
+      // One flow per method in a set: a second flowchart of the same method is revised by id instead.
       const of = diagram.type === 'flowchart' && diagram.of ? parseFlowRef(diagram.of) : null
       if (of && ctx.taskId) {
+        const key = setKey({ ...(prev ?? { taskId: ctx.taskId, role: null, option: null, stepId: null }), ...placement, kind: 'diagram', diagram })
         const same = taskDiagrams(store, ctx.taskId).find((c) => {
-          if (c.taskId !== ctx.taskId) return false
+          if (c.taskId !== ctx.taskId || setKey(c) !== key) return false
           const ref = c.id !== id && c.diagram!.type === 'flowchart' && c.diagram!.of ? parseFlowRef(c.diagram!.of) : null
           return ref?.module === of.module && ref.method === of.method
         })
-        if (same) throw new Error(`Not saved: flowchart ${same.id} ("${same.title}") already shows ${of.module}#${of.method}; revise it with id ${same.id}`)
+        if (same) throw new Error(`Not saved: flowchart ${same.id} ("${same.title}") already shows ${of.module}#${of.method} in this set; revise it with id ${same.id}`)
       }
       const canvas = store.saveCanvas({
         id,
@@ -867,10 +900,13 @@ function sharedTool(
         kind: 'diagram',
         diagram,
         placement,
+        root,
+        notes,
       })
       showInChat(store, ctx, canvas)
-      const saved = `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>.`
-      return canvas.role === 'fact' ? factCheck(store, project, canvas).then((note) => saved + note) : saved + planCheck(project, canvas.diagram!)
+      const saved = `Diagram ${canvas.id} (v${canvas.version})${canvas.role ? placedAs(store, project, canvas) : ''}${canvas.root ? ', the root of its set' : ''}: ${changes(canvas)}. Link it as [${canvas.title}](canvas:${canvas.id}), a node as canvas:${canvas.id}#<node-id>${setKey(canvas) ? `; another diagram of its set links it with links: [{ to: "${canvas.id}", node?, kind }]` : ''}.`
+      // A fact set's warnings come with its check.
+      return canvas.role === 'fact' ? factCheck(store, project, canvas).then((note) => saved + note) : saved + planCheck(project, canvas.diagram!) + setNote(store, canvas)
     }
   }
   return undefined

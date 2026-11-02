@@ -26,13 +26,13 @@ export const github: ChangeSource = {
 /** Where a review reads its PR: the local checkout of a project repository, else GitHub. */
 export const reviewSource = (work: Task): ChangeSource => (work.prReview?.pr.outside ? github : localGit)
 
-/** A review's Component fact diagrams, in the order they were drawn. */
+/** A review's fact set: its fact diagrams of every type, in the order they were drawn (povnyi-diff-nabir-pov-iazanykh.1). */
 export const reviewFacts = (canvases: Canvas[], workId: string) =>
-  canvases.filter((c) => c.taskId === workId && c.role === 'fact' && c.kind === 'diagram' && c.diagram?.type === 'component')
+  canvases.filter((c) => c.taskId === workId && !c.stepId && c.role === 'fact' && c.kind === 'diagram' && !!c.diagram)
 
-/** A step's Component diagrams of a role, in the order they were drawn. */
-export const stepComponents = (canvases: Canvas[], stepId: string, role: 'plan' | 'fact') =>
-  stepDiagrams(canvases, stepId).filter((c) => c.role === role && c.diagram?.type === 'component')
+/** A step's set of a role (its plan, its fact): its diagrams of every type, in the order they were drawn. */
+export const stepSet = (canvases: Canvas[], stepId: string, role: 'plan' | 'fact') =>
+  stepDiagrams(canvases, stepId).filter((c) => c.role === role && c.kind === 'diagram' && !!c.diagram)
 
 /** Where git runs for a repository of a step: a worktree is removed once merged; the main checkout shares its objects. */
 const repoDir = (r: TaskWork['repos'][number]) => (!r.local && existsSync(r.worktree) ? r.worktree : r.repo)
@@ -52,17 +52,11 @@ export async function stepTargets(project: Project, step: Task, heads: Record<st
   return out
 }
 
-/** The step's fact diagram: the one its fact names, else the first one placed in its fact. */
-export function factCanvas(step: Task, canvases: Canvas[]): Canvas | null {
-  const facts = stepComponents(canvases, step.id, 'fact')
-  return facts.find((c) => c.id === step.fact?.canvasId) ?? facts[0] ?? null
-}
-
-/** The fact of a step's PRs at `heads`: their changes against the step's fact diagram and plan. */
+/** The fact of a step's PRs at `heads`: their changes against the step's fact set and plan set. */
 export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[]): Promise<Fact> {
-  const plans = stepComponents(canvases, step.id, 'plan')
+  const plans = stepSet(canvases, step.id, 'plan')
   const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
-  return check(project, changed, factCanvas(step, canvases), plans)
+  return check(project, changed, stepSet(canvases, step.id, 'fact'), plans)
 }
 
 /** The counts of a fact, as a step records them. */
@@ -105,8 +99,11 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
     blockers: fact.blockers,
     plans: (fact.plan ?? []).map(canvasRef),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
+    set: fact.set.map(canvasRef),
     coverage: fact.coverage,
     unverified: fact.grounding?.unverified ?? [],
+    missing: fact.completeness?.missing ?? [],
+    warnings: fact.warnings,
     outside: fact.outside,
     at: Date.now(),
   }
@@ -127,16 +124,10 @@ export async function reviewTarget(project: Project, work: Task, head?: string, 
   return { repo: pr.repo, name, at: pr.repo, base: await mergeBase(pr.repo, from, at), head: at }
 }
 
-/** The review's fact diagram: the one its fact names, else the first one it has. */
-export function reviewFactCanvas(work: Task, canvases: Canvas[]): Canvas | null {
-  const facts = reviewFacts(canvases, work.id)
-  return facts.find((c) => c.id === work.fact?.canvasId) ?? facts[0] ?? null
-}
-
-/** The fact of a reviewed PR at `head`: its changes against the review's fact diagram; no plan to compare. */
+/** The fact of a reviewed PR at `head`: its changes against the review's fact set; no plan to compare. */
 export async function reviewFact(project: Project, work: Task, canvases: Canvas[], head?: string): Promise<Fact> {
   const changed = await changes(project, [await reviewTarget(project, work, head)], reviewSource(work))
-  return check(project, changed, reviewFactCanvas(work, canvases), null)
+  return check(project, changed, reviewFacts(canvases, work.id), null)
 }
 
 /** The fact of a review as its page shows it: at the head its fact is of, else the PR's. null before it has a PR. */

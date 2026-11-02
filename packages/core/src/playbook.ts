@@ -60,8 +60,8 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    alike in quality and speed and differ only in trade-offs, and compromises count. Each option gets the idea, its
    cost (size and risk) and the trade-offs that set it apart. Give a recommendation and say why. If there is only one
    sensible way, say so. Sketch every option that changes code with show_diagram (role option, option: its name): one
-   or two diagrams of the levels the option really changes, linked in the option's line. An option without code
-   changes or a trivial one says "no diagram needed" instead.
+   or two diagrams of the levels the option really changes, linked in the option's line. An option's diagrams are one
+   linked set, as step 7 says. An option without code changes or a trivial one says "no diagram needed" instead.
 5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
    everything else only the user can decide, each with your recommendation and why, call set_needs_input with a
    one-line summary, then stop and wait. Ask everything at once, at the task level; steps never get questions of their
@@ -71,8 +71,13 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    decision the user made against your advice goes there as they made it, and you carry it out. Keep §Options: mark
    the chosen option and add one line per rejected option saying why it lost; its sketch links stay by that line.
 7. Design the chosen option per layer: revise its sketches by their ids (never redraw copies) and add diagrams where
-   the change needs more, before splitting it into steps. Draw as many as the change needs, each a separate named
-   diagram, and link them in the doc. UI mockups and other visuals without a type go through show_canvas.
+   the change needs more, before splitting it into steps. Draw every level the change touches (system, modules, data,
+   scenarios, logic of methods), each a separate named diagram, and link them in the doc. The diagrams of one place
+   (an option, a step's plan) are one set: one is its root (root: true, the system level or the top component
+   diagram), and every other is reached from it through links (links on a module, interface line, use or entity: kind
+   detail, data, scenario or logic; a flowchart's of counts as logic). Every changed module with changed data, a
+   scenario or the logic of a method links to that diagram. UI mockups and other visuals without a type go through
+   show_canvas.
 8. Split the work into execution steps with create_subtask, in order; at least one. A step's title and note (one line)
    say what ships in it; the doc carries the details. A small task is one step. Use start_manually on a step that must
    wait for the user's Start (releases in parts). Give every step repos: the project repositories it changes, [] for a
@@ -94,7 +99,7 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
 Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
 what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
-2. Draw the fact: revise the step's fact diagram (a copy of its plan) under the diff, as the fact section says.
+2. Draw the fact: revise the step's fact set (a copy of its plan set) under the diff, as the fact section says.
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
@@ -106,8 +111,8 @@ have done it: no diagram of your own design and no list of differences from it.
    add_ticket. Without access to the tracker, say what is missing and work from the description.
 3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
    framing or a problem that is not real.
-4. Fact: get_pr_changes starts the fact diagram over the modules that own the changed code; draw what the PR did under
-   the diff, as the fact section says.
+4. Fact: get_pr_changes starts the fact set over the modules that own the changed code; draw what the PR did under
+   the diff, from scratch, as the fact section says.
 5. Check the fact and the code:
    - Does the change solve the problem, all of it, and nothing it was not asked to do?
    - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
@@ -121,16 +126,24 @@ have done it: no diagram of your own design and no list of differences from it.
    whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
    otherwise.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.`,
-  fact: `Revise the fact diagram under the diff, by its id and the same module ids. A step's fact starts as a copy of its
-plan; a teammate's PR has no plan, so its fact starts as the modules that own the changed code, unmarked.
+  fact: `Revise the fact set under the diff: its diagrams by their ids, with the same module ids, and new ones where the
+diff needs them. A step's fact starts as a copy of its plan set with its links; a teammate's PR has no plan, so its fact
+starts as one diagram of the modules that own the changed code, unmarked.
 - Done as planned: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the plan, or
   anything a teammate's PR did: add it, with module ids from get_architecture.
+- One linked set: a root (the top component diagram) and every other diagram reached from it through links, as the
+  plan section says; show every level the change touches, none it does not.
 - Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module
   (<repo>:<path> when several repos change that path). Nothing that is not in the diff.
 - Keep it at the level of the architecture: modules, their public interface and the dependencies between them.
   Helpers, fields of types and single adapters fold into one line (e.g. "language adapters: removed") that gives the
   files of all of them.
-- Show every changed code file: only the files a line gives count, a module mark alone shows none.`,
+- Show every changed code file: only the files a line gives count, a module mark alone shows none.
+- Show every change get_pr_changes lists by kind: a public method is its own interface line of its module; its changed
+  logic a flowchart linked kind logic (or with of), or trivialLogic "логіка тривіальна: <why>"; a model an entity with
+  its fields on a data diagram; a dependency added or removed a use marked add or del. What is not worth a diagram (a
+  utility, an internal type, a dependency of no weight) goes in notes on a diagram of the set, one line with why. mag
+  blocks merge on the ones it is sure of and warns on the rest.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
