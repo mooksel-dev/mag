@@ -709,7 +709,7 @@ export interface AgentSession {
   runStartedAt?: number
 }
 
-export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review'
+export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review' | 'chat'
 
 /** One line of the project's activity log. */
 export interface ProjectEvent {

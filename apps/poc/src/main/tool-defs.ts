@@ -41,6 +41,13 @@ const ARCH_MODULE = {
   },
 }
 
+/** The agents a project chat writes to (message_agent). */
+export const MESSAGED_ROLES = ['developer', 'reviewer', 'groomer'] as const
+export type MessagedRole = (typeof MESSAGED_ROLES)[number]
+
+/** The control tools of a project chat act only on the user's word, as cancel_task does. */
+const ASKED = 'Only when the user has asked for exactly this in this conversation ("approve", "start it", "tell the developer…"); never on your own. Then say in one line what you did, not "press the button".'
+
 const STEP_REPOS = {
   type: 'array',
   items: { type: 'string' },
@@ -600,6 +607,58 @@ export const TOOL_DEFS = [
       properties: { key: { type: 'string' }, reason: { type: 'string', description: 'Optional one line: why it is canceled.' } },
       required: ['key'],
     },
+  },
+  // The buttons of a work for a project chat (chat-keruie-robotamy-i-ahentamy.1): only when the user asks for it.
+  {
+    name: 'approve_plan',
+    scope: 'project',
+    description: `Approve a work's plan, as the user's Approve: planning -> ready, with the same checks (a step not done yet, no agent of the work in a turn). ${ASKED}`,
+    inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'The work, e.g. ABC-12.' } }, required: ['key'] },
+  },
+  {
+    name: 'start_work',
+    scope: 'project',
+    description: `Start a ready work (or restart one in progress), as the user's Start: its current step gets a developer. ${ASKED}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The work, e.g. ABC-12.' },
+        local_repos: { type: 'array', items: { type: 'string' }, description: 'Repositories (names or paths) its steps work on in the main checkout instead of a worktree, when the user asks for local. Leave it out for worktrees (a restart keeps what the work had).' },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'start_step',
+    scope: 'project',
+    description: `Start the next step of a work in progress that waits for Start (start manually), as the user's Start. ${ASKED}`,
+    inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'The work or that step, e.g. ABC-12 or ABC-12.2.' } }, required: ['key'] },
+  },
+  {
+    name: 'restart_review',
+    scope: 'project',
+    description: `Restart the agent review of the open PRs of a work's current step, as the user's Restart of a review. ${ASKED}`,
+    inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'The work or its current step.' } }, required: ['key'] },
+  },
+  {
+    name: 'message_agent',
+    scope: 'project',
+    description: `Write to an agent of a work or a step, as the user writes in its chat: its session resumes with the text (also how you answer its question). Without role: the agent that worked last. ${ASKED}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The work or a step, e.g. ABC-12 or ABC-12.2; a work means its current step for developer and reviewer.' },
+        text: { type: 'string', description: 'The message, as the user would write it.' },
+        role: { type: 'string', enum: MESSAGED_ROLES, description: 'Whom: the developer, the reviewer or the groomer.' },
+      },
+      required: ['key', 'text'],
+    },
+  },
+  {
+    name: 'stop_agent',
+    scope: 'project',
+    description: `Stop the agents of a work (its steps' too) or of a step that are in a turn, as the user's Stop. ${ASKED}`,
+    inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'The work or a step.' } }, required: ['key'] },
   },
   {
     name: 'update_notes',
