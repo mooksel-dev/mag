@@ -1,4 +1,4 @@
-import type { FileChange } from './types.ts'
+import type { ChangedUnit, FileChange } from './types.ts'
 
 const MARK: Record<FileChange['status'], string> = { add: '+', mod: '~', del: '-', rename: '>' }
 const NO_MODULE = '(no module)'
@@ -26,4 +26,26 @@ export function formatFiles(repo: string, baseSha: string, headSha: string, file
   const rest = files.filter((f) => f.kind !== 'code')
   if (rest.length) lines.push('', `not code: ${rest.map((f) => `${MARK[f.status]} ${f.path} (${f.kind})`).join(', ')}`)
   return lines.join('\n')
+}
+
+const UNIT_MARK: Record<ChangedUnit['diff'], string> = { add: '+', mod: '~', del: '-' }
+
+/**
+ * The changed public methods, models and dependencies of a PR (povnyi-diff-nabir-pov-iazanykh.1) as agents read them:
+ * each is a line on a diagram of the fact set, or a note there says why not. Sure ones first; unsure ones apart.
+ */
+export function formatUnits(units: ChangedUnit[]): string {
+  if (!units.length) return ''
+  const line = (u: ChangedUnit) =>
+    u.kind === 'dependency'
+      ? `  ${UNIT_MARK[u.diff]} ${u.module} -> ${u.name} (${u.repo}:${u.file}:${u.line})`
+      : `  ${UNIT_MARK[u.diff]} ${u.module ?? NO_MODULE} ${u.name || '(no name)'} (${u.repo}:${u.file}:${u.line})${u.bodyChanged && u.diff !== 'del' ? ', logic changes' : ''}`
+  const out = ['Changed methods, models and dependencies (mag reads them from the hunk headers and changed lines; the fact set shows each, a changed logic with a flowchart or trivialLogic, or a note says why not):']
+  for (const [kind, title] of [['method', 'Public methods'], ['model', 'Models'], ['dependency', 'Dependencies between modules']] as const) {
+    const of = units.filter((u) => u.kind === kind && u.confidence === 'high')
+    if (of.length) out.push(`${title}:`, ...of.map(line))
+  }
+  const low = units.filter((u) => u.confidence === 'low')
+  if (low.length) out.push('Unsure (warnings only):', ...low.map((u) => `${line(u)} [${u.kind}]`))
+  return out.join('\n')
 }

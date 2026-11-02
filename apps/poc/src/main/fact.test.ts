@@ -71,15 +71,15 @@ const FACT: ComponentDiagram = {
   modules: [
     {
       id: 'app', name: 'app', description: '', uses: [],
-      interface: [{ text: 'extra(): number', diff: 'add', files: ['src/extra.ts'] }],
+      interface: [{ text: 'extra(): number', diff: 'add', files: ['src/extra.ts'], trivialLogic: 'returns a constant' }],
       children: [
         {
           id: 'store', name: 'store', description: '', uses: [],
           interface: [
             { text: 'load(id): Item', diff: 'del', files: ['src/store.ts'] },
-            { text: 'load(id, fresh?): Item', diff: 'add', files: ['src/store.ts'] },
+            { text: 'load(id, fresh?): Item', diff: 'add', files: ['src/store.ts'], trivialLogic: 'one more argument, no new branch' },
             { text: 'remove(id): void' },
-            { text: 'save(id): Item', diff: 'add', files: ['src/store.ts'] },
+            { text: 'save(id): Item', diff: 'add', files: ['src/store.ts'], trivialLogic: 'returns its argument' },
           ],
         },
       ],
@@ -129,11 +129,17 @@ test('factOf: starts the fact diagram as a copy of the plan; the reviewer revise
 
   // The reviewer's revision is checked and recorded at once.
   const answer = await show(FACT, fact.canvasId!)
-  assert.match(answer, /Fact diagram: \[.*\]\(canvas:\w+\) \(v2\), revised\./)
+  assert.match(answer, /Fact set: root \[.*\]\(canvas:\w+\) \(v2\), revised\./)
   assert.doesNotMatch(answer, /does not show|do not rest/)
   assert.deepEqual(store.task(step.id).fact!.counts, { match: 1, differs: 0, missing: 1, unplanned: 2, unshown: 0, unverified: 0 })
-  await assert.rejects(show(FACT, plan.id), /only the fact diagram/)
-  await assert.rejects(show(FACT), /only the fact diagram/)
+  await assert.rejects(show(FACT, plan.id), /only the fact set of the step under review/)
+  // A new diagram of the reviewer joins the step's fact set (povnyi-diff-nabir-pov-iazanykh.1).
+  const added = await show({ type: 'data', entities: [{ id: 'item', name: 'Item', fields: [{ name: 'id', type: 'string' }] }], relations: [] })
+  const id = added.match(/^Diagram (\w+)/)![1]
+  assert.deepEqual([store.data.canvases[id].role, store.data.canvases[id].stepId], ['fact', step.id])
+  // Not linked from the root yet: the set says so.
+  assert.match(added, /"Fact" \(\w+\) is not reached from the root: give the module that owns these tables links: \[\{ to: "\w+", kind: "data" \}\]/)
+  store.data.canvases[id] = { ...store.data.canvases[id], role: null, stepId: null }
 
   // A plan the fact agrees with: merge is allowed.
   store.saveCanvas({ id: plan.id, projectId: plan.projectId, taskId: plan.taskId, sessionId: null, title: 'Plan', kind: 'diagram', diagram: { ...FACT, modules: FACT.modules } })
@@ -144,9 +150,9 @@ test('factOf: starts the fact diagram as a copy of the plan; the reviewer revise
 test('seed: without a plan, the modules that own the changed code, unmarked', async () => {
   const { store, project, step, repo, head, plan } = setup()
   const { files } = await changes(project, await stepTargets(project, store.task(step.id), { [repo]: head }), localGit, [plan])
-  const diagram = seed(step.key, [], files, project.architecture)!
-  assert.deepEqual(diagram.modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
-  assert.equal(seed(step.key, [], files.filter((f) => f.kind !== 'code'), project.architecture), null)
+  const [{ diagram }] = seed(step.key, [], files, project.architecture)
+  assert.deepEqual((diagram as ComponentDiagram).modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
+  assert.deepEqual(seed(step.key, [], files.filter((f) => f.kind !== 'code'), project.architecture), [])
 })
 
 test('factView: files, plan ↔ fact, the threshold, coverage and unverified lines; hunks open', async () => {
@@ -165,7 +171,10 @@ test('factView: files, plan ↔ fact, the threshold, coverage and unverified lin
   assert.equal(view.fact!.id, s.fact!.canvasId)
   assert.deepEqual(view.coverage!.unshown.map((f) => f.path), ['src/extra.ts', 'src/store.ts'])
   assert.deepEqual(view.unverified.map((u) => [u.change.key, u.reason]), [['store#load', 'no-files'], ['store#remove', 'no-files']])
-  assert.equal(view.blockers.length, 4)
+  // The copy of the plan shows neither extra nor save, nor the changed logic of load (povnyi-diff-nabir-pov-iazanykh.1).
+  assert.deepEqual(view.missing.map((m) => [m.rule, m.unit.name]), [['method', 'extra'], ['logic', 'load'], ['method', 'save']])
+  assert.deepEqual(view.set.map((c) => c.id), [s.fact!.canvasId])
+  assert.equal(view.blockers.length, 7)
 
   const save = view.files.find((f) => f.path === 'src/store.ts')!
   const hunk = { path: save.path, ...save.hunks.at(-1)! }

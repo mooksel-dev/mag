@@ -292,7 +292,7 @@ test('show_diagram: one flowchart per method of; the same one is revised by id',
   await call('show_diagram', { title: 'groom()', diagram: flow('tasks#groom') })
   const [c] = Object.values(store.data.canvases)
   assert.deepEqual(c.diagram, { type: 'flowchart', of: 'tasks#groom', summary: 'Queue first.', changes: ['Queues the job'], nodes: [{ id: 's', label: 'Start', shape: 'start' }], edges: [] })
-  await assert.rejects(call('show_diagram', { title: 'Again', diagram: flow(' tasks#groom ') }), new RegExp(`flowchart ${c.id} \\("groom\\(\\)"\\) already shows tasks#groom; revise it with id ${c.id}`))
+  await assert.rejects(call('show_diagram', { title: 'Again', diagram: flow(' tasks#groom ') }), new RegExp(`flowchart ${c.id} \\("groom\\(\\)"\\) already shows tasks#groom in this set; revise it with id ${c.id}`))
   await assert.rejects(call('show_diagram', { title: 'Bad', diagram: flow('tasks') }), /of must be "<moduleId>#<method>"/)
   // Revising the flow itself, and a flow of another method, are fine; a module or method need not exist yet.
   await call('show_diagram', { id: c.id, title: 'groom() v2', diagram: flow('tasks#groom') })

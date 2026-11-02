@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { normalizeDiagram, validateDiagram, type ArchNode } from '@mag/core'
@@ -44,9 +44,16 @@ rename from old name.ts
 rename to new name.ts
 `)
   assert.deepEqual(files, [
-    { path: 'a.ts', status: 'mod', hunks: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 2 }, { oldStart: 10, oldLines: 2, newStart: 11, newLines: 0 }] },
-    { path: 'new.ts', status: 'add', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1 }] },
-    { path: 'gone.ts', status: 'del', hunks: [{ oldStart: 1, oldLines: 1, newStart: 0, newLines: 0 }] },
+    {
+      path: 'a.ts',
+      status: 'mod',
+      hunks: [
+        { oldStart: 3, oldLines: 1, newStart: 3, newLines: 2, header: 'x', lines: ['--- not a header', '+++ nor this', '+two'] },
+        { oldStart: 10, oldLines: 2, newStart: 11, newLines: 0, lines: ['-a', '-b'] },
+      ],
+    },
+    { path: 'new.ts', status: 'add', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+x'] }] },
+    { path: 'gone.ts', status: 'del', hunks: [{ oldStart: 1, oldLines: 1, newStart: 0, newLines: 0, lines: ['-x'] }] },
     { path: 'new name.ts', oldPath: 'old name.ts', status: 'rename', hunks: [] },
   ])
 })
@@ -77,8 +84,26 @@ test('git client: treeAt and diffHunks with a rename', async () => {
   const files = await diffHunks(repo, 'main', 'mag/x-1')
   assert.deepEqual(files, [
     { path: 'src/new name.ts', oldPath: 'src/old name.ts', status: 'rename', hunks: [] },
-    { path: 'src/store.ts', status: 'mod', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }] },
+    {
+      path: 'src/store.ts',
+      status: 'mod',
+      // mag's TypeScript driver names no declaration before line 1; the changed lines come along for changedUnits.
+      hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: ['-export function load(id: string) {', "+import { A } from './new name.ts'", '+export function load(id: string, fresh = false) {'] }],
+    },
   ])
+})
+
+test("git client: hunk headers name the declaration by mag's drivers, the user's repository untouched (povnyi-diff-nabir-pov-iazanykh.1)", async () => {
+  const repo = fixtureRepo()
+  writeFileSync(join(repo, 'src/store.ts'), "import { A } from './new name.ts'\nexport class Store {\n  async load(id: string, fresh = false) {\n    walk(id, (x) => {\n      return x + 1\n    })\n  }\n}\n")
+  git(repo, 'commit', '-qam', 'class')
+  writeFileSync(join(repo, 'src/store.ts'), "import { A } from './new name.ts'\nexport class Store {\n  async load(id: string, fresh = false) {\n    walk(id, (x) => {\n      return x + 2\n    })\n  }\n}\n")
+  git(repo, 'commit', '-qam', 'body')
+  const [file] = await diffHunks(repo, 'HEAD~1', 'HEAD')
+  // The method, not the call with a callback inside it nor the class around it.
+  assert.equal(file.hunks[0].header, '  async load(id: string, fresh = false) {')
+  assert.equal(git(repo, 'status', '--porcelain'), '')
+  assert.ok(!existsSync(join(repo, '.gitattributes')) && !existsSync(join(repo, '.git/info/attributes')))
 })
 
 test('get_pr_changes: the step branch against the base, by module of the architecture', async () => {
@@ -96,7 +121,9 @@ test('get_pr_changes: the step branch against the base, by module of the archite
   const tools = createTools(store, {} as ToolActions)
   const out = await tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', {})
   assert.match(out, /^app: [0-9a-f]{12} → [0-9a-f]{12}, 2 file\(s\) changed, 2 of them code\./)
-  assert.match(out, /\napp\n {2}> src\/new name\.ts \(from src\/old name\.ts\): 0 hunk\(s\)\n\nstore\n {2}~ src\/store\.ts: 1 hunk\(s\) 1 → 1-2$/)
+  assert.match(out, /\napp\n {2}> src\/new name\.ts \(from src\/old name\.ts\): 0 hunk\(s\)\n\nstore\n {2}~ src\/store\.ts: 1 hunk\(s\) 1 → 1-2\n/)
+  // The changed public method by its signature line; the import stays inside app (store is one of its modules).
+  assert.match(out, /\nPublic methods:\n {2}~ store load \(app:src\/store\.ts:1\)$/)
   await assert.rejects(tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', { repo: 'web' }), /not a repo of this task/)
   git(repo, 'checkout', '-q', 'main')
   assert.equal(await tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', {}), 'app: no commits of its own on mag/x-1.')
@@ -141,8 +168,8 @@ test('PR #51 (T-50.1): the fact a reviewer drew from the diff shows every change
   const files = await filesOf(PRS[51])
   const fact = normalizeDiagram(JSON.parse(readFileSync(new URL('./fixtures/fact-pr51.json', import.meta.url), 'utf8')))
   assert.deepEqual(validateDiagram(fact), [])
-  assert.deepEqual(coverage(files, fact).unshown, [])
-  const g = grounding(fact, files, ARCH)
+  assert.deepEqual(coverage(files, [fact]).unshown, [])
+  const g = grounding([fact], files, ARCH)
   assert.deepEqual(g.unverified, [])
   assert.ok(g.grounded.length >= 20)
   // A line moved to a module whose files it does not give is caught.
@@ -150,7 +177,7 @@ test('PR #51 (T-50.1): the fact a reviewer drew from the diff shows every change
   if (moved.type !== 'component') throw new Error('component')
   const line = moved.modules.find((m) => m.id === 'tool-defs')!.interface!.find((l) => l.diff === 'add')!
   moved.modules.find((m) => m.id === 'store')!.interface = [line]
-  assert.deepEqual(grounding(moved, files, ARCH).unverified.map((u) => [u.change.module, u.reason]), [['store', 'other-module']])
+  assert.deepEqual(grounding([moved], files, ARCH).unverified.map((u) => [u.change.module, u.reason]), [['store', 'other-module']])
 })
 
 test("zeroContext: GitHub's diff with context reads as git's zero-context diff (reviews-ahent-reviuit-pr-timeitiv.3)", () => {
@@ -178,6 +205,8 @@ test("zeroContext: GitHub's diff with context reads as git's zero-context diff (
   git(dir, 'commit', '-qm', 'change')
   const head = git(dir, 'rev-parse', 'HEAD')
   const withContext = execFileSync('git', ['diff', '--no-color', '-M', base, head], { cwd: dir, encoding: 'utf8' })
-  assert.deepEqual(parseDiff(zeroContext(withContext)), parseDiff(execFileSync('git', ['diff', '--no-color', '-M', '--unified=0', base, head], { cwd: dir, encoding: 'utf8' })))
+  // GitHub's hunk headers name the declaration before its context, not before each run of changes: zeroContext drops them.
+  const noHeaders = (files: ReturnType<typeof parseDiff>) => files.map((f) => ({ ...f, hunks: f.hunks.map(({ header: _, ...h }) => h) }))
+  assert.deepEqual(parseDiff(zeroContext(withContext)), noHeaders(parseDiff(execFileSync('git', ['diff', '--no-color', '-M', '--unified=0', base, head], { cwd: dir, encoding: 'utf8' }))))
   assert.ok(withContext.includes(' line 1'), 'the fixture has context')
 })

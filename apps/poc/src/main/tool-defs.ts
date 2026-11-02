@@ -57,6 +57,21 @@ const DATA_DIFF = {
 const ONE_PER_LINE = 'One per line, never several joined by "/", "," or "+"; a plain string is an unchanged line; a changed one is the old line del and the new line add.'
 /** On a fact diagram (T-58): the PR's files a changed element rests on. */
 const FILES = { type: 'array', items: { type: 'string' }, description: "Fact diagrams only: the PR's files (repo-relative paths as get_pr_changes lists them; <repo>:<path> when several repos change that path) this change rests on, of this module. Required on every changed line, use and call of a fact: only files given here count as shown." }
+/** Explicit links to other diagrams of the set (povnyi-diff-nabir-pov-iazanykh.1, Decision 2). */
+const LINKS = {
+  type: 'array',
+  description:
+    'Links to other diagrams of the same set (an option, a step\'s plan or fact): detail = its inner modules, data = the tables or types it owns, scenario = a sequence it takes part in, logic = the flowchart of a method. Every diagram of a set is reached from its root through links.',
+  items: {
+    type: 'object',
+    required: ['to', 'kind'],
+    properties: {
+      to: { type: 'string', description: 'The id of a diagram of the same set.' },
+      node: { type: 'string', description: 'A node of that diagram to open at: a module, entity, participant, state or flowchart node id.' },
+      kind: { type: 'string', enum: ['detail', 'data', 'scenario', 'logic'] },
+    },
+  },
+}
 const LINES = (what: string) => ({
   type: 'array',
   description: `${what}. ${ONE_PER_LINE}`,
@@ -73,6 +88,8 @@ const INTERFACE = {
       diff: { ...DATA_DIFF, description: 'Change: add, mod, del, or move (it moved here; from says from which module). Leave it out for unchanged context.' },
       from: { type: 'string', description: 'With move: the id of the module it moved from, another module of this diagram.' },
       files: FILES,
+      links: LINKS,
+      trivialLogic: { type: 'string', description: 'Fact diagrams: instead of a flowchart for a method whose logic changes, one line on why it is trivial ("логіка тривіальна: rename", "passes one more argument").' },
     },
   },
 }
@@ -122,8 +139,9 @@ const DIAGRAM = {
           interface: INTERFACE,
           uses: {
             type: 'array',
-            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF, files: FILES } },
+            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF, files: FILES, links: LINKS } },
           },
+          links: LINKS,
           children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields.' }, description: 'Inner modules.' },
         },
       },
@@ -174,6 +192,7 @@ const DIAGRAM = {
           note: { type: 'string' },
           diff: DATA_DIFF,
           from: { type: 'string', description: 'With move: the old id of a renamed or moved entity.' },
+          links: LINKS,
           fields: {
             type: 'array',
             description: 'One field per item, never several in one name ("a / b", "a, b"). A changed field (name or type) is the old one del and the new one add; a field moved from another entity is move with from.',
@@ -612,10 +631,10 @@ export const TOOL_DEFS = [
   {
     name: 'show_diagram',
     scope: 'any',
-    // The reviewer revises the fact diagram of its step only (T-57.4, T-58).
+    // The reviewer draws the fact set of its step only (T-57.4, T-58, povnyi-diff-nabir-pov-iazanykh.1).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. A reviewer only revises the fact diagram of its step (role fact, started by mag as a copy of the plan): it draws what the diff did at the level of the architecture (modules, their public interface, dependencies; helpers, fields of types and single adapters fold into one line that gives the files of all of them), and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module (<repo>:<path> when several repos change that path). Only files a line gives count as shown; a module mark alone shows none. The answer lists the changed code files it does not show, the lines that do not rest on the PR and plan ↔ fact.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind); a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach). A reviewer draws the fact set of its step (role fact, started by mag as a copy of the plan set with its links): it revises its diagrams by id and adds new ones (without role, they join the fact set). It draws what the diff did at the level of the architecture (modules, their public interface, dependencies; helpers and single adapters fold into one line that gives the files of all of them), and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module (<repo>:<path> when several repos change that path). Only files a line gives count as shown; a module mark alone shows none. Every changed public method get_pr_changes lists is its own interface line, a changed logic has a flowchart linked kind logic (or of) or trivialLogic, a changed model is an entity on a data diagram, a dependency added or removed is a use marked add or del; what is not worth a diagram goes in notes with why. The answer lists the changed code files the set does not show, the lines that do not rest on the PR, the changed methods, models, logic and dependencies it neither shows nor explains, and plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -623,6 +642,16 @@ export const TOOL_DEFS = [
         diagram: DIAGRAM,
         id: { type: 'string', description: 'Existing diagram id to revise.' },
         ...PLACEMENT,
+        root: { type: 'boolean', description: 'true: the entry of its set (the system level or the top component diagram); the other diagrams of the set stop being root.' },
+        notes: {
+          type: 'array',
+          description: 'Fact diagrams: changes of the code the set does not draw, each with why in one line (a utility method, an internal type, trivial logic, a dependency of no weight). name as get_pr_changes names it.',
+          items: {
+            type: 'object',
+            required: ['kind', 'name', 'why'],
+            properties: { kind: { type: 'string', enum: ['method', 'model', 'logic', 'dependency'] }, name: { type: 'string' }, file: { type: 'string' }, why: { type: 'string' } },
+          },
+        },
       },
       required: ['title', 'diagram'],
     },

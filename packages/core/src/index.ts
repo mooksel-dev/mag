@@ -2,7 +2,7 @@
 // Keep it free of runtime dependencies.
 
 import type { ArchDiagram } from './arch.ts'
-import type { CanvasRole } from './canvases.ts'
+import type { CanvasRole, FactNote } from './canvases.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLevel, type PrReview } from './pr-review.ts'
@@ -10,6 +10,7 @@ import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLeve
 export * from './arch.ts'
 export * from './canvases.ts'
 export * from './diagram.ts'
+export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
 
@@ -1244,6 +1245,10 @@ export interface Canvas {
   repo?: string | null
   /** role 'fact': the plan diagram it is the fact of (T-55.4). */
   planOf?: string | null
+  /** The entry of its set: the level "System" or the top Component diagram (povnyi-diff-nabir-pov-iazanykh.1). */
+  root?: boolean
+  /** role 'fact': the changes of the code its set does not draw, each with why (Decision 8). */
+  notes?: FactNote[]
   version: number
   updatedAt: number
 }

@@ -8,11 +8,30 @@ export const DIFF_MARKS: DiffMark[] = ['add', 'mod', 'del']
 export type LineMark = DiffMark | 'move'
 export const LINE_MARKS: LineMark[] = [...DIFF_MARKS, 'move']
 
+/**
+ * What a link opens (povnyi-diff-nabir-pov-iazanykh.1, Decision 2): detail, the inside of a module (its modules);
+ * data, the tables or types it owns; scenario, a sequence it takes part in; logic, the flowchart of a method.
+ */
+export type LinkKind = 'detail' | 'data' | 'scenario' | 'logic'
+export const LINK_KINDS: LinkKind[] = ['detail', 'data', 'scenario', 'logic']
+
+/** An explicit link from a module, interface line, use or entity to another diagram of the same set; the agent sets it. */
+export interface DiagramLink {
+  /** The id of a diagram of the set. */
+  to: string
+  /** A node of that diagram to open at: a module, entity, participant, state or flowchart node id. */
+  node?: string
+  kind: LinkKind
+}
+
 /** An interface line of a Component diagram. A moved line sits in the module it moved to. */
 export interface DLine extends Omit<Line, 'diff'> {
   diff?: LineMark
   /** With move: the id of the module it moved from. */
   from?: string
+  links?: DiagramLink[]
+  /** On a fact diagram: why the method's changed logic needs no flowchart ("логіка тривіальна: …", Decision 8). */
+  trivialLogic?: string
 }
 
 /** A module of a Component diagram: an ArchNode with diff marks. */
@@ -21,6 +40,7 @@ export interface DNode extends Omit<ArchNode, 'interface' | 'uses' | 'children'>
   interface?: DLine[]
   uses: DUse[]
   children?: DNode[]
+  links?: DiagramLink[]
 }
 
 export interface DUse extends Omit<ArchUse, 'calls'> {
@@ -28,6 +48,7 @@ export interface DUse extends Omit<ArchUse, 'calls'> {
   diff?: DiffMark
   /** On a fact diagram: the PR's files the dependency rests on (T-58). */
   files?: string[]
+  links?: DiagramLink[]
 }
 
 export type MessageKind = 'call' | 'reply' | 'async'
@@ -91,6 +112,7 @@ export interface DEntity {
   /** With move: the old id of the entity (renamed or moved), not an entity of the diagram. */
   from?: string
   fields: DField[]
+  links?: DiagramLink[]
 }
 export interface DRelation {
   from: string
@@ -280,6 +302,16 @@ export function validateDiagram(d: Diagram): string[] {
   const link = (what: string, ids: Set<string>, from: string, to: string) => {
     for (const end of [from, to]) if (!ids.has(end)) errors.push(`${what} ${from} → ${to}: no ${end ? `"${end}"` : 'id'}`)
   }
+  /** Links to other diagrams of the set; where they lead is checked against the set (validateLinks). */
+  const links = (what: string, list: unknown) => {
+    if (list === undefined) return
+    if (!Array.isArray(list)) return void errors.push(`${what}: links must be a list of { to, node?, kind }`)
+    for (const l of list as DiagramLink[]) {
+      if (!l || typeof l !== 'object' || typeof l.to !== 'string' || !l.to.trim()) errors.push(`${what}: a link needs to, the id of a diagram of the set`)
+      else if (!LINK_KINDS.includes(l.kind)) errors.push(`${what}: link to ${l.to}: kind must be one of ${LINK_KINDS.join(', ')}`)
+      else if (l.node !== undefined && (typeof l.node !== 'string' || !l.node.trim())) errors.push(`${what}: link to ${l.to}: node must be a node id`)
+    }
+  }
 
   switch (d.type) {
     case 'component': {
@@ -290,9 +322,13 @@ export function validateDiagram(d: Diagram): string[] {
       const ids = idsOf('module', all)
       for (const n of all) {
         mark(`Module ${n.id}`, n.diff)
+        links(`Module ${n.id}`, n.links)
         for (const l of n.interface ?? []) {
           const what = `Interface line "${l.text}" of ${n.id}`
           files(what, l.files)
+          links(what, l.links)
+          if (l.trivialLogic !== undefined && (typeof l.trivialLogic !== 'string' || !l.trivialLogic.trim()))
+            errors.push(`${what}: trivialLogic is one line on why the changed logic needs no flowchart`)
           if (l.diff !== undefined && !LINE_MARKS.includes(l.diff)) errors.push(`${what}: diff must be one of ${LINE_MARKS.join(', ')}`)
           if (looksGrouped(l.text)) errors.push(`${what}: ${grouped('method', 'name(args): Result - what it does')}`)
           if (l.diff === 'move') {
@@ -306,6 +342,7 @@ export function validateDiagram(d: Diagram): string[] {
           else if (!ids.has(u.to)) errors.push(`Module ${n.id} uses "${u.to}": no such module`)
           mark(`Use ${n.id} → ${u.to}`, u.diff)
           files(`Use ${n.id} → ${u.to}`, u.files)
+          links(`Use ${n.id} → ${u.to}`, u.links)
           for (const c of u.calls) {
             const what = `Call "${c.text}" of ${n.id} → ${u.to}`
             mark(what, c.diff)
@@ -377,6 +414,7 @@ export function validateDiagram(d: Diagram): string[] {
       for (const e of d.entities) {
         const what = `Entity ${e.id}`
         dataMark(what, e.diff)
+        links(what, e.links)
         if (!ENTITY_KINDS.includes(e.kind)) errors.push(`${what}: kind must be one of ${ENTITY_KINDS.join(', ')}`)
         if (e.diff === 'move') {
           if (!e.from) errors.push(`${what}: move needs from, the old id of the entity`)
