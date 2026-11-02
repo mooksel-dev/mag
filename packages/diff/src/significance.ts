@@ -1,11 +1,11 @@
-// How much a change matters to a review (T-57.4): mag's defaults by kind, under the project's own rules (playbook).
-import { adapterOf, isCode } from './engine.ts'
+// How much a change matters to a review (T-57.4): mag's defaults by the kind of change a diagram draws, under the
+// project's own rules (playbook).
 import { matcher } from './vocabulary.ts'
-import type { Change, ChangeSet, Level } from './types.ts'
+import type { Change, Level } from './types.ts'
 
 export const LEVELS: Level[] = ['critical', 'high', 'medium', 'low', 'noise']
 
-/** The levels a review must account for: unshown ones keep the verdict at look (Decision 6). */
+/** The levels a review must account for: unexplained ones keep the verdict at look (T-58 Decision 5). */
 export const SIGNIFICANT: Level[] = ['critical', 'high']
 export const isSignificant = (c: Pick<Change, 'level'>) => !!c.level && SIGNIFICANT.includes(c.level)
 
@@ -20,7 +20,8 @@ const RULE = /^\s*(critical|high|medium|low|noise)\s*:\s*(\S+)\s*$/i
 
 /**
  * Rules from the playbook's text, one per line: `<level>: <path>[#<name>]`. path is a file, a folder or a glob as in
- * `paths`; name a glob over `<symbol>[.<member>]` (contracts: `TOOL_DEFS[name]`), any case. Other lines are prose.
+ * `paths`, matched against the files a change rests on; name a glob over the name it is about, any case. Other lines
+ * are prose.
  */
 export function parseSignificance(text: string): SignificanceRule[] {
   return text.split('\n').flatMap((line) => {
@@ -31,45 +32,34 @@ export function parseSignificance(text: string): SignificanceRule[] {
   })
 }
 
-const DOCS = /\.(md|mdx|txt|rst|png|jpe?g|gif|svg|ico|webp)$|(^|\/)(LICENSE|CHANGELOG)[^/]*$|(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|go\.sum|poetry\.lock)$/i
-
 const nameMatcher = (glob: string) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i')
 
 /** mag's level of a change when no rule of the project matches. */
 function byDefault(c: Change): Level {
-  if (c.test) return 'noise'
   switch (c.kind) {
     case 'module':
-      return 'high'
+      return c.diff === 'mod' ? 'medium' : 'high'
     case 'edge':
-      return c.diff === 'mod' ? 'low' : c.name?.startsWith('ext:') ? 'medium' : 'high'
-    case 'file':
-      // A source file no adapter reads: what changed in it is unknown.
-      if (c.path && isCode(c.path) && !adapterOf(c.path)) return 'high'
-      return c.path && DOCS.test(c.path) ? 'noise' : 'low'
+      return c.diff === 'mod' ? 'low' : 'high'
+    case 'call':
+      return 'medium'
   }
-  // A changed body of a table, view or resource is high; a new, removed or renamed one, or another header, critical.
-  if (c.elementKind === 'entity' || c.elementKind === 'infra') return c.diff === 'mod' && c.part === 'body' ? 'high' : 'critical'
-  if (c.elementKind === 'contract' || c.elementKind === 'field') return 'high'
-  // A planned element does not know whether it is exported: it counts as exported.
-  if (c.name === '(top-level)' || c.exported === false) return 'low'
-  return c.diff === 'mod' && c.part === 'body' ? 'medium' : 'high'
+  // A changed line body (marked mod) is medium; a new, removed, moved or re-signed one is high.
+  return c.diff === 'mod' && c.part !== 'signature' ? 'medium' : 'high'
 }
 
 /** The level of one change: the first matching rule of the project, else mag's default. */
 export function significance(change: Change, rules: SignificanceRule[]): Level {
-  if (change.test) return 'noise'
-  const path = change.path ?? change.hunks[0]?.path
   for (const r of rules) {
-    if (r.path && !(path && matcher(r.path)(path) >= 0)) continue
-    if (r.name && !(change.name && change.kind !== 'edge' && nameMatcher(r.name).test(change.name))) continue
     if (!r.path && !r.name) continue
+    if (r.path && !(change.files ?? []).some((f) => matcher(r.path!)(f) >= 0)) continue
+    if (r.name && !(change.kind !== 'edge' && nameMatcher(r.name).test(change.name))) continue
     return r.level
   }
   return byDefault(change)
 }
 
-/** The change set with every change's level. */
-export function withLevels(cs: ChangeSet, rules: SignificanceRule[]): ChangeSet {
-  return { ...cs, changes: cs.changes.map((c) => ({ ...c, level: significance(c, rules) })) }
+/** The changes with their levels. */
+export function withLevels(changes: Change[], rules: SignificanceRule[]): Change[] {
+  return changes.map((c) => ({ ...c, level: significance(c, rules) }))
 }

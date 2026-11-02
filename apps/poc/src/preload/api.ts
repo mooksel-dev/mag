@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { Change, CompareItem, HunkRef } from '@mag/diff/types'
+import type { CompareItem, Coverage, FileChange, Grounding, HunkRef } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -73,9 +73,6 @@ export type WindowTarget =
   | { kind: 'canvas'; canvasId: string }
   | { kind: 'doc'; taskId: string }
 
-/** A change of a PR's fact with the repository (path) it is in. */
-export type FactChange = Change & { repo: string }
-
 /** A diagram a fact view names. */
 export interface FactCanvas {
   id: string
@@ -84,17 +81,22 @@ export interface FactCanvas {
 }
 
 /**
- * Plan ↔ fact of a step's PRs as Diff shows it (T-57.5): what `stepFact` found at `heads`, from the code. The fact
- * changes carry their repository, so a hunk can be opened (stepHunk).
+ * Plan ↔ fact of a step's PRs as Diff shows it (T-57.5, T-58): what `stepFact` found at `heads`: the files the PRs
+ * change, plan ↔ fact of the diagrams, which changed code files the fact diagram shows and which of its lines do not
+ * rest on the PR. A file carries its repository's name; `repos` gives the commits to open its hunks (stepHunk).
  */
 export interface FactView {
   heads: Record<string, string>
-  repos: { repo: string; name: string; baseSha: string; headSha: string; deterministic: boolean; unparsed: string[] }[]
-  items: (Omit<CompareItem, 'fact'> & { fact: FactChange[] })[]
+  repos: { repo: string; name: string; baseSha: string; headSha: string }[]
+  files: FileChange[]
+  items: CompareItem[]
   blockers: string[]
   plans: FactCanvas[]
-  /** What of the fact the step's fact diagram shows; null without one. */
-  coverage: { canvas: FactCanvas; shown: FactChange[]; unshown: FactChange[] } | null
+  /** The step's fact diagram; null before the review starts one. */
+  fact: FactCanvas | null
+  /** null without a fact diagram. */
+  coverage: Coverage | null
+  unverified: Grounding['unverified']
   at: number
 }
 

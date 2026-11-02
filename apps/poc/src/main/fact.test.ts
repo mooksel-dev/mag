@@ -1,4 +1,4 @@
-// Plan ↔ fact over real git (T-57.4): a step's PR against its plan diagram, the draft fact diagram and its revision.
+// Plan ↔ fact over real git (T-57.4, T-58): a step's PR, its fact diagram started as a copy of the plan, its revision.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -9,7 +9,7 @@ import type { ArchDiagram, ComponentDiagram } from '@mag/core'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 import { createTools, type ToolActions } from './tools.ts'
-import { factHeads, factView, stepFact, stepHunk } from './fact.ts'
+import { factHeads, factSeed, factView, stepFact, stepFiles, stepHunk } from './fact.ts'
 import { hunkLines } from './git.ts'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -64,54 +64,91 @@ function setup() {
   return { repo, head, store, project, task, step, plan, orch, show }
 }
 
-test('stepFact: the PR against its plan diagram, levelled, with the threshold', async () => {
+const FACT: ComponentDiagram = {
+  type: 'component',
+  summary: 'load takes fresh; save and extra came instead of remove',
+  modules: [
+    {
+      id: 'app', name: 'app', description: '', uses: [],
+      interface: [{ text: 'extra(): number', diff: 'add', files: ['src/extra.ts'] }],
+      children: [
+        {
+          id: 'store', name: 'store', description: '', uses: [],
+          interface: [
+            { text: 'load(id): Item', diff: 'del', files: ['src/store.ts'] },
+            { text: 'load(id, fresh?): Item', diff: 'add', files: ['src/store.ts'] },
+            { text: 'remove(id): void' },
+            { text: 'save(id): Item', diff: 'add', files: ['src/store.ts'] },
+          ],
+        },
+      ],
+    },
+  ],
+}
+
+test('stepFact: changed files; without a fact diagram nothing is shown; a revised one against files and plan', async () => {
   const { store, project, step, repo, head } = setup()
-  const fact = await stepFact(project, store.task(step.id), { [repo]: head }, Object.values(store.data.canvases))
-  const rows = fact.comparison.items.map((i) => `${i.status} ${i.level} ${(i.plan ?? i.fact[0]).name ?? (i.plan ?? i.fact[0]).path}`)
-  assert.deepEqual(rows, ['missing high remove', 'unplanned high extra', 'unplanned high save', 'match high load'])
-  assert.deepEqual(fact.blockers, ['high: app function extra (src/extra.ts:1) is not on the plan', 'high: store function save (src/store.ts:5) is not on the plan'])
-  // The playbook's rules level the fact: a project that does not care about src/extra.ts.
+  const heads = { [repo]: head }
+  const none = await stepFact(project, store.task(step.id), heads, Object.values(store.data.canvases))
+  assert.deepEqual(none.files.map((f) => [f.path, f.module, f.kind]), [['README.md', null, 'docs'], ['src/extra.ts', 'app', 'code'], ['src/store.ts', 'store', 'code']])
+  assert.equal(none.canvas, null)
+  assert.deepEqual(none.comparison.items.map((i) => i.status), ['missing', 'missing'])
+  assert.equal(none.blockers[0], 'there is no fact diagram of the PRs yet')
+
+  store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: 'Fact', kind: 'diagram', diagram: FACT, placement: { role: 'fact', option: null, stepId: step.id, repo: null, planOf: null } })
+  const fact = await stepFact(project, store.task(step.id), heads, Object.values(store.data.canvases))
+  assert.deepEqual(fact.coverage!.unshown, [])
+  assert.deepEqual(fact.grounding!.unverified, [])
+  assert.deepEqual(fact.comparison.items.map((i) => `${i.status} ${i.level} ${(i.plan ?? i.fact)!.key}`), ['missing high store#remove', 'unplanned high app#extra', 'unplanned high store#save', 'match high store#load'])
+  assert.deepEqual(fact.blockers, ['high: store remove(id): void is planned, not on the fact', 'high: app extra(): number is on the fact, not on the plan', 'high: store save(id): Item is on the fact, not on the plan'])
+  // The playbook's rules level the fact by the files it gives: a project that does not care about src/extra.ts.
   store.updateProject(project.id, { playbook: { significance: 'low: src/extra.ts' } })
-  const ruled = await stepFact(store.project(project.id), store.task(step.id), { [repo]: head }, Object.values(store.data.canvases))
-  assert.deepEqual(ruled.blockers, ['high: store function save (src/store.ts:5) is not on the plan'])
+  const ruled = await stepFact(store.project(project.id), store.task(step.id), heads, Object.values(store.data.canvases))
+  assert.equal(ruled.blockers.length, 2)
 })
 
-test('factOf: records the fact, drafts the fact diagram; the reviewer may add to it, never drop', async () => {
+test('factOf: starts the fact diagram as a copy of the plan; the reviewer revises it and hears what mag checks', async () => {
   const { store, step, repo, head, plan, orch, show } = setup()
   const text = await orch.factOf(step.id, { [repo]: head })
   const fact = store.task(step.id).fact!
-  assert.deepEqual(fact.counts, { match: 1, differs: 0, missing: 1, unplanned: 2, unchecked: 0 })
-  assert.equal(fact.blockers.length, 2)
   const canvas = store.data.canvases[fact.canvasId!]
   assert.deepEqual([canvas.role, canvas.stepId, canvas.planOf, canvas.version, fact.canvasVersion], ['fact', step.id, plan.id, 1, 1])
-  const d = canvas.diagram as ComponentDiagram
-  assert.deepEqual(d.modules.map((m) => [m.id, m.interface?.map((l) => `${l.diff} ${l.text}`)]), [
-    ['app', ['add extra()']],
-    ['store', ['del load(id: string)', 'add load(id: string, fresh = false)', 'add save(id: string)']],
-  ])
-  assert.match(text, /Plan diagrams: \[Plan\]\(canvas:/)
+  assert.deepEqual((canvas.diagram as ComponentDiagram).modules, PLAN.modules, 'a copy of the plan')
+  // Nothing of the copy rests on the PR, so it shows no changed file (Decision 11).
+  assert.deepEqual(fact.counts, { match: 2, differs: 0, missing: 0, unplanned: 0, unshown: 2, unverified: 2 })
+  assert.match(text, /mag's copy of the plan: nothing on it rests on the PR yet\./)
+  assert.match(text, /### Changed files\napp: [0-9a-f]{12} → [0-9a-f]{12}, 3 file\(s\) changed, 2 of them code\./)
+  assert.match(text, /### Changed code the fact diagram does not show \(2\)\n- app:src\/extra\.ts \(app\)\n- app:src\/store\.ts \(store\)/)
+  assert.match(text, /### Lines of the fact that do not rest on the PR \(2\)\n- store load\(id, fresh\?\): Item: no-files/)
   assert.match(text, /merge is NOT allowed/)
-  assert.match(text, /mag's draft/)
 
-  // Unrevised, the draft is redrawn on the next heads.
+  // On the next heads the copy is not started again.
   await orch.factOf(step.id, { [repo]: head })
-  assert.equal(store.data.canvases[fact.canvasId!].version, 2)
+  assert.equal(store.data.canvases[fact.canvasId!].version, 1)
 
-  // The reviewer's revision that drops save is saved, and told what it no longer shows.
-  const revised = { ...d, summary: 'load gets a fresh flag; save and extra came along', modules: d.modules.map((m) => (m.id === 'store' ? { ...m, interface: m.interface!.slice(0, 2) } : m)) }
-  const answer = await show(revised, fact.canvasId!)
-  assert.match(answer, /no longer shows[\s\S]*- store function save \(src\/store\.ts:5\)/)
-  await assert.rejects(show(revised, plan.id), /only the fact diagram/)
-  await assert.rejects(show(revised), /only the fact diagram/)
+  // The reviewer's revision is checked and recorded at once.
+  const answer = await show(FACT, fact.canvasId!)
+  assert.match(answer, /Fact diagram: \[.*\]\(canvas:\w+\) \(v2\), revised\./)
+  assert.doesNotMatch(answer, /does not show|do not rest/)
+  assert.deepEqual(store.task(step.id).fact!.counts, { match: 1, differs: 0, missing: 1, unplanned: 2, unshown: 0, unverified: 0 })
+  await assert.rejects(show(FACT, plan.id), /only the fact diagram/)
+  await assert.rejects(show(FACT), /only the fact diagram/)
 
-  // A revised diagram stays; the reviewer hears what it misses.
-  const again = await orch.factOf(step.id, { [repo]: head })
-  assert.equal(store.data.canvases[fact.canvasId!].diagram!.type === 'component' && (store.data.canvases[fact.canvasId!].diagram as ComponentDiagram).summary, revised.summary)
-  assert.match(again, /revised since mag drew it; it does not show:\n {2}- store function save/)
-  assert.match(await show(d, fact.canvasId!), /shows every significant change of the code/)
+  // A plan the fact agrees with: merge is allowed.
+  store.saveCanvas({ id: plan.id, projectId: plan.projectId, taskId: plan.taskId, sessionId: null, title: 'Plan', kind: 'diagram', diagram: { ...FACT, modules: FACT.modules } })
+  assert.match(await show(FACT, fact.canvasId!), /merge is allowed\.$/)
+  assert.deepEqual(store.task(step.id).fact!.blockers, [])
 })
 
-test('factView: the comparison with repositories on the fact, the threshold, coverage of the fact diagram; hunks open', async () => {
+test('factSeed: without a plan, the modules that own the changed code, unmarked', async () => {
+  const { store, project, step, repo, head, plan } = setup()
+  const { files } = await stepFiles(project, store.task(step.id), { [repo]: head }, [plan])
+  const seed = factSeed(store.task(step.id), [], files, project.architecture)!
+  assert.deepEqual(seed.modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
+  assert.equal(factSeed(store.task(step.id), [], files.filter((f) => f.kind !== 'code'), project.architecture), null)
+})
+
+test('factView: files, plan ↔ fact, the threshold, coverage and unverified lines; hunks open', async () => {
   const { store, step, repo, head, orch } = setup()
   // No open PR head yet, no recorded fact: nothing to show.
   assert.equal(await factView(store.project(store.task(step.id).projectId), store.task(step.id), Object.values(store.data.canvases)), null)
@@ -120,21 +157,21 @@ test('factView: the comparison with repositories on the fact, the threshold, cov
   const s = store.task(step.id)
   const view = (await factView(store.project(s.projectId), s, Object.values(store.data.canvases)))!
   assert.deepEqual(view.heads, { [repo]: head })
-  assert.equal(view.repos.length, 1)
-  assert.equal(view.repos[0].headSha, head)
-  assert.deepEqual(view.items.map((i) => i.status), ['missing', 'unplanned', 'unplanned', 'match'])
-  assert.ok(view.items.flatMap((i) => i.fact).every((c) => c.repo === repo))
-  assert.equal(view.blockers.length, 2)
+  assert.deepEqual(view.repos.map((r) => [r.repo, r.name, r.headSha]), [[repo, 'app', head]])
+  assert.equal(view.files.length, 3)
+  assert.deepEqual(view.items.map((i) => i.status), ['match', 'match'])
   assert.deepEqual(view.plans.map((p) => p.title), ['Plan'])
-  // mag's draft shows all of the fact.
-  assert.equal(view.coverage!.canvas.id, s.fact!.canvasId)
-  assert.deepEqual(view.coverage!.unshown, [])
+  assert.equal(view.fact!.id, s.fact!.canvasId)
+  assert.deepEqual(view.coverage!.unshown.map((f) => f.path), ['src/extra.ts', 'src/store.ts'])
+  assert.deepEqual(view.unverified.map((u) => [u.change.key, u.reason]), [['store#load', 'no-files'], ['store#remove', 'no-files']])
+  assert.equal(view.blockers.length, 4)
 
-  const save = view.items.flatMap((i) => i.fact).find((c) => c.name === 'save')!
-  const lines = await stepHunk(s, repo, view.repos[0].baseSha, head, save.hunks[0])
+  const save = view.files.find((f) => f.path === 'src/store.ts')!
+  const hunk = { path: save.path, ...save.hunks.at(-1)! }
+  const lines = await stepHunk(s, repo, view.repos[0].baseSha, head, hunk)
   assert.ok(lines.includes('+export function save(id: string) {'), lines.join('\n'))
-  await assert.rejects(stepHunk(s, '/elsewhere', view.repos[0].baseSha, head, save.hunks[0]), /does not change/)
-  await assert.rejects(stepHunk(s, repo, 'HEAD', head, save.hunks[0]), /commit shas/)
+  await assert.rejects(stepHunk(s, '/elsewhere', view.repos[0].baseSha, head, hunk), /does not change/)
+  await assert.rejects(stepHunk(s, repo, 'HEAD', head, hunk), /commit shas/)
 
   // Merged: the PR is no longer open, the recorded heads stand.
   store.updateTask(step.id, { work: { ...s.work!, repos: s.work!.repos.map((r) => ({ ...r, prState: 'merged' as const })) } })

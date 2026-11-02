@@ -26,6 +26,8 @@ export interface DNode extends Omit<ArchNode, 'interface' | 'uses' | 'children'>
 export interface DUse extends Omit<ArchUse, 'calls'> {
   calls: Line[]
   diff?: DiffMark
+  /** On a fact diagram: the PR's files the dependency rests on (T-58). */
+  files?: string[]
 }
 
 export type MessageKind = 'call' | 'reply' | 'async'
@@ -262,6 +264,9 @@ export function validateDiagram(d: Diagram): string[] {
   const mark = (what: string, m: unknown) => {
     if (m !== undefined && !DIFF_MARKS.includes(m as DiffMark)) errors.push(`${what}: diff must be one of ${DIFF_MARKS.join(', ')}`)
   }
+  const files = (what: string, f: unknown) => {
+    if (f !== undefined && !(Array.isArray(f) && f.every((x) => typeof x === 'string' && x.trim()))) errors.push(`${what}: files must be a list of repo-relative paths`)
+  }
   /** Ids of the elements, reporting empty and repeated ones. */
   const idsOf = (what: string, list: { id: string }[]) => {
     const ids = new Set<string>()
@@ -287,6 +292,7 @@ export function validateDiagram(d: Diagram): string[] {
         mark(`Module ${n.id}`, n.diff)
         for (const l of n.interface ?? []) {
           const what = `Interface line "${l.text}" of ${n.id}`
+          files(what, l.files)
           if (l.diff !== undefined && !LINE_MARKS.includes(l.diff)) errors.push(`${what}: diff must be one of ${LINE_MARKS.join(', ')}`)
           if (looksGrouped(l.text)) errors.push(`${what}: ${grouped('method', 'name(args): Result - what it does')}`)
           if (l.diff === 'move') {
@@ -299,9 +305,11 @@ export function validateDiagram(d: Diagram): string[] {
           if (u.to === n.id) errors.push(`Module ${n.id} uses itself`)
           else if (!ids.has(u.to)) errors.push(`Module ${n.id} uses "${u.to}": no such module`)
           mark(`Use ${n.id} → ${u.to}`, u.diff)
+          files(`Use ${n.id} → ${u.to}`, u.files)
           for (const c of u.calls) {
             const what = `Call "${c.text}" of ${n.id} → ${u.to}`
             mark(what, c.diff)
+            files(what, c.files)
             if (looksGrouped(c.text)) errors.push(`${what}: ${grouped('call', 'name(args)')}`)
           }
         }

@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
@@ -140,7 +140,7 @@ export function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
 }
 
-/** Every file of the commit `sha`, with its blob sha (T-57). */
+/** Every file of the commit `sha`, with its blob sha. */
 export async function treeAt(repo: string, sha: string): Promise<{ path: string; blob: string }[]> {
   const { stdout } = await exec('git', ['ls-tree', '-r', '-z', '--full-tree', sha], { cwd: repo, maxBuffer: 64 * 1024 * 1024 })
   return stdout
@@ -153,36 +153,6 @@ export async function treeAt(repo: string, sha: string): Promise<{ path: string;
     })
     .filter((e) => e.type === 'blob')
     .map(({ path, blob }) => ({ path, blob }))
-}
-
-/** Contents of blobs by sha, read in one `git cat-file --batch`. */
-export function blobs(repo: string, shas: string[]): Promise<Map<string, string>> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', ['cat-file', '--batch'], { cwd: repo })
-    const chunks: Buffer[] = []
-    child.stdout.on('data', (c: Buffer) => chunks.push(c))
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`git cat-file exited with ${code}`))
-      const buf = Buffer.concat(chunks)
-      const out = new Map<string, string>()
-      let at = 0
-      while (at < buf.length) {
-        const nl = buf.indexOf(10, at)
-        if (nl < 0) break
-        const [sha, type, size] = buf.subarray(at, nl).toString().split(' ')
-        if (type === 'missing') {
-          at = nl + 1
-          continue
-        }
-        const n = Number(size)
-        out.set(sha, buf.subarray(nl + 1, nl + 1 + n).toString('utf8'))
-        at = nl + 1 + n + 1
-      }
-      resolve(out)
-    })
-    child.stdin.end(shas.join('\n') + '\n')
-  })
 }
 
 /** Changed files between two commits with zero-context hunks; renames detected (T-57). */

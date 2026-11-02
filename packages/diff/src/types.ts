@@ -1,4 +1,4 @@
-// Models of the architecture diff (T-57). Types only.
+// Models of the architecture diff (T-57, reworked in T-58). Types only.
 
 /** A repository: where git runs, and the name refs start with. */
 export interface Repo {
@@ -9,58 +9,6 @@ export interface Repo {
 /** Modules of the project's architecture with the files they own (T-56 F2). */
 export interface Vocabulary {
   modules: { id: string; paths: string[] }[]
-}
-
-export type ElementKind = 'symbol' | 'entity' | 'field' | 'contract' | 'infra'
-
-/** What a language calls the element: function, class, interface, method, tool… */
-export type Decl = string
-
-/** One deterministic element of a skeleton. */
-export interface Element {
-  /** `<repo>:<path>#<symbol>[.<member>]` */
-  ref: string
-  path: string
-  /** `<symbol>[.<member>]` */
-  name: string
-  /** Vocabulary module id; null when no module owns the file. */
-  module: string | null
-  kind: ElementKind
-  decl: Decl
-  exported: boolean
-  /** One line, as written: the part callers depend on. */
-  signature: string
-  /** Of the whole element as written; equal for a moved element. */
-  bodyHash: string
-  /** 1-based inclusive line ranges the element spans. */
-  lines: [number, number][]
-}
-
-/** An import of a file, resolved to a file of the repo or to an outside package. */
-export interface FileImport {
-  path: string
-  spec: string
-  line: number
-  /** A repo path, `ext:<package>` for an outside one, null when it does not resolve. */
-  target: string | null
-}
-
-/** A module depending on another (or on an outside package, `ext:<package>`). */
-export interface ModuleEdge {
-  from: string
-  to: string
-  /** The files of `from` that import `to`. */
-  files: string[]
-}
-
-export interface Skeleton {
-  repo: string
-  sha: string
-  elements: Element[]
-  imports: FileImport[]
-  edges: ModuleEdge[]
-  /** Source files no adapter reads: their elements are unknown. */
-  unparsed: string[]
 }
 
 export interface Hunk {
@@ -83,92 +31,66 @@ export interface HunkRef extends Hunk {
   path: string
 }
 
+/**
+ * What a changed file is, by its path alone, whatever the language. Only code has to be on a fact diagram; the rest is
+ * noise to coverage: tests, styles, lock files, generated code, documentation.
+ */
+export type FileKind = 'code' | 'test' | 'style' | 'lock' | 'generated' | 'docs'
+
+/** A file a PR changes (T-58): its hunks and the module of the vocabulary that owns it. */
+export interface FileChange extends FileDiff {
+  /** The repository's name. */
+  repo: string
+  /** Vocabulary module id; null when no module owns the file. */
+  module: string | null
+  kind: FileKind
+}
+
 export type DiffMark = 'add' | 'mod' | 'del' | 'move'
 
 export type Level = 'critical' | 'high' | 'medium' | 'low' | 'noise'
 
-/** One change over the vocabulary. */
+/** One change a Component diagram draws (a plan's or a fact's), over the ids of the vocabulary. */
 export interface Change {
   /**
-   * element: its ref (at head; at base when deleted), or `<module>#<method>` for a planned one base does not have;
-   * edge: `from -> to`; file: `<repo>:<path>`; module (plans only): its id.
+   * module: its id; element (an interface line): `<module>#<name>`; edge (a dependency): `<from> -> <to>`; call:
+   * `<from> -> <to>#<name>`.
    */
   key: string
-  kind: 'element' | 'edge' | 'file' | 'module'
+  kind: 'module' | 'element' | 'edge' | 'call'
   diff: DiffMark
-  /** The element's or file's module; for an edge, `from`. */
-  module: string | null
-  path?: string
-  /** element: its first line (at base when deleted). */
-  line?: number
-  /** element: `<symbol>[.<member>]`; edge: `to`. */
-  name?: string
-  elementKind?: ElementKind
-  decl?: Decl
-  exported?: boolean
-  /** Signatures; for an edge or file, absent. */
+  /** The module it is in; for an edge or call, `from`. */
+  module: string
+  /** element / call: the method, field or type the line names; edge: `to`; module: its name. */
+  name: string
+  /** The line as drawn; a changed signature is the del line (before) and the add line (after). */
   before?: string
   after?: string
-  /** mod: what changed. */
+  /** mod of an element: a changed signature (a del and an add line), else the line is marked mod. */
   part?: 'signature' | 'body'
-  /** move: the old ref (element) or old path (file). */
+  /** move: the module it moved from. */
   from?: string
-  /** Test files only: they change no architecture by themselves. */
-  test?: boolean
-  hunks: HunkRef[]
-  /** Set by significance (T-57.4). */
+  /** A new module: the code it will own. */
+  path?: string
+  /** The PR's files the line rests on (fact diagrams, T-58 Decision 9). */
+  files?: string[]
+  /** Set by significance. */
   level?: Level
 }
 
-export interface ChangeSet {
-  repo: string
-  baseSha: string
-  headSha: string
-  changes: Change[]
-  /** false when a changed source file has no adapter: coverage is not guaranteed. */
-  deterministic: boolean
-  /** Changed source files no adapter reads. */
-  unparsed: string[]
-}
-
 /**
- * Where a plan diagram disagrees with the code at base (T-57.3). unknown-module: an id the architecture does not have
- * and the diagram does not add; no-path: an added module without the code it will own; not-in-base: an unchanged,
- * changed or removed method, call or dependency that base does not have; exists: an add of what base has already.
+ * A plan change against the fact (T-57.4): match: done as planned; differs: done otherwise (another mark or line);
+ * missing: planned, not on the fact; unplanned: on the fact, not on the plan.
  */
-export type PlanWarningCode = 'unknown-module' | 'no-path' | 'not-in-base' | 'exists'
-
-export interface PlanWarning {
-  code: PlanWarningCode
-  /** The diagram module it is about. */
-  module: string
-  /** The interface line, `-> <to>` for a dependency, or `-> <to>#<method>` for a call; none for the module itself. */
-  item?: string
-  message: string
-}
-
-/** A plan diagram over the code at base: the changes it plans and where it disagrees with base. */
-export interface PlanCheck {
-  /** The skeletons it was checked against. */
-  base: { repo: string; sha: string }[]
-  changes: Change[]
-  warnings: PlanWarning[]
-}
-
-/**
- * A plan change against the fact of a PR (T-57.4). match: done as planned; differs: done otherwise (another mark, a
- * planned signature change that only touched the body); missing: planned, not in the code; unplanned: in the code, not
- * on the plan; unchecked: planned where the code cannot tell (a module without code, a changed call).
- */
-export type CompareStatus = 'match' | 'differs' | 'missing' | 'unplanned' | 'unchecked'
+export type CompareStatus = 'match' | 'differs' | 'missing' | 'unplanned'
 
 export interface CompareItem {
   status: CompareStatus
   /** The plan's change; none for unplanned. */
   plan?: Change
-  /** The fact's changes it stands for; [] for missing and unchecked. */
-  fact: Change[]
-  /** The highest level among its changes. */
+  /** The fact's change; none for missing. */
+  fact?: Change
+  /** The higher level of the two. */
   level: Level
   /** differs: how. */
   note?: string
@@ -178,36 +100,40 @@ export interface Comparison {
   items: CompareItem[]
 }
 
-/** What of a PR's fact a diagram shows (T-57.4). Test changes are left out. */
+/** Which changed code files of a PR a fact diagram shows (T-58 Decision 2). Files that are not code are left out. */
 export interface Coverage {
-  shown: Change[]
-  unshown: Change[]
+  shown: FileChange[]
+  unshown: FileChange[]
 }
 
-/** Language adapter: elements and imports of one file, whatever its module. */
-export interface LangAdapter {
-  lang: string
-  /** Its files are code only when they declare something (YAML, JSON): they need no module and are never unparsed. */
-  data?: boolean
-  matches(path: string): boolean
-  elements(path: string, src: string): ParsedElement[]
-  imports(path: string, src: string): { spec: string; line: number }[]
-  /**
-   * A repo path, `ext:<package>` or null for an import of `from`, given every file of the tree. Without it, imports
-   * resolve as in TypeScript: relative to the file, workspace packages, outside packages.
-   */
-  resolve?(from: string, spec: string, files: Set<string>): string | null
+/**
+ * Why a changed line of a fact cannot be taken on its word: no files, files the PR does not change, a plain path two
+ * repositories change (Decision 13), files of another module.
+ */
+export type UnverifiedReason = 'no-files' | 'not-in-pr' | 'ambiguous' | 'other-module'
+
+/** The changes of a fact diagram that rest on its PR's files, and those that do not (T-58 Decision 9). */
+export interface Grounding {
+  grounded: Change[]
+  unverified: { change: Change; reason: UnverifiedReason; files: string[] }[]
 }
 
-/** An element as an adapter sees it, before it gets a repo, path and module. */
-export type ParsedElement = Omit<Element, 'ref' | 'path' | 'module'>
+/**
+ * Where a plan diagram disagrees with the vocabulary (T-58 Decision 8): unknown-module: an id the architecture does
+ * not have and the diagram does not add; no-path: an added module without the code it will own; exists: an add of a
+ * module the architecture has already.
+ */
+export type PlanWarningCode = 'unknown-module' | 'no-path' | 'exists'
 
-/** The git operations the diff needs; the app's git client implements them. */
+export interface PlanWarning {
+  code: PlanWarningCode
+  /** The diagram module it is about. */
+  module: string
+  message: string
+}
+
+/** The git operation the diff needs; the app's git client implements it. */
 export interface GitSource {
-  /** Every file at `sha`: path and blob sha. */
-  treeAt(repo: string, sha: string): Promise<{ path: string; blob: string }[]>
-  /** Contents of blobs by sha. */
-  blobs(repo: string, shas: string[]): Promise<Map<string, string>>
   /** Changed files between two commits with zero-context hunks, renames detected. */
   diffHunks(repo: string, base: string, head: string): Promise<FileDiff[]>
 }

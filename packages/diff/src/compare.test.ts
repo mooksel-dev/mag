@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateDiagram, type ArchNode, type ComponentDiagram, type DNode } from '@mag/core'
-import { compare, coverage, formatComparison, mergeBlockers } from './compare.ts'
-import { factDiagram } from './fact.ts'
-import { planChanges } from './plan.ts'
+import type { ArchNode, ComponentDiagram, DNode } from '@mag/core'
+import { compare, coverage, formatComparison, grounding, mergeBlockers } from './compare.ts'
+import { createDiff, fileKind } from './files.ts'
+import { formatFiles } from './format.ts'
+import { diagramChanges, lineName, planWarnings } from './plan.ts'
 import { parseSignificance, significance, withLevels } from './significance.ts'
-import { planVocabulary, vocabularyOf } from './vocabulary.ts'
-import type { Change, ChangeSet } from './types.ts'
+import { moduleResolver, planVocabulary, vocabularyOf } from './vocabulary.ts'
+import type { Change, FileChange } from './types.ts'
 
 const node = (id: string, extra: Partial<ArchNode> = {}): ArchNode => ({ id, name: id, description: '', uses: [], ...extra })
 const architecture: ArchNode[] = [
@@ -23,159 +24,248 @@ const architecture: ArchNode[] = [
 ]
 
 const ORCH = 'apps/app/src/orchestrator.ts'
-const el = (module: string | null, path: string, name: string, diff: Change['diff'], extra: Partial<Change> = {}): Change => ({
-  key: `r:${path}#${name}`, kind: 'element', diff, module, path, line: 3, name, elementKind: 'symbol', decl: 'method', exported: true, hunks: [{ path, oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }], ...extra,
-})
-const edge = (from: string, to: string, diff: Change['diff']): Change => ({ key: `${from} -> ${to}`, kind: 'edge', diff, module: from, name: to, hunks: [] })
-const file = (module: string | null, path: string, diff: Change['diff'], extra: Partial<Change> = {}): Change => ({ key: `r:${path}`, kind: 'file', diff, module, path, hunks: [], ...extra })
-const set = (changes: Change[], extra: Partial<ChangeSet> = {}): ChangeSet => withLevels({ repo: 'r', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), changes, deterministic: true, unparsed: [], ...extra }, [])
-
+const GIT = 'apps/app/src/git.ts'
 const dnode = (id: string, extra: Partial<DNode> = {}): DNode => ({ id, name: id, description: '', uses: [], ...extra })
 const diagram = (modules: DNode[]): ComponentDiagram => ({ type: 'component', summary: 's', modules })
-const planOf = (d: ComponentDiagram) => planChanges(d, [], architecture).changes
+const file = (path: string, status: FileChange['status'] = 'mod', extra: Partial<FileChange> = {}): FileChange => ({
+  path, status, hunks: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 2 }], repo: 'r', module: null, kind: fileKind(path), ...extra,
+})
+const ownerOf = moduleResolver(vocabularyOf(architecture))
+const owned = (files: FileChange[]) => files.map((f) => ({ ...f, module: ownerOf(f.path) }))
 
-test('significance: defaults by kind, the project rules first', () => {
+test('fileKind: code by default, whatever the language; tests, styles, locks, generated and docs are not', () => {
+  const kinds = (paths: string[]) => paths.map(fileKind)
+  assert.deepEqual(kinds(['a.ts', 'svc/main.go', 'app/models.py', 'App/View.swift', 'infra/main.tf', 'db/1.sql', 'package.json']), Array(7).fill('code'))
+  assert.deepEqual(kinds(['a.test.ts', 'x_test.go', 'tests/test_a.py', 'test_b.py', 'AppTests/ViewTests.swift', 'src/__tests__/a.ts']), Array(6).fill('test'))
+  assert.deepEqual(kinds(['a.css', 'b.module.scss']), ['style', 'style'])
+  assert.deepEqual(kinds(['pnpm-lock.yaml', 'go.sum', 'poetry.lock', 'web/package-lock.json']), Array(4).fill('lock'))
+  assert.deepEqual(kinds(['dist/a.js', 'api/x.pb.go', 'x_pb2.py', 'a.min.js']), Array(4).fill('generated'))
+  assert.deepEqual(kinds(['README.md', 'docs/arch.ts', 'LICENSE', 'logo.png']), Array(4).fill('docs'))
+})
+
+test('changedFiles: the diff with the owner module and kind of each file', async () => {
+  const engine = createDiff({ diffHunks: async () => [{ path: ORCH, status: 'mod', hunks: [] }, { path: 'x.test.ts', status: 'add', hunks: [] }, { path: GIT, oldPath: 'apps/app/src/g.ts', status: 'rename', hunks: [] }] })
+  const files = await engine.changedFiles({ path: '/r', name: 'r' }, 'a', 'b', vocabularyOf(architecture))
+  assert.deepEqual(files.map((f) => [f.path, f.module, f.kind, f.repo]), [[ORCH, 'orchestrator', 'code', 'r'], ['x.test.ts', null, 'test', 'r'], [GIT, 'git', 'code', 'r']])
+  const text = formatFiles('r', 'a'.repeat(40), 'b'.repeat(40), files)
+  assert.match(text, /3 file\(s\) changed, 2 of them code/)
+  assert.match(text, /\n {2}> apps\/app\/src\/git\.ts \(from apps\/app\/src\/g\.ts\): 0 hunk\(s\)/)
+  assert.match(text, /not code: \+ x\.test\.ts \(test\)$/)
+})
+
+test('lineName: the name a line is about, past its keywords', () => {
+  assert.equal(lineName('review(stepId): void'), 'review')
+  assert.equal(lineName('export async function factOf(stepId: string)'), 'factOf')
+  assert.equal(lineName('interface StepFact { heads }'), 'StepFact')
+  assert.equal(lineName('Task.fact?: StepFact'), 'Task.fact?')
+  assert.equal(lineName('resource "aws_dynamodb_table" "users"'), 'aws_dynamodb_table')
+})
+
+test('diagramChanges: modules, lines (a del + add of one name is a signature change), dependencies and calls, with files', () => {
+  const changes = diagramChanges(
+    diagram([
+      dnode('orchestrator', {
+        diff: 'mod',
+        interface: [
+          { text: 'review(stepId): void', diff: 'del', files: [ORCH] },
+          { text: 'review(stepId, heads): void', diff: 'add', files: [ORCH] },
+          { text: 'groom(taskId)', diff: 'mod' },
+          { text: 'cancel(taskId)' },
+        ],
+        uses: [{ to: 'git', diff: 'add', files: [ORCH], calls: [{ text: 'diffHunks(repo, base, head)' }] }],
+      }),
+      dnode('git'),
+      dnode('fact', { diff: 'add', path: 'apps/app/src/fact.ts', interface: [{ text: 'stepFact(step): Fact' }] }),
+    ]),
+  )
+  assert.deepEqual(changes.map((c) => [c.kind, c.key, c.diff, c.part, c.files]), [
+    ['module', 'orchestrator', 'mod', undefined, undefined],
+    ['element', 'orchestrator#review', 'mod', 'signature', [ORCH]],
+    ['element', 'orchestrator#groom', 'mod', 'body', undefined],
+    ['edge', 'orchestrator -> git', 'add', undefined, [ORCH]],
+    ['call', 'orchestrator -> git#diffHunks', 'add', undefined, [ORCH]],
+    ['module', 'fact', 'add', undefined, undefined],
+    ['element', 'fact#stepFact', 'add', undefined, undefined],
+  ])
+  assert.equal(changes[1].before, 'review(stepId): void')
+  assert.equal(changes[5].path, 'apps/app/src/fact.ts')
+})
+
+test('significance: defaults by kind of change, the project rules first (by files and name)', () => {
+  const ch = (extra: Partial<Change>): Change => ({ key: 'k', kind: 'element', diff: 'add', module: 'orchestrator', name: 'review', ...extra })
   const lvl = (c: Change, rules = '') => significance(c, parseSignificance(rules))
-  assert.equal(lvl(el('orchestrator', ORCH, 'Orchestrator.review', 'mod', { part: 'signature' })), 'high')
-  assert.equal(lvl(el('orchestrator', ORCH, 'Orchestrator.review', 'mod', { part: 'body' })), 'medium')
-  assert.equal(lvl(el('orchestrator', ORCH, 'helper', 'add', { exported: false })), 'low')
-  assert.equal(lvl(el('tools', 'apps/app/src/tool-defs.ts', 'TOOL_DEFS[x]', 'mod', { elementKind: 'contract', part: 'body' })), 'high')
-  assert.equal(lvl(el('orchestrator', ORCH, 'User', 'add', { elementKind: 'entity' })), 'critical')
-  assert.equal(lvl(edge('orchestrator', 'git', 'add')), 'high')
-  assert.equal(lvl(edge('orchestrator', 'ext:zod', 'add')), 'medium')
-  assert.equal(lvl(file('app', 'README.md', 'mod')), 'noise')
-  assert.equal(lvl(file('app', 'apps/app/main.py', 'mod')), 'high', 'a language without an adapter')
-  assert.equal(lvl(file('app', 'apps/app/src/a.test.ts', 'mod', { test: true }), 'high: apps'), 'noise', 'tests stay noise')
-  // A prompt body is high by a rule; rules go first-match, by path and name, any case.
+  assert.equal(lvl(ch({ diff: 'mod', part: 'signature' })), 'high')
+  assert.equal(lvl(ch({ diff: 'mod', part: 'body' })), 'medium')
+  assert.equal(lvl(ch({ kind: 'edge', name: 'git' })), 'high')
+  assert.equal(lvl(ch({ kind: 'call' })), 'medium')
+  assert.equal(lvl(ch({ kind: 'module', diff: 'add' })), 'high')
   const rules = 'Prose is ignored.\nhigh: #*prompt*\nnoise: apps/app/src/git.ts\nlow: apps/app/src/tools.ts#run'
-  assert.equal(lvl(el('orchestrator', ORCH, 'reviewPrompt', 'mod', { part: 'body', decl: 'const' }), rules), 'high')
-  assert.equal(lvl(el('git', 'apps/app/src/git.ts', 'treeAt', 'mod', { part: 'signature' }), rules), 'noise')
-  assert.equal(lvl(el('tools', 'apps/app/src/tools.ts', 'run', 'add'), rules), 'low')
-  assert.equal(lvl(el('tools', 'apps/app/src/tools.ts', 'other', 'add'), rules), 'high')
+  assert.equal(lvl(ch({ name: 'reviewPrompt', diff: 'mod', part: 'body' }), rules), 'high')
+  assert.equal(lvl(ch({ name: 'diffHunks', files: [GIT] }), rules), 'noise')
+  assert.equal(lvl(ch({ name: 'run', files: ['apps/app/src/tools.ts'] }), rules), 'low')
+  assert.equal(lvl(ch({ name: 'run' }), rules), 'high', 'a path rule needs the files')
   assert.deepEqual(parseSignificance('high: #*PROMPT*\nhuge: x\nlow: a/b'), [
     { level: 'high', path: null, name: '*PROMPT*' },
     { level: 'low', path: 'a/b', name: null },
   ])
 })
 
-test('compare: match, differs, missing, unplanned and unchecked', () => {
-  const plan = planOf(
-    diagram([
-      dnode('orchestrator', {
-        diff: 'mod',
-        interface: [
-          { text: 'review(stepId): void', diff: 'del' },
-          { text: 'review(stepId, heads): void', diff: 'add' },
-          { text: 'factOf(stepId): Fact', diff: 'add' },
-          { text: 'groom(taskId): void', diff: 'mod' },
-          { text: 'cancel(taskId): void', diff: 'del' },
-        ],
-        uses: [{ to: 'git', calls: [], diff: 'add' }, { to: 'github', calls: [], diff: 'add' }],
-      }),
-      dnode('git'),
-      dnode('github'),
-      dnode('fact', { diff: 'add', layer: 'app', path: 'apps/app/src/fact.ts', interface: [{ text: 'stepFact(step): Fact' }] }),
-    ]),
-  )
-  const fact = set([
-    el('orchestrator', ORCH, 'Orchestrator.review', 'mod', { part: 'body' }),
-    el('orchestrator', ORCH, 'Orchestrator.factOf', 'add'),
-    el('orchestrator', ORCH, 'Orchestrator.groom', 'mod', { part: 'body' }),
-    el('orchestrator', ORCH, 'Orchestrator.develop', 'mod', { part: 'signature' }),
-    el('orchestrator', ORCH, 'helper', 'add', { exported: false }),
-    edge('orchestrator', 'git', 'add'),
-    file('orchestrator', ORCH, 'mod'),
-    file('fact', 'apps/app/src/fact.ts', 'add'),
-    el('fact', 'apps/app/src/fact.ts', 'stepFact', 'add'),
-    file('app', 'apps/app/src/fact.test.ts', 'add', { test: true }),
-    file('app', 'docs/notes.md', 'mod'),
-  ])
-  const { items } = compare(plan, fact, architecture)
-  const row = (s: string) => items.filter((i) => i.status === s).map((i) => (i.plan ?? i.fact[0]).name ?? i.plan?.key)
-  assert.deepEqual(row('differs'), ['review'], 'a planned signature change that only touched the body')
-  assert.equal(items.find((i) => i.status === 'differs')!.note, 'planned mod (signature), the code: mod (body)')
-  assert.deepEqual(row('missing'), ['cancel'])
-  assert.deepEqual(row('unplanned'), ['Orchestrator.develop', 'helper'], 'by level; tests, noise and files with element changes left out')
-  assert.deepEqual(row('unchecked'), ['github'], 'github has no code')
-  assert.deepEqual(row('match').sort(), ['factOf', 'fact', 'git', 'groom', 'stepFact'].sort(), 'lines of an added module are planned adds')
-  assert.deepEqual(items.filter((i) => i.status === 'unplanned').map((i) => i.level), ['high', 'low'])
+const PLAN = diagram([
+  dnode('orchestrator', {
+    diff: 'mod',
+    interface: [
+      { text: 'review(stepId): void', diff: 'del' },
+      { text: 'review(stepId, heads): void', diff: 'add' },
+      { text: 'factOf(stepId): Fact', diff: 'add' },
+      { text: 'cancel(taskId): void', diff: 'del' },
+      { text: 'groom(taskId): void', diff: 'mod' },
+    ],
+    uses: [{ to: 'git', calls: [], diff: 'add' }],
+  }),
+  dnode('git'),
+])
 
-  const blockers = mergeBlockers({ items }, [fact])
-  assert.equal(blockers.length, 1)
-  assert.match(blockers[0], /^high: orchestrator method Orchestrator\.develop \(apps\/app\/src\/orchestrator\.ts:3\) is not on the plan$/)
-  const text = formatComparison({ items }, blockers)
-  assert.match(text, /merge is NOT allowed/)
-  assert.match(text, /Done otherwise than planned \(1\):\n {2}- \[high\] mod \(signature\) orchestrator review; the code: mod \(body\) orchestrator method Orchestrator\.review \(apps\/app\/src\/orchestrator\.ts:3\)\n/)
-  assert.match(text, /Planned, not in the code \(1\)/)
+test('compare: match by key, differs by mark or line, missing, unplanned; inner modules stand for an outer one', () => {
+  // The fact: a copy of the plan, revised under the diff.
+  const fact = diagram([
+    dnode('orchestrator', {
+      diff: 'mod',
+      interface: [
+        { text: 'review(stepId): void', diff: 'del', files: [ORCH] },
+        { text: 'review(stepId, heads, round): void', diff: 'add', files: [ORCH] },
+        { text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH] },
+        { text: 'cancel(taskId): void' },
+        { text: 'groom(taskId): void', diff: 'del', files: [ORCH] },
+        { text: 'develop(stepId): void', diff: 'add', files: [ORCH] },
+      ],
+      uses: [{ to: 'git', calls: [], diff: 'add', files: [ORCH] }],
+    }),
+    dnode('git'),
+  ])
+  const { items } = compare(withLevels(diagramChanges(PLAN), []), withLevels(diagramChanges(fact), []), architecture)
+  const rows = items.map((i) => [i.status, (i.plan ?? i.fact)!.key, i.level])
+  assert.deepEqual(rows, [
+    ['differs', 'orchestrator#review', 'high'],
+    ['differs', 'orchestrator#groom', 'high'],
+    ['missing', 'orchestrator#cancel', 'high'],
+    ['unplanned', 'orchestrator#develop', 'high'],
+    ['match', 'orchestrator#factOf', 'high'],
+    ['match', 'orchestrator -> git', 'high'],
+    ['match', 'orchestrator', 'medium'],
+  ])
+  assert.equal(items[0].note, 'planned review(stepId, heads): void, done review(stepId, heads, round): void')
+  assert.equal(items[1].note, 'planned mod (body), done del')
+  // A plan drawn on the app is matched by the fact on its inner module.
+  const outer = diagram([dnode('app', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add' }] })])
+  const inner = diagram([dnode('orchestrator', { interface: [{ text: 'factOf(stepId)  :  Fact', diff: 'add', files: [ORCH] }] })])
+  assert.deepEqual(compare(diagramChanges(outer), diagramChanges(inner), architecture).items.map((i) => i.status), ['match'])
 })
 
-test('compare: an outer plan module stands for its inner ones; moves match moves', () => {
-  const plan = planOf(diagram([dnode('app', { interface: [{ text: 'treeAt(repo, sha): Tree', diff: 'move', from: 'tools' }] }), dnode('tools')]))
-  const fact = set([el('git', 'apps/app/src/git.ts', 'treeAt', 'move', { from: 'r:apps/app/src/tools.ts#treeAt' })])
-  assert.deepEqual(compare(plan, fact, architecture).items.map((i) => i.status), ['match'])
+test('coverage: a changed code file is shown only when a changed line gives it in files', () => {
+  const files = owned([file(ORCH), file(GIT), file('apps/app/src/tools.ts'), file('scripts/x.ts'), file('apps/app/src/a.test.ts'), file('README.md')])
+  const fact = diagram([
+    dnode('orchestrator', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH, 'scripts/x.ts'] }] }),
+    dnode('git'),
+    dnode('tools', { interface: [{ text: 'run()' }] }),
+  ])
+  const cov = coverage(files, fact)
+  assert.deepEqual(cov.shown.map((f) => f.path), [ORCH, 'scripts/x.ts'])
+  assert.deepEqual(cov.unshown.map((f) => f.path), [GIT, 'apps/app/src/tools.ts'], 'tests and docs are not code')
+  // A module marked changed without lines that give files shows none of them (Decision 11).
+  const marked = diagram([dnode('app', { diff: 'mod' }), dnode('orchestrator', { diff: 'mod', interface: [{ text: 'run()', diff: 'mod' }] })])
+  assert.deepEqual(coverage(files, marked).shown, [])
+  const blockers = mergeBlockers({ items: [] }, coverage(files, marked), grounding(marked, files, architecture))
+  assert.ok(blockers.includes('r:apps/app/src/orchestrator.ts (orchestrator) is changed, the fact diagram does not show it'))
 })
 
-test('compare and factDiagram: members of a new interface go with it', () => {
-  const T = 'apps/app/src/types.ts'
-  const fact = set([
-    el('orchestrator', T, 'Fact', 'add', { decl: 'interface', after: 'interface Fact' }),
-    el('orchestrator', T, 'Fact.heads', 'add', { decl: 'property', after: 'heads: Heads' }),
-    el('orchestrator', T, 'Fact.at', 'add', { decl: 'property', after: 'at: number' }),
-    el('orchestrator', T, 'Other.x', 'add', { decl: 'property', after: 'x: number' }),
+test('repo:path: the same path in two repositories is told apart; a plain one is ambiguous (Decision 13)', () => {
+  const files = [file(ORCH, 'mod', { module: 'orchestrator' }), file(ORCH, 'mod', { repo: 'web', module: 'orchestrator' }), file(GIT, 'mod', { repo: 'web', module: 'git' })]
+  const fact = diagram([
+    dnode('orchestrator', {
+      interface: [
+        { text: 'factOf()', diff: 'add', files: [`r:${ORCH}`] },
+        { text: 'groom()', diff: 'mod', files: [ORCH] },
+      ],
+    }),
+    dnode('git', { interface: [{ text: 'diffHunks()', diff: 'add', files: [GIT] }] }),
   ])
-  const { items } = compare([], fact, architecture)
-  assert.deepEqual(items.map((i) => i.fact.map((c) => c.name)), [['Fact', 'Fact.heads', 'Fact.at'], ['Other.x']])
-  assert.equal(mergeBlockers({ items }, [fact]).length, 2)
-  const d = factDiagram([fact], architecture, vocabularyOf(architecture))!
-  assert.deepEqual(d.modules[0].interface, [{ text: 'Fact', diff: 'add' }, { text: 'x: number', diff: 'add' }])
-  // A diagram that shows the interface shows its members.
-  assert.deepEqual(coverage(fact, [d], architecture).unshown, [])
-  const plan = planOf(diagram([dnode('orchestrator', { interface: [{ text: 'Fact', diff: 'add' }, { text: 'at: number', diff: 'add' }] })]))
-  assert.deepEqual(compare(plan, fact, architecture).items.map((i) => [i.status, i.fact.map((c) => c.name)]), [
-    ['unplanned', ['Other.x']],
-    ['match', ['Fact', 'Fact.heads']],
-    ['match', ['Fact.at']],
+  assert.deepEqual(coverage(files, fact).unshown.map((f) => `${f.repo}:${f.path}`), [`web:${ORCH}`])
+  const g = grounding(fact, files, architecture)
+  assert.deepEqual(g.grounded.map((c) => c.key), ['orchestrator#factOf', 'git#diffHunks'], 'a path only one repository changes needs no repo')
+  assert.deepEqual(g.unverified.map((u) => [u.change.key, u.reason, u.files]), [['orchestrator#groom', 'ambiguous', [ORCH]]])
+  assert.match(mergeBlockers({ items: [] }, coverage(files, fact), g).join('\n'), /orchestrator groom\(\): gives a path several repositories change: write <repo>:<path>/)
+})
+
+test('grounding: files in the PR and of the module; none, outside the PR or of another module is unverified', () => {
+  const files = owned([file(ORCH), file(GIT), file('scripts/x.ts'), file('apps/app/src/fact.ts', 'add')])
+  const fact = diagram([
+    dnode('orchestrator', {
+      interface: [
+        { text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH] },
+        { text: 'groom(taskId)', diff: 'mod' },
+        { text: 'cancel()', diff: 'del', files: ['apps/app/src/other.ts'] },
+        { text: 'treeAt()', diff: 'add', files: [GIT] },
+        { text: 'run()', diff: 'add', files: ['r:scripts/x.ts'] },
+      ],
+      uses: [{ to: 'git', diff: 'add', calls: [{ text: 'diffHunks()' }], files: [ORCH] }],
+    }),
+    dnode('git'),
+    dnode('app', {
+      interface: [{ text: 'boot()', diff: 'mod', files: ['apps/app/src/fact.ts'] }],
+      children: [dnode('fact', { diff: 'add', path: 'apps/app/src/fact.ts', interface: [{ text: 'stepFact(step): Fact', files: ['apps/app/src/fact.ts'] }] })],
+    }),
+  ])
+  const g = grounding(fact, files, architecture)
+  assert.deepEqual(g.grounded.map((c) => c.key), ['orchestrator#factOf', 'orchestrator#run', 'orchestrator -> git', 'orchestrator -> git#diffHunks', 'app#boot', 'fact#stepFact'], 'a module the fact adds is inside the one it is drawn in')
+  assert.deepEqual(g.unverified.map((u) => [u.change.key, u.reason, u.files]), [
+    ['orchestrator#groom', 'no-files', []],
+    ['orchestrator#cancel', 'not-in-pr', ['apps/app/src/other.ts']],
+    ['orchestrator#treeAt', 'other-module', [GIT]],
   ])
 })
 
-test('mergeBlockers: a fact no adapter reads blocks merge; a fully planned one does not', () => {
-  const plan = planOf(diagram([dnode('orchestrator', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add' }] })]))
-  const fact = set([el('orchestrator', ORCH, 'Orchestrator.factOf', 'add')])
-  assert.deepEqual(mergeBlockers(compare(plan, fact, architecture), [fact]), [])
-  const py = set([file('app', 'apps/app/x.py', 'mod')], { deterministic: false, unparsed: ['apps/app/x.py'] })
-  assert.deepEqual(mergeBlockers(compare(plan, [fact, py], architecture), [fact, py]), ['high: file apps/app/x.py is not on the plan', 'r: no adapter reads apps/app/x.py'])
-  assert.match(formatComparison(compare(plan, fact, architecture), []), /^Threshold: merge is allowed/)
+test('mergeBlockers: unshown files, unverified lines and significant differences; none for a full, grounded, planned fact', () => {
+  const files = owned([file(ORCH), file(GIT)])
+  const fact = diagram([
+    dnode('orchestrator', {
+      diff: 'mod',
+      interface: [
+        { text: 'review(stepId): void', diff: 'del', files: [ORCH] },
+        { text: 'review(stepId, heads): void', diff: 'add', files: [ORCH] },
+        { text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH] },
+        { text: 'cancel(taskId): void', diff: 'del', files: [ORCH] },
+        { text: 'groom(taskId): void', diff: 'mod', files: [ORCH] },
+      ],
+      uses: [{ to: 'git', calls: [], diff: 'add', files: [ORCH] }],
+    }),
+    dnode('git', { interface: [{ text: 'diffHunks(repo, base, head)', diff: 'add', files: [GIT] }] }),
+  ])
+  const plan = withLevels(diagramChanges(PLAN), [])
+  const cmp = compare(plan, withLevels(diagramChanges(fact), []), architecture)
+  const blockers = mergeBlockers(cmp, coverage(files, fact), grounding(fact, files, architecture))
+  assert.deepEqual(blockers, ['high: git diffHunks(repo, base, head) is on the fact, not on the plan'])
+  assert.match(formatComparison(cmp, blockers), /^Threshold: merge is NOT allowed/)
+
+  const planned = { ...PLAN, modules: [PLAN.modules[0], fact.modules[1]] }
+  const ok = compare(withLevels(diagramChanges(planned), []), withLevels(diagramChanges(fact), []), architecture)
+  assert.deepEqual(mergeBlockers(ok, coverage(files, fact), grounding(fact, files, architecture)), [])
+  assert.match(formatComparison(ok, []), /^Threshold: merge is allowed/)
+
+  // The plan copied as it is: nothing rests on the PR.
+  const copy = mergeBlockers(compare(plan, plan, architecture), coverage(files, PLAN), grounding(PLAN, files, architecture))
+  assert.ok(copy.some((b) => b === 'r:apps/app/src/git.ts (git) is changed, the fact diagram does not show it'))
+  assert.equal(copy.filter((b) => b.endsWith('gives no files of the PR')).length, 5)
+  assert.deepEqual(mergeBlockers({ items: [] }, null, null), ['there is no fact diagram of the PRs yet'])
 })
 
-test('factDiagram: a valid draft that covers the significant fact', () => {
-  const vocabulary = planVocabulary(architecture, [])
-  const fact = set([
-    el('orchestrator', ORCH, 'Orchestrator.review', 'mod', { part: 'signature', before: 'async review(stepId: string)', after: 'async review(stepId: string, heads: Heads)' }),
-    el('orchestrator', ORCH, 'Orchestrator.factOf', 'add', { after: 'factOf(stepId: string): Promise<Fact>' }),
-    el('orchestrator', ORCH, 'Orchestrator.groom', 'mod', { part: 'body', after: 'groom(taskId)' }),
-    el('orchestrator', ORCH, 'helper', 'add', { exported: false, after: 'helper()' }),
-    el('git', 'apps/app/src/git.ts', 'treeAt', 'move', { from: 'r:apps/app/src/tools.ts#treeAt', after: 'treeAt(repo: string, sha: string)' }),
-    el(null, 'scripts/x.ts', 'run', 'add', { after: 'run()' }),
-    edge('orchestrator', 'git', 'add'),
-    edge('orchestrator', 'ext:@octokit/rest', 'add'),
+test('planWarnings: ids the architecture lacks, adds of what it has, new modules without a path', () => {
+  const d = diagram([
+    dnode('app', { children: [dnode('fact', { diff: 'add', path: 'apps/app/src/fact.ts' }), dnode('store', { diff: 'add', layer: 'service' })] }),
+    dnode('orchestrator', { diff: 'add' }),
+    dnode('cache'),
   ])
-  const d = factDiagram([fact], architecture, vocabulary)!
-  assert.deepEqual(validateDiagram(d), [])
-  assert.deepEqual(d.modules.map((m) => m.id), ['orchestrator', 'git', 'tools', 'ext-octokit-rest', 'unowned'])
-  assert.deepEqual(d.modules[0].interface, [
-    { text: 'review(stepId: string)', diff: 'del' },
-    { text: 'review(stepId: string, heads: Heads)', diff: 'add' },
-    { text: 'factOf(stepId: string): Promise<Fact>', diff: 'add' },
-    { text: 'groom(taskId)', diff: 'mod' },
-  ], 'internal helpers are left out')
-  assert.deepEqual(d.modules[0].uses.map((u) => [u.to, u.diff]), [['git', 'add'], ['ext-octokit-rest', 'add']])
-  assert.deepEqual(d.modules[1].interface, [{ text: 'treeAt(repo: string, sha: string)', diff: 'move', from: 'tools' }])
-  // The draft shows every significant change of the fact.
-  const cov = coverage(fact, [d], architecture)
-  assert.deepEqual(cov.unshown.map((c) => c.name), ['helper'])
-  // A reviewer's revision that drops a change no longer covers it.
-  const dropped = { ...d, modules: d.modules.map((m) => (m.id === 'orchestrator' ? { ...m, interface: m.interface!.slice(2) } : m)) }
-  assert.deepEqual(coverage(fact, [dropped], architecture).unshown.map((c) => c.name).sort(), ['Orchestrator.review', 'helper'])
+  assert.deepEqual(planWarnings(d, architecture).map((w) => [w.code, w.module]), [['no-path', 'store'], ['exists', 'orchestrator'], ['unknown-module', 'cache']])
+  assert.deepEqual(planWarnings(d, []), [], 'no architecture, nothing to check against')
 })
 
 test('planVocabulary: a module the plan adds with a path joins the vocabulary', () => {

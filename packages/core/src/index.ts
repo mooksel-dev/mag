@@ -421,15 +421,17 @@ export interface AgentReview {
 }
 
 /**
- * Plan ↔ fact of a step's PRs at `heads` (T-57.4), by mag from the code: how many plan changes were done as planned,
- * otherwise or not at all, what the code changed outside the plan, what the code cannot tell; and why the review may
- * not say merge (Decision 6 of T-57: a significant change the plan does not show, code no adapter reads).
+ * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58): the reviewer's fact diagram against the plan diagrams (how
+ * many plan changes were done as planned, otherwise or not at all, what the fact has outside the plan) and against the
+ * PRs' files; and why the review may not say merge (T-58 Decision 5: a changed code file the fact does not show, a
+ * line of it that does not rest on the PR, a significant difference from the plan).
  */
 export interface StepFact {
   heads: Record<string, string>
-  counts: { match: number; differs: number; missing: number; unplanned: number; unchecked: number }
+  /** Plan ↔ fact by status; unshown: changed code files the fact diagram does not show; unverified: its lines that do not rest on the PR (T-58). */
+  counts: { match: number; differs: number; missing: number; unplanned: number; unshown: number; unverified: number }
   blockers: string[]
-  /** The draft fact diagram (role fact) and the version mag drew; a higher version is the reviewer's. */
+  /** The fact diagram (role fact) and the version mag started it at, a copy of the plan; a higher version is the reviewer's. */
   canvasId: string | null
   canvasVersion: number | null
   at: number
@@ -1181,8 +1183,6 @@ export interface Canvas {
   repo?: string | null
   /** role 'fact': the plan diagram it is the fact of (T-55.4). */
   planOf?: string | null
-  /** A Component diagram: the base commit per repository (path) it was last checked against (T-57.3). */
-  baseSha?: Record<string, string> | null
   version: number
   updatedAt: number
 }

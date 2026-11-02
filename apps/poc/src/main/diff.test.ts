@@ -1,12 +1,13 @@
-// The architecture diff over real git (T-57.1): the git client, get_pr_changes, and merged PRs of mag as fixtures.
+// The architecture diff over real git (T-57.1, T-58): the git client, get_pr_changes, and merged PRs of mag as fixtures.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createDiff, type Change, type ChangeSet, type Vocabulary } from '@mag/diff'
-import { blobs, diffHunks, parseDiff, treeAt } from './git.ts'
+import { normalizeDiagram, validateDiagram, type ArchNode } from '@mag/core'
+import { coverage, createDiff, grounding, type Vocabulary } from '@mag/diff'
+import { diffHunks, parseDiff, treeAt } from './git.ts'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 
@@ -69,13 +70,10 @@ function fixtureRepo() {
   return repo
 }
 
-test('git client: treeAt, blobs and diffHunks with a rename', async () => {
+test('git client: treeAt and diffHunks with a rename', async () => {
   const repo = fixtureRepo()
   const tree = await treeAt(repo, 'main')
   assert.deepEqual(tree.map((f) => f.path).sort(), ['src/old name.ts', 'src/store.ts'])
-  const src = await blobs(repo, [...tree.map((f) => f.blob), '0'.repeat(40)])
-  assert.equal(src.get(tree.find((f) => f.path === 'src/store.ts')!.blob), 'export function load(id: string) {\n  return id\n}\n')
-  assert.equal(src.size, 2)
   const files = await diffHunks(repo, 'main', 'mag/x-1')
   assert.deepEqual(files, [
     { path: 'src/new name.ts', oldPath: 'src/old name.ts', status: 'rename', hunks: [] },
@@ -97,15 +95,14 @@ test('get_pr_changes: the step branch against the base, by module of the archite
   const reviewer = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'reviewer', agent: 'claude-code', status: 'running' })
   const tools = createTools(store, {} as ToolActions)
   const out = await tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', {})
-  assert.match(out, /^app: [0-9a-f]{12} → [0-9a-f]{12}, 2 file\(s\) changed, deterministic\./)
-  assert.match(out, /\nstore\n {2}~ function load {2}src\/store\.ts:2\n {6}- function load\(id: string\)\n {6}\+ function load\(id: string, fresh = false\)\n {2}\+ uses app {2}src\/store\.ts:1\n/)
-  assert.match(out, /file > src\/new name\.ts \(from src\/old name\.ts\)/)
+  assert.match(out, /^app: [0-9a-f]{12} → [0-9a-f]{12}, 2 file\(s\) changed, 2 of them code\./)
+  assert.match(out, /\napp\n {2}> src\/new name\.ts \(from src\/old name\.ts\): 0 hunk\(s\)\n\nstore\n {2}~ src\/store\.ts: 1 hunk\(s\) 1 → 1-2$/)
   await assert.rejects(tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', { repo: 'web' }), /not a repo of this task/)
   git(repo, 'checkout', '-q', 'main')
   assert.equal(await tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', {}), 'app: no commits of its own on mag/x-1.')
 })
 
-// Merged PRs of mag; what their plans missed and the skeleton found is T-56 §Findings F10.
+// Merged PRs of mag: the files they change by module, and a fact a reviewer drew from the diff (T-58.1 experiment).
 const ROOT = git(process.cwd(), 'rev-parse', '--show-toplevel')
 const has = (sha: string) => {
   try {
@@ -115,53 +112,43 @@ const has = (sha: string) => {
     return false
   }
 }
-const PRS = { 47: '7306f8ed1c09efbbbee58b5309d444a16f1296d7', 48: 'd15ff3ecd267fb5a4fdf23edc8901c4878137981', 51: 'cfcbf58955ea5e6e631c98fd21686b0983631bfa' }
+const PRS = { 47: '7306f8ed1c09efbbbee58b5309d444a16f1296d7', 51: 'cfcbf58955ea5e6e631c98fd21686b0983631bfa' }
 
 /** The modules of mag's architecture these PRs touch, as recorded by the architect. */
-const MAG: Vocabulary = {
-  modules: Object.entries({
-    poc: 'apps/poc', 'main-entry': 'apps/poc/src/main/index.ts', orchestrator: 'apps/poc/src/main/orchestrator.ts', 'agent-tools': 'apps/poc/src/main/tools.ts',
-    store: 'apps/poc/src/main/store.ts', 'tool-defs': 'apps/poc/src/main/tool-defs.ts', 'preload-bridge': 'apps/poc/src/preload', 'renderer-app': 'apps/poc/src/renderer/src/App.tsx',
-    'diff-tab': 'apps/poc/src/renderer/src/DiffTab.tsx', 'popout-view': 'apps/poc/src/renderer/src/Popout.tsx', 'chat-view': 'apps/poc/src/renderer/src/Chat.tsx',
-    'diagram-views': 'apps/poc/src/renderer/src/diagrams', 'component-diagram': 'apps/poc/src/renderer/src/diagrams/Component.tsx', 'graph-diagrams': 'apps/poc/src/renderer/src/diagrams/Graph.tsx',
-    'component-diff': 'apps/poc/src/renderer/src/componentDiff.ts', 'arch-edges': 'apps/poc/src/renderer/src/archEdges.ts', 'core-model': 'packages/core/src',
-  }).map(([id, path]) => ({ id, paths: [path] })),
+const PATHS: Record<string, string> = {
+  'main-entry': 'apps/poc/src/main/index.ts', orchestrator: 'apps/poc/src/main/orchestrator.ts', 'agent-tools': 'apps/poc/src/main/tools.ts',
+  store: 'apps/poc/src/main/store.ts', 'tool-defs': 'apps/poc/src/main/tool-defs.ts', 'preload-bridge': 'apps/poc/src/preload', 'renderer-app': 'apps/poc/src/renderer/src/App.tsx',
+  'component-diagram': 'apps/poc/src/renderer/src/diagrams/Component.tsx', 'component-diff': 'apps/poc/src/renderer/src/componentDiff.ts', 'arch-edges': 'apps/poc/src/renderer/src/archEdges.ts',
 }
+const ARCH: ArchNode[] = [
+  { id: 'poc', name: 'poc', description: '', uses: [], paths: ['apps/poc'], children: Object.entries(PATHS).map(([id, path]) => ({ id, name: id, description: '', uses: [], paths: [path] })) },
+  { id: 'core-model', name: 'core', description: '', uses: [], paths: ['packages/core/src'] },
+]
+const MAG: Vocabulary = { modules: [{ id: 'poc', paths: ['apps/poc'] }, ...Object.entries(PATHS).map(([id, path]) => ({ id, paths: [path] })), { id: 'core-model', paths: ['packages/core/src'] }] }
 
-const engine = createDiff({ treeAt, blobs, diffHunks })
-const factOf = (sha: string) => engine.changes({ path: ROOT, name: 'mag' }, `${sha}^1`, `${sha}^2`, MAG)
-const lines = (cs: ChangeSet, pick: (c: Change) => boolean) => cs.changes.filter(pick).map((c) => `${c.diff} ${c.module}:${c.kind === 'edge' ? `-> ${c.name}` : c.name}`)
-const elements = (cs: ChangeSet) => lines(cs, (c) => c.kind === 'element')
-const edges = (cs: ChangeSet) => lines(cs, (c) => c.kind === 'edge' && !c.name!.startsWith('ext:'))
-const includes = (all: string[], want: string[]) => assert.deepEqual(want.filter((w) => !all.includes(w)), [], `missing in\n${all.join('\n')}`)
+const engine = createDiff({ diffHunks })
+const filesOf = (sha: string) => engine.changedFiles({ path: ROOT, name: 'mag' }, `${sha}^1`, `${sha}^2`, MAG)
 
-test('PR #47 (T-48.1): the API changes of component-diff its plan missed, and routeEdges got pill', { skip: !has(PRS[47]) && 'mag history not here' }, async () => {
-  const cs = await factOf(PRS[47])
-  includes(elements(cs), ['add component-diff:edgePill', 'add component-diff:callGroups', 'add component-diff:CallGroup', 'del component-diff:edgeCalls', 'del component-diff:EDGE_CALLS', 'mod arch-edges:routeEdges'])
-  const route = cs.changes.find((c) => c.name === 'routeEdges')!
-  assert.equal(route.part, 'signature')
-  assert.match(route.after!, /pill = PILL/)
-  // The plan marked 7 modules the PR did not touch; the fact has only these.
-  assert.deepEqual([...new Set(cs.changes.filter((c) => !c.test).map((c) => c.module))].sort(), ['arch-edges', 'component-diagram', 'component-diff', 'core-model', 'poc'])
-  assert.equal(cs.deterministic, true)
-})
-
-test('PR #48 (T-48.2): CanvasFrame got siblings, new dependencies, flow types in core', { skip: !has(PRS[48]) && 'mag history not here' }, async () => {
-  const cs = await factOf(PRS[48])
-  includes(elements(cs), ['mod chat-view:CanvasFrame', 'add component-diff:flowOf', 'add component-diff:methodCallers', 'add component-diff:FlowItem', 'add diagram-views:DiagramItem', 'add core-model:flowDiff', 'add core-model:MethodFlow'])
-  assert.match(cs.changes.find((c) => c.name === 'CanvasFrame')!.after!, /siblings/)
-  includes(edges(cs), ['add popout-view:-> diff-tab', 'add diagram-views:-> component-diff', 'add component-diagram:-> graph-diagrams'])
-  // arch-edges changed in #47, not here.
-  assert.ok(!cs.changes.some((c) => c.module === 'arch-edges'))
-})
-
-test('PR #51 (T-50.1): wiring, preload, App.tsx, core helpers, Store.createTask and the tool contracts', { skip: !has(PRS[51]) && 'mag history not here' }, async () => {
-  const cs = await factOf(PRS[51])
-  includes(elements(cs), [
-    'mod main-entry:(top-level)', 'add preload-bridge:NewTask.repos', 'mod renderer-app:SubtaskRow', 'add core-model:repoNames', 'add core-model:projectRepo', 'add core-model:stepRepoNames',
-    'mod store:Store.createTask', 'add tool-defs:TOOL_DEFS[add_repo]', 'mod tool-defs:TOOL_DEFS[create_subtask]',
+test('PR #47 (T-48.1): changed files by owner module; tests and styles are not code', { skip: !has(PRS[47]) && 'mag history not here' }, async () => {
+  const files = await filesOf(PRS[47])
+  assert.deepEqual(files.filter((f) => f.kind === 'code').map((f) => `${f.module} ${f.path.split('/').at(-1)}`), [
+    'arch-edges archEdges.ts', 'component-diff componentDiff.ts', 'component-diagram Component.tsx', 'core-model diagram.ts',
   ])
-  assert.equal(cs.changes.find((c) => c.name === 'TOOL_DEFS[create_subtask]')!.after, 'create_subtask(title, note?, start_manually?, repos?)')
-  // The plan marked tasks-view changed; the change was in App.tsx.
-  assert.ok(!cs.changes.some((c) => c.path?.endsWith('Tasks.tsx')))
+  assert.deepEqual(files.filter((f) => f.kind !== 'code').map((f) => f.kind).sort(), ['style', 'test', 'test', 'test'])
+})
+
+test('PR #51 (T-50.1): the fact a reviewer drew from the diff shows every changed code file and rests on the PR', { skip: !has(PRS[51]) && 'mag history not here' }, async () => {
+  const files = await filesOf(PRS[51])
+  const fact = normalizeDiagram(JSON.parse(readFileSync(new URL('./fixtures/fact-pr51.json', import.meta.url), 'utf8')))
+  assert.deepEqual(validateDiagram(fact), [])
+  assert.deepEqual(coverage(files, fact).unshown, [])
+  const g = grounding(fact, files, ARCH)
+  assert.deepEqual(g.unverified, [])
+  assert.ok(g.grounded.length >= 20)
+  // A line moved to a module whose files it does not give is caught.
+  const moved = structuredClone(fact)
+  if (moved.type !== 'component') throw new Error('component')
+  const line = moved.modules.find((m) => m.id === 'tool-defs')!.interface!.find((l) => l.diff === 'add')!
+  moved.modules.find((m) => m.id === 'store')!.interface = [line]
+  assert.deepEqual(grounding(moved, files, ARCH).unverified.map((u) => [u.change.module, u.reason]), [['store', 'other-module']])
 })

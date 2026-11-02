@@ -613,12 +613,12 @@ test('review: the first round forks the owner session; changes go to the develop
   assert.equal(runs.at(-1), second)
 })
 
-test('review: the reviewer reads plan ↔ fact; merge is refused over the threshold (T-57.4)', async () => {
+test('review: the reviewer draws the fact and reads plan ↔ fact; merge is refused over the threshold (T-57.4, T-58)', async () => {
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /compared the PRs with this step's plan diagrams[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
-  const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unchecked: 0 }
+  assert.match(run.spec.prompt, /The fact diagram \(below\) is yours to draw[\s\S]*Every changed line, dependency and call gives files[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
+  const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unshown: 0, unverified: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, canvasVersion: null, at: 1 } })
   assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
   assert.equal(store.task(step.id).review, undefined)
@@ -754,41 +754,14 @@ test('reopen from the app while the owner works: the user is asked to tell it (T
   assert.equal(store.task(task.id).status, 'planning')
 })
 
-test('develop: base moved under the step\'s plan; the developer is told, the user is asked (T-57.3)', async () => {
-  const { dir, store, orch, project, task } = setup()
-  const app = join(dir, 'repos', 'app')
-  mkdirSync(join(app, 'src'), { recursive: true })
-  git(join(dir, 'repos'), 'init', '-q', '-b', 'main', app)
-  writeFileSync(join(app, 'src/store.ts'), 'export function load(id: string) {}\n')
-  git(app, 'add', '.')
-  git(app, 'commit', '-q', '-m', 'base')
-  const drawnAt = git(app, 'rev-parse', 'HEAD')
-  const architecture = { summary: '', updatedAt: 1, modules: [{ id: 'store', name: 'store', description: '', uses: [], paths: ['src/store.ts'] }] }
-  store.updateProject(project.id, { repos: [app], architecture })
-  store.updateTask(task.id, { status: 'ready' })
-  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo' })
-  const diagram = { type: 'component' as const, summary: 's', modules: [{ id: 'store', name: 'store', description: '', uses: [], interface: [{ text: 'load(id)' }] }] }
-  const canvas = store.saveCanvas({ projectId: project.id, taskId: task.id, sessionId: null, title: 'Store', kind: 'diagram', diagram, placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
-  store.setCanvasBase(canvas.id, { [app]: drawnAt })
-  writeFileSync(join(app, 'src/store.ts'), 'export function read(id: string) {}\n')
-  git(app, 'commit', '-q', '-am', 'renamed')
-
-  await orch.develop(task.id)
-  const first = store.data.sessions.find((s) => s.stepId === step.id)!.items[0]
-  assert.equal(first.kind, 'user')
-  assert.match((first as { text: string }).text, /^Implement step .*\n\nmain has moved since the plan of this step was drawn.*\n\[Store\]\(canvas:\w+\):\n- store: "load" is not in its code at base/s)
-  assert.equal(store.task(task.id).needsInput, `${step.key}: main moved under its plan; see the developer chat`)
-})
-
-test('develop: no message and no question while base has not moved under the plan (T-57.3)', async () => {
+test('develop: a step with a plan diagram starts without a message or a question (T-58: no check against base)', async () => {
   const { dir, store, orch, project, task } = setup()
   const app = gitRepo(join(dir, 'repos', 'app'))
   store.updateProject(project.id, { repos: [app], architecture: { summary: '', updatedAt: 1, modules: [{ id: 'store', name: 'store', description: '', uses: [], paths: ['src'] }] } })
   store.updateTask(task.id, { status: 'ready' })
   const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo' })
   const diagram = { type: 'component' as const, summary: 's', modules: [{ id: 'store', name: 'store', description: '', uses: [], interface: [{ text: 'load(id)' }] }] }
-  const canvas = store.saveCanvas({ projectId: project.id, taskId: task.id, sessionId: null, title: 'Store', kind: 'diagram', diagram, placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
-  store.setCanvasBase(canvas.id, { [app]: git(app, 'rev-parse', 'HEAD') })
+  store.saveCanvas({ projectId: project.id, taskId: task.id, sessionId: null, title: 'Store', kind: 'diagram', diagram, placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   await orch.develop(task.id)
   assert.deepEqual(store.data.sessions.find((s) => s.stepId === step.id)!.items, [])
   assert.equal(store.task(task.id).needsInput, null)
