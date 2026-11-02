@@ -3,7 +3,7 @@
 // the intent and the fact with the same diff service as a step's review, and records findings by level with a verdict.
 // Nothing goes to GitHub without the user's button.
 
-import type { AgentSession, ReviewFinding, Task } from './index.ts'
+import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
 
 /** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit. */
 export type FindingLevel = 'blocker' | 'should_fix' | 'question' | 'nit'
@@ -22,8 +22,16 @@ export const PR_VERDICT_LABELS: Record<PrVerdict, string> = { approve: 'Approve'
 /** The PR under review. */
 export interface PrRef {
   url: string
-  /** The project repository (path) it is a PR of. */
+  /**
+   * The project repository (path) it is a PR of; for a PR outside the project (`outside`), its GitHub owner/repo, lower
+   * case.
+   */
   repo: string
+  /**
+   * A PR of a repository the project has no checkout of (reviews-ahent-reviuit-pr-timeitiv.3): its changes are read from
+   * GitHub, and its fact has modules by folder, without the project's architecture.
+   */
+  outside?: boolean
   number: number
   author: string
   /** Its base branch. */
@@ -112,4 +120,64 @@ export function reviewReadyText(review: PrReview): string {
 /** The owner topic of a review is in a turn. */
 export function reviewRunning(task: Pick<Task, 'ownerSessionId'>, sessions: AgentSession[]): boolean {
   return sessions.some((s) => s.id === task.ownerSessionId && s.status === 'running')
+}
+
+/** The name a PR's repository goes by: the project's name for it, else (outside the project) its repo part. */
+export function prRepoName(project: Pick<Project, 'repos'>, pr: PrRef): string {
+  return pr.outside ? (pr.repo.split('/')[1] ?? pr.repo) : (repoNames(project)[project.repos.indexOf(pr.repo)] ?? pr.repo)
+}
+
+/** A finding's place as a line range of a file (`src/a.ts:12`, `src/a.ts:12-20`); null when it names no line. */
+export function findingPlace(where: string | undefined): { path: string; start: number; end: number } | null {
+  const m = where?.trim().match(/^([^\s:]+):(\d+)(?:-(\d+))?$/)
+  if (!m) return null
+  const start = Number(m[2])
+  const end = m[3] ? Number(m[3]) : start
+  return start > 0 && end >= start ? { path: m[1].replace(/^\.\//, ''), start, end } : null
+}
+
+/** A line comment of a review on GitHub: on the PR's side of the diff, `start` when it spans several lines. */
+export interface PostComment {
+  path: string
+  line: number
+  start?: number
+  body: string
+}
+
+/** What the user publishes to a teammate's PR: the review's text and its line comments. */
+export interface PostReview {
+  verdict: PrVerdict
+  body: string
+  comments: PostComment[]
+}
+
+const findingText = (f: ReviewFinding) => `**${FINDING_LEVEL_LABELS[f.level ?? 'should_fix']}**: ${f.text}`
+
+/**
+ * The review the user publishes (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): only the findings they picked, in
+ * level order; one on a line of a file is a line comment, the rest go in the text. `inline: false`: everything in the
+ * text (GitHub refuses a comment on a line the PR does not change). GitHub wants a text with request changes and
+ * comment: without findings for it, it counts them.
+ */
+export function reviewToPost(verdict: PrVerdict, findings: ReviewFinding[], inline = true): PostReview {
+  const picked = findingsByLevel(findings.filter((f) => f.post)).flatMap((g) => g.findings)
+  const comments: PostComment[] = []
+  const rest: string[] = []
+  for (const f of picked) {
+    const at = inline ? findingPlace(f.where) : null
+    if (at) comments.push({ path: at.path, line: at.end, ...(at.end > at.start ? { start: at.start } : {}), body: findingText(f) })
+    else rest.push(`- ${f.where ? `\`${f.where}\`: ` : ''}${findingText(f)}`)
+  }
+  const body = rest.length || verdict === 'approve' ? rest.join('\n') : picked.length ? findingCounts(picked) : PR_VERDICT_LABELS[verdict]
+  return { verdict, body, comments }
+}
+
+/**
+ * What a poll of a review's PR leads to (reviews-ahent-reviuit-pr-timeitiv.3): done once it is merged or closed
+ * (Decision 12); a look at new commits after the agent's review (Decision 8) once mag has not asked about that head yet;
+ * else nothing. A review the agent has not finished is left to it.
+ */
+export function reviewPollOutcome(review: PrReview, live: { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: string | null }): 'done' | 'rereview' | null {
+  if (live.state !== 'OPEN') return 'done'
+  return live.head && review.head && live.head !== review.pr.head ? 'rereview' : null
 }

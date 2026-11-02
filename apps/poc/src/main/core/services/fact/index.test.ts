@@ -70,3 +70,14 @@ test('hunk: through the source, between commit shas only', async () => {
   assert.deepEqual(await hunk(source, target.at, target.base, target.head, { path: 'src/api/users.ts', ...DIFF[0].hunks[0] }), ['+src/api/users.ts'])
   await assert.rejects(hunk(source, target.at, 'HEAD', target.head, { path: 'x', ...DIFF[0].hunks[0] }), /commit shas/)
 })
+
+test('changes: a repository outside the project reads by its folders, not the project architecture (reviews-ahent-reviuit-pr-timeitiv.3)', async () => {
+  const outside = await changes(project, [{ ...target, outside: true }], source, [canvas('intent', INTENT)])
+  assert.equal(outside.outside, true)
+  // The intent's jobs module (src/jobs) first, then the folders: src/api is a folder module, not the project's api.
+  assert.deepEqual(outside.files.map((f) => [f.path, f.module]), [['src/api/users.ts', 'src-api'], ['src/jobs/sync.ts', 'jobs']])
+  const fact = check(project, outside, canvas('fact', INTENT, 2), [canvas('intent', INTENT)])
+  assert.equal(fact.outside, true)
+  assert.match(factReport(fact, null, 'intent'), /Without the project architecture: the repository is outside the project/)
+  assert.equal((await changes(project, [target], source)).outside, false)
+})

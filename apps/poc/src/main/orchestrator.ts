@@ -1,16 +1,16 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, reviewOf, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrReview, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { changes, check, factReport, seed } from './core/services/fact/index.ts'
-import { factCanvas, factRecord, localGit, reviewComponents, reviewFactCanvas, reviewTarget, stepComponents, stepTargets } from './fact.ts'
+import { factCanvas, factRecord, localGit, reviewComponents, reviewFactCanvas, reviewSource, reviewTarget, stepComponents, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -216,17 +216,27 @@ const findingLines = (findings: ReviewFinding[]) =>
 
 /**
  * The job of the topic that owns a review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): said in full every
- * time, a first look or a look again. `files`: the PR's changed files as mag read them.
+ * time, a first look or a look again. `files`: the PR's changed files as mag read them; `since`: on a look again at new
+ * commits, only what changed after the head reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8).
  */
-const prReviewPrompt = (project: Project, work: Task, files: string) => {
+const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null) => {
   const r = work.prReview!
   const pr = r.pr
-  const name = repoNames(project)[project.repos.indexOf(pr.repo)] ?? pr.repo
+  const name = prRepoName(project, pr)
   const playbook = playbookOf(project)
+  const newer = r.head && r.head !== pr.head
+  const sinceDiff = pr.outside ? `gh api -H "Accept: application/vnd.github.diff" repos/${pr.repo}/compare/${r.head}...${pr.head}` : `git diff ${r.head} ${pr.head}`
   const before = r.verdict
-    ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\nLook again: what changed since, and whether each finding still holds; keep the intent and fact diagrams and revise them.`
+    ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
+        newer
+          ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the intent and fact diagrams and revise them where the new commits change them.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
+          : 'Look again: whether each finding still holds; keep the intent and fact diagrams and revise them.'
+      }`
     : ''
-  return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own its review ${work.key}. Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.${before}
+  const where = pr.outside
+    ? `Its repository ${pr.repo} is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff ${pr.url}, gh pr view and gh api (read only). Its fact is drawn without the project's architecture: its modules are its folders, as get_pr_changes lists them; say so in the review.`
+    : `Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.`
+  return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own its review ${work.key}. ${where}${before}
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
 Review it following the project's playbook:
 ${playbook.prReview}
@@ -1005,12 +1015,12 @@ export class Orchestrator {
   async reviewPr(projectId: string, url: string, by?: string): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
     const info = await prInfo(parsePrUrl(url).url)
-    const repo = await this.repoOfSlug(project, info.repo)
-    if (!repo) throw new Error(`${info.repo} is not a repository of ${project.name}: add its checkout in Settings to review its PRs`)
     if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
-    const name = repoNames(project)[project.repos.indexOf(repo)]
+    // A repository the project has no checkout of is read from GitHub (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10).
+    const repo = await this.repoOfSlug(project, info.repo)
     const tasks = this.store.data.tasks.filter((t) => t.projectId === projectId)
-    const pr = { url: info.url, repo, number: info.number, author: info.author, base: info.base, head: info.head }
+    const pr: PrRef = { url: info.url, repo: repo ?? info.repo, ...(repo ? {} : { outside: true }), number: info.number, author: info.author, base: info.base, head: info.head }
+    const name = prRepoName(project, pr)
     const prev = reviewOf(tasks, info.url)
     const owner = by ?? (prev && this.ownerSession(prev)?.id) ?? undefined
     if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is still working; ask it there`)
@@ -1027,7 +1037,8 @@ export class Orchestrator {
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
     if (!prev) this.store.updateTask(work.id, { prReview: fresh })
     log.info('agent', `${work.key}: review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
-    const job = prReviewPrompt(project, this.store.task(work.id), await this.prFiles(project, this.store.task(work.id)))
+    const { files, since } = await this.prFiles(project, this.store.task(work.id))
+    const job = prReviewPrompt(project, this.store.task(work.id), files, since)
     if (!by) await this.send(sessionId, job)
     return { taskId: work.id, sessionId, job }
   }
@@ -1052,17 +1063,30 @@ export class Orchestrator {
     return undefined
   }
 
-  /** The changed files of a review's PR, fetched into its repository's checkout, as the topic reads them. */
-  private async prFiles(project: Project, work: Task): Promise<string> {
-    const pr = work.prReview!.pr
-    try {
-      await fetchPr(pr.repo, pr.number, pr.base)
-      const target = await reviewTarget(project, work)
-      return formatFiles(target.name, target.base, target.head, (await changes(project, [target], localGit)).files)
-    } catch (e) {
-      log.warn('agent', `${work.key}: reading the PR locally failed: ${(e as Error).message}`)
-      return `(mag could not read the PR locally: ${(e as Error).message.split('\n')[0]}. Read it with gh pr diff; get_pr_changes needs it locally.)`
+  /**
+   * The changed files of a review's PR as the topic reads them: fetched into its repository's checkout, or from GitHub
+   * outside the project. `since`: with new commits after the head reviewed last, what they changed.
+   */
+  private async prFiles(project: Project, work: Task): Promise<{ files: string; since: string | null }> {
+    const r = work.prReview!
+    const pr = r.pr
+    const source = reviewSource(work)
+    const read = async (since?: string) => {
+      const target = await reviewTarget(project, work, undefined, since)
+      return formatFiles(target.name, target.base, target.head, (await changes(project, [target], source)).files)
     }
+    let files: string
+    try {
+      if (!pr.outside) await fetchPr(pr.repo, pr.number, pr.base)
+      files = await read()
+    } catch (e) {
+      log.warn('agent', `${work.key}: reading the PR failed: ${(e as Error).message}`)
+      return { files: `(mag could not read the PR: ${(e as Error).message.split('\n')[0]}. Read it with gh pr diff; get_pr_changes needs it too.)`, since: null }
+    }
+    if (!r.head || r.head === pr.head) return { files, since: null }
+    // A force push may have dropped the head reviewed last: then the whole PR is the change.
+    const since = await read(r.head).catch((e) => (log.warn('agent', `${work.key}: changes since ${r.head!.slice(0, 12)}: ${(e as Error).message}`), null))
+    return { files, since }
   }
 
   /**
@@ -1076,12 +1100,12 @@ export class Orchestrator {
     const project = this.store.project(work.projectId)
     const canvases = Object.values(this.store.data.canvases)
     const intent = reviewComponents(canvases, workId, 'intent')
-    const changed = await changes(project, [await reviewTarget(project, work)], localGit, intent)
+    const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work), intent)
     const same = work.fact?.heads[pr.repo] === pr.head
     let canvas = reviewFactCanvas(work, canvases)
     let started = same ? (work.fact?.canvasVersion ?? null) : null
     if (!canvas && intent.length) {
-      const diagram = seed(`${pr.url}`, intent, changed.files, project.architecture, 'intent')
+      const diagram = seed(`${pr.url}`, intent, changed.files, pr.outside ? null : project.architecture, 'intent')
       if (diagram) {
         const planOf = intent.length === 1 ? intent[0].id : null
         canvas = this.store.saveCanvas({ projectId: project.id, taskId: workId, sessionId: null, title: `${work.key}: fact`, kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: pr.repo, planOf } })
@@ -1102,6 +1126,50 @@ export class Orchestrator {
     const n = r.findings.length
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
     return 'Recorded: the user sees it in the Reviews tab. Nothing goes to GitHub until they publish the findings they pick.'
+  }
+
+  /**
+   * The user's Publish (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): the review goes to the PR on GitHub as theirs,
+   * with `verdict` and only the findings at `picks` (indexes into its findings). mag posts it, never an agent. A finding
+   * on a line the PR does not change is refused by GitHub as a line comment: then every finding goes in the text.
+   */
+  async publishReview(workId: string, verdict: PrVerdict, picks: number[]): Promise<string> {
+    const work = this.store.task(workId)
+    const r = work.prReview
+    if (!isReview(work) || !r) throw new Error(`${work.key} is not a review of a PR`)
+    if (!r.head) throw new Error(`${work.key} has no review yet`)
+    const findings = r.findings.map((f, i) => ({ ...f, post: picks.includes(i) }))
+    this.store.updateTask(workId, { prReview: { ...r, findings } })
+    let url: string
+    try {
+      url = await postReview(r.pr.url, r.head, reviewToPost(verdict, findings))
+    } catch (e) {
+      if (!/\b422\b|line could not be resolved|pull_request_review_thread/i.test((e as Error).message) || !reviewToPost(verdict, findings).comments.length) throw e
+      log.info('agent', `${work.key}: line comments refused, publishing them in the text: ${(e as Error).message.split('\n')[0]}`)
+      url = await postReview(r.pr.url, r.head, reviewToPost(verdict, findings, false))
+    }
+    this.store.updateTask(workId, { prReview: { ...this.store.task(workId).prReview!, posted: { at: Date.now(), url } } })
+    const n = picks.length
+    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `Published to GitHub: ${PR_VERDICT_LABELS[verdict]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
+    log.info('agent', `${work.key}: published ${PR_VERDICT_LABELS[verdict]} with ${n} finding(s) to ${r.pr.url}`)
+    return url
+  }
+
+  /**
+   * The user's Connect repo for a review of a PR outside the project (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10):
+   * `dir`, a checkout of its repository, joins the project, and the review looks again with the project's architecture.
+   */
+  async connectReviewRepo(workId: string, dir: string): Promise<{ sessionId: string }> {
+    const work = this.store.task(workId)
+    const pr = work.prReview?.pr
+    if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
+    if (!pr.outside) throw new Error(`${work.key} already reads its PR from the project's checkout`)
+    const origin = githubSlug((await repoInfo(dir).catch(() => null))?.origin)
+    if (origin !== pr.repo) throw new Error(`${dir} is not a checkout of ${pr.repo}${origin ? ` (its origin is ${origin})` : ''}`)
+    const project = this.store.project(work.projectId)
+    if (!project.repos.includes(dir)) this.store.updateProject(project.id, { repos: [...project.repos, dir] })
+    log.info('agent', `${work.key}: ${pr.repo} joins ${project.name} at ${dir}`)
+    return this.rereview(workId)
   }
 
   /** A live session takes a message during a turn too: the agent gets it in that turn. */

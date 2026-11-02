@@ -746,3 +746,5 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .reviewempty { padding-top: 40px; max-width: 520px; }
 .finding { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
 .finding .pill { min-width: 70px; text-align: center; }
+.reviewpublish { margin-top: 8px; }
+.finding input[type='checkbox'] { margin: 0; align-self: center; }

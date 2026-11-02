@@ -92,6 +92,7 @@ export function CoverageView({ view, hunks }: { view: FactView; hunks: Hunks }) 
         {cover && <span className="diffchip">shown {cover.shown.length}</span>}
         {cover && <span className={`diffchip${cover.unshown.length ? ' s-missing' : ''}`}>not shown {cover.unshown.length}</span>}
         <span className={`diffchip${view.unverified.length ? ' s-missing' : ''}`}>unverified lines {view.unverified.length}</span>
+        {view.outside && <span className="diffchip" title="The repository is outside the project: its modules are its folders">without the project architecture</span>}
         {other.length > 0 && (
           <button className="diffchip link" onClick={() => setRest(!rest)}>
             {rest ? '▾' : '▸'} not code {other.length}

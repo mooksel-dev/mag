@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, githubSlug, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, githubSlug, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, AwaitingPr, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -274,6 +274,23 @@ app.whenReady().then(async () => {
     return sessionId
   })
   handle('review:close', (_, id: string) => orch.closeReview(id))
+  // Publishing is the user's button only (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): mag posts, not an agent.
+  handle('review:publish', async (_, id: string, verdict: PrVerdict, picks: number[]) => {
+    try {
+      return { url: await orch.publishReview(id, verdict, picks) }
+    } catch (e) {
+      return { error: (e as Error).message.split('\n')[0] }
+    }
+  })
+  handle('review:connect', async (_, id: string) => {
+    const r = await dialog.showOpenDialog({ title: `A checkout of ${store.task(id).prReview?.pr.repo ?? 'the repository'}`, properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths[0]) return null
+    try {
+      return { sessionId: (await orch.connectReviewRepo(id, r.filePaths[0])).sessionId }
+    } catch (e) {
+      return { error: (e as Error).message.split('\n')[0] }
+    }
+  })
   handle('review:checks', (_, id: string) => {
     const pr = store.task(id).prReview?.pr
     if (!pr) throw new Error('Not a review of a PR')

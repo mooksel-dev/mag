@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
   FINDING_LEVEL_LABELS,
+  PR_VERDICTS,
   PR_VERDICT_LABELS,
   findingCounts,
   findingsByLevel,
   parsePrUrl,
+  prRepoName,
   projectReviews,
-  repoNames,
   reviewRunning,
   type PrVerdict,
   type Project,
@@ -35,6 +36,9 @@ function reviewStatus(work: Task | undefined, state: AppState): string {
   if (!r?.verdict) return 'waits for the agent'
   return `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}${r.head === r.pr.head ? '' : ' · new commits since'}`
 }
+
+/** Findings worth publishing unless the user says otherwise: blockers and should fix. */
+const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'].includes(f.level ?? 'should_fix')
 
 /** "app#418", from a PR link. */
 const prShort = (url: string) => {
@@ -204,6 +208,10 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
 }) {
   const [error, setError] = useState<string | null>(null)
   const r = work.prReview
+  // What the user publishes; a new review starts from its own picks.
+  const [picks, setPicks] = useState<Set<number>>(new Set())
+  useEffect(() => setPicks(new Set((r?.findings ?? []).flatMap((f, i) => (pickedByDefault(f) ? [i] : [])))), [r?.at])
+  const toggle = (i: number) => setPicks((p) => (p.has(i) ? new Set([...p].filter((x) => x !== i)) : new Set([...p, i])))
   const running = reviewRunning(work, state.sessions)
   const diagrams = state.canvases.filter((c) => c.taskId === work.id && c.kind === 'diagram' && c.diagram && (c.role === 'intent' || c.role === 'fact'))
   const diagramsKey = diagrams.map((d) => `${d.id}@${d.version}`).join(',')
@@ -213,7 +221,7 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
     f().catch((e) => setError(String((e as Error).message ?? e)))
   }
   if (!r) return <p className="muted">This review has no PR.</p>
-  const repo = repoNames(project)[project.repos.indexOf(r.pr.repo)] ?? r.pr.repo
+  const repo = prRepoName(project, r.pr)
   return (
     <div className="reviewview">
       <div className="taskrow">
@@ -239,6 +247,15 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
         <div className="grow" />
         <span className="muted small">Nothing goes to GitHub without your button.</span>
       </div>
+      {r.pr.outside && (
+        <div className="banner">
+          {r.pr.repo} is not one of the project's repositories: mag reads the PR from GitHub, and its fact has modules by folder, without the project architecture.{' '}
+          <button className="small" disabled={running} title="Pick a checkout of the repository: it joins the project, and the review looks again with its architecture" onClick={act(() => mag.connectReviewRepo(work.id).then((c) => {
+            if (c && 'error' in c) throw new Error(c.error)
+            if (c) onOpenTopic(c.sessionId)
+          }))}>Connect repo</button>
+        </div>
+      )}
       {running && !r.verdict && <p className="muted">The agent is reviewing: PR and ticket, problem, approach, intent, fact, findings.</p>}
       {r.problem && (
         <section>
@@ -274,6 +291,9 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
           findingsByLevel(r.findings).map(({ level, findings }) =>
             findings.map((f, i) => (
               <div key={`${level}${i}`} className="finding">
+                {r.verdict && (
+                  <input type="checkbox" title="Publish this finding" aria-label="Publish this finding" checked={picks.has(r.findings.indexOf(f))} onChange={() => toggle(r.findings.indexOf(f))} />
+                )}
                 <span className={`pill ${LEVEL_PILLS[level]}`}>{FINDING_LEVEL_LABELS[level]}</span>
                 <div className="grow">
                   <div>{f.text}</div>
@@ -287,7 +307,50 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
         ) : (
           <p className="muted small">{r.verdict ? 'No findings.' : 'None yet.'}</p>
         )}
+        {r.verdict && <Publish work={work} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
       </section>
+    </div>
+  )
+}
+
+/**
+ * The user's Publish (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): the verdict and the picked findings go to the
+ * PR on GitHub as the user's review, after they confirm. Nothing else ever does.
+ */
+function Publish({ work, repo, picks, running, now, onError }: {
+  work: Task
+  repo: string
+  picks: Set<number>
+  running: boolean
+  now: number
+  onError: (e: string | null) => void
+}) {
+  const r = work.prReview!
+  const [verdict, setVerdict] = useState<PrVerdict>(r.verdict ?? 'comment')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setVerdict(r.verdict ?? 'comment'), [r.verdict, r.at])
+  const stale = r.head !== r.pr.head
+  const publish = () => {
+    const n = picks.size
+    if (!confirm(`Publish to ${repo}#${r.pr.number} as you: ${PR_VERDICT_LABELS[verdict]}${n ? ` with ${n} finding${n > 1 ? 's' : ''}` : ''}?${stale ? '\nThe PR has new commits since this review.' : ''}`)) return
+    onError(null)
+    setBusy(true)
+    mag.publishReview(work.id, verdict, [...picks].sort((a, b) => a - b)).then(
+      (res) => (setBusy(false), 'error' in res && onError(`GitHub: ${res.error}`)),
+      (e) => (setBusy(false), onError(String((e as Error).message ?? e))),
+    )
+  }
+  return (
+    <div className="taskrow reviewpublish">
+      <select value={verdict} onChange={(e) => setVerdict(e.target.value as PrVerdict)} aria-label="Verdict to publish">
+        {PR_VERDICTS.map((v) => <option key={v} value={v}>{PR_VERDICT_LABELS[v]}</option>)}
+      </select>
+      <button className="primary" disabled={busy || running} title="Post the verdict and the picked findings to the PR as your review" onClick={publish}>
+        {busy ? 'Publishing…' : `Publish to GitHub${picks.size ? ` (${picks.size})` : ''}`}
+      </button>
+      {r.posted && (
+        <button className="link small" title="Open the published review" onClick={() => mag.open(r.posted!.url)}>published {ago(r.posted.at, now)} ↗</button>
+      )}
     </div>
   )
 }

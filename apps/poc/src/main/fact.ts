@@ -1,19 +1,29 @@
 // The fact of a step's PRs against its plan (T-57.4, reworked in T-58): a step is one caller of the fact service. Here
 // a step becomes what the service reads: its repositories' changes since they left the base branch, over local git,
 // with its plan as the intent; and the fact as the step records it and Diff shows it. A review of a teammate's PR
-// (reviews-ahent-reviuit-pr-timeitiv.2) is the other caller: the PR's changes, with its intent diagrams as the intent.
+// (reviews-ahent-reviuit-pr-timeitiv.2) is the other caller: the PR's changes, with its intent diagrams as the intent;
+// read from GitHub when the project has no checkout of its repository (reviews-ahent-reviuit-pr-timeitiv.3).
 import { existsSync } from 'node:fs'
-import { prHeads, repoNames, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
+import { prHeads, prRepoName, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
 import type { HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, type ChangeSource, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
-import { diffHunks, diffText, hunkLines, mergeBase, revParse } from './git.ts'
+import { diffHunks, diffText, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse, zeroContext } from './git.ts'
 
 /** Changes as the local git checkouts of the project's repositories have them. */
 export const localGit: ChangeSource = {
   diffHunks,
   hunkLines: async (at, base, head, ref) => hunkLines(await diffText(at, base, head), ref.path, ref),
 }
+
+/** Changes as GitHub has them, for a repository without a local checkout: `at` is its owner/repo. */
+export const github: ChangeSource = {
+  diffHunks: githubDiffHunks,
+  hunkLines: async (at, base, head, ref) => hunkLines(zeroContext(await githubDiffText(at, base, head)), ref.path, ref),
+}
+
+/** Where a review reads its PR: the local checkout of a project repository, else GitHub. */
+export const reviewSource = (work: Task): ChangeSource => (work.prReview?.pr.outside ? github : localGit)
 
 /** A review's Component diagrams of a role (intent, fact), in the order they were drawn. */
 export const reviewComponents = (canvases: Canvas[], workId: string, role: 'intent' | 'fact') =>
@@ -96,16 +106,22 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
     coverage: fact.coverage,
     unverified: fact.grounding?.unverified ?? [],
+    outside: fact.outside,
     at: Date.now(),
   }
 }
 
-/** The PR of a review at `head` (default: its head when mag last looked), from where it left its base branch. */
-export async function reviewTarget(project: Project, work: Task, head?: string): Promise<ChangeTarget> {
+/**
+ * The PR of a review at `head` (default: its head when mag last looked), from where it left its base branch; or, with
+ * `since` (the head reviewed last), only what changed after it.
+ */
+export async function reviewTarget(project: Project, work: Task, head?: string, since?: string): Promise<ChangeTarget> {
   const pr = work.prReview?.pr
   if (!pr) throw new Error(`${work.key} reviews no PR`)
-  const name = repoNames(project)[project.repos.indexOf(pr.repo)] ?? pr.repo
+  const name = prRepoName(project, pr)
   const at = head ?? pr.head
+  if (pr.outside) return { repo: pr.repo, name, at: pr.repo, base: await githubMergeBase(pr.repo, since ?? pr.base, at), head: at, outside: true }
+  if (since) return { repo: pr.repo, name, at: pr.repo, base: since, head: at }
   const from = await revParse(pr.repo, `origin/${pr.base}`).catch(() => revParse(pr.repo, pr.base))
   return { repo: pr.repo, name, at: pr.repo, base: await mergeBase(pr.repo, from, at), head: at }
 }
@@ -119,7 +135,7 @@ export function reviewFactCanvas(work: Task, canvases: Canvas[]): Canvas | null 
 /** The fact of a reviewed PR at `head`: its changes against the review's fact diagram and intent. */
 export async function reviewFact(project: Project, work: Task, canvases: Canvas[], head?: string): Promise<Fact> {
   const intent = reviewComponents(canvases, work.id, 'intent')
-  const changed = await changes(project, [await reviewTarget(project, work, head)], localGit, intent)
+  const changed = await changes(project, [await reviewTarget(project, work, head)], reviewSource(work), intent)
   return check(project, changed, reviewFactCanvas(work, canvases), intent)
 }
 
@@ -134,7 +150,7 @@ export async function reviewFactView(project: Project, work: Task, canvases: Can
 /** The lines of one hunk of a reviewed PR, between two commits of a FactView. */
 export async function reviewHunk(work: Task, repo: string, base: string, head: string, ref: HunkRef): Promise<string[]> {
   if (work.prReview?.pr.repo !== repo) throw new Error(`${work.key} does not review a PR of ${repo}`)
-  return hunk(localGit, repo, base, head, ref)
+  return hunk(reviewSource(work), repo, base, head, ref)
 }
 
 /** The lines of one hunk of a step's PR in `repo` (one of the step's), between two commits of a FactView. */
