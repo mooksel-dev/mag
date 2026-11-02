@@ -4,17 +4,17 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, githubSlug, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
-import type { AppState, AwaitingPr, NewTask, RendererCrash, WindowTarget } from '../preload/api'
+import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
-import { prChecks, prsAwaitingReview, repoInfo } from './git'
+import { prChecks, repoInfo } from './git'
 import { factView, reviewFactView, reviewHunk, stepHunk } from './fact'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
@@ -247,20 +247,6 @@ app.whenReady().then(async () => {
     return isReview(step) ? reviewHunk(step, repo, base, head, hunk) : stepHunk(step, repo, base, head, hunk)
   })
   // Reviews of teammates' PRs (reviews-ahent-reviuit-pr-timeitiv.2).
-  handle('reviews:awaiting', async (_, projectId: string) => {
-    const prs: AwaitingPr[] = []
-    const errors: string[] = []
-    for (const repo of store.project(projectId).repos) {
-      const slug = githubSlug((await repoInfo(repo).catch(() => null))?.origin)
-      if (!slug) continue
-      try {
-        prs.push(...(await prsAwaitingReview(slug)))
-      } catch (e) {
-        errors.push(`${slug}: ${(e as Error).message.split('\n')[0]}`)
-      }
-    }
-    return { prs: prs.sort((a, b) => b.updatedAt - a.updatedAt), errors }
-  })
   handle('review:start', async (_, projectId: string, url: string) => {
     try {
       const { taskId, sessionId } = await orch.reviewPr(projectId, url)

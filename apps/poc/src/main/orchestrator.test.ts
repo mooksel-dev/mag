@@ -875,7 +875,7 @@ test("a topic never writes to a PR: review, comment, close, edit, gh api writes 
   assert.ok(!denied.includes('Bash'))
 })
 
-test("a teammate's PR: intent ↔ fact starts the fact as a copy of the intent; the verdict goes to Needs you (reviews-ahent-reviuit-pr-timeitiv.2)", async () => {
+test("a teammate's PR: mag starts its fact without a plan; the verdict goes to Needs you (reviews-ahent-reviuit-pr-timeitiv.2, reviews-prybraty-spysok-pr-i.1)", async () => {
   const { dir, store, orch, project } = setup()
   const app = gitRepo(join(dir, 'repos', 'app'))
   git(app, 'checkout', '-q', '-b', 'feature')
@@ -890,16 +890,13 @@ test("a teammate's PR: intent ↔ fact starts the fact as a copy of the intent; 
   const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
   store.updateTask(work.id, { prReview: { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null } })
 
-  // Without an intent there is nothing to copy: the topic is told to draw it first.
-  assert.match(await orch.reviewFactOf(work.id), /## Intent ↔ fact \(mag\)\nIntent diagrams: none yet: draw the intent[\s\S]*src\/charge\.ts/)
-  assert.equal(store.task(work.id).fact?.canvasId, null)
-
-  const intent = store.saveCanvas({ projectId: project.id, taskId: work.id, sessionId: topic.id, title: 'Intent', kind: 'diagram', diagram: { type: 'component', summary: 'Charge once.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'add', uses: [] }] }, placement: { role: 'intent', option: null, stepId: null, repo: null, planOf: null } })
+  // No plan to copy: mag starts the fact over the modules that own the changed code, and compares it with nothing.
   const report = await orch.reviewFactOf(work.id)
   const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
-  assert.match(report, new RegExp(`Intent diagrams: \\[Intent\\]\\(canvas:${intent.id}\\)[\\s\\S]*mag's copy of the intent`))
-  assert.deepEqual([fact.stepId, fact.repo, fact.planOf, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, app, intent.id, fact.id, { [app]: head }])
-  assert.match((fact.diagram as { summary: string }).summary, /copy of its intent "Intent"/)
+  assert.match(report, /^## Fact \(mag\)\nFact diagram: \[[^\]]+\]\(canvas:\w+\) \(v1\), started by mag: nothing on it rests on the PR yet\.[\s\S]*src\/charge\.ts[\s\S]*### The fact is not complete yet/)
+  assert.doesNotMatch(report, /Intent|Plan ↔ fact/)
+  assert.deepEqual([fact.stepId, fact.repo, fact.planOf, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, app, null, fact.id, { [app]: head }])
+  assert.match((fact.diagram as { summary: string }).summary, /no plan diagram/)
 
   assert.match(orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /Nothing goes to GitHub/)
   const r = store.task(work.id).prReview!

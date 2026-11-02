@@ -73,17 +73,6 @@ export type WindowTarget =
   | { kind: 'canvas'; canvasId: string }
   | { kind: 'doc'; taskId: string }
 
-/** An open PR that requests the user's review (gh search prs --review-requested=@me). */
-export interface AwaitingPr {
-  url: string
-  number: number
-  title: string
-  author: string
-  /** owner/repo, lower case. */
-  repo: string
-  updatedAt: number
-}
-
 /** One CI check of a PR; bucket: pass, fail, pending, skipping or cancel. */
 export interface PrCheck {
   name: string
@@ -210,13 +199,11 @@ export interface MagApi {
   onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
   /**
    * Plan ↔ fact of a step from the code (T-57.5): its open PRs (else the heads its fact was recorded at) against its
-   * plan diagrams; null when it has neither. A review of a teammate's PR: intent ↔ fact of its PR.
+   * plan diagrams; null when it has neither. A review of a teammate's PR: the fact of its PR, without a plan.
    */
   stepFact(stepId: string): Promise<FactView | null>
   /** The lines of one hunk of a step's PR (`+…`, `-…`), from `base`..`head` of one of its repositories. A review's too. */
   stepHunk(stepId: string, repo: string, base: string, head: string, hunk: HunkRef): Promise<string[]>
-  /** Open PRs of the project's GitHub repositories that request the user's review; a repo gh could not search is in errors. */
-  awaitingReviews(projectId: string): Promise<{ prs: AwaitingPr[]; errors: string[] }>
   /**
    * Review a teammate's PR of a project repository: its review (new, or the PR's own again) and the topic that does it.
    * A link that is not one, or a PR outside the project, comes back as `error`.

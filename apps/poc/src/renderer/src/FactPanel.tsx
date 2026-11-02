@@ -124,29 +124,41 @@ export function CoverageView({ view, hunks }: { view: FactView; hunks: Hunks }) 
 }
 
 function Body({ step, view }: { step: Task; view: FactView }) {
-  const [all, setAll] = useState(false)
-  const [matches, setMatches] = useState(false)
   const hunks = useHunks(step.id, view)
-  const r = rows(view.items, all)
-  // A review of a teammate's PR has an intent where a step has its plan, and no merge of ours to allow.
+  // A review of a teammate's PR has no plan to compare and no merge of ours to allow: only the fact against its diff
+  // (reviews-prybraty-spysok-pr-i.1).
   const review = isReview(step)
-  const intent = review ? 'intent' : 'plan'
   return (
     <>
       <div className="muted small">
         {view.repos.map((x) => `${x.name} ${short(x.baseSha)}..${short(x.headSha)}`).join(' · ')}
-        {view.plans.length ? ` · ${intent}: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : review ? ' · no intent diagram yet' : ' · no plan diagram: nothing it changes is planned'}
+        {review ? '' : view.plans.length ? ` · plan: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : ' · no plan diagram: nothing it changes is planned'}
       </div>
       <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
         {view.blockers.length ? (
           <>
-            {review ? 'The fact does not cover the PR yet, or differs from the intent:' : 'Merge is not allowed, look at most:'}
+            {review ? 'The fact does not cover the PR yet:' : 'Merge is not allowed, look at most:'}
             <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
           </>
+        ) : review ? (
+          'The fact shows every changed code file and rests on the PR.'
         ) : (
-          `${review ? '' : 'Merge is allowed: '}The fact shows every changed code file, rests on the PR and agrees with the ${intent}.`
+          'Merge is allowed: the fact shows every changed code file, rests on the PR and agrees with the plan.'
         )}
       </div>
+      {!review && <Comparison view={view} hunks={hunks} />}
+      <CoverageView view={view} hunks={hunks} />
+    </>
+  )
+}
+
+/** Plan ↔ fact of a step: the counts by status and the differences, the significant ones first. */
+function Comparison({ view, hunks }: { view: FactView; hunks: ReturnType<typeof useHunks> }) {
+  const [all, setAll] = useState(false)
+  const [matches, setMatches] = useState(false)
+  const r = rows(view.items, all)
+  return (
+    <>
       <div className="factbar">
         <div className="chips">
           {statusCounts(view.items).map((s) => (
@@ -161,11 +173,11 @@ function Body({ step, view }: { step: Task; view: FactView }) {
         </span>
       </div>
       {view.items.length === 0 ? (
-        <p className="muted small">Neither the {intent} nor the fact diagram draws a change.</p>
+        <p className="muted small">Neither the plan nor the fact diagram draws a change.</p>
       ) : (
         <table className="facttable">
           <thead>
-            <tr><th /><th>level</th><th>{review ? 'Intent' : 'Plan'}</th><th>Fact</th></tr>
+            <tr><th /><th>level</th><th>Plan</th><th>Fact</th></tr>
           </thead>
           <tbody>
             {r.shown.map((i, n) => <Row key={n} item={i} view={view} hunks={hunks} />)}
@@ -190,7 +202,6 @@ function Body({ step, view }: { step: Task; view: FactView }) {
           </tbody>
         </table>
       )}
-      <CoverageView view={view} hunks={hunks} />
     </>
   )
 }
@@ -199,7 +210,7 @@ function Body({ step, view }: { step: Task; view: FactView }) {
  * Plan ↔ fact of a step (T-57.5, T-58): its fact diagram, drawn by the reviewer from the diff, against its plan
  * diagrams; the threshold; which changed files the fact shows and which of its lines do not rest on the PR; the diff
  * behind each file. Open by default while a PR is open; computed when open. A review of a teammate's PR (`step` is
- * the review) shows intent ↔ fact of its PR the same way.
+ * the review) shows the fact of its PR the same way, without a plan.
  */
 export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: string }) {
   const review = isReview(step)
@@ -225,7 +236,7 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
     <div className="factpanel">
       <div className="factbar">
         <button className="link diffsub" onClick={() => setOpen(!open)}>
-          {open ? '▾' : '▸'} {review ? 'Intent' : 'Plan'} ↔ fact
+          {open ? '▾' : '▸'} {review ? 'Fact' : 'Plan ↔ fact'}
         </button>
         {!open && counts && (
           <span className="muted small">

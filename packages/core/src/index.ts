@@ -561,7 +561,7 @@ export interface Task {
   ownerQuestion?: string | null
   /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
   review?: AgentReview | null
-  /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). A review: intent ↔ fact of the PR. */
+  /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). A review: the fact of the PR, without a plan. */
   fact?: StepFact | null
   /** Works of type review: the teammate's PR and what its review found. */
   prReview?: PrReview | null
@@ -1238,11 +1238,11 @@ export interface Canvas {
   role?: CanvasRole | null
   /** role 'option': the option it sketches, e.g. "A". */
   option?: string | null
-  /** role 'plan' / 'fact': the step it belongs to; none for the intent and fact of a review (they are its work's). */
+  /** role 'plan' / 'fact': the step it belongs to; none for the fact of a review (it is its work's). */
   stepId?: string | null
   /** role 'plan' / 'fact': the project repository (path) it changes; none when it spans the step. */
   repo?: string | null
-  /** role 'fact': the plan (or intent) diagram it is the fact of (T-55.4). */
+  /** role 'fact': the plan diagram it is the fact of (T-55.4). */
   planOf?: string | null
   version: number
   updatedAt: number

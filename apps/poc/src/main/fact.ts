@@ -1,8 +1,9 @@
 // The fact of a step's PRs against its plan (T-57.4, reworked in T-58): a step is one caller of the fact service. Here
 // a step becomes what the service reads: its repositories' changes since they left the base branch, over local git,
-// with its plan as the intent; and the fact as the step records it and Diff shows it. A review of a teammate's PR
-// (reviews-ahent-reviuit-pr-timeitiv.2) is the other caller: the PR's changes, with its intent diagrams as the intent;
-// read from GitHub when the project has no checkout of its repository (reviews-ahent-reviuit-pr-timeitiv.3).
+// against its plan; and the fact as the step records it and Diff shows it. A review of a teammate's PR
+// (reviews-ahent-reviuit-pr-timeitiv.2) is the other caller: the PR's changes, without a plan to compare
+// (reviews-prybraty-spysok-pr-i.1); read from GitHub when the project has no checkout of its repository
+// (reviews-ahent-reviuit-pr-timeitiv.3).
 import { existsSync } from 'node:fs'
 import { prHeads, prRepoName, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
 import type { HunkRef } from '@mag/diff'
@@ -25,9 +26,9 @@ export const github: ChangeSource = {
 /** Where a review reads its PR: the local checkout of a project repository, else GitHub. */
 export const reviewSource = (work: Task): ChangeSource => (work.prReview?.pr.outside ? github : localGit)
 
-/** A review's Component diagrams of a role (intent, fact), in the order they were drawn. */
-export const reviewComponents = (canvases: Canvas[], workId: string, role: 'intent' | 'fact') =>
-  canvases.filter((c) => c.taskId === workId && c.role === role && c.kind === 'diagram' && c.diagram?.type === 'component')
+/** A review's Component fact diagrams, in the order they were drawn. */
+export const reviewFacts = (canvases: Canvas[], workId: string) =>
+  canvases.filter((c) => c.taskId === workId && c.role === 'fact' && c.kind === 'diagram' && c.diagram?.type === 'component')
 
 /** A step's Component diagrams of a role, in the order they were drawn. */
 export const stepComponents = (canvases: Canvas[], stepId: string, role: 'plan' | 'fact') =>
@@ -102,7 +103,7 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
     files: fact.files,
     items: fact.comparison.items,
     blockers: fact.blockers,
-    plans: fact.intent.map(canvasRef),
+    plans: (fact.plan ?? []).map(canvasRef),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
     coverage: fact.coverage,
     unverified: fact.grounding?.unverified ?? [],
@@ -128,18 +129,17 @@ export async function reviewTarget(project: Project, work: Task, head?: string, 
 
 /** The review's fact diagram: the one its fact names, else the first one it has. */
 export function reviewFactCanvas(work: Task, canvases: Canvas[]): Canvas | null {
-  const facts = reviewComponents(canvases, work.id, 'fact')
+  const facts = reviewFacts(canvases, work.id)
   return facts.find((c) => c.id === work.fact?.canvasId) ?? facts[0] ?? null
 }
 
-/** The fact of a reviewed PR at `head`: its changes against the review's fact diagram and intent. */
+/** The fact of a reviewed PR at `head`: its changes against the review's fact diagram; no plan to compare. */
 export async function reviewFact(project: Project, work: Task, canvases: Canvas[], head?: string): Promise<Fact> {
-  const intent = reviewComponents(canvases, work.id, 'intent')
-  const changed = await changes(project, [await reviewTarget(project, work, head)], reviewSource(work), intent)
-  return check(project, changed, reviewFactCanvas(work, canvases), intent)
+  const changed = await changes(project, [await reviewTarget(project, work, head)], reviewSource(work))
+  return check(project, changed, reviewFactCanvas(work, canvases), null)
 }
 
-/** Intent ↔ fact of a review as its page shows it: at the head its fact is of, else the PR's. null before it has a PR. */
+/** The fact of a review as its page shows it: at the head its fact is of, else the PR's. null before it has a PR. */
 export async function reviewFactView(project: Project, work: Task, canvases: Canvas[]): Promise<FactView | null> {
   const pr = work.prReview?.pr
   if (!pr) return null

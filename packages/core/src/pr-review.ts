@@ -1,6 +1,7 @@
 // Reviews of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): a work of type review, without steps and without a
-// PR of ours. Its owner (a project topic) reads the PR and its ticket, states the problem, weighs the approach, draws
-// the intent and the fact with the same diff service as a step's review, and records findings by level with a verdict.
+// PR of ours. Its owner (a project topic) reads the PR and its ticket, states the problem, draws the fact with the same
+// diff service as a step's review and checks it against the problem and the project's agreements, not against a plan
+// of its own (reviews-prybraty-spysok-pr-i.1); it records findings by level with a verdict.
 // Nothing goes to GitHub without the user's button.
 
 import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
@@ -40,12 +41,12 @@ export interface PrRef {
   head: string
 }
 
-/** A review of a teammate's PR: what the agent understood, how it rates the approach, and its findings. */
+/** A review of a teammate's PR: what the agent understood, whether the change solves it, and its findings. */
 export interface PrReview {
   pr: PrRef
   /** The problem as the agent understood it, with evidence; empty until it has reviewed. */
   problem: string
-  /** Its view of the approach: right or not, better alternatives. */
+  /** How the PR solves the problem and whether it does (reviews-prybraty-spysok-pr-i.1: not the agent's own design). */
   approach: string
   /** null until the agent has reviewed. */
   verdict: PrVerdict | null

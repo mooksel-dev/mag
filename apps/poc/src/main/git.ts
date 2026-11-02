@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import { parsePrUrl, type PostReview, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
-import type { AwaitingPr, PrCheck } from '../preload/api'
+import type { PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
 
@@ -158,12 +158,6 @@ export async function prInfo(url: string): Promise<PrInfo> {
   const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,author,state,baseRefName,headRefOid,additions,deletions,changedFiles']))
   const repo = String(v.url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//i)?.[1]?.toLowerCase() ?? ''
   return { url: v.url, number: v.number, title: v.title, author: v.author?.login ?? '?', state: v.state, repo, base: v.baseRefName, head: v.headRefOid, additions: v.additions ?? 0, deletions: v.deletions ?? 0, changedFiles: v.changedFiles ?? 0 }
-}
-
-/** Open PRs of a GitHub repository (owner/repo) that request the user's review. */
-export async function prsAwaitingReview(slug: string): Promise<AwaitingPr[]> {
-  const list = JSON.parse(await run('gh', ['search', 'prs', '--review-requested=@me', '--state=open', '--repo', slug, '--json', 'url,number,title,author,updatedAt', '--limit', '50']))
-  return list.map((p: any) => ({ url: p.url, number: p.number, title: p.title, author: p.author?.login ?? '?', repo: slug.toLowerCase(), updatedAt: Date.parse(p.updatedAt) || 0 }))
 }
 
 /** The CI checks of a PR; [] when it has none. */

@@ -86,7 +86,6 @@ const api: MagApi = {
       if (openTaskCb === cb) openTaskCb = null
     }
   },
-  awaitingReviews: (projectId) => ipcRenderer.invoke('reviews:awaiting', projectId),
   startReview: (projectId, url) => ipcRenderer.invoke('review:start', projectId, url),
   reviewAgain: (taskId) => ipcRenderer.invoke('review:again', taskId),
   closeReview: (taskId) => ipcRenderer.invoke('review:close', taskId),

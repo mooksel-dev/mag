@@ -694,8 +694,8 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
-  prReview: 'How the agent reviews a teammate\'s PR (Reviews tab): PR and ticket, problem, approach, intent, fact, CI, findings by level and a verdict. It never writes to the PR.',
-  fact: 'How a reviewer draws the fact of a diff as a revision of the plan; every review that reads a diff follows it.',
+  prReview: 'How the agent reviews a teammate\'s PR (Reviews tab): PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
+  fact: 'How a reviewer draws the fact of a diff (a revision of a step\'s plan; a teammate\'s PR has none); every review that reads a diff follows it.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
   significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',
 }
