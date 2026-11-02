@@ -1,27 +1,16 @@
 import { useState } from 'react'
-import { diagramGroups, diagramSummary, prHeads, repoNames, subtasksOf, type DiffCount, type Project, type Task } from '@mag/core'
+import { diagramGroups, diagramSummary, prHeads, repoNames, setOf, subtasksOf, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { DIAGRAM_NAMES, DiagramView } from './diagrams/DiagramView'
+import { DIAGRAM_NAMES } from './diagrams/DiagramView'
+import { Changes, DiffSetView, setContext, type DiagramCanvas } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { SubtaskIcon } from './Tasks'
 
 const mag = window.mag
 
-type DiagramCanvas = AppState['canvases'][number] & { diagram: NonNullable<AppState['canvases'][number]['diagram']> }
-
 /** Diagram canvases among `canvases`, in the order they were drawn. */
 export function diagramsOf(canvases: AppState['canvases']): DiagramCanvas[] {
   return canvases.filter((c): c is DiagramCanvas => c.kind === 'diagram' && !!c.diagram)
-}
-
-function Changes({ count }: { count: DiffCount }) {
-  if (!count.add && !count.mod && !count.del && !count.move) return <span className="muted small">no changes</span>
-  return (
-    <span className="diffcount">
-      <span className="d-add">+{count.add}</span> <span className="d-mod">~{count.mod}</span> <span className="d-del">−{count.del}</span>
-      {count.move > 0 && <> <span className="d-move">↷{count.move}</span></>}
-    </span>
-  )
 }
 
 const OpenWindow = ({ id }: { id: string }) => (
@@ -53,8 +42,8 @@ const hasFact = (step: Task) => !!step.fact || Object.keys(prHeads(step.work)).l
 
 /**
  * The diagrams of a work by their place (T-55.3): Options side by side → Plan by step and repository, with plan ↔ fact
- * of the step's PRs (T-57.5) → the rest. Options fold once there is a plan. Click a diagram to open it here, ⧉ in its
- * own window.
+ * of the step's PRs (T-57.5) → the rest. Options fold once there is a plan. Click a diagram to open its whole set here
+ * (DiffSetView), ⧉ in its own window.
  */
 export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks: Task[]; project: Project | undefined; diagrams: DiagramCanvas[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
@@ -70,21 +59,11 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
   const showOptions = optionsOpen ?? !plan.length
   const open = diagrams.find((d) => d.id === openId)
   if (!diagrams.length && !plan.length) return <p className="muted">No diagrams yet. The groomer draws the change here: modules, scenarios, states, algorithms and data.</p>
-  if (open)
-    return (
-      <div className="diffopen">
-        <div className="canvashead">
-          <button className="link" onClick={() => setOpenId(null)}>‹ All diagrams</button>
-          <span className="muted small">{DIAGRAM_NAMES[open.diagram.type]}</span>
-          <span className="title">{open.title}</span>
-          <Changes count={diagramSummary(open.diagram)} />
-          <div className="grow" />
-          <span className="muted small">v{open.version}</span>
-          <OpenWindow id={open.id} />
-        </div>
-        <DiagramView key={open.id + open.version} diagram={open.diagram} siblings={diagrams} />
-      </div>
-    )
+  if (open) {
+    // The whole set of the diagram in one window: its option, its step's plan or fact (povnyi-diff-nabir-pov-iazanykh.2).
+    const set = setOf(open, diagrams)
+    return <DiffSetView key={set[0].id} set={set} current={open.id} {...setContext(set, tasks)} onClose={() => setOpenId(null)} />
+  }
   const from = (d: DiagramCanvas) => (d.taskId === task.id ? null : (tasks.find((t) => t.id === d.taskId)?.key ?? 'another task'))
   const repoName = (r: string | null) => (r === null ? 'Whole step' : (repoNames({ repos })[repos.indexOf(r)] ?? r))
   const grouped = groups.options.length > 0 || plan.length > 0

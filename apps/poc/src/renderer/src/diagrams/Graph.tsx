@@ -13,18 +13,18 @@ const INITIAL = '@initial'
 const FINAL = '@final'
 
 /** Steps, branches and loops of a flow, top-down. `view`: before or after the change, without diff colors (flowchartAs). */
-export function FlowchartView({ diagram, focus, view = 'diff' }: { diagram: FlowchartDiagram; focus?: string; view?: FlowView }) {
+export function FlowchartView({ diagram, focus, view = 'diff', onSelect }: { diagram: FlowchartDiagram; focus?: string; view?: FlowView; onSelect?: (id: string | null) => void }) {
   const d = flowchartAs(diagram, view)
   const nodes = d.nodes.map((n): Marked<GraphNode> => ({ id: n.id, label: n.label, shape: n.shape, diff: n.diff }))
   const edges = d.edges.map((e, i): Marked<GraphEdge> => ({ id: `e${i}`, from: e.from, to: e.to, label: e.label, diff: e.diff }))
-  return <GraphView nodes={nodes} edges={edges} direction="DOWN" focus={focus} plain={view !== 'diff'} />
+  return <GraphView nodes={nodes} edges={edges} direction="DOWN" focus={focus} plain={view !== 'diff'} onSelect={onSelect} />
 }
 
 /**
  * States of an entity, left to right. A dot points at the initial states, final states lead to a bullseye; those
  * pseudo-arrows take the change of their state.
  */
-export function StateView({ diagram, focus }: { diagram: StateDiagram; focus?: string }) {
+export function StateView({ diagram, focus, onSelect }: { diagram: StateDiagram; focus?: string; onSelect?: (id: string | null) => void }) {
   const nodes: Marked<GraphNode>[] = diagram.states.map((s) => ({ id: s.id, label: s.label, shape: 'state', diff: s.diff }))
   const edges: Marked<GraphEdge>[] = diagram.transitions.map((t, i) => ({
     id: `t${i}`,
@@ -46,7 +46,7 @@ export function StateView({ diagram, focus }: { diagram: StateDiagram; focus?: s
   return (
     <>
       <div className="muted small graphentity">States of <b>{diagram.entity}</b></div>
-      <GraphView nodes={nodes} edges={edges} direction="RIGHT" focus={focus} finals={new Set(final.map((s) => s.id))} />
+      <GraphView nodes={nodes} edges={edges} direction="RIGHT" focus={focus} finals={new Set(final.map((s) => s.id))} onSelect={onSelect} />
     </>
   )
 }
@@ -55,18 +55,20 @@ export function StateView({ diagram, focus }: { diagram: StateDiagram; focus?: s
  * A node-and-arrow diagram laid out by elkjs. Hover or click a node to see its arrows; `focus` (a #node link) selects
  * a node and scrolls to it. `finals`: states drawn with a double border. `plain`: no diff colors, unmarked is not context.
  */
-function GraphView({ nodes, edges, direction, focus, finals, plain = false }: {
+function GraphView({ nodes, edges, direction, focus, finals, plain = false, onSelect }: {
   nodes: Marked<GraphNode>[]
   edges: Marked<GraphEdge>[]
   direction: 'DOWN' | 'RIGHT'
   focus?: string
   finals?: Set<string>
   plain?: boolean
+  onSelect?: (id: string | null) => void
 }) {
   const [layout, setLayout] = useState<GraphLayout | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(focus ?? null)
+  useEffect(() => onSelect?.(selected), [selected])
   const svg = useRef<SVGSVGElement>(null)
   const uid = useId()
 

@@ -17,11 +17,12 @@ function entityDiff(e: DEntity, movedOut: Set<string>): DataMark | undefined {
  * that moved is purple at both ends, struck out at the source, with a dashed line between them. Hover or click an
  * entity to see its relations; `focus` (a #entity link) selects one and scrolls to it.
  */
-export function DataView({ diagram, focus }: { diagram: DataDiagram; focus?: string }) {
+export function DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; focus?: string; onSelect?: (id: string | null) => void }) {
   const [layout, setLayout] = useState<DataLayout | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hover, setHover] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(focus ?? null)
+  useEffect(() => onSelect?.(selected), [selected])
   const svg = useRef<SVGSVGElement>(null)
   const uid = useId()
 

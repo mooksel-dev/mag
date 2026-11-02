@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeDiagram, remapLinks, setKey, setOf, setRoot, validateDiagram, validateLinks, type Canvas, type Diagram } from './index.ts'
+import { linksAt, nodeFiles, normalizeDiagram, remapLinks, setKey, setLevels, setOf, setRoot, setTrail, validateDiagram, validateLinks, type Canvas, type Diagram } from './index.ts'
 
 const canvas = (id: string, diagram: Diagram, extra: Partial<Canvas> = {}): Canvas =>
   ({ id, projectId: 'p', taskId: 't', sessionId: null, title: id, kind: 'diagram', diagram, role: 'plan', option: null, stepId: 's1', repo: null, planOf: null, version: 1, updatedAt: 0, ...extra }) as Canvas
@@ -75,4 +75,49 @@ test('validateDiagram: links need to and a kind; trivialLogic is one line', () =
   ])
   assert.deepEqual(validateDiagram(normalizeDiagram({ ...DATA, entities: [{ ...(DATA as { entities: object[] }).entities[0], links: 'api' }] })), ['Entity users: links must be a list of { to, node?, kind }'])
   assert.deepEqual(validateDiagram(normalizeDiagram(COMPONENT)), [])
+})
+
+test('setLevels: root as the system, then modules, data, scenarios, logic; unchanged diagrams but the root hidden (povnyi-diff-nabir-pov-iazanykh.2)', () => {
+  const MOD: Diagram = { type: 'component', summary: 's', modules: [{ id: 'db', name: 'db', description: '', diff: 'add', uses: [] }] }
+  const QUIET: Diagram = { type: 'component', summary: 's', modules: [{ id: 'x', name: 'x', description: '', uses: [] }] }
+  const flow: Diagram = { ...FLOW, nodes: [{ id: 'a', label: 'a', shape: 'start', diff: 'add' }] }
+  const data: Diagram = { ...DATA, entities: [{ ...(DATA as Extract<Diagram, { type: 'data' }>).entities[0], diff: 'add' }] }
+  const seq: Diagram = { ...SEQ, messages: [{ from: 'api', to: 'api', text: 'x', kind: 'call', diff: 'add' }] }
+  const set = [canvas('flow', flow), canvas('c', COMPONENT, { root: true }), canvas('m', MOD), canvas('q', QUIET), canvas('data', data), canvas('seq', seq)]
+  assert.deepEqual(setLevels(set).map((l) => [l.level, l.diagrams.map((d) => d.canvas.id)]), [['system', ['c']], ['modules', ['m']], ['data', ['data']], ['scenarios', ['seq']], ['logic', ['flow']]])
+  // Reached ones first: the root links data before the flow, so with two flows the linked one leads.
+  const two = [canvas('flow2', flow), ...set]
+  assert.deepEqual(setLevels(two).find((l) => l.level === 'logic')!.diagrams.map((d) => d.canvas.id), ['flow', 'flow2'])
+})
+
+test('setTrail: the root, then each diagram with the node whose link led there; an orphan alone', () => {
+  const MOD: Diagram = { type: 'component', summary: 's', modules: [{ id: 'db', name: 'db', description: '', uses: [], links: [{ to: 'flow', kind: 'logic' }] }] }
+  const ROOT: Diagram = { type: 'component', summary: 's', modules: [{ id: 'api', name: 'api', description: '', uses: [], links: [{ to: 'm', kind: 'detail' }] }] }
+  const set = [canvas('r', ROOT, { root: true }), canvas('m', MOD), canvas('flow', FLOW), canvas('lost', DATA)]
+  assert.deepEqual(setTrail(set, 'flow'), [{ id: 'r' }, { id: 'm', via: 'api' }, { id: 'flow', via: 'db' }])
+  assert.deepEqual(setTrail(set, 'r'), [{ id: 'r' }])
+  assert.deepEqual(setTrail(set, 'lost'), [{ id: 'lost' }])
+})
+
+test('linksAt: a module opens its own, its lines\' and its uses\' links, and the flowcharts of its methods by of', () => {
+  const of: Diagram = { ...FLOW, of: 'api#create' }
+  const set = [canvas('c', COMPONENT, { root: true }), canvas('data', DATA), canvas('flow', FLOW), canvas('seq', SEQ), canvas('of', of)]
+  assert.deepEqual(linksAt(set, 'c', 'api').map((l) => [l.from, l.link.to, l.link.kind, !!l.implicit]), [
+    ['api', 'data', 'data', false],
+    ['api#list', 'flow', 'logic', false],
+    ['api -> db', 'seq', 'scenario', false],
+    ['api#create', 'of', 'logic', true],
+  ])
+  assert.deepEqual(linksAt(set, 'c', 'db'), [])
+  assert.equal(linksAt(set, 'c').length, 4)
+  assert.deepEqual(linksAt(set, 'nope', 'api'), [])
+})
+
+test('nodeFiles: the files of a module\'s lines, uses and calls, once each', () => {
+  const d: Diagram = {
+    type: 'component', summary: 's',
+    modules: [{ id: 'api', name: 'api', description: '', interface: [{ text: 'a()', diff: 'add', files: ['a.ts'] }], uses: [{ to: 'db', calls: [{ text: 'q()', files: ['b.ts', 'a.ts'] }], files: ['c.ts'] }] }],
+  }
+  assert.deepEqual(nodeFiles(d, 'api'), ['a.ts', 'c.ts', 'b.ts'])
+  assert.deepEqual(nodeFiles(d, 'db'), [])
 })
