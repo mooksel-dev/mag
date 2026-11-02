@@ -2,9 +2,9 @@
 // prompt (role, repositories, tools, what is enforced); the playbook is the part a project may rewrite.
 
 /** Phase texts of the playbook; each one goes into the prompts of the roles doing that phase. */
-export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'fact' | 'tracker' | 'significance'
+export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'prReview' | 'fact' | 'tracker' | 'significance'
 
-export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'fact', 'tracker', 'significance']
+export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'prReview', 'fact', 'tracker', 'significance']
 
 export interface Playbook {
   /** How an agent leads: its own position, disagreement with a reason, the next move. Every role. */
@@ -16,8 +16,13 @@ export interface Playbook {
   /** What the first reviewer checks a step's PRs against. Reviewer. */
   review: string
   /**
+   * How to review a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): PR and ticket → problem → approach → intent →
+   * fact → findings by level → verdict. The project topic that owns the review.
+   */
+  prReview: string
+  /**
    * How a reviewer draws the fact of code changes: a revision of the intent diagram under the diff. Shared by every
-   * review that reads a diff (a step's PRs now, a teammate's PR next).
+   * review that reads a diff: a step's PRs (intent: its plan) and a teammate's PR (intent: what its ticket asks).
    */
   fact: string
   /** What agents may do in a ticket tracker. Every role that sees tickets. */
@@ -92,9 +97,28 @@ what and where.`,
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
-  fact: `Revise the fact diagram (a copy of the intent: the plan) under the diff, by its id and the same module ids.
-- Done as planned: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the plan: add it,
-  with module ids from get_architecture.
+  prReview: `1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
+   comments with gh api, reading only) and its diff (gh pr diff, or git in the repository).
+2. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it with
+   add_ticket. Without access to the tracker, say what is missing and work from the description.
+3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
+   framing or a problem that is not real.
+4. Approach: is this the right way to fix it? Name better alternatives with their cost and trade-offs; sketch one with
+   show_diagram (no role) when it changes modules or interfaces.
+5. Intent: draw what the ticket and the description ask for, from them and not from the diff, as diagrams of the change
+   at the level of the architecture (show_diagram, role intent).
+6. Fact: get_pr_changes starts the fact diagram as a copy of the intent; revise it under the diff, as the fact section
+   says. Intent ↔ fact shows what is missing, done otherwise or done beyond the ticket.
+7. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
+8. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
+   question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
+   diagram) when it applies. Verdict: request_changes with any blocker, approve when you would merge it yourself,
+   comment otherwise.
+Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.`,
+  fact: `Revise the fact diagram (a copy of the intent: a step's plan, or what a teammate's PR is meant to do) under the
+diff, by its id and the same module ids.
+- Done as intended: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the intent: add
+  it, with module ids from get_architecture.
 - Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module
   (<repo>:<path> when several repos change that path). Nothing that is not in the diff.
 - Keep it at the level of the architecture: modules, their public interface and the dependencies between them.
@@ -128,6 +152,7 @@ export function playbookOf(project: { playbook?: Partial<Playbook> | null }): Pl
     plan: text('plan'),
     step: text('step'),
     review: text('review'),
+    prReview: text('prReview'),
     fact: text('fact'),
     tracker: text('tracker'),
     significance: text('significance'),

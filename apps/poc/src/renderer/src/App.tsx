@@ -12,6 +12,7 @@ import {
   inbox,
   integrationMode,
   isLegacy,
+  isReview,
   openLocalChecks,
   openPrs,
   openWorkCount,
@@ -49,6 +50,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { LocalChecks, StartButton } from './LocalMode'
 import { Home } from './Home'
 import { IdeasPage } from './Ideas'
+import { ReviewsPage } from './Reviews'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
 import { AgentDot, ApproveButton, CancelButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow } from './Tasks'
@@ -65,8 +67,8 @@ const loadFlag = (k: string, d: boolean) => {
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-type Tab = 'home' | 'tasks' | 'ideas' | 'architecture' | 'settings'
-const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
+type Tab = 'home' | 'tasks' | 'ideas' | 'reviews' | 'architecture' | 'settings'
+const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', ideas: 'Ideas', reviews: 'Reviews', architecture: 'Architecture', settings: 'Settings' }
 
 /** One project's window; the project is fixed for the window's lifetime. */
 export function App({ projectId }: { projectId: string }) {
@@ -76,6 +78,8 @@ export function App({ projectId }: { projectId: string }) {
   const [taskId, setTaskId] = useState<string | null>(null)
   /** The idea open on the Ideas tab. */
   const [ideaId, setIdeaId] = useState<string | null>(null)
+  /** The review open on the Reviews tab. */
+  const [reviewId, setReviewId] = useState<string | null>(null)
   /** Tasks opens with the ticket link field (Home → From a ticket). */
   const [fromTicket, setFromTicket] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
@@ -109,6 +113,14 @@ export function App({ projectId }: { projectId: string }) {
 
   // A pop-out or a notification asked to show a task; main sends it to this project's window only.
   useEffect(() => mag.onOpenTask((_, tid) => setTaskId(tid)), [])
+  // A review of a teammate's PR has no task page: it opens on the Reviews tab.
+  useEffect(() => {
+    const t = state?.tasks.find((x) => x.id === taskId)
+    if (!t || !isReview(t)) return
+    setTab('reviews')
+    setReviewId(t.id)
+    setTaskId(null)
+  }, [taskId, state])
   // ⌘O, File → Open Project… / New Project…, the dock menu.
   useEffect(() => mag.onOpenPicker(setPicker), [])
 
@@ -123,16 +135,18 @@ export function App({ projectId }: { projectId: string }) {
   const color = projectColor(project)
   // Subtasks are steps of their task's plan, not pages: a subtask (e.g. a clicked T-12.3) shows its task.
   const picked = tasks.find((t) => t.id === taskId)
-  const task = (picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null
+  // A review shows on its tab (see the effect above), never as a task page.
+  const task = picked && isReview(picked) ? null : ((picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null)
   const inboxCount = inbox(project.id, tasks, state.sessions).length
   const openCount = openWorkCount(tasks)
   /** Leaving a tab closes the ticket link field. */
   const go = (t: Tab) => { setTab(t); setTaskId(null); setIdeaId(null); setFromTicket(false) }
   const openKey = (key: string) => setTaskId(taskByKey(tasks, key)?.id ?? null)
+  const reviewCount = tasks.filter((t) => isReview(t) && t.status === 'in_progress').length
   const ideaCount = state.ideas.filter((i) => i.projectId === project.id).length
   // An open idea has its discussion beside it instead of the chat aside.
   const ideaOpen = tab === 'ideas' && state.ideas.some((i) => i.id === ideaId && i.projectId === project.id)
-  const screen = task ? `Task ${task.key}` : ideaOpen ? 'Idea' : TAB_NAMES[tab]
+  const screen = task ? `Task ${task.key}` : ideaOpen ? 'Idea' : tab === 'reviews' && reviewId ? 'Review' : TAB_NAMES[tab]
   const chatBusy = state.sessions.some((s) => s.projectId === project.id && s.role === 'chat' && s.status === 'running')
 
   return (
@@ -159,6 +173,7 @@ export function App({ projectId }: { projectId: string }) {
             </button>
             <button className={tab === 'tasks' && !task ? 'on' : ''} onClick={() => go('tasks')}>Tasks <span className="cnt">{openCount}</span></button>
             <button className={tab === 'ideas' && !task ? 'on' : ''} onClick={() => go('ideas')}>Ideas <span className="cnt">{ideaCount}</span></button>
+            <button className={tab === 'reviews' && !task ? 'on' : ''} onClick={() => go('reviews')}>Reviews <span className="cnt">{reviewCount}</span></button>
             <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => go('architecture')}>Architecture</button>
             <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => go('settings')}>Settings</button>
             <div className="grow" />
@@ -174,6 +189,8 @@ export function App({ projectId }: { projectId: string }) {
               <TasksPage key={String(fromTicket)} project={project} tasks={tasks} sessions={state.sessions} onOpen={setTaskId} fromTicket={fromTicket} />
             ) : tab === 'ideas' ? (
               <IdeasPage project={project} state={state} ideaId={ideaId} onOpenIdea={setIdeaId} onOpenKey={openKey} onOpenTopic={openTopic} />
+            ) : tab === 'reviews' ? (
+              <ReviewsPage project={project} state={state} reviewId={reviewId} onOpenReview={setReviewId} onOpenTopic={openTopic} onOpenKey={openKey} />
             ) : tab === 'architecture' ? (
               <Architecture key={project.id} project={project} />
             ) : (
@@ -677,6 +694,7 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
+  prReview: 'How the agent reviews a teammate\'s PR (Reviews tab): PR and ticket, problem, approach, intent, fact, CI, findings by level and a verdict. It never writes to the PR.',
   fact: 'How a reviewer draws the fact of a diff as a revision of the plan; every review that reads a diff follows it.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
   significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',

@@ -4,18 +4,18 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, isLegacy, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, githubSlug, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
-import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
+import type { AppState, AwaitingPr, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
-import { repoInfo } from './git'
-import { factView, stepHunk } from './fact'
+import { prChecks, prsAwaitingReview, repoInfo } from './git'
+import { factView, reviewFactView, reviewHunk, stepHunk } from './fact'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
 import { startAttention } from './attention'
@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -120,6 +120,9 @@ app.whenReady().then(async () => {
   actions.reopen = (id, what, by) => orch.reopen(id, what, by)
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
+  actions.reviewPr = (projectId, url, by) => orch.reviewPr(projectId, url, by)
+  actions.reviewFact = (id) => orch.reviewFactOf(id)
+  actions.setPrReview = (id, review) => orch.setPrReview(id, review)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -233,11 +236,49 @@ app.whenReady().then(async () => {
     const c = store.data.canvases[id]
     return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null
   })
+  // A review of a teammate's PR shows its fact the way a step does.
   handle('step:fact', (_, stepId: string) => {
     const step = store.task(stepId)
-    return factView(store.project(step.projectId), step, Object.values(store.data.canvases))
+    const canvases = Object.values(store.data.canvases)
+    return isReview(step) ? reviewFactView(store.project(step.projectId), step, canvases) : factView(store.project(step.projectId), step, canvases)
   })
-  handle('step:hunk', (_, stepId: string, repo: string, base: string, head: string, hunk: HunkRef) => stepHunk(store.task(stepId), repo, base, head, hunk))
+  handle('step:hunk', (_, stepId: string, repo: string, base: string, head: string, hunk: HunkRef) => {
+    const step = store.task(stepId)
+    return isReview(step) ? reviewHunk(step, repo, base, head, hunk) : stepHunk(step, repo, base, head, hunk)
+  })
+  // Reviews of teammates' PRs (reviews-ahent-reviuit-pr-timeitiv.2).
+  handle('reviews:awaiting', async (_, projectId: string) => {
+    const prs: AwaitingPr[] = []
+    const errors: string[] = []
+    for (const repo of store.project(projectId).repos) {
+      const slug = githubSlug((await repoInfo(repo).catch(() => null))?.origin)
+      if (!slug) continue
+      try {
+        prs.push(...(await prsAwaitingReview(slug)))
+      } catch (e) {
+        errors.push(`${slug}: ${(e as Error).message.split('\n')[0]}`)
+      }
+    }
+    return { prs: prs.sort((a, b) => b.updatedAt - a.updatedAt), errors }
+  })
+  handle('review:start', async (_, projectId: string, url: string) => {
+    try {
+      const { taskId, sessionId } = await orch.reviewPr(projectId, url)
+      return { taskId, sessionId }
+    } catch (e) {
+      return { error: (e as Error).message.split('\n')[0] }
+    }
+  })
+  handle('review:again', async (_, id: string) => {
+    const { sessionId } = await orch.rereview(id)
+    return sessionId
+  })
+  handle('review:close', (_, id: string) => orch.closeReview(id))
+  handle('review:checks', (_, id: string) => {
+    const pr = store.task(id).prReview?.pr
+    if (!pr) throw new Error('Not a review of a PR')
+    return prChecks(pr.url)
+  })
   handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
     const name = basename(f.name || (f.path ? basename(f.path) : 'file')).replace(/[^\w.-]+/g, '_') || 'file'
     const path = join(attachmentsDir, `${randomUUID().slice(0, 8)}-${name}`)

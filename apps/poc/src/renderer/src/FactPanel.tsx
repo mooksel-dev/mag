@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { prHeads, type Task } from '@mag/core'
+import { isReview, prHeads, type Task } from '@mag/core'
 import type { Change, FileChange, Level } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 import { STATUS_ICON, STATUS_LABEL, fileKey, filesOf, hunksOf, mark, rows, statusCounts, unverified, what, type FactItem } from './factView'
@@ -127,20 +127,23 @@ function Body({ step, view }: { step: Task; view: FactView }) {
   const [matches, setMatches] = useState(false)
   const hunks = useHunks(step.id, view)
   const r = rows(view.items, all)
+  // A review of a teammate's PR has an intent where a step has its plan, and no merge of ours to allow.
+  const review = isReview(step)
+  const intent = review ? 'intent' : 'plan'
   return (
     <>
       <div className="muted small">
         {view.repos.map((x) => `${x.name} ${short(x.baseSha)}..${short(x.headSha)}`).join(' · ')}
-        {view.plans.length ? ` · plan: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : ' · no plan diagram: nothing it changes is planned'}
+        {view.plans.length ? ` · ${intent}: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : review ? ' · no intent diagram yet' : ' · no plan diagram: nothing it changes is planned'}
       </div>
       <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
         {view.blockers.length ? (
           <>
-            Merge is not allowed, look at most:
+            {review ? 'The fact does not cover the PR yet, or differs from the intent:' : 'Merge is not allowed, look at most:'}
             <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
           </>
         ) : (
-          'Merge is allowed: the fact shows every changed code file, rests on the PR and agrees with the plan.'
+          `${review ? '' : 'Merge is allowed: '}The fact shows every changed code file, rests on the PR and agrees with the ${intent}.`
         )}
       </div>
       <div className="factbar">
@@ -157,11 +160,11 @@ function Body({ step, view }: { step: Task; view: FactView }) {
         </span>
       </div>
       {view.items.length === 0 ? (
-        <p className="muted small">Neither the plan nor the fact diagram draws a change.</p>
+        <p className="muted small">Neither the {intent} nor the fact diagram draws a change.</p>
       ) : (
         <table className="facttable">
           <thead>
-            <tr><th /><th>level</th><th>Plan</th><th>Fact</th></tr>
+            <tr><th /><th>level</th><th>{review ? 'Intent' : 'Plan'}</th><th>Fact</th></tr>
           </thead>
           <tbody>
             {r.shown.map((i, n) => <Row key={n} item={i} view={view} hunks={hunks} />)}
@@ -194,15 +197,18 @@ function Body({ step, view }: { step: Task; view: FactView }) {
 /**
  * Plan ↔ fact of a step (T-57.5, T-58): its fact diagram, drawn by the reviewer from the diff, against its plan
  * diagrams; the threshold; which changed files the fact shows and which of its lines do not rest on the PR; the diff
- * behind each file. Open by default while a PR is open; computed when open.
+ * behind each file. Open by default while a PR is open; computed when open. A review of a teammate's PR (`step` is
+ * the review) shows intent ↔ fact of its PR the same way.
  */
 export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: string }) {
-  const live = Object.keys(prHeads(step.work)).length > 0
+  const review = isReview(step)
+  const heads = review ? { pr: step.prReview?.pr.head ?? '' } : prHeads(step.work)
+  const live = Object.keys(heads).length > 0
   const [open, setOpen] = useState(live)
   const [view, setView] = useState<FactView | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [nonce, setNonce] = useState(0)
-  const key = JSON.stringify([prHeads(step.work), step.fact?.at ?? null, diagramsKey, nonce])
+  const key = JSON.stringify([heads, step.fact?.at ?? null, diagramsKey, nonce])
   useEffect(() => {
     if (!open) return
     let gone = false
@@ -218,12 +224,12 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
     <div className="factpanel">
       <div className="factbar">
         <button className="link diffsub" onClick={() => setOpen(!open)}>
-          {open ? '▾' : '▸'} Plan ↔ fact
+          {open ? '▾' : '▸'} {review ? 'Intent' : 'Plan'} ↔ fact
         </button>
         {!open && counts && (
           <span className="muted small">
             {Object.entries(counts).filter(([, n]) => n > 0).map(([s, n]) => `${s in STATUS_LABEL ? STATUS_LABEL[s as keyof typeof STATUS_LABEL] : s.replace('unshown', 'not shown')} ${n}`).join(' · ')}
-            {step.fact!.blockers.length > 0 && ' · merge not allowed'}
+            {step.fact!.blockers.length > 0 && !review && ' · merge not allowed'}
           </span>
         )}
         <div className="grow" />
@@ -234,7 +240,7 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
       {open && (
         error ? <p className="muted small">mag could not compare: {error}</p>
         : view === undefined ? <p className="muted small">Comparing…</p>
-        : view === null ? <p className="muted small">No PR yet: the fact is drawn in the review once the step has one.</p>
+        : view === null ? <p className="muted small">{review ? 'No PR to compare.' : 'No PR yet: the fact is drawn in the review once the step has one.'}</p>
         : <Body step={step} view={view} />
       )}
     </div>

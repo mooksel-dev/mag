@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_PLAYBOOK, PRECEDENCE, type AgentEvent } from '@mag/core'
+import { DEFAULT_PLAYBOOK, PRECEDENCE, inbox, type AgentEvent } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -863,4 +863,51 @@ test('develop: a step with a plan diagram starts without a message or a question
   await orch.develop(task.id)
   assert.deepEqual(store.data.sessions.find((s) => s.stepId === step.id)!.items, [])
   assert.equal(store.task(task.id).needsInput, null)
+})
+
+test("a topic never writes to a PR: review, comment, close, edit, gh api writes and push are denied (reviews-ahent-reviuit-pr-timeitiv.2)", async () => {
+  const { store, orch, project } = setup()
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'review https://github.com/acme/api/pull/4')
+  const denied = specs.at(-1)!.disallowedTools ?? []
+  for (const rule of ['Bash(gh pr review:*)', 'Bash(gh pr comment:*)', 'Bash(gh pr merge:*)', 'Bash(gh pr close:*)', 'Bash(gh pr edit:*)', 'Bash(gh api * -X *)', 'Bash(gh api --method *)', 'Bash(gh api * -f *)', 'Bash(git push:*)'])
+    assert.ok(denied.includes(rule), rule)
+  assert.ok(!denied.includes('Bash'))
+})
+
+test("a teammate's PR: intent ↔ fact starts the fact as a copy of the intent; the verdict goes to Needs you (reviews-ahent-reviuit-pr-timeitiv.2)", async () => {
+  const { dir, store, orch, project } = setup()
+  const app = gitRepo(join(dir, 'repos', 'app'))
+  git(app, 'checkout', '-q', '-b', 'feature')
+  mkdirSync(join(app, 'src'))
+  writeFileSync(join(app, 'src', 'charge.ts'), 'export const charge = 1\n')
+  git(app, 'add', '.')
+  git(app, 'commit', '-q', '-m', 'charge')
+  const head = git(app, 'rev-parse', 'HEAD')
+  store.updateProject(project.id, { repos: [app] })
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const pr = { url: 'https://github.com/acme/app/pull/7', repo: app, number: 7, author: 'olena', base: 'main', head }
+  const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
+  store.updateTask(work.id, { prReview: { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null } })
+
+  // Without an intent there is nothing to copy: the topic is told to draw it first.
+  assert.match(await orch.reviewFactOf(work.id), /## Intent ↔ fact \(mag\)\nIntent diagrams: none yet: draw the intent[\s\S]*src\/charge\.ts/)
+  assert.equal(store.task(work.id).fact?.canvasId, null)
+
+  const intent = store.saveCanvas({ projectId: project.id, taskId: work.id, sessionId: topic.id, title: 'Intent', kind: 'diagram', diagram: { type: 'component', summary: 'Charge once.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'add', uses: [] }] }, placement: { role: 'intent', option: null, stepId: null, repo: null, planOf: null } })
+  const report = await orch.reviewFactOf(work.id)
+  const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
+  assert.match(report, new RegExp(`Intent diagrams: \\[Intent\\]\\(canvas:${intent.id}\\)[\\s\\S]*mag's copy of the intent`))
+  assert.deepEqual([fact.stepId, fact.repo, fact.planOf, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, app, intent.id, fact.id, { [app]: head }])
+  assert.match((fact.diagram as { summary: string }).summary, /copy of its intent "Intent"/)
+
+  assert.match(orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /Nothing goes to GitHub/)
+  const r = store.task(work.id).prReview!
+  assert.deepEqual([r.verdict, r.head, r.problem], ['request_changes', head, 'p'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
+  assert.match(store.data.events.at(-1)!.text, /PR review: Request changes · 1 finding/)
+
+  orch.closeReview(work.id)
+  assert.equal(store.task(work.id).status, 'done')
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions), [])
 })

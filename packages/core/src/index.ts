@@ -5,13 +5,16 @@ import type { ArchDiagram } from './arch.ts'
 import type { CanvasRole } from './canvases.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
+import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLevel, type PrReview } from './pr-review.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
 export * from './diagram.ts'
 export * from './playbook.ts'
+export * from './pr-review.ts'
 
-export type TaskType = 'dev' | 'design' | 'spike' | 'research'
+/** review: a review of a teammate's PR (see PrReview); no steps, only in the Reviews tab. */
+export type TaskType = 'dev' | 'design' | 'spike' | 'research' | 'review'
 
 /**
  * The state of a work (T-55.7): its agents' progress, not a status for a team. planning (the owner gathers, states the
@@ -420,10 +423,17 @@ export type ReviewVerdict = 'changes' | 'merge' | 'look'
 
 export const REVIEW_VERDICTS: ReviewVerdict[] = ['changes', 'merge', 'look']
 
+/** A finding of an agent review: of a step's PRs (AgentReview) or of a teammate's PR (PrReview). */
 export interface ReviewFinding {
   text: string
   /** file:line, a module or a PR, when it applies. */
   where?: string
+  /** How much it matters; missing on findings recorded before levels. */
+  level?: FindingLevel
+  /** The node of a diagram it is about: canvas:<id>#<node>. */
+  node?: string
+  /** A teammate's PR: the user picked it for publishing. */
+  post?: boolean
 }
 
 /** The first review of a step's PRs, by an agent (T-55.1): a fork of the work's owner session, else a fresh reviewer. */
@@ -551,8 +561,10 @@ export interface Task {
   ownerQuestion?: string | null
   /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
   review?: AgentReview | null
-  /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). */
+  /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). A review: intent ↔ fact of the PR. */
   fact?: StepFact | null
+  /** Works of type review: the teammate's PR and what its review found. */
+  prReview?: PrReview | null
   createdAt: number
   updatedAt: number
 }
@@ -915,7 +927,7 @@ export function canCancel(task: Task): boolean {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** The Tasks tab: works by state, each in display order. */
+/** The Tasks tab: works by state, each in display order. Reviews are not in it: they have the Reviews tab. */
 export interface WorkSections {
   /** Oldest first. */
   inProgress: Task[]
@@ -928,7 +940,7 @@ export interface WorkSections {
 }
 
 export function workSections(tasks: Task[]): WorkSections {
-  const works = tasks.filter((t) => !t.parentId)
+  const works = tasks.filter((t) => !t.parentId && !isReview(t))
   const by = (state: WorkState) => works.filter((t) => t.status === state).sort((a, b) => a.createdAt - b.createdAt)
   return {
     inProgress: by('in_progress'),
@@ -938,9 +950,9 @@ export function workSections(tasks: Task[]): WorkSections {
   }
 }
 
-/** Works not finished yet: the Tasks tab count. */
+/** Works not finished yet: the Tasks tab count. Reviews count in their own tab. */
 export function openWorkCount(tasks: Task[]): number {
-  return tasks.filter((t) => !t.parentId && !FINISHED_STATES.includes(t.status as WorkState)).length
+  return tasks.filter((t) => !t.parentId && !isReview(t) && !FINISHED_STATES.includes(t.status as WorkState)).length
 }
 
 export const STATUS_LABELS: Record<WorkState | SubtaskStatus, string> = {
@@ -1014,8 +1026,11 @@ export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]):
   return null
 }
 
-/** review_look: the agent review of the step's PRs wants the user to look (its verdict look, or changes past the rounds). */
-export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'review_look' | 'ready_to_merge' | 'ready_to_start'
+/**
+ * review_look: the agent review of the step's PRs wants the user to look (its verdict look, or changes past the rounds).
+ * review_ready: the agent's review of a teammate's PR is ready.
+ */
+export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'review_look' | 'ready_to_merge' | 'review_ready' | 'ready_to_start'
 
 export interface InboxItem {
   /** null for an approval in a project chat. */
@@ -1030,7 +1045,7 @@ export interface InboxItem {
   approvalId?: string
 }
 
-const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'ready_to_start']
+const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'review_ready', 'ready_to_start']
 
 const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'reviewer']
 const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', reviewer: 'Review failed' }
@@ -1044,6 +1059,7 @@ export function lastTaskSession(taskId: string, sessions: AgentSession[]): Agent
 /** One item for a top-level task; its steps' PRs and Start count for it. A finished work waits on nobody. */
 function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
   if (task.parentId || task.status === 'done' || task.status === 'canceled') return null
+  if (isReview(task)) return reviewItem(task, sessions)
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
   if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
@@ -1063,6 +1079,13 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   const ready = prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge'
   if (task.status === 'in_progress' && prs.length) return { ...base, kind: 'ready_to_merge', text: wait ? `${wait.step.key}: ${ready}` : ready }
   return null
+}
+
+/** A review of a teammate's PR in progress: its question, else its verdict once ready, unless its topic is in a turn. */
+function reviewItem(task: Task, sessions: AgentSession[]): InboxItem | null {
+  if (task.needsInput) return { task, kind: 'question', text: task.needsInput }
+  if (reviewRunning(task, sessions) || !task.prReview || !reviewReady(task)) return null
+  return { task, kind: 'review_ready', text: reviewReadyText(task.prReview) }
 }
 
 /** One item per pending approval in the project's sessions, task sessions and chats alike. */
@@ -1108,11 +1131,11 @@ export type PipelineStage = 'planning' | 'ready' | 'in_progress' | 'done7d'
 
 const WEEK_MS = 7 * DAY_MS
 
-/** Work counts per state; done only counts works finished in the last 7 days; canceled is not counted. */
+/** Work counts per state; done only counts works finished in the last 7 days; canceled and reviews are not counted. */
 export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage, number> {
   const counts: Record<PipelineStage, number> = { planning: 0, ready: 0, in_progress: 0, done7d: 0 }
   for (const t of tasks) {
-    if (t.parentId || t.status === 'canceled') continue
+    if (t.parentId || isReview(t) || t.status === 'canceled') continue
     if (t.status !== 'done') counts[t.status as Exclude<WorkState, 'done' | 'canceled'>]++
     else if (t.updatedAt >= now - WEEK_MS) counts.done7d++
   }
@@ -1184,6 +1207,17 @@ Each: the question, your recommendation and why.
 
 # Findings
 `,
+  review: `# Problem
+What the PR fixes and why it is real, with evidence.
+
+# Open questions
+Each: the question, your recommendation and why.
+
+# Approach
+Is it the right way to fix it; better alternatives with their trade-offs.
+
+# Findings
+`,
 }
 
 /** html: a self-contained page (show_canvas); diagram: typed data mag renders itself (show_diagram). */
@@ -1204,11 +1238,11 @@ export interface Canvas {
   role?: CanvasRole | null
   /** role 'option': the option it sketches, e.g. "A". */
   option?: string | null
-  /** role 'plan' / 'fact': the step it belongs to. */
+  /** role 'plan' / 'fact': the step it belongs to; none for the intent and fact of a review (they are its work's). */
   stepId?: string | null
   /** role 'plan' / 'fact': the project repository (path) it changes; none when it spans the step. */
   repo?: string | null
-  /** role 'fact': the plan diagram it is the fact of (T-55.4). */
+  /** role 'fact': the plan (or intent) diagram it is the fact of (T-55.4). */
   planOf?: string | null
   version: number
   updatedAt: number

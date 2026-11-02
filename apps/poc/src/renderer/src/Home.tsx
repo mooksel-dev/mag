@@ -36,6 +36,7 @@ const PILLS: Record<InboxKind, [string, string]> = {
   question: ['amber', 'Question'],
   review_look: ['amber', 'Look here'],
   ready_to_merge: ['green', 'Ready to merge'],
+  review_ready: ['violet', 'Review ready'],
   ready_to_start: ['amber', 'Waits for Start'],
 }
 
