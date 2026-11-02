@@ -9,6 +9,17 @@ import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
 
+/** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
+const NO_CONTROL: Pick<ToolActions, 'approve' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents'> = {
+  approve: () => {},
+  develop: async () => {},
+  startStep: async () => {},
+  restartReview: async () => {},
+  agentOf: () => null,
+  send: async () => {},
+  stopAgents: async () => [],
+}
+
 const setup = () => {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-tools-')), 'db.json'))
   const project = store.createProject('p')
@@ -46,6 +57,7 @@ const setup = () => {
     },
     reviewFact: async (id) => (calls.push(`fact of ${store.task(id).key}`), 'Fact'),
     setPrReview: (id, r) => (calls.push(`pr review ${store.task(id).key}: ${r.verdict} ${r.findings.map((f) => `${f.level}|${f.where ?? ''}|${f.node ?? ''}|${f.text}`).join(';')}`), 'Recorded.'),
+    ...NO_CONTROL,
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'planning' })
@@ -353,7 +365,7 @@ test('a doc that links a project-chat diagram adopts it; one of another task sta
   assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
   // The project chat writes a doc through update_task_doc and adopts the same way.
   const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '', askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '' })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '', askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '', ...NO_CONTROL })
   assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'big', markdown: `[l](canvas:${loose.id})` }), /Moved into big/)
   assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
@@ -508,7 +520,7 @@ test('add_idea: any agent puts a finding on the project ideas, with where it cam
 test('reopen_work: a project chat continues a done work it then owns (T-55.6)', async () => {
   const { store, project, task, call } = setup()
   const reopened: string[] = []
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.'), askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '' })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.'), askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '', ...NO_CONTROL })
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
   assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'big', what: 'web' }), /^Back\. Plan what is left right here: .*work: "big"/)
   assert.deepEqual(reopened, [`big: web by ${topic.id}`])
@@ -563,4 +575,12 @@ test('set_review takes findings with levels, and refuses an unknown one', async 
   await tools({ taskId: task.id, sessionId: reviewer.id }, 'set_review', { verdict: 'look', findings: [{ text: 'x', where: 'a.ts:1', level: 'question' }] })
   assert.deepEqual(calls, ['review big.1: look a.ts:1|x'])
   await assert.rejects(tools({ taskId: task.id, sessionId: reviewer.id }, 'set_review', { verdict: 'look', findings: [{ text: 'x', level: 'urgent' }] }), /level must be one of/)
+})
+
+test("a project chat gets the buttons' tools, each only on the user's word (chat-keruie-robotamy-i-ahentamy.1)", () => {
+  const names = ['approve_plan', 'start_work', 'start_step', 'restart_review', 'message_agent', 'stop_agent']
+  const chat = toolsFor('project', 'chat').filter((t) => names.includes(t.name))
+  assert.deepEqual(chat.map((t) => t.name), names)
+  for (const t of chat) assert.match(t.description, /Only when the user has asked for exactly this in this conversation/)
+  assert.ok(!toolsFor('task', 'developer').some((t) => names.includes(t.name)))
 })

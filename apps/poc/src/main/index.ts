@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -123,6 +123,13 @@ app.whenReady().then(async () => {
   actions.reviewPr = (projectId, url, by) => orch.reviewPr(projectId, url, by)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
   actions.setPrReview = (id, review) => orch.setPrReview(id, review)
+  actions.approve = (id) => orch.approve(id)
+  actions.develop = (id, localRepos) => orch.develop(id, undefined, localRepos)
+  actions.startStep = (id) => orch.startStep(id)
+  actions.restartReview = (id) => orch.reviewTask(id)
+  actions.agentOf = (id, role) => orch.agentOf(id, role)
+  actions.send = (sessionId, text) => orch.send(sessionId, text)
+  actions.stopAgents = (id) => orch.stopAgents(id)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -160,14 +167,7 @@ app.whenReady().then(async () => {
     }
     store.updateTask(id, patch)
   })
-  handle('task:approve', (_, id: string) => {
-    const task = store.task(id)
-    if (task.status !== 'planning') throw new Error(`${task.key} is ${task.status}; only a plan in planning is approved`)
-    if (store.data.sessions.some((s) => s.taskId === id && orch.isRunning(s.id))) throw new Error('An agent is still working on this task')
-    const ready = canApprove(task, projectTasks(task.projectId))
-    if (!ready.ok) throw new Error(`${task.key} cannot be approved: ${ready.reason}`)
-    store.updateTask(id, { status: 'ready', needsInput: null })
-  })
+  handle('task:approve', (_, id: string) => orch.approve(id))
   // A link that is not one is an answer for the field, not a failure to log.
   const answer = (f: () => unknown) => {
     try {

@@ -1,14 +1,14 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
-import { APPROVE_TOOL } from './tool-defs.ts'
+import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { changes, check, factReport, seed } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
@@ -165,6 +165,11 @@ works on yet, without status or priority; what has a state is a work.
 - One answer per turn: make the tool calls first, then reply once at the end. Don't answer before recording and
   again after it; say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that work.
+- You do what the user's buttons do when the user asks you to: approve_plan, start_work (local_repos when they want
+  it local), start_step, restart_review, stop_agent, and message_agent to write to a work's developer, reviewer or
+  groomer (it resumes; that is also how you pass on an answer to its question). Only when the user asked for it in this
+  conversation ("approve", "start it", "tell the developer…"), never on your own. Never tell the user to press a
+  button or paste text into an agent's chat: do it, then say in one line what you did; when it fails, say why.
 - For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
   diagram of a change (component, sequence, state, flowchart, data) use show_diagram. Revise either by id instead of drawing
   a new one. Prefer showing over describing.
@@ -477,6 +482,41 @@ export class Orchestrator {
     }
     this.groom(taskId, ask)
     return `${task.key} is back in planning; a groomer plans the rest.`
+  }
+
+  /** The user's Approve (the button, or a project chat the user asked): a plan in planning is ready to start. */
+  approve(taskId: string) {
+    const task = this.store.task(taskId)
+    if (task.status !== 'planning') throw new Error(`${task.key} is ${task.status}; only a plan in planning is approved`)
+    if (this.store.data.sessions.some((s) => s.taskId === taskId && this.isRunning(s.id))) throw new Error('An agent is still working on this task')
+    const ready = canApprove(task, this.store.data.tasks.filter((t) => t.projectId === task.projectId))
+    if (!ready.ok) throw new Error(`${task.key} cannot be approved: ${ready.reason}`)
+    this.store.updateTask(taskId, { status: 'ready', needsInput: null })
+  }
+
+  /**
+   * The agent a message to a work or a step goes to (a project chat's message_agent): its session of `role`, else the
+   * one that worked last. A work's developer and reviewer are those of its current step (a legacy task's developer is
+   * its own); a step's are its own. null when it has none.
+   */
+  agentOf(taskId: string, role?: MessagedRole): AgentSession | null {
+    const task = this.store.task(taskId)
+    const step = task.parentId ? task : currentStep(task.id, this.store.data.tasks)
+    const workId = task.parentId ?? task.id
+    const mine = this.store.data.sessions.filter(
+      (s) => s.taskId === workId && MESSAGED_ROLES.includes(s.role as MessagedRole) && (!role || s.role === role) && (task.parentId ? s.stepId === task.id : !s.stepId || s.stepId === step?.id),
+    )
+    const lastAt = (s: AgentSession) => s.items.at(-1)?.at ?? 0
+    // Sessions are in the order they were created: the later of two equally recent wins.
+    return mine.reduce<AgentSession | null>((best, s) => (!best || lastAt(s) >= lastAt(best) ? s : best), null)
+  }
+
+  /** Stops every agent of a work (its steps' too) or of a step that is in a turn; returns those stopped. */
+  async stopAgents(taskId: string): Promise<AgentSession[]> {
+    const task = this.store.task(taskId)
+    const running = this.store.data.sessions.filter((s) => (task.parentId ? s.stepId === task.id : s.taskId === task.id) && this.isRunning(s.id))
+    await Promise.all(running.map((s) => this.stop(s.id)))
+    return running
   }
 
   /** The owner of a work: the topic that created it, or its groomer. */

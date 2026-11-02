@@ -1,4 +1,4 @@
-import { CANVAS_ROLES, DEFAULT_TEMPLATES, FACT_NOTE_KINDS, setKey, setOf, validateLinks, type FactNote, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { CANVAS_ROLES, DEFAULT_TEMPLATES, FACT_NOTE_KINDS, setKey, setOf, validateLinks, type FactNote, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, formatUnits, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -8,7 +8,7 @@ import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
 import { changes as factChanges, factReport } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewFact, stepFact } from './fact.ts'
-import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
+import { MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
   taskId?: string
@@ -43,6 +43,20 @@ export interface ToolActions {
   reviewFact(workId: string): Promise<string>
   /** The owner topic's set_pr_review; returns what to tell it. */
   setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string
+  /** The user's Approve: planning → ready, with the button's checks. */
+  approve(taskId: string): void
+  /** The user's Start (or Restart) of a work; `localRepos`: repositories its steps work on in the main checkout. */
+  develop(taskId: string, localRepos?: string[]): Promise<void>
+  /** The user's Start of a work's next step that starts manually. */
+  startStep(taskId: string): Promise<void>
+  /** The user's Restart of the review of a work's current step. */
+  restartReview(taskId: string): Promise<void>
+  /** The session a message to a work or a step goes to: of `role`, else the one that worked last. */
+  agentOf(taskId: string, role?: MessagedRole): AgentSession | null
+  /** A message to a session, as the user's in its chat; resumes it. */
+  send(sessionId: string, text: string): Promise<void>
+  /** Stops the agents of a work or a step in a turn; returns those stopped. */
+  stopAgents(taskId: string): Promise<AgentSession[]>
 }
 
 /**
@@ -808,6 +822,15 @@ function sharedTool(
       return actions.cancel(t.id, reason).then(() => `Canceled ${t.key}.${taskPrs(t).some((r) => r.prState === 'open') ? ' Its open PRs are left as they are.' : ''}`)
     }
 
+    // The buttons of a work, for a project chat the user asked (chat-keruie-robotamy-i-ahentamy.1): the same methods.
+    case 'approve_plan':
+    case 'start_work':
+    case 'start_step':
+    case 'restart_review':
+    case 'message_agent':
+    case 'stop_agent':
+      return controlTool(store, actions, project, ctx, name, args, byKey)
+
     case 'update_notes':
       store.updateProject(project.id, { notes: String(args.notes ?? '') })
       return 'Notes updated.'
@@ -911,3 +934,78 @@ function sharedTool(
   }
   return undefined
 }
+
+/**
+ * A project chat does what the user's buttons do, when the user asks it (chat-keruie-robotamy-i-ahentamy.1): approve,
+ * start a work or a step, restart a review, write to an agent, stop one. Each calls the orchestrator method its button
+ * does, so the checks are the same; each done action is a line in the project's log.
+ */
+async function controlTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>, byKey: (key: unknown) => Task): Promise<string> {
+  const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+  if (session?.role !== 'chat') throw new Error(`${name} is for a project chat`)
+  const t = byKey(args.key)
+  const work = t.parentId ? store.task(t.parentId) : t
+  const logged = (what: string, of: Task = t) => {
+    store.logEvent({ projectId: project.id, taskId: work.id, taskKey: of.key, kind: 'chat', text: `chat: ${what} ${of.key} at the user's request` })
+    log.info('tools', `chat ${session.id}: ${what} ${of.key}`)
+  }
+  /** A step key names the current step of its work; the actions on a step work on that one. */
+  const current = () => {
+    const step = currentStep(work.id, store.data.tasks)
+    if (t.parentId && step?.id !== t.id) throw new Error(`${t.key} is ${t.status}; the current step of ${work.key} is ${step?.key ?? 'none'}`)
+    return step
+  }
+
+  switch (name) {
+    case 'approve_plan': {
+      actions.approve(t.id)
+      logged('approved')
+      return `${t.key} is approved: ready to start.`
+    }
+
+    case 'start_work': {
+      if (t.parentId) throw new Error(`${t.key} is a step: start its work ${work.key}, or start_step for a step that starts manually`)
+      const local = args.local_repos == null ? undefined : reposArg(args.local_repos, project)
+      await actions.develop(t.id, local)
+      logged('started')
+      const now = store.task(t.id)
+      const step = currentStep(t.id, store.data.tasks)
+      return `Started ${t.key}${step ? ` on ${step.key}` : ''}${local?.length ? `, locally in ${local.map((r) => repoName(project, r)).join(', ')}` : ''}.${now.needsInput ? ` It needs the user: ${now.needsInput}` : ''}`
+    }
+
+    case 'start_step': {
+      const step = current()
+      await actions.startStep(work.id)
+      logged('started step', step ?? t)
+      return `Started ${step?.key ?? work.key}.`
+    }
+
+    case 'restart_review': {
+      const step = current()
+      await actions.restartReview(work.id)
+      logged('restarted the review of', step ?? t)
+      return `The review of ${step?.key ?? work.key} is restarted, unless its last review already covers its PRs.`
+    }
+
+    case 'message_agent': {
+      const role = typeof args.role === 'string' && args.role.trim() ? args.role.trim() : undefined
+      if (role && !(MESSAGED_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${MESSAGED_ROLES.join(', ')}`)
+      const text = String(args.text ?? '').trim()
+      if (!text) throw new Error('text is required')
+      const agent = actions.agentOf(t.id, role as MessagedRole | undefined)
+      if (!agent) throw new Error(`${t.key} has no ${role ?? 'agent'} to write to${role ? '' : ` (${MESSAGED_ROLES.join(', ')})`}`)
+      await actions.send(agent.id, text)
+      logged(`wrote to the ${agent.role} of`)
+      return `Sent to the ${agent.role} of ${t.key}; it goes on with it.`
+    }
+
+    case 'stop_agent': {
+      const stopped = await actions.stopAgents(t.id)
+      if (!stopped.length) throw new Error(`No agent of ${t.key} is working`)
+      logged('stopped')
+      return `Stopped the ${[...new Set(stopped.map((s) => s.role))].join(', ')} of ${t.key}.`
+    }
+  }
+  throw new Error(`Unknown tool ${name}`)
+}
+

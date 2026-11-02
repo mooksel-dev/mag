@@ -8,6 +8,8 @@ import { DEFAULT_PLAYBOOK, PRECEDENCE, inbox, type AgentEvent } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
+import { createTools, type ToolActions } from './tools.ts'
+import type { MessagedRole } from './tool-defs.ts'
 
 /** A Claude Code live process driven by the test: it records what mag does and emits what the CLI would. */
 class FakeLive implements LiveHandle {
@@ -1004,4 +1006,118 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     gh.restore()
     delete process.env.GIT_SSH_COMMAND
   }
+})
+
+/** The tools of a project topic that does what the buttons do, wired to the orchestrator as index.ts wires them. */
+function chatControls(s: ReturnType<typeof setup>) {
+  const actions = {
+    approve: (id: string) => s.orch.approve(id),
+    develop: (id: string, local?: string[]) => s.orch.develop(id, undefined, local),
+    startStep: (id: string) => s.orch.startStep(id),
+    restartReview: (id: string) => s.orch.reviewTask(id),
+    agentOf: (id: string, role?: MessagedRole) => s.orch.agentOf(id, role),
+    send: (id: string, text: string) => s.orch.send(id, text),
+    stopAgents: (id: string) => s.orch.stopAgents(id),
+  } as ToolActions
+  const tools = createTools(s.store, actions)
+  const topic = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const call = (name: string, args: Record<string, unknown>, sessionId = topic.id) => tools({ projectId: s.project.id, sessionId }, name, args)
+  const logged = () => s.store.data.events.filter((e) => e.kind === 'chat').map((e) => `${e.taskKey}: ${e.text}`)
+  return { call, topic, logged }
+}
+
+test("approve_plan: the button's checks and change; a project topic only; logged (chat-keruie-robotamy-i-ahentamy.1)", async () => {
+  const s = setup()
+  const { store, orch, project, task } = s
+  const { call, logged } = chatControls(s)
+  const architect = store.createSession({ projectId: project.id, taskId: null, role: 'architect', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(call('approve_plan', { key: 'login' }, architect.id), /approve_plan is for a project chat/)
+  await assert.rejects(call('approve_plan', { key: 'login' }), /login cannot be approved: Add at least one step/)
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  orch.groom(task.id)
+  await tick()
+  await assert.rejects(call('approve_plan', { key: 'login' }), /An agent is still working on this task/)
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  store.updateTask(task.id, { needsInput: 'Look' })
+  assert.equal(await call('approve_plan', { key: 'login' }), 'login is approved: ready to start.')
+  assert.deepEqual([store.task(task.id).status, store.task(task.id).needsInput], ['ready', null])
+  await assert.rejects(call('approve_plan', { key: 'login' }), /login is ready; only a plan in planning is approved/)
+  assert.deepEqual(logged(), ["login: chat: approved login at the user's request"])
+})
+
+test('start_work and start_step: as Start; errors as the button gives them (chat-keruie-robotamy-i-ahentamy.1)', async () => {
+  const s = setup()
+  const { store, project, task } = s
+  const { call, logged } = chatControls(s)
+  const one = store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  const two = store.createTask({ projectId: project.id, title: 'two', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [], startManually: true })
+  await assert.rejects(call('start_work', { key: 'login' }), /login is planning; only ready or in progress works are developed/)
+  store.updateTask(task.id, { status: 'ready' })
+  await assert.rejects(call('start_work', { key: 'login.1' }), /login\.1 is a step: start its work login/)
+  await assert.rejects(call('start_work', { key: 'login', local_repos: ['web'] }), /Not a repository of the project: web/)
+  assert.equal(await call('start_work', { key: 'login' }), 'Started login on login.1.')
+  assert.equal(store.task(one.id).status, 'in_progress')
+  const dev = store.data.sessions.find((x) => x.stepId === one.id && x.role === 'developer')!
+  assert.match(opened.at(-1)!.sent[0], /^Implement step login\.1 of login/)
+  await assert.rejects(call('start_work', { key: 'login' }), /Developer is still working/)
+  await assert.rejects(call('start_step', { key: 'login' }), /login has no step waiting for Start: login\.1 is in progress/)
+
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  store.updateTask(one.id, { status: 'done' })
+  await assert.rejects(call('start_step', { key: 'login.1' }), /login\.1 is done; the current step of login is login\.2/)
+  assert.equal(await call('start_step', { key: 'login.2' }), 'Started login.2.')
+  assert.equal(store.task(two.id).status, 'in_progress')
+  assert.notEqual(store.data.sessions.find((x) => x.stepId === two.id)?.id, dev.id)
+  assert.deepEqual(logged(), ["login: chat: started login at the user's request", "login.2: chat: started step login.2 at the user's request"])
+})
+
+test('start_work: local_repos by name work in the main checkout (chat-keruie-robotamy-i-ahentamy.1)', async () => {
+  const s = localSetup()
+  const { call } = chatControls(s)
+  assert.equal(await call('start_work', { key: 'login', local_repos: ['app'] }), 'Started login on login.1, locally in app.')
+  assert.deepEqual(s.store.task(s.task.id).localRepos, [s.app])
+})
+
+test('restart_review: the button\'s check (chat-keruie-robotamy-i-ahentamy.1)', async () => {
+  const s = await developing()
+  const { call, logged } = chatControls(s)
+  await assert.rejects(call('restart_review', { key: 'login' }), /No step of this task has an open PR to review/)
+  assert.deepEqual(logged(), [])
+})
+
+test('message_agent: the agent that worked last, or of the role; its session resumes with the text (chat-keruie-robotamy-i-ahentamy.1)', async () => {
+  const s = await developing()
+  const { store, task, step, session, live } = s
+  const { call, logged } = chatControls(s)
+  const groomer = store.createSession({ projectId: s.project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  groomer.items.push({ kind: 'user', text: 'old', at: 1 })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  store.updateTask(task.id, { needsInput: 'Which schema?' })
+
+  await assert.rejects(call('message_agent', { key: 'login', text: ' ' }), /text is required/)
+  await assert.rejects(call('message_agent', { key: 'login', text: 'x', role: 'architect' }), /role must be one of developer, reviewer, groomer/)
+  await assert.rejects(call('message_agent', { key: 'login', text: 'x', role: 'reviewer' }), /login has no reviewer to write to/)
+  assert.equal(await call('message_agent', { key: 'login', text: 'Schema v2' }), 'Sent to the developer of login; it goes on with it.')
+  assert.equal(live.sent.at(-1), 'Schema v2')
+  assert.equal(session.status, 'running')
+  assert.equal(store.task(task.id).needsInput, null, 'the answer clears the question')
+  assert.deepEqual(session.items.at(-1), { kind: 'user', text: 'Schema v2', attachments: undefined, at: session.items.at(-1)!.at })
+
+  assert.equal(s.orch.agentOf(step.id)?.id, session.id, 'a step: its own agents')
+  assert.equal(s.orch.agentOf(task.id, 'groomer')?.id, groomer.id)
+  assert.deepEqual(logged(), ["login: chat: wrote to the developer of login at the user's request"])
+})
+
+test('stop_agent: stops the agents of a work in a turn, as Stop (chat-keruie-robotamy-i-ahentamy.1)', async () => {
+  const s = await developing()
+  const { call, logged } = chatControls(s)
+  assert.equal(s.session.status, 'running')
+  assert.equal(await call('stop_agent', { key: 'login.1' }), 'Stopped the developer of login.1.')
+  await tick()
+  assert.notEqual(s.session.status, 'running')
+  await assert.rejects(call('stop_agent', { key: 'login' }), /No agent of login is working/)
+  assert.deepEqual(logged(), ["login.1: chat: stopped login.1 at the user's request"])
 })
