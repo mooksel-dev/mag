@@ -56,6 +56,7 @@ const api: MagApi = {
   repoInfo: (path) => ipcRenderer.invoke('repo:info', path),
   send: (sessionId, text, attachments) => ipcRenderer.invoke('session:send', sessionId, text, attachments),
   newChat: (projectId) => ipcRenderer.invoke('chat:new', projectId),
+  branchChat: (sessionId) => ipcRenderer.invoke('chat:branch', sessionId),
   renameChat: (sessionId, title) => ipcRenderer.invoke('chat:rename', sessionId, title),
   deleteChat: (sessionId) => ipcRenderer.invoke('chat:delete', sessionId),
   getCanvas: (id) => ipcRenderer.invoke('canvas:get', id),

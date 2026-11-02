@@ -496,6 +496,7 @@ button.iconbtn { flex: none; position: relative; width: 28px; height: 28px; padd
 button.iconbtn:not(:disabled):hover { background: var(--hover); color: var(--text); }
 .iconbtn .cnt { position: absolute; right: 1px; bottom: 1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--status); color: var(--muted); font-size: 9px; line-height: 13px; }
 .threadpicker { flex: 1; min-width: 0; }
+.branchedfrom { padding: 4px 18px; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .threadbtn { width: 100%; display: flex; align-items: center; gap: 6px; border: none; background: none; padding: 5px 8px; font-weight: 500; text-align: left; }
 .threadbtn:hover, .threadbtn[aria-expanded='true'] { background: var(--hover); }
 .threadbtn .title, .threadlist .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

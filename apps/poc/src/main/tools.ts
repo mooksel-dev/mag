@@ -37,6 +37,8 @@ export interface ToolActions {
   askOwner(stepId: string, question: string): boolean
   /** The owner's answer to its step developer's waiting question; the developer goes on with it. */
   answerDeveloper(stepId: string, text: string): Promise<void>
+  /** A topic's Branch: a new topic forking its agent session; `text` is its first message. Returns the new topic's id. */
+  branchChat(sessionId: string, text?: string): string
   /** A topic's review_pr: the review of a teammate's PR, owned by `by`; returns the job for its turn. */
   reviewPr(projectId: string, url: string, by: string): Promise<{ taskId: string; job: string }>
   /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
@@ -787,6 +789,14 @@ function sharedTool(
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       if (session?.role !== 'chat') throw new Error('review_pr is for a project topic')
       return actions.reviewPr(project.id, String(args.url ?? ''), session.id).then((r) => r.job)
+    }
+
+    case 'branch_topic': {
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (session?.role !== 'chat' || session.taskId) throw new Error('branch_topic is for a project topic')
+      const id = actions.branchChat(session.id, typeof args.text === 'string' ? args.text : undefined)
+      const title = store.session(id).title
+      return `Branched into a new topic "${title}" (${id})${typeof args.text === 'string' && args.text.trim() ? '; its agent answers the first message there' : ''}. Tell the user it is in Topics; go on here only with this topic's own question.`
     }
 
     case 'add_idea': {

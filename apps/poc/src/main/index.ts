@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -120,6 +120,7 @@ app.whenReady().then(async () => {
   actions.reopen = (id, what, by) => orch.reopen(id, what, by)
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
+  actions.branchChat = (sessionId, text) => orch.branchChat(sessionId, text)
   actions.reviewPr = (projectId, url, by) => orch.reviewPr(projectId, url, by)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
   actions.setPrReview = (id, review) => orch.setPrReview(id, review)
@@ -230,6 +231,7 @@ app.whenReady().then(async () => {
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
+  handle('chat:branch', (_, sessionId: string) => orch.branchChat(sessionId))
   handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))
   handle('chat:delete', (_, sessionId: string) => orch.deleteChat(sessionId))
   handle('canvas:get', (_, id: string) => {

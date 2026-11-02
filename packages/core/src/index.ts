@@ -692,8 +692,13 @@ export interface AgentSession {
   agent: AgentKind
   /** The agent's own session id, used to resume. */
   nativeSessionId: string | null
-  /** Reviewer: the owner's native session its first run forks (T-55.1); later runs resume the fork. */
+  /**
+   * The native session its first run forks; later runs resume the fork. Reviewer: the owner's (T-55.1); a branched
+   * topic: its parent topic's.
+   */
   forkOf?: string | null
+  /** A project topic branched from another one (Branch): that topic's id. */
+  branchOf?: string | null
   /** Model the agent reported when its session started. */
   activeModel?: string
   /** Slash commands and skills the agent reported when its session last started, without the "/". */

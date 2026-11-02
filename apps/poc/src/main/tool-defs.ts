@@ -475,6 +475,13 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'https://github.com/<owner>/<repo>/pull/<n>' } }, required: ['url'] },
   },
   {
+    name: 'branch_topic',
+    scope: 'project',
+    description:
+      'Branch this topic into a new one, when the user asks to go on with a separate question there: the new topic forks your session, so it starts with everything said here, and this topic stays as it is. text, if given, is its first message: the new topic\'s agent answers it there. Answers with the new topic\'s id; the user finds it in Topics.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Optional first message of the new topic, as the user would write it.' } } },
+  },
+  {
     name: 'get_pr_changes',
     scope: 'task',
     reviewer: 'also',

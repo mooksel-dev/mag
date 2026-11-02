@@ -1121,3 +1121,56 @@ test('stop_agent: stops the agents of a work in a turn, as Stop (chat-keruie-rob
   await assert.rejects(call('stop_agent', { key: 'login' }), /No agent of login is working/)
   assert.deepEqual(logged(), ["login.1: chat: stopped login.1 at the user's request"])
 })
+
+test("branchChat: the new topic forks the parent's session on its first live turn; the parent stays (branch-this-topic-novyi-topik.1)", async () => {
+  const { store, orch, project } = setup()
+  const parentId = orch.newChat(project.id)
+  // A topic without an agent session has nothing to fork.
+  assert.throws(() => orch.branchChat(parentId), /no agent session to branch yet/)
+  await orch.send(parentId, 'Design the login')
+  const parentLive = opened.at(-1)!
+  parentLive.emit({ type: 'session.started', nativeSessionId: 'parent-native' })
+  parentLive.emit({ type: 'turn.done', ok: true })
+  await tick()
+  const parent = store.session(parentId)
+
+  const id = orch.branchChat(parentId, ' And the logout? ')
+  const topic = store.session(id)
+  assert.deepEqual([topic.forkOf, topic.branchOf, topic.title, topic.role, topic.taskId], ['parent-native', parentId, 'Branch of Design the login', 'chat', null])
+  await tick()
+  const live = opened.at(-1)!
+  assert.notEqual(live, parentLive)
+  assert.deepEqual(live.sent, ['And the logout?'])
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession], ['parent-native', true])
+  assert.equal(topic.title, 'Branch of Design the login', 'the title is not replaced by the first message')
+  assert.deepEqual(parent.items.filter((i) => i.kind === 'user').length, 1, 'the parent is untouched')
+
+  // Its next process resumes the fork, not the parent.
+  live.emit({ type: 'session.started', nativeSessionId: 'fork-native' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  live.close()
+  await tick()
+  await orch.send(id, 'more')
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession], ['fork-native', false])
+
+  // Without text the topic waits for the user's first message.
+  const count = opened.length
+  const empty = store.session(orch.branchChat(parentId))
+  await tick()
+  assert.deepEqual([empty.items.length, opened.length], [0, count])
+})
+
+test('branch_topic: a project topic branches itself into a new one; other sessions cannot (branch-this-topic-novyi-topik.1)', async () => {
+  const s = setup()
+  const tools = createTools(s.store, { branchChat: (id: string, text?: string) => s.orch.branchChat(id, text) } as ToolActions)
+  const topic = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Auth' })
+  const call = (args: Record<string, unknown>, sessionId = topic.id) => tools({ projectId: s.project.id, sessionId }, 'branch_topic', args)
+  await assert.rejects(call({}), /no agent session to branch yet/)
+  topic.nativeSessionId = 'auth-native'
+  const architect = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'architect', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(call({}, architect.id), /branch_topic is for a project topic/)
+  assert.match(String(await call({})), /^Branched into a new topic "Branch of Auth" \(\w+\)\. Tell the user/)
+  const branch = s.store.data.sessions.at(-1)!
+  assert.deepEqual([branch.branchOf, branch.forkOf, branch.items.length], [topic.id, 'auth-native', 0])
+})
