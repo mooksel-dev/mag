@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingsByLevel, githubSlug, inbox, openWorkCount, parsePrUrl, pipelineCounts, projectReviews, reviewOf, reviewReady, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, openWorkCount, parsePrUrl, pipelineCounts, projectReviews, reviewOf, reviewReady, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -84,4 +84,46 @@ test('Needs you: a review is ready once its verdict covers the PR head, and not 
   assert.deepEqual(inbox('p', [stale, review('n')], [topic('idle')]), [])
   assert.deepEqual(inbox('p', [review('q', { needsInput: 'No access to the repo' })], []).map((i) => i.kind), ['question'])
   assert.deepEqual(inbox('p', [{ ...ready, status: 'done' }], [topic('idle')]), [])
+})
+
+test('findingPlace: a file line or range; anything else names no line (reviews-ahent-reviuit-pr-timeitiv.3)', () => {
+  assert.deepEqual(findingPlace('src/a.ts:12'), { path: 'src/a.ts', start: 12, end: 12 })
+  assert.deepEqual(findingPlace('./src/a.ts:12-20'), { path: 'src/a.ts', start: 12, end: 20 })
+  assert.equal(findingPlace('src/a.ts'), null)
+  assert.equal(findingPlace('billing module'), null)
+  assert.equal(findingPlace('src/a.ts:20-12'), null)
+  assert.equal(findingPlace(undefined), null)
+})
+
+test('reviewToPost: only picked findings, in level order; lines become line comments, the rest goes in the text', () => {
+  const findings = [
+    { text: 'naming', level: 'nit' as const, where: 'src/a.ts:3', post: true },
+    { text: 'not picked', level: 'blocker' as const, where: 'src/b.ts:1' },
+    { text: 'no lock', level: 'blocker' as const, where: 'src/a.ts:10-14', post: true },
+    { text: 'why?', level: 'question' as const, where: 'billing', post: true },
+  ]
+  assert.deepEqual(reviewToPost('request_changes', findings), {
+    verdict: 'request_changes',
+    body: '- `billing`: **question**: why?',
+    comments: [
+      { path: 'src/a.ts', line: 14, start: 10, body: '**blocker**: no lock' },
+      { path: 'src/a.ts', line: 3, body: '**nit**: naming' },
+    ],
+  })
+  assert.deepEqual(reviewToPost('comment', findings, false).body.split('\n'), ['- `src/a.ts:10-14`: **blocker**: no lock', '- `billing`: **question**: why?', '- `src/a.ts:3`: **nit**: naming'])
+  assert.deepEqual(reviewToPost('approve', []), { verdict: 'approve', body: '', comments: [] })
+  assert.equal(reviewToPost('request_changes', [findings[2]]).body, '1 blocker')
+  assert.equal(reviewToPost('comment', []).body, 'Comment')
+})
+
+test('reviewPollOutcome: done when merged or closed; new commits after a review get a look once', () => {
+  const reviewed = prReview({ verdict: 'approve', head: 'abc' })
+  assert.equal(reviewPollOutcome(reviewed, { state: 'MERGED', head: 'abc' }), 'done')
+  assert.equal(reviewPollOutcome(prReview(), { state: 'CLOSED', head: 'abc' }), 'done')
+  assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'abc' }), null)
+  assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'def' }), 'rereview')
+  // Asked about def already (the PR's head is def), the agent has not recorded it yet.
+  assert.equal(reviewPollOutcome({ ...reviewed, pr: { ...reviewed.pr, head: 'def' } }, { state: 'OPEN', head: 'def' }), null)
+  // Not reviewed yet: the agent is at it.
+  assert.equal(reviewPollOutcome(prReview(), { state: 'OPEN', head: 'def' }), null)
 })

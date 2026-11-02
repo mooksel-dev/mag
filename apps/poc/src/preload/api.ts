@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { CompareItem, Coverage, FileChange, Grounding, HunkRef } from '@mag/diff/types'
 
 export interface AppState {
@@ -115,6 +115,8 @@ export interface FactView {
   /** null without a fact diagram. */
   coverage: Coverage | null
   unverified: Grounding['unverified']
+  /** Read without the project's architecture (a PR outside the project): modules are folders. */
+  outside: boolean
   at: number
 }
 
@@ -226,6 +228,16 @@ export interface MagApi {
   closeReview(taskId: string): Promise<void>
   /** The CI checks of a review's PR, from GitHub. */
   prChecks(taskId: string): Promise<PrCheck[]>
+  /**
+   * Publish a review to its PR on GitHub as the user: `verdict` and only the findings at `picks` (indexes into its
+   * findings). The user's button only; returns the review's link, or what GitHub refused.
+   */
+  publishReview(taskId: string, verdict: PrVerdict, picks: number[]): Promise<{ url: string } | { error: string }>
+  /**
+   * A review of a PR outside the project: the user picks a checkout of its repository, which joins the project, and the
+   * review looks again; returns its topic. null when the user cancels.
+   */
+  connectReviewRepo(taskId: string): Promise<{ sessionId: string } | { error: string } | null>
   /** Save a renderer error as a crash report in the logs folder. */
   reportCrash(crash: RendererCrash): Promise<void>
   /** The newest crash from before this start that the user has not dismissed. */

@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
-import type { TaskWork } from '@mag/core'
+import { parsePrUrl, type PostReview, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
 import type { AwaitingPr, PrCheck } from '../preload/api'
 
@@ -183,6 +183,109 @@ export async function prChecks(url: string): Promise<PrCheck[]> {
  */
 export async function fetchPr(repo: string, number: number, base: string) {
   await run('git', ['fetch', '--no-write-fetch-head', 'origin', `pull/${number}/head`, base], repo)
+}
+
+/**
+ * The diff between two commits of a GitHub repository (owner/repo) as GitHub has it (reviews-ahent-reviuit-pr-timeitiv.3):
+ * for a PR of a repository without a local checkout. `base...head`: from where head left base.
+ */
+export async function githubDiffText(repo: string, base: string, head: string): Promise<string> {
+  return run('gh', ['api', '-H', 'Accept: application/vnd.github.diff', `repos/${repo}/compare/${base}...${head}`])
+}
+
+/** The changed files between two commits of a GitHub repository, with zero-context hunks: what diffHunks gives locally. */
+export async function githubDiffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
+  return parseDiff(zeroContext(await githubDiffText(repo, base, head)))
+}
+
+/** Where `head` left `base` (a branch or a commit) in a GitHub repository (owner/repo). */
+export async function githubMergeBase(repo: string, base: string, head: string): Promise<string> {
+  return run('gh', ['api', `repos/${repo}/compare/${encodeURIComponent(base)}...${head}`, '--jq', '.merge_base_commit.sha'])
+}
+
+/**
+ * A unified diff with context (GitHub's) as `git diff --unified=0` prints it: each run of changed lines a hunk of its
+ * own, context lines dropped. A hunk without old (new) lines starts at the line before, as git has it.
+ */
+export function zeroContext(text: string): string {
+  const out: string[] = []
+  let oldNo = 0
+  let newNo = 0
+  let run: { old: number; new: number; lines: string[]; dels: number; adds: number } | null = null
+  // Lines of the current hunk still to come: a context or changed line may itself look like a header.
+  let oldLeft = 0
+  let newLeft = 0
+  const flush = () => {
+    if (!run) return
+    const range = (start: number, lines: number) => `${lines ? start : start - 1}${lines === 1 ? '' : `,${lines}`}`
+    out.push(`@@ -${range(run.old, run.dels)} +${range(run.new, run.adds)} @@`, ...run.lines)
+    run = null
+  }
+  for (const line of text.split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = line[0]
+      if (c === ' ' || (c === undefined && line === '')) {
+        flush()
+        oldNo++, newNo++, oldLeft--, newLeft--
+        continue
+      }
+      if (c === '-' || c === '+') {
+        run ??= { old: oldNo, new: newNo, lines: [], dels: 0, adds: 0 }
+        run.lines.push(line)
+        if (c === '-') (run.dels++, oldNo++, oldLeft--)
+        else (run.adds++, newNo++, newLeft--)
+        continue
+      }
+      if (c === '\\') {
+        run?.lines.push(line)
+        continue
+      }
+    }
+    flush()
+    oldLeft = newLeft = 0
+    const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
+    if (h) {
+      oldNo = +h[1]
+      newNo = +h[3]
+      oldLeft = h[2] === undefined ? 1 : +h[2]
+      newLeft = h[4] === undefined ? 1 : +h[4]
+      // An empty side (-0,0 / +0,0) counts from line 1.
+      if (!oldLeft) oldNo++
+      if (!newLeft) newNo++
+      continue
+    }
+    out.push(line)
+  }
+  flush()
+  return out.join('\n')
+}
+
+/** Runs a command with `input` on its stdin. */
+function runWithInput(cmd: string, args: string[], input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => (stdout += d))
+    child.stderr.on('data', (d) => (stderr += d))
+    child.on('error', reject)
+    child.on('close', (code) => (code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr.trim() || stdout.trim() || `${cmd} exited with ${code}`))))
+    child.stdin.end(input)
+  })
+}
+
+const EVENTS: Record<PostReview['verdict'], string> = { approve: 'APPROVE', request_changes: 'REQUEST_CHANGES', comment: 'COMMENT' }
+
+/**
+ * Publishes a review to a PR as the user (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): only from the user's button
+ * in the app, never from an agent. `commit`: the head the review is of. Returns the review's link.
+ */
+export async function postReview(url: string, commit: string, review: PostReview): Promise<string> {
+  const { owner, repo, number } = parsePrUrl(url)
+  const comments = review.comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', ...(c.start ? { start_line: c.start, start_side: 'RIGHT' } : {}), body: c.body }))
+  const payload = JSON.stringify({ commit_id: commit, event: EVENTS[review.verdict], body: review.body, comments })
+  const out = JSON.parse(await runWithInput('gh', ['api', '--method', 'POST', `repos/${owner}/${repo}/pulls/${number}/reviews`, '--input', '-'], payload))
+  return out.html_url || url
 }
 
 export function slug(s: string) {

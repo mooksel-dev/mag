@@ -7,5 +7,5 @@ export { LEVELS, SIGNIFICANT, isSignificant, parseSignificance, significance, wi
 export { carryIds, sharedPaths, unowned } from './ownership.ts'
 export { diagramChanges, formatPlanWarnings, lineName, planWarnings } from './plan.ts'
 export { formatFiles } from './format.ts'
-export { moduleResolver, planVocabulary, vocabularyOf } from './vocabulary.ts'
+export { folderVocabulary, moduleResolver, planVocabulary, vocabularyOf } from './vocabulary.ts'
 export type * from './types.ts'

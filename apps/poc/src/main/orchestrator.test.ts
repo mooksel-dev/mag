@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_PLAYBOOK, PRECEDENCE, inbox, type AgentEvent } from '@mag/core'
@@ -910,4 +910,101 @@ test("a teammate's PR: intent ↔ fact starts the fact as a copy of the intent; 
   orch.closeReview(work.id)
   assert.equal(store.task(work.id).status, 'done')
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions), [])
+})
+
+/**
+ * A gh on PATH that answers from a local repository as GitHub would (reviews-ahent-reviuit-pr-timeitiv.3): pr view
+ * from `pr`, compare from git in `repo`; a posted review is appended to `posts`, refused with 422 while `reject` is set
+ * and it has line comments.
+ */
+function fakeGh(dir: string) {
+  const bin = join(dir, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const config = join(dir, 'gh.json')
+  writeFileSync(join(bin, 'gh'), `#!/usr/bin/env node
+const { execFileSync } = require('node:child_process')
+const fs = require('node:fs')
+const c = JSON.parse(fs.readFileSync(${JSON.stringify(config)}, 'utf8'))
+const a = process.argv.slice(2)
+const git = (...args) => execFileSync('git', args, { cwd: c.repo, encoding: 'utf8' })
+if (a[0] === 'pr' && a[1] === 'view') process.stdout.write(JSON.stringify(c.pr))
+else if (a[0] === 'api' && a.includes('POST')) {
+  const body = JSON.parse(fs.readFileSync(0, 'utf8'))
+  if (c.reject && body.comments.length) { process.stderr.write('gh: Unprocessable Entity (HTTP 422): line could not be resolved'); process.exit(1) }
+  fs.appendFileSync(c.posts, JSON.stringify(body) + '\\n')
+  process.stdout.write(JSON.stringify({ html_url: c.pr.url + '#review-1' }))
+} else if (a[0] === 'api') {
+  const [base, head] = a.find((x) => x.includes('/compare/')).split('/compare/')[1].split('...').map(decodeURIComponent)
+  process.stdout.write(a.includes('--jq') ? git('merge-base', base, head) : git('diff', '--no-color', '-M', base + '...' + head))
+} else { process.stderr.write('fake gh: ' + a.join(' ')); process.exit(2) }
+`)
+  chmodSync(join(bin, 'gh'), 0o755)
+  const path = process.env.PATH
+  process.env.PATH = `${bin}:${path}`
+  const set = (c: object) => writeFileSync(config, JSON.stringify(c))
+  return { set, posts: () => (existsSync(join(dir, 'posts')) ? readFileSync(join(dir, 'posts'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []), restore: () => void (process.env.PATH = path), postsFile: join(dir, 'posts') }
+}
+
+test("a PR outside the project: read from GitHub by folders; the user publishes the picked findings; new commits get a look at what they change (reviews-ahent-reviuit-pr-timeitiv.3)", async () => {
+  const { dir, store, orch, project } = setup()
+  const remote = gitRepo(join(dir, 'remote'))
+  git(remote, 'checkout', '-q', '-b', 'feature')
+  mkdirSync(join(remote, 'src', 'billing'), { recursive: true })
+  writeFileSync(join(remote, 'src', 'billing', 'charge.ts'), 'export const charge = 1\n')
+  git(remote, 'add', '.')
+  git(remote, 'commit', '-q', '-m', 'charge')
+  const head = git(remote, 'rev-parse', 'HEAD')
+  const url = 'https://github.com/acme/remote/pull/7'
+  const gh = fakeGh(dir)
+  const pr = { url, number: 7, title: 'Charge', author: { login: 'olena' }, state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head }
+  gh.set({ repo: remote, posts: gh.postsFile, pr })
+  try {
+    const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+    const first = await orch.reviewPr(project.id, url, topic.id)
+    const work = store.task(first.taskId)
+    assert.deepEqual([work.prReview!.pr.repo, work.prReview!.pr.outside, work.title], ['acme/remote', true, 'remote#7: Charge'])
+    assert.match(first.job, /Its repository acme\/remote is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff/)
+    assert.match(first.job, /Changed files \(mag\):\n[\s\S]*src-billing[\s\S]*src\/billing\/charge\.ts/)
+    assert.doesNotMatch(first.job, /New commits since/)
+    assert.match(await orch.reviewFactOf(work.id), /Without the project architecture: the repository is outside the project/)
+
+    orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'charges twice', level: 'blocker', where: 'src/billing/charge.ts:1' }, { text: 'name', level: 'nit', where: 'charge' }] })
+    assert.match(await orch.publishReview(work.id, 'request_changes', [0]), /#review-1$/)
+    assert.deepEqual(gh.posts(), [{ commit_id: head, event: 'REQUEST_CHANGES', body: '1 blocker', comments: [{ path: 'src/billing/charge.ts', line: 1, side: 'RIGHT', body: '**blocker**: charges twice' }] }])
+    const r = store.task(work.id).prReview!
+    assert.deepEqual(r.findings.map((f) => f.post), [true, false])
+    assert.equal(r.posted?.url, `${url}#review-1`)
+    // GitHub refuses a line comment: everything goes in the text.
+    gh.set({ repo: remote, posts: gh.postsFile, pr, reject: true })
+    await orch.publishReview(work.id, 'comment', [0, 1])
+    assert.deepEqual(gh.posts()[1], { commit_id: head, event: 'COMMENT', body: '- `src/billing/charge.ts:1`: **blocker**: charges twice\n- `charge`: **nit**: name', comments: [] })
+
+    // New commits: only what they change.
+    writeFileSync(join(remote, 'src', 'billing', 'refund.ts'), 'export const refund = 1\n')
+    git(remote, 'add', '.')
+    git(remote, 'commit', '-q', '-m', 'refund')
+    const next = git(remote, 'rev-parse', 'HEAD')
+    gh.set({ repo: remote, posts: gh.postsFile, pr: { ...pr, headRefOid: next } })
+    const again = await orch.reviewPr(project.id, url, topic.id)
+    assert.equal(again.taskId, work.id)
+    assert.match(again.job, new RegExp(`New commits since: review only what changed after ${head.slice(0, 12)} \\(gh api -H "Accept: application/vnd.github.diff" repos/acme/remote/compare/${head}\\.\\.\\.${next}\\)`))
+    const since = again.job.split('Changed since your review (mag):\n')[1].split('Pass work')[0]
+    assert.match(since, /refund\.ts/)
+    assert.doesNotMatch(since, /charge\.ts/)
+
+    // Connect repo: only a checkout of that repository joins the project.
+    await assert.rejects(orch.connectReviewRepo(work.id, dir), /is not a checkout of acme\/remote/)
+    // Its checkout: read locally from then on (the fetch from GitHub fails here without a network, and is said so).
+    git(remote, 'remote', 'add', 'origin', 'git@github.com:acme/remote.git')
+    process.env.GIT_SSH_COMMAND = 'false'
+    const { sessionId } = await orch.connectReviewRepo(work.id, remote)
+    assert.equal(sessionId, topic.id)
+    assert.ok(store.project(project.id).repos.includes(remote))
+    const local = store.task(work.id).prReview!
+    assert.deepEqual([local.pr.repo, local.pr.outside, local.head], [remote, undefined, head])
+    assert.match(opened.at(-1)!.sent.at(-1)!, /Its code is in .*remote, the main checkout[\s\S]*New commits since: review only what changed after \w+ \(git diff /)
+  } finally {
+    gh.restore()
+    delete process.env.GIT_SSH_COMMAND
+  }
 })

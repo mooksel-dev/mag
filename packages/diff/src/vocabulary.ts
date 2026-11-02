@@ -53,3 +53,24 @@ export function planVocabulary(modules: ArchNode[], diagrams: Diagram[]): Vocabu
   }
   return out
 }
+
+/** Folders whose children are each a module of their own: a monorepo's apps and packages, a source root's areas. */
+const PACKAGE_DIRS = new Set(['apps', 'packages', 'services', 'libs', 'modules', 'cmd', 'internal', 'pkg', 'crates', 'plugins', 'src', 'lib'])
+
+/**
+ * The vocabulary of a repository without a recorded architecture (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10): a
+ * module per top folder of `paths`, one per child of a folder like apps/, packages/ or src/. Files at the root get none.
+ */
+export function folderVocabulary(paths: string[]): Vocabulary {
+  const seen = new Set<string>()
+  const out: Vocabulary['modules'] = []
+  for (const p of paths.map(clean)) {
+    const parts = p.split('/')
+    if (parts.length < 2) continue
+    const dir = PACKAGE_DIRS.has(parts[0]) && parts.length > 2 ? `${parts[0]}/${parts[1]}` : parts[0]
+    if (seen.has(dir)) continue
+    seen.add(dir)
+    out.push({ id: dir.replace(/[^\w-]+/g, '-'), paths: [dir] })
+  }
+  return { modules: out }
+}

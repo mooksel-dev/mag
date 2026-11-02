@@ -1,5 +1,5 @@
 import { rmdir } from 'node:fs'
-import { currentStep, isLegacy, prHeads, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
@@ -103,12 +103,41 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     if (prRollup(next, await changedRepos(next, store.project(owner.projectId).baseBranch)) === 'review') await orch.review(owner.id, heads)
   }
 
+  /**
+   * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.3): done once the PR is merged or closed (Decision
+   * 12); new commits after the head the agent reviewed get another look at what they change (Decision 8), once its
+   * topic is free. A review the agent has not finished is left to it.
+   */
+  const pollReview = async (work: Task) => {
+    const r = work.prReview!
+    let pr: Awaited<ReturnType<typeof prState>>
+    try {
+      pr = await prState(r.pr.url)
+    } catch (e) {
+      checkError(work.key, e)
+      return
+    }
+    // The user may have closed it, or it may have changed, while GitHub answered.
+    const now = store.task(work.id)
+    if (now.status !== 'in_progress' || now.prReview?.pr.url !== r.pr.url) return
+    const outcome = reviewPollOutcome(now.prReview!, pr)
+    if (outcome === 'done') {
+      log.info('scheduler', `${work.key} done: its PR was ${pr.state.toLowerCase()}`)
+      store.updateTask(work.id, { status: 'done', needsInput: null })
+      return
+    }
+    if (outcome !== 'rereview' || orch.isRunning(now.ownerSessionId ?? '')) return
+    log.info('scheduler', `${work.key}: new commits on its PR (${pr.head!.slice(0, 12)}), looking again`)
+    await orch.rereview(work.id).catch((e) => checkError(work.key, e))
+  }
+
   let polling = false
   const pollPrs = async () => {
     if (polling) return
     polling = true
     try {
-      for (const task of store.data.tasks.filter((t) => !t.parentId && t.status === 'in_progress')) {
+      for (const work of store.data.tasks.filter((t) => isReview(t) && t.status === 'in_progress' && t.prReview)) await pollReview(work)
+      for (const task of store.data.tasks.filter((t) => !t.parentId && t.status === 'in_progress' && !isReview(t))) {
         const owner = isLegacy(task) ? task : currentStep(task.id, store.data.tasks)
         // Fully merged but not done: merged while its developer ran, so pollWork skipped it then.
         if (owner?.work && (owner.work.repos.some(live) || prRollup(owner.work, []) === 'done')) await pollWork(owner, task)

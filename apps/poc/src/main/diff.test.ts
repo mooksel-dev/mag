@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { normalizeDiagram, validateDiagram, type ArchNode } from '@mag/core'
 import { coverage, createDiff, grounding, type Vocabulary } from '@mag/diff'
-import { diffHunks, parseDiff, treeAt } from './git.ts'
+import { diffHunks, parseDiff, treeAt, zeroContext } from './git.ts'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 
@@ -151,4 +151,33 @@ test('PR #51 (T-50.1): the fact a reviewer drew from the diff shows every change
   const line = moved.modules.find((m) => m.id === 'tool-defs')!.interface!.find((l) => l.diff === 'add')!
   moved.modules.find((m) => m.id === 'store')!.interface = [line]
   assert.deepEqual(grounding(moved, files, ARCH).unverified.map((u) => [u.change.module, u.reason]), [['store', 'other-module']])
+})
+
+test("zeroContext: GitHub's diff with context reads as git's zero-context diff (reviews-ahent-reviuit-pr-timeitiv.3)", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-zero-'))
+  git(dir, 'init', '-q', '-b', 'main')
+  git(dir, 'config', 'user.email', 't@t')
+  git(dir, 'config', 'user.name', 't')
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`)
+  writeFileSync(join(dir, 'a.ts'), lines.join('\n') + '\n')
+  writeFileSync(join(dir, 'gone.ts'), 'x\ny\n')
+  writeFileSync(join(dir, 'empty.ts'), '')
+  git(dir, 'add', '.')
+  git(dir, 'commit', '-qm', 'base')
+  const base = git(dir, 'rev-parse', 'HEAD')
+  const next = [...lines]
+  next.splice(1, 1, '--- looks like a header', 'two b')
+  next.splice(6, 0, 'inserted')
+  next.splice(12, 2)
+  next.push('end')
+  writeFileSync(join(dir, 'a.ts'), next.join('\n') + '\n')
+  writeFileSync(join(dir, 'new.ts'), 'n\n')
+  writeFileSync(join(dir, 'empty.ts'), 'filled\n')
+  git(dir, 'rm', '-q', 'gone.ts')
+  git(dir, 'add', '.')
+  git(dir, 'commit', '-qm', 'change')
+  const head = git(dir, 'rev-parse', 'HEAD')
+  const withContext = execFileSync('git', ['diff', '--no-color', '-M', base, head], { cwd: dir, encoding: 'utf8' })
+  assert.deepEqual(parseDiff(zeroContext(withContext)), parseDiff(execFileSync('git', ['diff', '--no-color', '-M', '--unified=0', base, head], { cwd: dir, encoding: 'utf8' })))
+  assert.ok(withContext.includes(' line 1'), 'the fixture has context')
 })

@@ -2,8 +2,8 @@
 // the files some commits change, the fact diagram a reviewer draws of them as a revision of the intent, and mag's check
 // of it against the files (coverage, grounding) and the intent (compare). It knows no step: a step's PRs (intent: its
 // plan) and a teammate's PR (intent: what its ticket asks) are two callers of the same diff.
-import { findNode, playbookOf, walkArch, type Canvas, type ComponentDiagram, type DNode, type Project } from '@mag/core'
-import { compare, coverage, createDiff, describe, diagramChanges, formatComparison, formatFiles, grounding, mergeBlockers, parseSignificance, planVocabulary, withLevels, type Comparison, type Coverage, type FileChange, type FileDiff, type Grounding, type HunkRef } from '@mag/diff'
+import { findNode, playbookOf, walkArch, type Canvas, type ComponentDiagram, type DNode, type Diagram, type Project } from '@mag/core'
+import { compare, coverage, createDiff, describe, diagramChanges, folderVocabulary, formatComparison, formatFiles, grounding, mergeBlockers, parseSignificance, planVocabulary, withLevels, type Comparison, type Coverage, type FileChange, type FileDiff, type Grounding, type HunkRef, type Vocabulary } from '@mag/diff'
 
 /** Where the changes are read from: a local git checkout, later a PR's diff on GitHub. `at` is where it reads a repository. */
 export interface ChangeSource {
@@ -21,6 +21,11 @@ export interface ChangeTarget {
   at: string
   base: string
   head: string
+  /**
+   * A repository the project has no architecture of (a teammate's PR outside the project, reviews-ahent-reviuit-pr-timeitiv.3):
+   * its modules are its folders.
+   */
+  outside?: boolean
 }
 
 export interface FactRepo {
@@ -36,6 +41,8 @@ export interface Changes {
   repos: FactRepo[]
   /** The files changed, of every repository. */
   files: FileChange[]
+  /** Read without the project's architecture: modules by folder (a target outside the project). */
+  outside: boolean
 }
 
 /** What the intent of the changes is called: a step's plan, or the intent of a teammate's PR. */
@@ -53,20 +60,29 @@ export interface Fact extends Changes {
   blockers: string[]
 }
 
+/** A repository outside the project in the intent's modules first, then by its folders. */
+function outsideVocabulary(intent: Diagram[], diffs: FileDiff[]): Vocabulary {
+  const own = planVocabulary([], intent).modules
+  const folders = folderVocabulary(diffs.map((d) => d.path)).modules.filter((m) => !own.some((o) => o.id === m.id))
+  return { modules: [...own, ...folders] }
+}
+
 /**
  * The files the targets change, each from its base to its head, in the vocabulary of the project's architecture plus
- * the modules the intent adds.
+ * the modules the intent adds. A target outside the project: the intent's modules, then its folders.
  */
 export async function changes(project: Project, targets: ChangeTarget[], source: ChangeSource, intent: Canvas[] = []): Promise<Changes> {
-  const vocabulary = planVocabulary(project.architecture?.modules ?? [], intent.map((c) => c.diagram!))
-  const engine = createDiff({ diffHunks: (at, base, head) => source.diffHunks(at, base, head) })
+  const diagrams = intent.map((c) => c.diagram!)
+  const vocabulary = planVocabulary(project.architecture?.modules ?? [], diagrams)
   const repos: FactRepo[] = []
   const files: FileChange[] = []
   for (const t of targets) {
     repos.push({ repo: t.repo, name: t.name, baseSha: t.base, headSha: t.head })
-    files.push(...(await engine.changedFiles({ path: t.at, name: t.name }, t.base, t.head, vocabulary)))
+    const diffs = await source.diffHunks(t.at, t.base, t.head)
+    const words = t.outside ? outsideVocabulary(diagrams, diffs) : vocabulary
+    files.push(...(await createDiff({ diffHunks: async () => diffs }).changedFiles({ path: t.at, name: t.name }, t.base, t.head, words)))
   }
-  return { repos, files }
+  return { repos, files, outside: targets.some((t) => t.outside) }
 }
 
 /**
@@ -102,7 +118,8 @@ export function seed(of: string, intent: Canvas[], files: FileChange[], architec
  * playbook's rules, and what keeps the review from merge.
  */
 export function check(project: Project, changed: Changes, canvas: Canvas | null, intent: Canvas[]): Fact {
-  const architecture = project.architecture?.modules ?? []
+  // The project's architecture says nothing of a repository outside it.
+  const architecture = changed.outside ? [] : (project.architecture?.modules ?? [])
   const { repos, files } = changed
   const rules = parseSignificance(playbookOf(project).significance)
   const planned = withLevels(intent.flatMap((c) => diagramChanges(c.diagram!)), rules)
@@ -112,7 +129,7 @@ export function check(project: Project, changed: Changes, canvas: Canvas | null,
   const nothing = !files.some((f) => f.kind === 'code')
   const cover = canvas ? coverage(files, canvas.diagram!) : nothing ? { shown: [], unshown: [] } : null
   const ground = canvas ? grounding(canvas.diagram!, files, architecture) : nothing ? { grounded: [], unverified: [] } : null
-  return { repos, files, intent, canvas, comparison, coverage: cover, grounding: ground, blockers: mergeBlockers(comparison, cover, ground) }
+  return { repos, files, outside: changed.outside, intent, canvas, comparison, coverage: cover, grounding: ground, blockers: mergeBlockers(comparison, cover, ground) }
 }
 
 const link = (c: Canvas) => `[${c.title}](canvas:${c.id})`
@@ -131,7 +148,8 @@ export function factReport(fact: Fact, started: number | null, name: IntentName 
     : c.version === started
       ? `Fact diagram: ${link(c)} (v${c.version}), mag's copy of the ${name}: nothing on it rests on the PR yet.`
       : `Fact diagram: ${link(c)} (v${c.version}), revised.`
-  const out = [`## ${Name} ↔ fact (mag)`, `${Name} diagrams: ${plans}.`, diagram, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
+  const outside = fact.outside ? ['Without the project architecture: the repository is outside the project, its modules are its folders (packages).'] : []
+  const out = [`## ${Name} ↔ fact (mag)`, `${Name} diagrams: ${plans}.`, diagram, ...outside, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
   const unshown = fact.coverage?.unshown ?? []
   if (unshown.length) out.push('', `### Changed code the fact diagram does not show (${unshown.length})`, ...unshown.map((f) => `- ${f.repo}:${f.path} (${f.module ?? 'no module'})`))
   const unverified = fact.grounding?.unverified ?? []
