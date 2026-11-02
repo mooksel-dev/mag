@@ -17,6 +17,17 @@ test('storedPlaybook: keeps only what differs from the default; null when nothin
   assert.deepEqual(storedPlaybook({ ...DEFAULT_PLAYBOOK, plan: 'ours', reviewRounds: 3 }), { plan: 'ours', reviewRounds: 3 })
 })
 
+test('stance: an editable section like the others; the plan asks for a recommendation and weighs answers (ahent-vede-robotu-vlasna-pozytsiia.1)', () => {
+  assert.equal(playbookOf({ playbook: { stance: 'agree softly' } }).stance, 'agree softly')
+  assert.equal(playbookOf({ playbook: { stance: ' ' } }).stance, DEFAULT_PLAYBOOK.stance)
+  assert.deepEqual(storedPlaybook({ ...DEFAULT_PLAYBOOK, stance: 'ours' }), { stance: 'ours' })
+  assert.match(DEFAULT_PLAYBOOK.stance, /next move/)
+  assert.match(DEFAULT_PLAYBOOK.stance, /skeptic/)
+  assert.match(DEFAULT_PLAYBOOK.plan, /each with your recommendation and why/)
+  assert.match(DEFAULT_PLAYBOOK.plan, /weigh the answer first/)
+  for (const template of Object.values(DEFAULT_TEMPLATES)) assert.match(template, /# Open questions\n.*your recommendation and why/)
+})
+
 test('docDecisions: the Decisions section, with the given step\'s subsection only', () => {
   const doc = '# Problem\np\n\n# Decisions\n- draft PRs\n## T-5.1\n- only core\n## T-5.2\n- old API\n## Notes\n- kept\n\n# Plan\n1. x'
   assert.equal(docDecisions(doc), '- draft PRs\n## T-5.1\n- only core\n## T-5.2\n- old API\n## Notes\n- kept')

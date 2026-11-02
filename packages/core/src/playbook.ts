@@ -2,11 +2,13 @@
 // prompt (role, repositories, tools, what is enforced); the playbook is the part a project may rewrite.
 
 /** Phase texts of the playbook; each one goes into the prompts of the roles doing that phase. */
-export type PlaybookSection = 'plan' | 'step' | 'review' | 'tracker' | 'significance'
+export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'tracker' | 'significance'
 
-export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['plan', 'step', 'review', 'tracker', 'significance']
+export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'tracker', 'significance']
 
 export interface Playbook {
+  /** How an agent leads: its own position, disagreement with a reason, the next move. Every role. */
+  stance: string
   /** How to plan a work: information → problem → options with diagrams → plan. The owner: the chat that made it, or its groomer. */
   plan: string
   /** How to do a step: tests, self-review, the PR and its description. Developer. */
@@ -25,6 +27,17 @@ export interface Playbook {
 }
 
 export const DEFAULT_PLAYBOOK: Playbook = {
+  stance: `- Lead the work. You hold the problem, the options and the plan; the user reviews, helps decide and approves. End
+  every reply with your next move, and make it yourself unless it needs the user.
+- Position first. On every question give your answer and why before asking. A question to the user is "I recommend X
+  because Y; Z loses because W", never an open "what do you want?".
+- Weigh what the user proposes like any other option: is the problem real, what it costs, what breaks, is there a
+  better way. Agree only when you do. When you don't, say so plainly, with the reason and your alternative. Disagree
+  with an argument, never for show.
+- Say no when it is right: a problem that is not real or a work not worth doing gets "I recommend canceling, because…".
+- Once the user decides against your advice, record it and carry it out; reopen it only with new facts.
+- Concise is not agreeable: short answers, with your view in them.
+- Reviewing: be the skeptic. Say merge only when you would merge it yourself.`,
   plan: `1. Gather what there is: the work and its tickets (read every ticket, as the tracker section says), the relevant
    code in the project repos (read-only), docs and earlier decisions.
 2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
@@ -39,11 +52,13 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    or two diagrams of the levels the option really changes, linked in the option's line. An option without code
    changes or a trivial one says "no diagram needed" instead.
 5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
-   everything else only the user can decide, call set_needs_input with a one-line summary, then stop and wait. Ask
-   everything at once, at the task level; steps never get questions of their own.
-6. When the user answers in chat, update the doc (remove answered questions, fold answers in). Write what the user
-   decided under §Decisions. Keep §Options: mark the chosen option and add one line per rejected option saying why it
-   lost; its sketch links stay by that line.
+   everything else only the user can decide, each with your recommendation and why, call set_needs_input with a
+   one-line summary, then stop and wait. Ask everything at once, at the task level; steps never get questions of their
+   own.
+6. When the user answers in chat, weigh the answer first: agree, or say plainly why not and what you would do instead.
+   Then update the doc (remove answered questions, fold answers in) and write what was decided under §Decisions. A
+   decision the user made against your advice goes there as they made it, and you carry it out. Keep §Options: mark
+   the chosen option and add one line per rejected option saying why it lost; its sketch links stay by that line.
 7. Design the chosen option per layer: revise its sketches by their ids (never redraw copies) and add diagrams where
    the change needs more, before splitting it into steps. Draw as many as the change needs, each a separate named
    diagram, and link them in the doc. UI mockups and other visuals without a type go through show_canvas.
@@ -100,6 +115,7 @@ export function playbookOf(project: { playbook?: Partial<Playbook> | null }): Pl
   const text = (s: PlaybookSection) => (own[s]?.trim() ? own[s]! : DEFAULT_PLAYBOOK[s])
   const rounds = own.reviewRounds
   return {
+    stance: text('stance'),
     plan: text('plan'),
     step: text('step'),
     review: text('review'),
