@@ -255,11 +255,23 @@ export const TOOL_DEFS = [
   {
     name: 'set_needs_input',
     scope: 'task',
-    description: 'Tell the user you need them. Pass a one-line reason, or null when nothing is pending anymore. Details belong in the doc.',
+    description:
+      "Tell the user you need them. Pass a one-line reason, or null when nothing is pending anymore. Details belong in the doc. A step's developer asks the work's owner first: it answers in the developer's chat or asks the user.",
     inputSchema: {
       type: 'object',
       properties: { reason: { type: ['string', 'null'] } },
       required: ['reason'],
+    },
+  },
+  {
+    name: 'answer_developer',
+    scope: 'task',
+    description:
+      "The owner of the work: answer the question a step's developer asked with set_needs_input. The text goes into the developer's chat (the answer and why) and it goes on; the work no longer needs the user.",
+    inputSchema: {
+      type: 'object',
+      properties: { step: { type: 'string', description: 'The step key, e.g. ABC-12.2.' }, text: { type: 'string' } },
+      required: ['step', 'text'],
     },
   },
   {
@@ -605,7 +617,7 @@ export const APPROVE_TOOL = 'mcp__mag__approve_tool'
  * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer. In a
  * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
  */
-export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas'] as const
+export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas'] as const
 
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 

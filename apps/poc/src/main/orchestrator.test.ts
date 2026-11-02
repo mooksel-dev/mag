@@ -170,6 +170,51 @@ test('developer: PR feedback goes into the live process between turns, not durin
   assert.equal(store.task(step.parentId!).status, 'in_progress')
 })
 
+test("askOwner: a developer's question goes to the work's owner; the step waits, the owner answers or the user is asked (ahent-vede-robotu-vlasna-pozytsiia.2)", async () => {
+  const s = await developing()
+  const { store, orch, task, step, session, live } = s
+  assert.equal(orch.askOwner(step.id, 'Which schema?'), false, 'no owner: the user is asked')
+  const groomer = store.createSession({ projectId: s.project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  store.updateTask(task.id, { ownerSessionId: groomer.id })
+  store.data.docs[task.id] = '# Decisions\n- Schema v2 everywhere.\n'
+
+  assert.equal(orch.askOwner(step.id, 'Which schema?'), true)
+  await tick()
+  const owner = opened.at(-1)!
+  assert.notEqual(owner, live)
+  assert.match(owner.sent[0], /^The developer of login\.1 \("s"\) asks: Which schema\?\nYou own login: .*answer_developer\(step: "login\.1", text\).*set_needs_input\(reason\)/s)
+  assert.match(owner.sent[0], /Schema v2 everywhere/, 'with the decisions of the work')
+  assert.equal(orch.askOwner(step.id, 'Again?'), false, 'the owner is busy: the user is asked')
+
+  // The developer stops to wait: no "stopped without a PR" for the user.
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, null)
+  assert.equal(store.task(step.id).ownerQuestion, 'Which schema?')
+
+  // The owner ends its turn without answering: the user gets the question.
+  owner.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, 'login.1 asks: Which schema? (its owner did not answer)')
+
+  await orch.answerDeveloper(step.id, 'v2, by the decisions')
+  assert.match(live.sent.at(-1)!, /^The owner of the work answers your question: v2, by the decisions$/)
+  assert.equal(session.status, 'running')
+  assert.equal(store.task(step.id).ownerQuestion, null)
+  assert.equal(store.task(task.id).needsInput, null)
+  await assert.rejects(orch.answerDeveloper(step.id, 'more'), /No question of login\.1's developer is waiting/)
+})
+
+test('askOwner: a topic that owns the work is told to pass work (ahent-vede-robotu-vlasna-pozytsiia.2)', async () => {
+  const { store, orch, task, step, project } = await developing()
+  const topic = orch.newChat(project.id)
+  store.updateTask(task.id, { ownerSessionId: topic })
+  assert.equal(orch.askOwner(step.id, 'Which schema?'), true)
+  await tick()
+  const said = store.session(topic).items.find((i) => i.kind === 'user')
+  assert.ok(said?.kind === 'user' && said.text.includes('answer_developer(step: "login.1", work: "login", text)') && said.text.includes('set_needs_input(work: "login", reason)'))
+})
+
 test('developer: a message during a turn joins it', async () => {
   const { orch, session, live } = await developing()
   await orch.send(session.id, 'also this')

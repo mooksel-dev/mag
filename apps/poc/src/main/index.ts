@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -118,6 +118,8 @@ app.whenReady().then(async () => {
   actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
   actions.setReview = (id, verdict, findings) => orch.setReview(id, verdict, findings)
   actions.reopen = (id, what, by) => orch.reopen(id, what, by)
+  actions.askOwner = (id, question) => orch.askOwner(id, question)
+  actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))

@@ -71,7 +71,8 @@ Then work following the project's playbook:
 ${playbookOf(project).step}
 After opening a PR, call set_pr with its URL and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
 If the plan no longer fits reality, do not rewrite it on your own: call set_needs_input with a one-line reason,
-explain it in this chat and stop. The same for a decision only the user can make. When the user has decided here,
+explain it in this chat and stop. The same for a decision you cannot make. The work's owner, who planned it, gets the
+question first and answers here or asks the user. When the answer has come here (the owner's or the user's),
 update the doc (§Decisions, §Progress and the affected part of the plan) and continue; step titles and notes stay as they are.
 Never merge and never push to ${base}: mag blocks both. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.
@@ -133,7 +134,8 @@ How mag works: a work (a task; one problem, one work) is planned by its owner: t
 with diagrams and the decisions, then steps (subtasks; at least one) -> ready: the user approved the plan; priority lives in the
 tracker, not in mag -> in progress: the user starts it with Start, and its steps run one after another.
 Each step gets a new developer session from fresh base, its own branch and a worktree per repository it changes, and
-at most one PR per changed repository. Before the user sees a step's PRs, the owner reviews them in a fork of itself:
+at most one PR per changed repository. A developer's question goes to the work's owner first, who answers it or
+asks the user with a recommendation. Before the user sees a step's PRs, the owner reviews them in a fork of itself:
 changes go back to the developer, merge or look go to the user. A step is done when its PRs are merged (or, without
 code, when its developer closes it), and the next one starts on its own unless it is marked start manually (then it
 waits for the user's Start) -> done when every step is done. A done work that needs more is continued, never
@@ -405,8 +407,7 @@ export class Orchestrator {
     this.store.updateTask(taskId, { status: 'planning', needsInput: null, ...(by && { ownerSessionId: by }) })
     log.info('agent', `${task.key} reopened`, { by: by ?? 'app' })
     if (by) return `${task.key} is back in planning and this topic owns it.`
-    // The owner: the topic that created it, or its groomer.
-    const owner = this.store.data.sessions.find((s) => s.id === task.ownerSessionId && (s.taskId === null || s.taskId === taskId))
+    const owner = this.ownerSession(task)
     const ask = `${task.key} was done, but more is needed: ${need}\nIt is back in planning; its done steps stay as they are. Update the doc (problem, decisions, plan) for what is needed, add the new steps${owner?.role === 'chat' ? ` (pass work: "${task.key}")` : ''} and ask the user to review the plan.`
     if (owner && this.isRunning(owner.id)) {
       this.store.updateTask(taskId, { needsInput: `More needed: ${need}. Its owner is busy: tell it in its chat` })
@@ -418,6 +419,59 @@ export class Orchestrator {
     }
     this.groom(taskId, ask)
     return `${task.key} is back in planning; a groomer plans the rest.`
+  }
+
+  /** The owner of a work: the topic that created it, or its groomer. */
+  private ownerSession(task: Task) {
+    return this.store.data.sessions.find((s) => s.id === task.ownerSessionId && (s.taskId === null || s.taskId === task.id))
+  }
+
+  /**
+   * A step developer's question (its set_needs_input) goes to the work's owner first (ahent-vede-robotu-vlasna-pozytsiia.2):
+   * the owner holds the decisions and the context, and answers it with answer_developer or asks the user with its
+   * recommendation. false when the owner is busy or gone: the user is asked, as before.
+   */
+  askOwner(stepId: string, question: string): boolean {
+    const step = this.store.task(stepId)
+    if (!step.parentId) return false
+    const task = this.store.task(step.parentId)
+    const owner = this.ownerSession(task)
+    if (!owner || this.isRunning(owner.id)) return false
+    this.store.updateTask(stepId, { ownerQuestion: question })
+    log.info('agent', `${step.key}: the developer asks its owner`, { owner: owner.id })
+    const work = owner.role === 'chat' ? `, work: "${task.key}"` : ''
+    const decisions = contextBlocks({ decisions: docDecisions(this.store.data.docs[task.id] ?? '', step.key) })
+    const ask =
+      `The developer of ${step.key} ("${step.title}") asks: ${question}\n` +
+      `You own ${task.key}: answer it yourself when the decisions, the doc or what you discussed with the user cover it: answer_developer(step: "${step.key}"${work}, text), with the answer and why. ` +
+      `Only when the user has to decide: set_needs_input(${work ? `work: "${task.key}", ` : ''}reason) with the question and your recommendation, and once the user has decided, pass it on with answer_developer.` +
+      blocks(decisions)
+    void this.send(owner.id, ask).catch((e) => {
+      this.store.updateTask(stepId, { ownerQuestion: null })
+      this.store.updateTask(task.id, { needsInput: `${question} (could not ask its owner: ${(e as Error).message})` })
+    })
+    return true
+  }
+
+  /** The owner's answer to its step developer's question: the developer's session goes on with it. */
+  async answerDeveloper(stepId: string, text: string) {
+    const step = this.store.task(stepId)
+    const session = this.lastStepSession(stepId)
+    if (!step.ownerQuestion || !session) throw new Error(`No question of ${step.key}'s developer is waiting`)
+    await this.send(session.id, `The owner of the work answers your question: ${text}`)
+  }
+
+  /**
+   * An owner's turn ended with a developer's question neither answered nor put to the user: the user gets it, so a step
+   * never waits silently.
+   */
+  private unanswered(owner: AgentSession) {
+    for (const step of this.store.data.tasks) {
+      if (!step.parentId || !step.ownerQuestion) continue
+      const task = this.store.task(step.parentId)
+      if (task.ownerSessionId !== owner.id || task.needsInput) continue
+      this.store.updateTask(task.id, { needsInput: `${step.key} asks: ${step.ownerQuestion} (its owner did not answer)` })
+    }
   }
 
   /**
@@ -455,7 +509,8 @@ export class Orchestrator {
     // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
     if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
-    this.store.updateTask(step.id, { status: 'in_progress', waitingFor: null, work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local) })
+    // A restart is told what to do: a question it asked the owner no longer holds the step.
+    this.store.updateTask(step.id, { status: 'in_progress', waitingFor: null, ownerQuestion: null, work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local) })
     // Once per step, before its first session: a restart leaves the main checkouts as they are.
     const ready = last ? { discuss: [] } : await this.prepareLocal(step.id)
     if (!ready) return
@@ -754,7 +809,7 @@ export class Orchestrator {
    */
   async review(stepId: string, heads?: Record<string, string>, retry = false) {
     const step = this.store.task(stepId)
-    if (!step.parentId || step.status !== 'in_progress' || !step.work) return
+    if (!step.parentId || step.status !== 'in_progress' || !step.work || step.ownerQuestion) return
     const task = this.store.task(step.parentId)
     if (task.status !== 'in_progress' || task.needsInput) return
     if (this.reviewing.has(stepId) || this.store.data.sessions.some((s) => s.stepId === stepId && this.isRunning(s.id))) return
@@ -909,6 +964,8 @@ export class Orchestrator {
       return this.run(session, prompt)
     }
     this.store.updateTask(session.taskId, { needsInput: null })
+    // Told anything (the owner's answer, or the user's), the developer no longer waits for its owner.
+    if (session.role === 'developer' && session.stepId) this.store.updateTask(session.stepId, { ownerQuestion: null })
     // A worktree may have failed earlier or been removed: recreate it before resuming.
     if (session.role === 'developer' && this.ownerOf(session).work && !(await this.prepareWorktrees(session))) return
     return this.run(session, prompt)
@@ -1308,6 +1365,7 @@ export class Orchestrator {
 
   /** Make sure a finished run (or turn of a live session) never leaves a task silently stuck. */
   private async afterRun(session: AgentSession) {
+    if ((session.role === 'chat' || session.role === 'groomer') && !session.background?.length) this.unanswered(session)
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
     // A step closed or merged during the run: its worktrees could not go while the run was on. Its process goes first.
@@ -1327,7 +1385,8 @@ export class Orchestrator {
       const work = this.ownerOf(session).work
       const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []
       const now = this.store.task(task.id)
-      if (now.status !== 'in_progress' || now.needsInput || this.isRunning(session.id) || session.background?.length || this.ownerOf(session).status === 'done') return
+      // A step whose developer asked its owner waits for the answer.
+      if (now.status !== 'in_progress' || now.needsInput || this.isRunning(session.id) || session.background?.length || this.ownerOf(session).status === 'done' || this.ownerOf(session).ownerQuestion) return
       const outcome = devRunOutcome(work, changed, failed, !!session.stepId)
       // Every PR merged, maybe while the run was on: the step is done. A legacy task finishes on the scheduler's poll.
       if (outcome.kind === 'complete') return session.stepId ? this.completeStep(session.stepId) : undefined
