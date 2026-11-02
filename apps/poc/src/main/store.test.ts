@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store } from './store.ts'
@@ -282,4 +282,48 @@ test('ideas (T-55.6): none in an older file; add, edit and delete persist', () =
   store.deleteIdea(a.id)
   store.flush()
   assert.deepEqual(new Store(file).data.ideas.map((i) => i.text), ['dark mode everywhere'])
+})
+
+test('a restart keeps a step in progress: its work, PR, sessions and diagrams stay; migrations run once', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const store = new Store(file)
+  const p = store.createProject('p')
+  const task = store.createTask({ projectId: p.id, title: 'Fix restart', type: 'dev', description: '' })
+  const step = store.createTask({ projectId: p.id, parentId: task.id, title: 's1', type: 'dev', description: '' })
+  store.createTask({ projectId: p.id, parentId: task.id, title: 's2', type: 'dev', description: '' })
+  const work = { repos: [{ repo: '/src/mag', branch: 'mag/fix-restart-1', worktree: '/w/mag', prUrl: 'https://github.com/o/r/pull/66', prState: 'open' as const, checkError: null }], dir: '/w/s1', feedbackSeenAt: 5 }
+  store.updateTask(task.id, { status: 'in_progress' })
+  store.updateTask(step.id, { status: 'in_progress', work })
+  const sessions = (['developer', 'reviewer'] as const).map((role) => store.createSession({ projectId: p.id, taskId: task.id, stepId: step.id, role, agent: 'claude-code', status: 'idle' }))
+  sessions.forEach((s, i) => (s.nativeSessionId = `native-${i}`))
+  const legacyStepSession = store.createSession({ projectId: p.id, taskId: step.id, stepId: null, role: 'developer', agent: 'claude-code', status: 'idle' })
+  legacyStepSession.nativeSessionId = 'native-step'
+  store.saveCanvas({ projectId: p.id, taskId: step.id, sessionId: null, title: 'step page', kind: 'html', html: '<p/>' })
+  store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
+  store.flush()
+  const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
+  assert.equal(store.data.schemaVersion, 5, 'a new file has had every migration')
+
+  const restart = (patch: (d: Record<string, unknown>) => void) => {
+    const d = JSON.parse(readFileSync(file, 'utf8'))
+    patch(d)
+    writeFileSync(file, JSON.stringify(d))
+    for (let i = 0; i < 2; i++) {
+      const again = new Store(file)
+      assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
+      assert.equal(again.data.schemaVersion, 5)
+      assert.equal('stepsMigrated' in again.data, false)
+      again.flush()
+    }
+  }
+  restart(() => {})
+  // A file from before schemaVersion: the current model says the old migrations have run.
+  restart((d) => {
+    delete d.schemaVersion
+    d.stepsMigrated = true
+  })
+  // Even if every migration ran again, the T-22 one leaves current steps and their work alone.
+  restart((d) => {
+    d.schemaVersion = 0
+  })
 })
