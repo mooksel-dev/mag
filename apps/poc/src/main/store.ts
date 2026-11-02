@@ -20,7 +20,9 @@ interface Data {
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
-  /** migrateToSteps has run (T-28). */
+  /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
+  schemaVersion?: number
+  /** Before schemaVersion: migrateToSteps has run (T-28). */
   stepsMigrated?: boolean
 }
 
@@ -146,11 +148,38 @@ export class Store {
       s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
       s.stepId ??= null
     }
-    this.migrateSubtaskKeys()
-    this.migrateToTaskWork()
-    this.migrateStatuses()
-    this.migrateToSteps()
-    this.migrateToWorkStates()
+    this.migrate()
+  }
+
+  /** Format migrations in the order they were added; a new one goes last. */
+  private migrations = [
+    () => this.migrateSubtaskKeys(),
+    () => this.migrateToTaskWork(),
+    () => this.migrateStatuses(),
+    () => this.migrateToSteps(),
+    () => this.migrateToWorkStates(),
+  ]
+
+  /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
+  private migrate() {
+    const from = this.data.schemaVersion ?? this.inferredVersion()
+    delete this.data.stepsMigrated
+    for (const run of this.migrations.slice(from)) run()
+    if (this.data.schemaVersion === this.migrations.length) return
+    this.data.schemaVersion = this.migrations.length
+    this.changed()
+  }
+
+  /**
+   * A file from before schemaVersion: every migration ran on each start then, so data of a later model means the
+   * earlier ones have run. Work states (T-55.7) mean all of them; steps (T-28) mean all up to migrateToSteps.
+   */
+  private inferredVersion() {
+    const { tasks } = this.data
+    if (tasks.some((t) => !t.parentId && (t.status === 'planning' || t.status === 'ready'))) return this.migrations.length
+    // Through migrateToSteps.
+    if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
+    return 0
   }
 
   /**
@@ -194,12 +223,11 @@ export class Store {
   }
 
   /**
-   * Subtasks become steps (T-28), once. Checklists become steps that start on their own; a todo or in-progress task
+   * Subtasks become steps (T-28). Checklists become steps that start on their own; a todo or in-progress task
    * without subtasks gets one step with its title. A legacy task (see isLegacy) is left alone: it finishes on its own
    * work, its subtasks stay a checklist.
    */
   private migrateToSteps() {
-    if (this.data.stepsMigrated) return
     for (const t of this.data.tasks) if (t.parentId) t.startManually ??= false
     for (const t of [...this.data.tasks]) {
       // Before T-55.7: todo is ready now (see migrateToWorkStates, which runs after).
@@ -211,7 +239,6 @@ export class Store {
         rank: 1, needsInput: null, work: null, startManually: false, nextSubNo: 1, createdAt: now, updatedAt: now,
       })
     }
-    this.data.stepsMigrated = true
     this.changed()
   }
 
@@ -244,10 +271,14 @@ export class Store {
   /**
    * One developer session per task (T-22): work moves to the per-repo shape, subtasks become todo/done plan steps
    * without work, and their sessions and canvases move to the parent. A started parent that has no work of its own
-   * (its subtasks had it) goes back to planned, so a developer picks it up as a whole.
+   * (its subtasks had it) goes back to planned, so a developer picks it up as a whole. Only tasks of that time are
+   * touched: one whose subtasks had work of the old shape; a step with per-repo work (T-28) keeps it.
    */
   private migrateToTaskWork() {
     let changed = false
+    const oldWork = (t: Task) => !!t.work && !(t.work as { repos?: unknown }).repos
+    const oldParents = new Set(this.data.tasks.filter((t) => t.parentId && oldWork(t)).map((t) => t.parentId!))
+    const oldSubs = new Set(this.data.tasks.filter((t) => t.parentId && oldParents.has(t.parentId) && (!t.work || oldWork(t))).map((t) => t.id))
     for (const t of this.data.tasks) {
       const old = t.work as unknown as (LegacyWork & { repos?: unknown }) | null
       if (!old || old.repos) continue
@@ -256,14 +287,14 @@ export class Store {
       changed = true
     }
     for (const sub of this.data.tasks) {
-      const parent = sub.parentId ? this.data.tasks.find((x) => x.id === sub.parentId) : undefined
+      const parent = oldSubs.has(sub.id) ? this.data.tasks.find((x) => x.id === sub.parentId) : undefined
       if (!parent) continue
       const status = sub.status === 'done' || parent.status === 'done' ? 'done' : 'todo'
       if (sub.status === status && !sub.work && !sub.needsInput) continue
       Object.assign(sub, { status, work: null, needsInput: null })
       changed = true
     }
-    const parentOf = new Map(this.data.tasks.filter((t) => t.parentId).map((t) => [t.id, t.parentId!]))
+    const parentOf = new Map(this.data.tasks.filter((t) => oldSubs.has(t.id)).map((t) => [t.id, t.parentId!]))
     for (const s of this.data.sessions) {
       const parentId = s.taskId && parentOf.get(s.taskId)
       if (!parentId) continue
@@ -279,7 +310,7 @@ export class Store {
       changed = true
     }
     for (const t of this.data.tasks) {
-      if (t.parentId || t.work || (t.status !== 'in_progress' && (t.status as string) !== 'in_review')) continue
+      if (!oldParents.has(t.id) || t.work || (t.status !== 'in_progress' && (t.status as string) !== 'in_review')) continue
       // Before T-26's statuses; migrateStatuses turns it into todo.
       ;(t as { status: string }).status = 'planned'
       changed = true
