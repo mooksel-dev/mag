@@ -81,8 +81,9 @@ const INTERFACE = {
 const PLACEMENT = {
   role: {
     type: 'string',
-    enum: ['option', 'plan', 'none'],
-    description: 'option: sketches an option of §Options; plan: the planned change of one step; none: unplaced. Omitted on a revision: the diagram keeps its place.',
+    enum: ['option', 'plan', 'intent', 'none'],
+    description:
+      "option: sketches an option of §Options; plan: the planned change of one step; intent: a review of a teammate's PR, what its ticket and description ask for (the review's plan); none: unplaced. Omitted on a revision: the diagram keeps its place.",
   },
   option: { type: 'string', description: 'role option: the option\'s name as in §Options, e.g. "A".' },
   step: { type: 'string', description: 'role plan: the key of the step, e.g. ABC-12.2.' },
@@ -211,6 +212,21 @@ const DIAGRAM = {
   },
 }
 
+const FINDING = {
+  type: 'object',
+  required: ['text'],
+  properties: {
+    text: { type: 'string' },
+    where: { type: 'string', description: 'file:line, a module or a PR, when it applies.' },
+    level: {
+      type: 'string',
+      enum: ['blocker', 'should_fix', 'question', 'nit'],
+      description: "blocker: must not merge; should_fix: fix before merge unless argued; question: needs the author's answer; nit: optional.",
+    },
+    node: { type: 'string', description: 'The node of a diagram it is about: canvas:<id>#<node-id>, e.g. on the fact diagram.' },
+  },
+}
+
 export const TOOL_DEFS = [
   {
     name: 'get_task',
@@ -239,7 +255,7 @@ export const TOOL_DEFS = [
     name: 'place_diagram',
     scope: 'task',
     description:
-      'Say where a diagram stands in this task, without redrawing it: role option with option (the option it sketches), role plan with step and repo (the step and repository it changes), role none to unplace. A diagram drawn in the project chat moves into the task; one of another task is copied in (link the copy in the doc instead).',
+      'Say where a diagram stands in this task, without redrawing it: role option with option (the option it sketches), role plan with step and repo (the step and repository it changes), role intent in a review of a teammate\'s PR, role none to unplace. A diagram drawn in the project chat moves into the task; one of another task is copied in (link the copy in the doc instead).',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, ...PLACEMENT }, required: ['id', 'role'] },
   },
   {
@@ -387,25 +403,40 @@ export const TOOL_DEFS = [
       type: 'object',
       properties: {
         verdict: { type: 'string', enum: ['changes', 'merge', 'look'] },
-        findings: {
-          type: 'array',
-          description: 'One finding per item; none for a clean merge.',
-          items: {
-            type: 'object',
-            required: ['text'],
-            properties: { text: { type: 'string' }, where: { type: 'string', description: 'file:line, a module or a PR, when it applies.' } },
-          },
-        },
+        findings: { type: 'array', description: 'One finding per item, each with its level; none for a clean merge.', items: FINDING },
       },
       required: ['verdict', 'findings'],
     },
+  },
+  {
+    name: 'set_pr_review',
+    scope: 'task',
+    description:
+      "The topic that owns a review of a teammate's PR: record it, once you have the verdict and again when it changes. It shows on the review's page in the Reviews tab; nothing goes to GitHub (the user publishes the findings they pick).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        problem: { type: 'string', description: 'What the PR fixes and why it is real, with evidence (ticket, code path, logs); short.' },
+        approach: { type: 'string', description: 'Is it the right way to fix it; better alternatives with their trade-offs; short.' },
+        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'] },
+        findings: { type: 'array', description: 'One finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
+      },
+      required: ['problem', 'approach', 'verdict', 'findings'],
+    },
+  },
+  {
+    name: 'review_pr',
+    scope: 'project',
+    description:
+      "Review a teammate's PR of a project repository, by its GitHub link: mag starts (or reopens) its review, owned by this topic, fetches the PR and answers with the job. Do it right here, in this turn.",
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'https://github.com/<owner>/<repo>/pull/<n>' } }, required: ['url'] },
   },
   {
     name: 'get_pr_changes',
     scope: 'task',
     reviewer: 'also',
     description:
-      "The files the step's branches change against the base, any language: per module of the project's architecture that owns them, each changed code file with its hunks (old → new lines); tests, styles, lock files, generated code and docs listed apart. Read the diff itself with git diff or gh pr diff. Every changed code file has to be on the fact diagram; its lines give these paths as files.",
+      "The files the step's branches change against the base, any language: per module of the project's architecture that owns them, each changed code file with its hunks (old → new lines); tests, styles, lock files, generated code and docs listed apart. Read the diff itself with git diff or gh pr diff. Every changed code file has to be on the fact diagram; its lines give these paths as files. A review of a teammate's PR: its intent ↔ fact; the first call after the intent is drawn starts the fact diagram as a copy of it.",
     inputSchema: {
       type: 'object',
       properties: { repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Default: every repo of the step.' } },
@@ -585,7 +616,7 @@ export const TOOL_DEFS = [
     // The reviewer revises the fact diagram of its step only (T-57.4, T-58).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. A reviewer only revises the fact diagram of its step (role fact, started by mag as a copy of the plan): it draws what the diff did at the level of the architecture (modules, their public interface, dependencies; helpers, fields of types and single adapters fold into one line that gives the files of all of them), and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module (<repo>:<path> when several repos change that path). Only files a line gives count as shown; a module mark alone shows none. The answer lists the changed code files it does not show, the lines that do not rest on the PR and plan ↔ fact.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when the data schema changes (collections, tables, fields, core model types, file or API payload formats). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved. Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, also draw a flowchart with of, summary and changes; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram), role intent for what a reviewed teammate\'s PR is meant to change. Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. A reviewer only revises the fact diagram of its step (role fact, started by mag as a copy of the plan): it draws what the diff did at the level of the architecture (modules, their public interface, dependencies; helpers, fields of types and single adapters fold into one line that gives the files of all of them), and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module (<repo>:<path> when several repos change that path). Only files a line gives count as shown; a module mark alone shows none. The answer lists the changed code files it does not show, the lines that do not rest on the PR and plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -614,10 +645,11 @@ export const TOOL_DEFS = [
 export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 
 /**
- * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer. In a
+ * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer, and
+ * reviews a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2). In a
  * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
  */
-export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas'] as const
+export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_pr_review'] as const
 
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 

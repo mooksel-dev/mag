@@ -1,4 +1,4 @@
-import { DEFAULT_TEMPLATES, REVIEW_VERDICTS, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DEFAULT_TEMPLATES, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -7,7 +7,7 @@ import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
 import { changes as factChanges, factReport } from './core/services/fact/index.ts'
-import { branchTarget, factRecord, localGit, stepFact } from './fact.ts'
+import { branchTarget, factRecord, localGit, reviewFact, stepFact } from './fact.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -37,6 +37,12 @@ export interface ToolActions {
   askOwner(stepId: string, question: string): boolean
   /** The owner's answer to its step developer's waiting question; the developer goes on with it. */
   answerDeveloper(stepId: string, text: string): Promise<void>
+  /** A topic's review_pr: the review of a teammate's PR, owned by `by`; returns the job for its turn. */
+  reviewPr(projectId: string, url: string, by: string): Promise<{ taskId: string; job: string }>
+  /** Intent ↔ fact of a review's PR (its get_pr_changes); starts the fact diagram once there is an intent. */
+  reviewFact(workId: string): Promise<string>
+  /** The owner topic's set_pr_review; returns what to tell it. */
+  setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string
 }
 
 /**
@@ -74,22 +80,28 @@ function reposArg(v: unknown, project: Project): string[] {
   return project.repos.filter((r) => paths.includes(r))
 }
 
-/** Review findings from a tool argument: [{ text, where? }]; some agent CLIs pass the array as a JSON string. */
+/** Review findings from a tool argument: [{ text, where?, level?, node? }]; some agent CLIs pass the array as a JSON string. */
 function findingsArg(v: unknown): ReviewFinding[] {
   let raw = v ?? []
   if (typeof raw === 'string') {
     try {
       raw = JSON.parse(raw)
     } catch {
-      throw new Error('findings must be an array of { text, where? }')
+      throw new Error('findings must be an array of { text, where?, level?, node? }')
     }
   }
-  if (!Array.isArray(raw)) throw new Error('findings must be an array of { text, where? }')
+  if (!Array.isArray(raw)) throw new Error('findings must be an array of { text, where?, level?, node? }')
   return raw.map((x: Record<string, unknown>) => {
     const text = String(x?.text ?? '').trim()
     if (!text) throw new Error('Every finding needs a text')
-    const where = typeof x.where === 'string' && x.where.trim() ? x.where.trim() : undefined
-    return where ? { text, where } : { text }
+    const opt = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+    const level = opt(x.level)
+    if (level && !(FINDING_LEVELS as string[]).includes(level)) throw new Error(`level must be one of ${FINDING_LEVELS.join(', ')}`)
+    const f: ReviewFinding = { text }
+    if (opt(x.where)) f.where = opt(x.where)
+    if (level) f.level = level as ReviewFinding['level']
+    if (opt(x.node)) f.node = opt(x.node)
+    return f
   })
 }
 
@@ -381,6 +393,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       }
 
       case 'get_pr_changes': {
+        if (isReview(task)) return actions.reviewFact(task.id)
         const work = runWork(store, ctx)
         if (!work) throw new Error(`${task.key} has no work in progress`)
         const ref = typeof args.repo === 'string' && args.repo.trim() ? args.repo : null
@@ -400,6 +413,18 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         const findings = findingsArg(args.findings)
         if (verdict !== 'merge' && !findings.length) throw new Error(`A ${verdict} verdict needs findings: what and where`)
         return actions.setReview(stepId, verdict, findings)
+      }
+
+      case 'set_pr_review': {
+        if (!isReview(task)) throw new Error(`${task.key} is not a review of a teammate's PR`)
+        if (task.ownerSessionId !== ctx.sessionId) throw new Error(`set_pr_review is for the topic that owns ${task.key}`)
+        const verdict = args.verdict as PrVerdict
+        if (!PR_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${PR_VERDICTS.join(', ')}`)
+        const findings = findingsArg(args.findings)
+        if (findings.some((f) => !f.level)) throw new Error(`Every finding needs its level: ${FINDING_LEVELS.join(', ')}`)
+        if (verdict === 'approve' && findings.some((f) => f.level === 'blocker')) throw new Error('A blocker and approve do not go together: request_changes, or drop the blocker and say why')
+        const text = (v: unknown) => String(v ?? '').trim()
+        return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict, findings })
       }
 
       default:
@@ -429,7 +454,7 @@ function taskDiagrams(store: Store, taskId: string): Canvas[] {
 }
 
 /** Roles an agent places a diagram in; none takes it out of the groups. Facts come with the PR review (T-55.4). */
-const PLACE_ROLES = ['option', 'plan', 'none'] as const
+const PLACE_ROLES = ['option', 'plan', 'intent', 'none'] as const
 
 /**
  * A diagram's placement from tool arguments (T-55.3): role option with option, role plan with step and an optional
@@ -445,6 +470,11 @@ function placementArg(store: Store, task: Task | null, project: Project, args: R
   if (!(PLACE_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${PLACE_ROLES.join(', ')}`)
   const none = { role: null, option: null, stepId: null, repo: null, planOf: null }
   if (role === 'none') return none
+  if (role === 'intent') {
+    if (text(args.option) || text(args.step) || text(args.repo)) throw new Error('An intent diagram has no option, step or repo')
+    if (!task || !isReview(task)) throw new Error("role intent is for a review of a teammate's PR: what its ticket and description ask for")
+    return { ...none, role: 'intent' }
+  }
   if (role === 'option') {
     if (text(args.step) || text(args.repo)) throw new Error('An option diagram has no step or repo')
     if (!text(args.option)) throw new Error('role option needs option: its name as in §Options, e.g. "A"')
@@ -479,9 +509,11 @@ function placementOut(store: Store, project: Project, taskId: string, c: Canvas)
 /** The short name of a project repository (see repoNames); the path of one removed since. */
 const repoName = (project: Project, path: string) => repoNames(project)[project.repos.indexOf(path)] ?? path
 
-/** " as option A", " in the plan of T-1.2 (api)", " in the fact of T-1.2", or " (unplaced)". */
+/** " as option A", " as the intent", " in the plan of T-1.2 (api)", " in the fact of T-1.2", or " (unplaced)". */
 function placedAs(store: Store, project: Project, p: CanvasPlacement): string {
   if (p.role === 'option') return ` as option ${p.option}`
+  if (p.role === 'intent') return ' as the intent'
+  if (p.role === 'fact' && !p.stepId) return ' as the fact'
   if (p.role !== 'plan' && p.role !== 'fact') return ' (unplaced)'
   const key = store.data.tasks.find((t) => t.id === p.stepId)?.key
   return ` in the ${p.role} of ${key}${p.repo ? ` (${repoName(project, p.repo)})` : ''}`
@@ -501,6 +533,8 @@ const changes = (c: Canvas) => formatDiffCount(diagramSummary(c.diagram!)) || 'n
  * records it on the step for the merge threshold, and says what the reviewer has left to fix.
  */
 async function factCheck(store: Store, project: Project, canvas: Canvas): Promise<string> {
+  const work = !canvas.stepId && canvas.taskId ? store.data.tasks.find((t) => t.id === canvas.taskId) : undefined
+  if (work && isReview(work)) return reviewFactCheck(store, project, work, canvas)
   const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
   if (!step?.fact || canvas.diagram?.type !== 'component') return ''
   try {
@@ -509,6 +543,23 @@ async function factCheck(store: Store, project: Project, canvas: Canvas): Promis
     store.updateTask(step.id, { fact: factRecord(fact, step.fact.heads, step.fact.canvasVersion) })
     if (!fact.blockers.length) return ' It shows every changed code file, rests on the PR and agrees with the plan: merge is allowed.'
     return `\n${factReport(fact, step.fact.canvasVersion)}`
+  } catch (e) {
+    log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
+    return ''
+  }
+}
+
+/** A revision of a review's fact diagram (reviews-ahent-reviuit-pr-timeitiv.2): checked again and recorded, as for a step. */
+async function reviewFactCheck(store: Store, project: Project, work: Task, canvas: Canvas): Promise<string> {
+  const pr = work.prReview?.pr
+  const head = pr && work.fact?.heads[pr.repo]
+  if (!head || canvas.diagram?.type !== 'component') return ''
+  try {
+    const fact = await reviewFact(project, work, Object.values(store.data.canvases), head)
+    if (fact.canvas?.id !== canvas.id) return ''
+    store.updateTask(work.id, { fact: factRecord(fact, work.fact!.heads, work.fact!.canvasVersion) })
+    if (!fact.blockers.length) return ' It shows every changed code file, rests on the PR and agrees with the intent.'
+    return `\n${factReport(fact, work.fact!.canvasVersion, 'intent')}`
   } catch (e) {
     log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
     return ''
@@ -692,6 +743,12 @@ function sharedTool(
       const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
       ideaBecameWork(store, session.id)
       return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user approves the plan when it is ready.`
+    }
+
+    case 'review_pr': {
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (session?.role !== 'chat') throw new Error('review_pr is for a project topic')
+      return actions.reviewPr(project.id, String(args.url ?? ''), session.id).then((r) => r.job)
     }
 
     case 'add_idea': {

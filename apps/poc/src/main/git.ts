@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import type { TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
+import type { AwaitingPr, PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
 
@@ -134,6 +135,54 @@ export async function prFeedback(url: string): Promise<PrFeedback[]> {
   ].filter((f) => !f.body.trimStart().startsWith(AGENT_MARK))
 
   return feedback
+}
+
+/** A teammate's PR as a review needs it (reviews-ahent-reviuit-pr-timeitiv.2). */
+export interface PrInfo {
+  url: string
+  number: number
+  title: string
+  author: string
+  state: PrStatus['state']
+  /** owner/repo of its base repository, lower case. */
+  repo: string
+  base: string
+  head: string
+  additions: number
+  deletions: number
+  changedFiles: number
+}
+
+/** The PR a link names, from GitHub. */
+export async function prInfo(url: string): Promise<PrInfo> {
+  const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,author,state,baseRefName,headRefOid,additions,deletions,changedFiles']))
+  const repo = String(v.url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//i)?.[1]?.toLowerCase() ?? ''
+  return { url: v.url, number: v.number, title: v.title, author: v.author?.login ?? '?', state: v.state, repo, base: v.baseRefName, head: v.headRefOid, additions: v.additions ?? 0, deletions: v.deletions ?? 0, changedFiles: v.changedFiles ?? 0 }
+}
+
+/** Open PRs of a GitHub repository (owner/repo) that request the user's review. */
+export async function prsAwaitingReview(slug: string): Promise<AwaitingPr[]> {
+  const list = JSON.parse(await run('gh', ['search', 'prs', '--review-requested=@me', '--state=open', '--repo', slug, '--json', 'url,number,title,author,updatedAt', '--limit', '50']))
+  return list.map((p: any) => ({ url: p.url, number: p.number, title: p.title, author: p.author?.login ?? '?', repo: slug.toLowerCase(), updatedAt: Date.parse(p.updatedAt) || 0 }))
+}
+
+/** The CI checks of a PR; [] when it has none. */
+export async function prChecks(url: string): Promise<PrCheck[]> {
+  // gh exits 8 while checks are pending and 1 when one failed: the JSON is printed all the same.
+  const { stdout } = await exec('gh', ['pr', 'checks', url, '--json', 'name,bucket,link'], { maxBuffer: 10 * 1024 * 1024 }).catch((e) => {
+    if (typeof e?.stdout === 'string' && e.stdout.trim().startsWith('[')) return { stdout: e.stdout as string }
+    if (/no checks reported/i.test(String(e?.stderr ?? e?.message))) return { stdout: '[]' }
+    throw e
+  })
+  return JSON.parse(stdout).map((c: any) => ({ name: c.name, bucket: c.bucket, link: c.link || null }))
+}
+
+/**
+ * Fetches a PR's head commit and its base branch into a checkout's objects (no branch, no FETCH_HEAD, the working tree
+ * as it is), so local git can diff it.
+ */
+export async function fetchPr(repo: string, number: number, base: string) {
+  await run('git', ['fetch', '--no-write-fetch-head', 'origin', `pull/${number}/head`, base], repo)
 }
 
 export function slug(s: string) {

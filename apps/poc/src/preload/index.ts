@@ -86,6 +86,11 @@ const api: MagApi = {
       if (openTaskCb === cb) openTaskCb = null
     }
   },
+  awaitingReviews: (projectId) => ipcRenderer.invoke('reviews:awaiting', projectId),
+  startReview: (projectId, url) => ipcRenderer.invoke('review:start', projectId, url),
+  reviewAgain: (taskId) => ipcRenderer.invoke('review:again', taskId),
+  closeReview: (taskId) => ipcRenderer.invoke('review:close', taskId),
+  prChecks: (taskId) => ipcRenderer.invoke('review:checks', taskId),
   reportCrash: (crash) => ipcRenderer.invoke('log:crash', crash),
   lastCrash: () => ipcRenderer.invoke('crash:last'),
   dismissCrash: () => ipcRenderer.invoke('crash:dismiss'),

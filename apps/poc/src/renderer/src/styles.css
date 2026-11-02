@@ -729,3 +729,20 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .localcheck .localbtns { display: flex; gap: 6px; }
 .localcheck .localbtns button, .localchecks.compact .banner button { margin-left: 0; }
 .localerror { flex-basis: 100%; font-size: 12px; color: var(--danger-fg); }
+
+/* Reviews tab (reviews-ahent-reviuit-pr-timeitiv.2): PRs on the left, the review open on the right. */
+.reviews { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 24px; align-items: start; }
+.reviewlist { display: flex; flex-direction: column; gap: 6px; }
+.reviewlist h2 { margin: 10px 0 2px; color: var(--muted); }
+.reviewrow { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.reviewrow.on { border-color: var(--pc, var(--line)); background: var(--surface); }
+.reviewrow .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reviewrow .grow { min-width: 0; }
+.reviewpaste { display: flex; gap: 6px; }
+.reviewpaste input { flex: 1; min-width: 0; font: inherit; }
+.reviewview { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.reviewview h1 { margin: 0; }
+.reviewview h2 { font-size: 14px; margin: 8px 0 4px; }
+.reviewempty { padding-top: 40px; max-width: 520px; }
+.finding { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.finding .pill { min-width: 70px; text-align: center; }

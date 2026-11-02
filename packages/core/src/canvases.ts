@@ -1,12 +1,16 @@
 // Diagrams as data (T-55.3): where a diagram stands in its work. Options sketch the ways to solve the problem; the plan
-// is per step and repository; the fact is what a step's PR really did (T-55.4).
+// is per step and repository; the fact is what a step's PR really did (T-55.4). A review of a teammate's PR has no plan:
+// its intent is what the ticket and the PR's description ask for, and its fact is what the PR did.
 
 import type { Canvas, Task } from './index.ts'
 
-/** option: sketches one option; plan: the planned change of a step (in one repo); fact: what the step's PR did. */
-export type CanvasRole = 'option' | 'plan' | 'fact'
+/**
+ * option: sketches one option; plan: the planned change of a step (in one repo); intent: what a teammate's PR is meant
+ * to change, from its ticket and description (a review's plan); fact: what a step's PR, or a reviewed PR, did.
+ */
+export type CanvasRole = 'option' | 'plan' | 'intent' | 'fact'
 
-export const CANVAS_ROLES: CanvasRole[] = ['option', 'plan', 'fact']
+export const CANVAS_ROLES: CanvasRole[] = ['option', 'plan', 'intent', 'fact']
 
 /** A diagram's place in its work; the fields of other roles are null. */
 export type CanvasPlacement = Pick<Canvas, 'role' | 'option' | 'stepId' | 'repo' | 'planOf'>

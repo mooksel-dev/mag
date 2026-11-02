@@ -1,15 +1,16 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, reviewOf, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrReview, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { formatFiles } from '@mag/diff'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
 import { changes, check, factReport, seed } from './core/services/fact/index.ts'
-import { factCanvas, factRecord, localGit, stepComponents, stepTargets } from './fact.ts'
+import { factCanvas, factRecord, localGit, reviewComponents, reviewFactCanvas, reviewTarget, stepComponents, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -153,6 +154,9 @@ works on yet, without status or priority; what has a state is a work.
   back in planning, this topic owns it, and you plan the new steps here as above.
 - Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line. list_tasks shows
   the ideas; when the user starts a work from one, plan it like any other.
+- The user asks you to review a teammate's PR (a GitHub PR link, "поревюй <url>"): review_pr(url), then do the job it
+  answers with, right here. You own that review: when the user asks for more, revise it and record it again with
+  set_pr_review. Nothing you run writes to the PR.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
 - Record outcomes so they outlive this chat: what was decided about a work, once you have weighed it, goes under §Decisions in its doc
@@ -207,7 +211,32 @@ Read only: change no files, run nothing that writes, never push, comment on GitH
 ${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
 }
 
-const findingLines = (findings: ReviewFinding[]) => findings.map((f) => `- ${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
+const findingLines = (findings: ReviewFinding[]) =>
+  findings.map((f) => `- ${f.level ? `[${FINDING_LEVEL_LABELS[f.level]}] ` : ''}${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
+
+/**
+ * The job of the topic that owns a review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): said in full every
+ * time, a first look or a look again. `files`: the PR's changed files as mag read them.
+ */
+const prReviewPrompt = (project: Project, work: Task, files: string) => {
+  const r = work.prReview!
+  const pr = r.pr
+  const name = repoNames(project)[project.repos.indexOf(pr.repo)] ?? pr.repo
+  const playbook = playbookOf(project)
+  const before = r.verdict
+    ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\nLook again: what changed since, and whether each finding still holds; keep the intent and fact diagrams and revise them.`
+    : ''
+  return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own its review ${work.key}. Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.${before}
+Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
+Review it following the project's playbook:
+${playbook.prReview}
+The fact diagram, by the project's playbook:
+${playbook.fact}
+mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
+Changed files (mag):
+${files}
+Call set_pr_review once you have the verdict (again whenever the user asks for more and it changes), then reply in a few lines: the verdict and the blockers.`
+}
 
 /** What the developer is told when the agent review asks for changes. */
 const reviewFeedback = (review: AgentReview, many: boolean) =>
@@ -224,6 +253,22 @@ const blocks = (text: string) => (text ? `\n\n${text}` : '')
 
 /** What mag never lets an agent run, whatever its prompt says (T-55.2): a merge, and a push to the base branch. */
 const NEVER_MERGE = 'Bash(gh pr merge:*)'
+
+/**
+ * What an agent that reviews never runs (reviews-ahent-reviuit-pr-timeitiv.2, Decision 7): anything that writes to a
+ * PR on GitHub. A teammate's PR gets only what the user publishes with their button.
+ */
+const NO_PR_WRITES = [
+  NEVER_MERGE,
+  'Bash(gh pr review:*)',
+  'Bash(gh pr comment:*)',
+  'Bash(gh pr close:*)',
+  'Bash(gh pr edit:*)',
+  'Bash(gh pr ready:*)',
+  'Bash(gh pr reopen:*)',
+  ...['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input'].flatMap((flag) => [`Bash(gh api ${flag} *)`, `Bash(gh api * ${flag} *)`]),
+  'Bash(git push:*)',
+]
 const noPushTo = (base: string) => [`Bash(git push * ${base})`, `Bash(git push * ${base} *)`, `Bash(git push *:${base})`, `Bash(git push *:${base} *)`, `Bash(git push *refs/heads/${base}*)`]
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
@@ -951,6 +996,114 @@ export class Orchestrator {
     if (!this.resumeDeveloper(step, reviewFeedback(review, many))) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
   }
 
+  /**
+   * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): the PR of a project repository, by its link. Its
+   * work (type review, in progress at once, no steps) is the PR's open one if it has one, else a new one. `by`: the
+   * project topic that asks (review_pr); it owns the review and gets the job back to do in its turn. Without it (the
+   * Reviews tab) the review's topic does it, a new one titled after the PR when it has none.
+   */
+  async reviewPr(projectId: string, url: string, by?: string): Promise<{ taskId: string; sessionId: string; job: string }> {
+    const project = this.store.project(projectId)
+    const info = await prInfo(parsePrUrl(url).url)
+    const repo = await this.repoOfSlug(project, info.repo)
+    if (!repo) throw new Error(`${info.repo} is not a repository of ${project.name}: add its checkout in Settings to review its PRs`)
+    if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
+    const name = repoNames(project)[project.repos.indexOf(repo)]
+    const tasks = this.store.data.tasks.filter((t) => t.projectId === projectId)
+    const pr = { url: info.url, repo, number: info.number, author: info.author, base: info.base, head: info.head }
+    const prev = reviewOf(tasks, info.url)
+    const owner = by ?? (prev && this.ownerSession(prev)?.id) ?? undefined
+    if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is still working; ask it there`)
+    const sessionId = owner ?? this.newChat(projectId)
+    if (!owner) {
+      const topic = this.store.session(sessionId)
+      topic.title = `Review ${name}#${info.number}`
+      topic.titleGenerated = true
+    }
+    const fresh: PrReview = { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null }
+    const title = `${name}#${info.number}: ${info.title}`
+    const work = prev
+      ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview: { ...(prev.prReview ?? fresh), pr } }), this.store.task(prev.id))
+      : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
+    if (!prev) this.store.updateTask(work.id, { prReview: fresh })
+    log.info('agent', `${work.key}: review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
+    const job = prReviewPrompt(project, this.store.task(work.id), await this.prFiles(project, this.store.task(work.id)))
+    if (!by) await this.send(sessionId, job)
+    return { taskId: work.id, sessionId, job }
+  }
+
+  /** The user's Review again: the review's PR as it is now gets another look. */
+  rereview(workId: string) {
+    const work = this.store.task(workId)
+    if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
+    return this.reviewPr(work.projectId, work.prReview.pr.url)
+  }
+
+  /** The user closes a review: done; Review again brings it back. */
+  closeReview(workId: string) {
+    const work = this.store.task(workId)
+    if (!isReview(work)) throw new Error(`${work.key} is not a review of a PR`)
+    this.store.updateTask(workId, { status: 'done', needsInput: null })
+  }
+
+  /** The project repository whose GitHub remote is `slug` (owner/repo). */
+  private async repoOfSlug(project: Project, slug: string): Promise<string | undefined> {
+    for (const r of project.repos) if (githubSlug((await repoInfo(r).catch(() => null))?.origin) === slug.toLowerCase()) return r
+    return undefined
+  }
+
+  /** The changed files of a review's PR, fetched into its repository's checkout, as the topic reads them. */
+  private async prFiles(project: Project, work: Task): Promise<string> {
+    const pr = work.prReview!.pr
+    try {
+      await fetchPr(pr.repo, pr.number, pr.base)
+      const target = await reviewTarget(project, work)
+      return formatFiles(target.name, target.base, target.head, (await changes(project, [target], localGit)).files)
+    } catch (e) {
+      log.warn('agent', `${work.key}: reading the PR locally failed: ${(e as Error).message}`)
+      return `(mag could not read the PR locally: ${(e as Error).message.split('\n')[0]}. Read it with gh pr diff; get_pr_changes needs it locally.)`
+    }
+  }
+
+  /**
+   * Intent ↔ fact of a review's PR at its head (get_pr_changes), recorded on the review. Once it has an intent, mag
+   * starts the fact diagram as a copy of it for the topic to revise under the diff. Returns what the topic reads.
+   */
+  async reviewFactOf(workId: string): Promise<string> {
+    const work = this.store.task(workId)
+    const pr = work.prReview?.pr
+    if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
+    const project = this.store.project(work.projectId)
+    const canvases = Object.values(this.store.data.canvases)
+    const intent = reviewComponents(canvases, workId, 'intent')
+    const changed = await changes(project, [await reviewTarget(project, work)], localGit, intent)
+    const same = work.fact?.heads[pr.repo] === pr.head
+    let canvas = reviewFactCanvas(work, canvases)
+    let started = same ? (work.fact?.canvasVersion ?? null) : null
+    if (!canvas && intent.length) {
+      const diagram = seed(`${pr.url}`, intent, changed.files, project.architecture, 'intent')
+      if (diagram) {
+        const planOf = intent.length === 1 ? intent[0].id : null
+        canvas = this.store.saveCanvas({ projectId: project.id, taskId: workId, sessionId: null, title: `${work.key}: fact`, kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: pr.repo, planOf } })
+        started = canvas.version
+      }
+    }
+    const fact = check(project, changed, canvas, intent)
+    this.store.updateTask(workId, { fact: factRecord(fact, { [pr.repo]: pr.head }, started) })
+    return factReport(fact, started, 'intent')
+  }
+
+  /** The topic's set_pr_review: the review of the PR at the head mag gave it. Nothing goes to GitHub. */
+  setPrReview(workId: string, r: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string {
+    const work = this.store.task(workId)
+    const prev = work.prReview
+    if (!isReview(work) || !prev) throw new Error(`${work.key} is not a review of a PR`)
+    this.store.updateTask(workId, { prReview: { ...prev, ...r, head: prev.pr.head, at: Date.now() }, needsInput: null })
+    const n = r.findings.length
+    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
+    return 'Recorded: the user sees it in the Reviews tab. Nothing goes to GitHub until they publish the findings they pick.'
+  }
+
   /** A live session takes a message during a turn too: the agent gets it in that turn. */
   async send(sessionId: string, text: string, attachments: Attachment[] = []) {
     const session = this.store.session(sessionId)
@@ -1051,7 +1204,8 @@ export class Orchestrator {
         appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
         // Bash reads tickets through CLIs like acli or gh (T-37); read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
+        // A topic may own a review of a teammate's PR: nothing it runs writes to a PR.
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
       }
     }
     const task = this.store.task(session.taskId)
@@ -1068,7 +1222,7 @@ export class Orchestrator {
         appendSystemPrompt: `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` + arch + blocks(contextBlocks({ notes: project.notes })),
         // Bash for gh pr view / diff and git; read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
       }
     }
     if (session.role === 'developer' && owner.work) {

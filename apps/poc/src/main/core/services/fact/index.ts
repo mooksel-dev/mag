@@ -38,8 +38,11 @@ export interface Changes {
   files: FileChange[]
 }
 
+/** What the intent of the changes is called: a step's plan, or the intent of a teammate's PR. */
+export type IntentName = 'plan' | 'intent'
+
 export interface Fact extends Changes {
-  /** The intent diagrams: a step's plan. */
+  /** The intent diagrams: a step's plan, or what a reviewed PR is meant to do. */
   intent: Canvas[]
   /** The fact diagram; null before the review starts one. */
   canvas: Canvas | null
@@ -69,9 +72,9 @@ export async function changes(project: Project, targets: ChangeTarget[], source:
 /**
  * Where the reviewer starts the fact diagram: a copy of the intent diagrams (several: their modules together, each id
  * once). Without intent: the modules that own the changed code, unmarked, to draw the fact from scratch. `of` names
- * what the fact is of (a step's key). null when there is nothing to draw.
+ * what the fact is of (a step's key, a PR). null when there is nothing to draw.
  */
-export function seed(of: string, intent: Canvas[], files: FileChange[], architecture: Project['architecture']): ComponentDiagram | null {
+export function seed(of: string, intent: Canvas[], files: FileChange[], architecture: Project['architecture'], name: IntentName = 'plan'): ComponentDiagram | null {
   const modules: DNode[] = []
   const ids = new Set<string>()
   const take = (n: DNode) => {
@@ -84,14 +87,14 @@ export function seed(of: string, intent: Canvas[], files: FileChange[], architec
   for (const c of intent) for (const n of (c.diagram as ComponentDiagram).modules) take(n)
   if (intent.length) {
     const titles = intent.map((c) => `"${c.title}"`).join(', ')
-    return { type: 'component', summary: `Fact of ${of}, started as a copy of its plan ${titles}: the reviewer revises it under the diff.`, modules }
+    return { type: 'component', summary: `Fact of ${of}, started as a copy of its ${name} ${titles}: the reviewer revises it under the diff.`, modules }
   }
   for (const id of new Set(files.filter((f) => f.kind === 'code' && f.module).map((f) => f.module!))) {
     const arch = findNode(architecture?.modules ?? [], id)
     take({ id, name: arch?.name ?? id, description: arch?.description ?? '', uses: [] })
   }
   if (!modules.length) return null
-  return { type: 'component', summary: `Fact of ${of}: no plan diagram, the reviewer draws the fact from the diff over these modules.`, modules }
+  return { type: 'component', summary: `Fact of ${of}: no ${name} diagram, the reviewer draws the fact from the diff over these modules.`, modules }
 }
 
 /**
@@ -114,21 +117,26 @@ export function check(project: Project, changed: Changes, canvas: Canvas | null,
 
 const link = (c: Canvas) => `[${c.title}](canvas:${c.id})`
 
-/** What the reviewer reads of a fact: the changed files, what the fact diagram does not show or ground, intent ↔ fact. */
-export function factReport(fact: Fact, started: number | null): string {
-  const plans = fact.intent.length ? fact.intent.map(link).join(', ') : 'none: the step has no plan diagram, so nothing it changes is planned'
+/**
+ * What the reviewer reads of a fact: the changed files, what the fact diagram does not show or ground, intent ↔ fact.
+ * `name`: what the intent is called (a step's plan, a reviewed PR's intent).
+ */
+export function factReport(fact: Fact, started: number | null, name: IntentName = 'plan'): string {
+  const Name = name === 'plan' ? 'Plan' : 'Intent'
+  const none = name === 'plan' ? 'none: the step has no plan diagram, so nothing it changes is planned' : 'none yet: draw the intent (role intent) first, then call get_pr_changes again'
+  const plans = fact.intent.length ? fact.intent.map(link).join(', ') : none
   const c = fact.canvas
   const diagram = !c
     ? 'Fact diagram: none, the PRs change no code.'
     : c.version === started
-      ? `Fact diagram: ${link(c)} (v${c.version}), mag's copy of the plan: nothing on it rests on the PR yet.`
+      ? `Fact diagram: ${link(c)} (v${c.version}), mag's copy of the ${name}: nothing on it rests on the PR yet.`
       : `Fact diagram: ${link(c)} (v${c.version}), revised.`
-  const out = [`## Plan ↔ fact (mag)`, `Plan diagrams: ${plans}.`, diagram, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
+  const out = [`## ${Name} ↔ fact (mag)`, `${Name} diagrams: ${plans}.`, diagram, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
   const unshown = fact.coverage?.unshown ?? []
   if (unshown.length) out.push('', `### Changed code the fact diagram does not show (${unshown.length})`, ...unshown.map((f) => `- ${f.repo}:${f.path} (${f.module ?? 'no module'})`))
   const unverified = fact.grounding?.unverified ?? []
   if (unverified.length) out.push('', `### Lines of the fact that do not rest on the PR (${unverified.length})`, ...unverified.map((u) => `- ${describe(u.change)}: ${u.reason}${u.files.length ? ` (${u.files.join(', ')})` : ''}`))
-  out.push('', '### Plan ↔ fact', formatComparison(fact.comparison, fact.blockers))
+  out.push('', `### ${Name} ↔ fact`, formatComparison(fact.comparison, fact.blockers))
   return out.join('\n')
 }
 

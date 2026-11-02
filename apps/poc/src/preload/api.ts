@@ -73,6 +73,24 @@ export type WindowTarget =
   | { kind: 'canvas'; canvasId: string }
   | { kind: 'doc'; taskId: string }
 
+/** An open PR that requests the user's review (gh search prs --review-requested=@me). */
+export interface AwaitingPr {
+  url: string
+  number: number
+  title: string
+  author: string
+  /** owner/repo, lower case. */
+  repo: string
+  updatedAt: number
+}
+
+/** One CI check of a PR; bucket: pass, fail, pending, skipping or cancel. */
+export interface PrCheck {
+  name: string
+  bucket: string
+  link: string | null
+}
+
 /** A diagram a fact view names. */
 export interface FactCanvas {
   id: string
@@ -190,11 +208,24 @@ export interface MagApi {
   onOpenTask(cb: (projectId: string, taskId: string) => void): () => void
   /**
    * Plan ↔ fact of a step from the code (T-57.5): its open PRs (else the heads its fact was recorded at) against its
-   * plan diagrams; null when it has neither.
+   * plan diagrams; null when it has neither. A review of a teammate's PR: intent ↔ fact of its PR.
    */
   stepFact(stepId: string): Promise<FactView | null>
-  /** The lines of one hunk of a step's PR (`+…`, `-…`), from `base`..`head` of one of its repositories. */
+  /** The lines of one hunk of a step's PR (`+…`, `-…`), from `base`..`head` of one of its repositories. A review's too. */
   stepHunk(stepId: string, repo: string, base: string, head: string, hunk: HunkRef): Promise<string[]>
+  /** Open PRs of the project's GitHub repositories that request the user's review; a repo gh could not search is in errors. */
+  awaitingReviews(projectId: string): Promise<{ prs: AwaitingPr[]; errors: string[] }>
+  /**
+   * Review a teammate's PR of a project repository: its review (new, or the PR's own again) and the topic that does it.
+   * A link that is not one, or a PR outside the project, comes back as `error`.
+   */
+  startReview(projectId: string, url: string): Promise<{ taskId: string; sessionId: string } | { error: string }>
+  /** The review's PR as it is now gets another look by its topic (a new one if it is gone); returns the topic. */
+  reviewAgain(taskId: string): Promise<string>
+  /** Close a review: done; reviewAgain brings it back. */
+  closeReview(taskId: string): Promise<void>
+  /** The CI checks of a review's PR, from GitHub. */
+  prChecks(taskId: string): Promise<PrCheck[]>
   /** Save a renderer error as a crash report in the logs folder. */
   reportCrash(crash: RendererCrash): Promise<void>
   /** The newest crash from before this start that the user has not dismissed. */
