@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeDiagram, type DataDiagram } from '@mag/core'
-import { DATA_ROW, clipToShape, fieldNotes, fieldKey, layoutData, layoutGraph, measureNode, movePath, pathOf, wrap } from './graphLayout.ts'
+import { DATA_ROW, GROUP_HEAD, clipToShape, fieldNotes, fieldKey, indexText, layoutData, layoutGraph, measureNode, movePath, pathOf, wrap } from './graphLayout.ts'
 
 test('wrap: breaks on words, keeps a long word whole', () => {
   assert.deepEqual(wrap('check the open pull request', 10), ['check the', 'open pull', 'request'])
@@ -123,4 +123,27 @@ test('layoutData: a row per field, relations leave from their field, a move keep
   const userId = l.relations[0].points[0]
   assert.ok(Math.abs(userId.y - (states.rows[0].y + DATA_ROW / 2)) < 1, 'relation leaves from the userId row')
   assert.match(movePath(users, users.rows[2], states, states.rows[2]), /^M[\d.]+ [\d.]+ C/)
+})
+
+test('layoutData: entities stand in the box of their module, indexes are rows after the fields (povnyi-diff-nabir-pov-iazanykh.3)', async () => {
+  const d: DataDiagram = {
+    type: 'data',
+    entities: [
+      { id: 'dar_jobs', name: 'dar_jobs', kind: 'collection', module: 'dar_jobs', fields: [{ name: 'user_id', type: 'string' }, { name: 'sent_at', type: 'time', diff: 'add' }], indexes: [{ fields: ['user_id'], unique: true, diff: 'add' }] },
+      { id: 'states', name: 'dar_user_states', kind: 'collection', module: 'dar_user_states', fields: [{ name: 'user_id', type: 'string' }] },
+      { id: 'loose', name: 'loose', kind: 'table', fields: [{ name: 'id', type: 'int' }] },
+    ],
+    relations: [{ from: 'dar_jobs', to: 'states', kind: 'N:1', field: 'user_id', cross: true }],
+  }
+  const l = await layoutData(d)
+  assert.deepEqual(l.entities.map((e) => e.id), ['dar_jobs', 'states', 'loose'])
+  assert.deepEqual(l.groups.map((g) => g.module), ['dar_jobs', 'dar_user_states'])
+  const jobs = l.entities[0]
+  const box = l.groups[0]
+  assert.ok(jobs.x >= box.x && jobs.y >= box.y + GROUP_HEAD && jobs.x + jobs.w <= box.x + box.w && jobs.y + jobs.h <= box.y + box.h, 'the entity is inside its module')
+  assert.equal(jobs.indexRows.length, 1)
+  assert.ok(jobs.indexRows[0].y >= jobs.rows[1].y + jobs.rows[1].h && jobs.indexRows[0].y + DATA_ROW <= jobs.y + jobs.h)
+  assert.equal(indexText(d.entities[0].indexes![0]), 'unique (user_id)')
+  // The relation leaves from its field's row, in the coordinates of the whole diagram.
+  assert.ok(Math.abs(l.relations[0].points[0].y - (jobs.rows[0].y + DATA_ROW / 2)) < 1)
 })

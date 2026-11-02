@@ -145,7 +145,7 @@ test('check: changed methods, logic and dependencies must be on the fact set or 
   const bare = check(arch, changed, [canvas('fact', component([line]), 2)], null)
   assert.deepEqual(bare.completeness!.missing.map((m) => m.rule), ['logic', 'dependency'])
   assert.equal(bare.blockers.length, 2)
-  assert.match(factReport(bare, 1), /### Changed methods, models, logic and dependencies\n[\s\S]*the logic of list changes[\s\S]*api starts depending on jobs/)
+  assert.match(factReport(bare, 1), /### Changed methods, models, indexes, logic and dependencies\n[\s\S]*the logic of list changes[\s\S]*api starts depending on jobs/)
 
   // A flowchart linked from the line, the dependency drawn: complete; the flowchart is reached from the root.
   const flow = { id: 'flow', title: 'list', version: 1, root: false, diagram: { type: 'flowchart', nodes: [{ id: 'a', label: 'a', shape: 'start' }], edges: [] } } as unknown as Canvas

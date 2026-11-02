@@ -27,7 +27,7 @@ export interface DiagramLink {
 /** An interface line of a Component diagram. A moved line sits in the module it moved to. */
 export interface DLine extends Omit<Line, 'diff'> {
   diff?: LineMark
-  /** With move: the id of the module it moved from. */
+  /** With move: the id of the module it moved from; "<module>#<old name>" when it is renamed (there or here). */
   from?: string
   links?: DiagramLink[]
   /** On a fact diagram: why the method's changed logic needs no flowchart ("логіка тривіальна: …", Decision 8). */
@@ -81,8 +81,17 @@ export interface FlowchartDiagram {
   summary?: string
   /** The changes of the logic, one per item. */
   changes?: string[]
-  nodes: { id: string; label: string; shape: FlowShape; diff?: DiffMark }[]
+  nodes: FlowNode[]
   edges: { from: string; to: string; label?: string; diff?: DiffMark }[]
+}
+/** A node of a flowchart. */
+export interface FlowNode {
+  id: string
+  label: string
+  shape: FlowShape
+  diff?: DiffMark
+  /** A step that calls another method: the flowchart of that method, private ones too (povnyi-diff-nabir-pov-iazanykh.3). */
+  links?: DiagramLink[]
 }
 
 
@@ -94,13 +103,16 @@ export const ENTITY_KINDS: EntityKind[] = ['collection', 'table', 'struct', 'typ
 export type Cardinality = '1:1' | '1:N' | 'N:1' | 'N:M' | 'ref'
 export const CARDINALITIES: Cardinality[] = ['1:1', '1:N', 'N:1', 'N:M', 'ref']
 
-/** One field, one line. A changed field is its old line del and its new line add. */
+/** One field, one line. A changed field is its old line del and its new line add; a renamed one is one line, move. */
 export interface DField {
   name: string
   type: string
   note?: string
   diff?: DataMark
-  /** With move: the field it moved from, "<entity id>.<field name>" of another entity of the diagram. */
+  /**
+   * With move: the field it moved from, "<entity id>.<field name>" of another entity of the diagram; renamed in its
+   * entity: "<this entity id>.<old name>".
+   */
   from?: string
 }
 export interface DEntity {
@@ -112,7 +124,20 @@ export interface DEntity {
   /** With move: the old id of the entity (renamed or moved), not an entity of the diagram. */
   from?: string
   fields: DField[]
+  /**
+   * The module that owns the stored data (povnyi-diff-nabir-pov-iazanykh.3, Decision 11): a module id of the
+   * vocabulary, or the id of the outside system whose data it is; the data diagram groups entities by it.
+   */
+  module?: string
+  /** Its indexes and unique keys; a changed one carries its mark. */
+  indexes?: DIndex[]
   links?: DiagramLink[]
+}
+/** An index of an entity: the fields it is on, in order, and whether it keeps them unique. */
+export interface DIndex {
+  fields: string[]
+  unique?: boolean
+  diff?: DiffMark
 }
 export interface DRelation {
   from: string
@@ -122,6 +147,8 @@ export interface DRelation {
   field?: string
   label?: string
   diff?: DiffMark
+  /** Between modules or systems: no foreign key, the link holds by value only. */
+  cross?: boolean
 }
 export interface DataDiagram {
   type: 'data'
@@ -203,6 +230,13 @@ export function normalizeDiagram(raw: unknown): Diagram {
           fields: (Array.isArray(e.fields) ? e.fields : []).map((f: unknown) =>
             f && typeof f === 'object' ? { ...(f as DField), name: str((f as Raw).name), type: str((f as Raw).type) } : (f as DField),
           ),
+          // An index's fields given as "a, b" are its fields in order.
+          ...(Array.isArray(e.indexes) && {
+            indexes: arr(e.indexes).map((i) => ({
+              ...i,
+              fields: typeof i.fields === 'string' ? i.fields.split(',').map((x) => x.trim()).filter(Boolean) : Array.isArray(i.fields) ? i.fields.map(str) : [],
+            })),
+          }),
         })),
         relations: arr(d.relations).map((r) => ({ ...r, from: str(r.from), to: str(r.to), kind: (r.kind ?? 'ref') as Cardinality })),
       }
@@ -332,9 +366,11 @@ export function validateDiagram(d: Diagram): string[] {
           if (l.diff !== undefined && !LINE_MARKS.includes(l.diff)) errors.push(`${what}: diff must be one of ${LINE_MARKS.join(', ')}`)
           if (looksGrouped(l.text)) errors.push(`${what}: ${grouped('method', 'name(args): Result - what it does')}`)
           if (l.diff === 'move') {
-            if (!l.from) errors.push(`${what}: move needs from, the id of the module it moved from`)
-            else if (l.from === n.id) errors.push(`${what}: moved from ${n.id} itself; a changed method is a del line and an add line`)
-            else if (!ids.has(l.from)) errors.push(`${what}: moved from "${l.from}", no such module`)
+            const src = l.from ? moveSource(l.from) : null
+            if (!src) errors.push(`${what}: move needs from, the id of the module it moved from, or "<module>#<old name>" when renamed`)
+            else if (src.module === n.id && (!src.method || src.method === methodName(l.text)))
+              errors.push(`${what}: moved from ${n.id} itself; a renamed method gives from "${n.id}#<old name>", a changed one is a del line and an add line`)
+            else if (!ids.has(src.module)) errors.push(`${what}: moved from "${src.module}", no such module`)
           } else if (l.from) errors.push(`${what}: from is only for diff move`)
         }
         for (const u of n.uses) {
@@ -393,6 +429,7 @@ export function validateDiagram(d: Diagram): string[] {
       const ids = idsOf('node', d.nodes)
       for (const n of d.nodes) {
         mark(`Node ${n.id}`, n.diff)
+        links(`Node ${n.id}`, n.links)
         if (!['start', 'step', 'decision', 'end'].includes(n.shape)) errors.push(`Node ${n.id}: shape must be start, step, decision or end`)
       }
       for (const e of d.edges) {
@@ -439,17 +476,30 @@ export function validateDiagram(d: Diagram): string[] {
               continue
             }
             const src = fieldRef(d.entities, f.from)
-            if (!src) errors.push(`${fw}: moved from "${f.from}", no such field; give "<entity>.<field>" of this diagram`)
-            else if (src.entity === e.id) errors.push(`${fw}: moved within ${e.id}; a renamed field is a del line and an add line`)
+            // Renamed in place (Decision 12): from is "<this entity>.<old name>", a field it no longer has.
+            const renamed = !src && f.from.startsWith(`${e.id}.`) && f.from.slice(e.id.length + 1) !== f.name
+            if (renamed) continue
+            if (!src) errors.push(`${fw}: moved from "${f.from}", no such field; give "<entity>.<field>" of this diagram, or "${e.id}.<old name>" when renamed`)
+            else if (src.entity === e.id) errors.push(`${fw}: moved within ${e.id} from a field it still has; a renamed field gives from "${e.id}.<old name>" and no line of the old name`)
             else if (d.entities.find((x) => x.id === src.entity)!.fields.find((x) => x?.name === src.field)!.diff === 'add')
               errors.push(`${fw}: moved from "${f.from}", which is added; mark the source as it was`)
           } else if (f.from) errors.push(`${fw}: from is only for diff move`)
+        }
+        if (e.module !== undefined && (typeof e.module !== 'string' || !e.module.trim())) errors.push(`${what}: module is the id of the module (or outside system) that owns it`)
+        if (e.indexes !== undefined && !Array.isArray(e.indexes)) errors.push(`${what}: indexes must be a list of { fields, unique?, diff? }`)
+        for (const i of Array.isArray(e.indexes) ? e.indexes : []) {
+          const iw = `Index (${i.fields.join(', ')}) of ${e.id}`
+          if (!i.fields.length) errors.push(`${what}: an index has no fields`)
+          for (const f of i.fields) if (!names.has(f)) errors.push(`${iw}: no field "${f}" in ${e.id}; add it (unmarked, when it does not change)`)
+          if (i.unique !== undefined && typeof i.unique !== 'boolean') errors.push(`${iw}: unique must be true or false`)
+          mark(iw, i.diff)
         }
       }
       for (const r of d.relations) {
         const what = `Relation ${r.from} → ${r.to}`
         link('Relation', ids, r.from, r.to)
         mark(what, r.diff)
+        if (r.cross !== undefined && typeof r.cross !== 'boolean') errors.push(`${what}: cross must be true or false`)
         if (!CARDINALITIES.includes(r.kind)) errors.push(`${what}: kind must be one of ${CARDINALITIES.join(', ')}`)
         const src = d.entities.find((e) => e.id === r.from)
         if (r.field && src && !src.fields.some((f) => f?.name === r.field)) errors.push(`${what}: no field "${r.field}" in ${r.from}`)
@@ -659,9 +709,23 @@ export function moves(d: ComponentDiagram): Move[] {
   walkArch(d.modules, (n) => ids.add(n.id))
   const out: Move[] = []
   walkArch(d.modules, (n) => {
-    for (const l of n.interface ?? []) if (l.diff === 'move' && l.from && l.from !== n.id && ids.has(l.from)) out.push({ line: l, from: l.from, to: n.id })
+    for (const l of n.interface ?? []) {
+      const from = l.diff === 'move' && l.from ? moveSource(l.from)?.module : undefined
+      if (from && from !== n.id && ids.has(from)) out.push({ line: l, from, to: n.id })
+    }
   })
   return out
+}
+
+/**
+ * Where a moved interface line comes from (its from): a module id, or "<module>#<old name>" for a method renamed
+ * (povnyi-diff-nabir-pov-iazanykh.3, Decision 12), in its module or on the way to another. null when empty.
+ */
+export function moveSource(from: string): { module: string; method?: string } | null {
+  const at = from.indexOf('#')
+  const module = (at < 0 ? from : from.slice(0, at)).trim()
+  const method = at < 0 ? '' : from.slice(at + 1).trim()
+  return module ? { module, ...(method && { method }) } : null
 }
 
 /** A changed line on a box; `to` marks a line that moved out of the box to that module. */
@@ -672,12 +736,13 @@ export const BOX_LINES = 3
 
 /**
  * The changed interface lines of a module for its box, in order: its own (add, del, mod, move in), then, given the
- * whole diagram, the lines that moved out of it. At most BOX_LINES; `more` is how many are left out.
+ * whole diagram, the lines that moved out of it. At most `limit` (BOX_LINES; Infinity for a box opened in full);
+ * `more` is how many are left out.
  */
-export function boxLines(n: DNode, d?: ComponentDiagram): { shown: BoxLine[]; more: number } {
+export function boxLines(n: DNode, d?: ComponentDiagram, limit = BOX_LINES): { shown: BoxLine[]; more: number } {
   const all: BoxLine[] = (n.interface ?? []).filter((l) => l.diff)
   if (d) for (const m of moves(d)) if (m.from === n.id) all.push({ ...m.line, to: m.to })
-  return { shown: all.slice(0, BOX_LINES), more: Math.max(0, all.length - BOX_LINES) }
+  return { shown: all.slice(0, limit), more: Math.max(0, all.length - limit) }
 }
 
 /** A module's own change: its mark, else 'mod' when one of its interface lines changes. */
@@ -696,7 +761,7 @@ function countNodes(nodes: DNode[], all: DNode[], c: DiffCount) {
   return c
 }
 
-/** Changed elements of a diagram: Component counts modules and uses, Data its entities, fields and relations, the others their nodes and links. */
+/** Changed elements of a diagram: Component counts modules and uses, Data its entities, fields, indexes and relations, the others their nodes and links. */
 export function diagramSummary(d: Diagram): DiffCount {
   const c = zero()
   switch (d.type) {
@@ -712,7 +777,7 @@ export function diagramSummary(d: Diagram): DiffCount {
       for (const x of [...d.nodes, ...d.edges]) count(c, x.diff)
       return c
     case 'data':
-      for (const x of [...d.entities, ...d.entities.flatMap((e) => e.fields), ...d.relations]) count(c, x?.diff)
+      for (const x of [...d.entities, ...d.entities.flatMap((e) => [...e.fields, ...(e.indexes ?? [])]), ...d.relations]) count(c, x?.diff)
       return c
   }
   return c

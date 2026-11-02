@@ -212,6 +212,14 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
   const [boxes, setBoxes] = useState<Map<string, Box>>(new Map())
   // Unchanged modules of a diff the user unfolded back into their lanes.
   const [unfolded, setUnfolded] = useState<Set<string>>(new Set())
+  // Boxes opened in full by their "+N more": every changed line, not only the first ones.
+  const [opened, setOpened] = useState<Set<string>>(new Set())
+  const toggleOpened = (id: string) =>
+    setOpened((s) => {
+      const next = new Set(s)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   const wrap = useRef<HTMLDivElement>(null)
   const els = useRef(new Map<string, HTMLElement>())
   const uid = useId()
@@ -256,7 +264,7 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
     const ro = new ResizeObserver(measure)
     ro.observe(root)
     return () => ro.disconnect()
-  }, [nodes, ports, folded, unfolded])
+  }, [nodes, ports, folded, unfolded, opened])
 
   const focus = (hover && boxes.has(hover) ? hover : null) ?? (selected && boxes.has(selected) ? selected : null)
   const near = (id: string) =>
@@ -311,7 +319,8 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
               const inner = n.children?.length ?? 0
               const changes = diff && inner ? formatDiffCount(innerSummary(n, all)) : ''
               const mark = diff ? nodeDiff(n) : undefined
-              const changed = diff ? cardLines(n, diagram, flows) : null
+              const full = opened.has(n.id)
+              const changed = diff ? cardLines(n, diagram, flows, full) : null
               return (
                 <div
                   key={n.id}
@@ -330,7 +339,16 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
                   {changed && changed.shown.length > 0 && (
                     <span className="lines">
                       {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} onFlow={flowFor(flows, n.id, l, onFlow)} />)}
-                      {changed.more > 0 && <span className="more muted">+{changed.more} ще</span>}
+                      {(changed.more > 0 || full) && (
+                        <button
+                          className="more link muted"
+                          title={full ? 'Show the first lines only' : 'Show every changed line of this module'}
+                          onClick={(e) => (e.stopPropagation(), toggleOpened(n.id))}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          {full ? 'show less' : `+${changed.more} more`}
+                        </button>
+                      )}
                     </span>
                   )}
                   {inner > 0 && (
@@ -564,13 +582,14 @@ function DiffDetails({ all, flows, node, onReveal, onOpen, onFlow }: {
 }
 
 /**
- * The lines on a diff box: its changed lines (boxLines), then the lines of methods with a flow, at most BOX_LINES;
- * `more` counts the rest.
+ * The lines on a diff box: its changed lines (boxLines), then the lines of methods with a flow, at most BOX_LINES
+ * unless the box is opened in full; `more` counts the rest.
  */
-function cardLines(n: DNode, d: ComponentDiagram, flows: FlowItem[]): { shown: BoxLine[]; more: number } {
-  const changed = boxLines(n, d)
+function cardLines(n: DNode, d: ComponentDiagram, flows: FlowItem[], full = false): { shown: BoxLine[]; more: number } {
+  const limit = full ? Infinity : BOX_LINES
+  const changed = boxLines(n, d, limit)
   const all = [...changed.shown, ...flowLines(n, flows)]
-  return { shown: all.slice(0, BOX_LINES), more: changed.more + Math.max(0, all.length - BOX_LINES) }
+  return { shown: all.slice(0, limit), more: changed.more + Math.max(0, all.length - limit) }
 }
 
 /** Opens the flow of the method on a line of `module`, when it has one; a line that moved out has none here. */

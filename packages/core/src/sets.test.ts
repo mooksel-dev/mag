@@ -56,6 +56,20 @@ test('validateLinks: no root, several roots, links outside the set or to no node
   assert.deepEqual(validateLinks([canvas('c', linked('data', 'orders'), { root: true }), canvas('data', DATA)]), ['"c" (c): api links to node "orders" of "data" (data), which has no such node.'])
 })
 
+test('a step of a flowchart links the flowchart of the private method it calls; remapLinks follows it (povnyi-diff-nabir-pov-iazanykh.3)', () => {
+  const caller: Diagram = { type: 'flowchart', nodes: [{ id: 'send', label: 'doSend(account)', shape: 'step', links: [{ to: 'private', node: 'start', kind: 'logic' }] }], edges: [] }
+  const callee: Diagram = { type: 'flowchart', nodes: [{ id: 'start', label: 'start', shape: 'start' }], edges: [] }
+  assert.deepEqual(validateDiagram(caller), [])
+  assert.match(validateDiagram({ ...caller, nodes: [{ ...caller.nodes[0], links: [{ to: 'private', kind: 'nope' as never }] }] }).join('\n'), /Node send: link to private: kind must be one of/)
+  // The callee has no of: only the step's link reaches it.
+  const set = [canvas('c', COMPONENT, { root: true }), canvas('data', DATA), canvas('flow', caller), canvas('seq', SEQ), canvas('private', callee)]
+  assert.deepEqual(validateLinks(set), [])
+  assert.deepEqual(linksAt(set, 'flow', 'send').map((l) => l.link.to), ['private'])
+  assert.deepEqual(setTrail(set, 'private'), [{ id: 'c' }, { id: 'flow', via: 'api#list' }, { id: 'private', via: 'send' }])
+  const copy = remapLinks(caller, new Map([['private', 'P']])) as typeof caller
+  assert.equal(copy.nodes[0].links![0].to, 'P')
+})
+
 test('remapLinks: a copy of a set links its own diagrams', () => {
   const copy = remapLinks(COMPONENT, new Map([['data', 'D'], ['flow', 'F']]))
   assert.ok(copy.type === 'component')

@@ -3,7 +3,7 @@
 // and mag's check of it against the files (coverage, grounding), the changed methods, models, logic and dependencies
 // (completeness) and, when there is one, the plan (compare). It knows no step: a step's PRs (against its plan) and a
 // teammate's PR (no plan: reviews-prybraty-spysok-pr-i.1) are two callers of the same diff.
-import { findNode, playbookOf, setRoot, validateLinks, walkArch, type Canvas, type ComponentDiagram, type DNode, type Diagram, type Project } from '@mag/core'
+import { diagramWarnings, findNode, playbookOf, setRoot, validateLinks, walkArch, type Canvas, type ComponentDiagram, type DNode, type Diagram, type Project } from '@mag/core'
 import { changedUnits, compare, completeness, coverage, createDiff, describe, diagramChanges, folderVocabulary, formatComparison, formatCompleteness, formatFiles, grounding, mergeBlockers, parseSignificance, planVocabulary, withLevels, type ChangedUnit, type Comparison, type Completeness, type Coverage, type FileChange, type FileDiff, type Grounding, type HunkRef, type Vocabulary } from '@mag/diff'
 
 /** Where the changes are read from: a local git checkout, later a PR's diff on GitHub. `at` is where it reads a repository. */
@@ -61,7 +61,10 @@ export interface Fact extends Changes {
   coverage: Coverage | null
   grounding: Grounding | null
   completeness: Completeness | null
-  /** Where the fact set does not hang together: root, links, orphans (validateLinks). */
+  /**
+   * Where the fact set does not hang together (root, links, orphans: validateLinks) and where a diagram of it breaks a
+   * rule of the diff (diagramWarnings: owners, relations, stored data only, no mocks, renames as move).
+   */
   warnings: string[]
   blockers: string[]
 }
@@ -164,7 +167,7 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
   const canvas = setRoot(set) ?? set.find((c) => c.diagram!.type === 'component') ?? set[0] ?? null
   return {
     repos, files, units, outside: changed.outside, plan, set, canvas, comparison, coverage: cover, grounding: ground, completeness: complete,
-    warnings: drawn ? validateLinks(set) : [],
+    warnings: drawn ? [...validateLinks(set), ...set.flatMap((c) => diagramWarnings(c.diagram!).map((w) => `"${c.title}" (${c.id}): ${w}`))] : [],
     blockers: mergeBlockers(comparison, cover, ground, complete),
   }
 }
@@ -194,8 +197,8 @@ export function factReport(fact: Fact, started: number | null): string {
   const unverified = fact.grounding?.unverified ?? []
   if (unverified.length) out.push('', `### Lines of the fact that do not rest on the PR (${unverified.length})`, ...unverified.map((u) => `- ${describe(u.change)}: ${u.reason}${u.files.length ? ` (${u.files.join(', ')})` : ''}`))
   const missing = fact.completeness ? formatCompleteness(fact.completeness) : ''
-  if (missing) out.push('', '### Changed methods, models, logic and dependencies', missing)
-  if (fact.warnings.length) out.push('', `### The fact set does not hang together (${fact.warnings.length})`, ...fact.warnings.map((w) => `- ${w}`))
+  if (missing) out.push('', '### Changed methods, models, indexes, logic and dependencies', missing)
+  if (fact.warnings.length) out.push('', `### Where the fact set does not hang together or breaks a rule of the diff (${fact.warnings.length})`, ...fact.warnings.map((w) => `- ${w}`))
   if (plan) out.push('', '### Plan ↔ fact', formatComparison(fact.comparison, fact.blockers))
   else out.push('', fact.blockers.length ? `### The fact is not complete yet\n${fact.blockers.map((b) => `  - ${b}`).join('\n')}` : '### The fact is complete: it shows every changed code file, method, model, logic and dependency and rests on the PR.')
   return out.join('\n')

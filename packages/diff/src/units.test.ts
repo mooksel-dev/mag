@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ArchNode, Diagram } from '@mag/core'
-import { completeness } from './completeness.ts'
+import { completeness, describeMissing } from './completeness.ts'
 import { mergeBlockers } from './compare.ts'
 import { fileKind } from './files.ts'
 import { formatUnits } from './format.ts'
@@ -39,17 +39,17 @@ test('changedUnits, TypeScript: the method a header names, declarations among th
       hunk('export function list(limit: number) {', ['+', '+export function count(): number {', '+  return all.length', '+}', '+', '+function helper() {', '+  return 1', '+}']),
       // Only the signature changes.
       hunk(undefined, ['-export const remove = (id: string) => store.del(id)', '+export const remove = (id: string, soft = false) => store.del(id, soft)']),
-      // A field of an exported interface; a comment changes nothing.
+      // A field of an exported interface is no stored data (povnyi-diff-nabir-pov-iazanykh.3); a comment changes nothing.
       hunk('export interface User {', ['+  email: string', '+  // the login']),
       // A call with a callback is no declaration: the body of run changes.
       hunk('  run() {', ['+    walkArch(nodes, (n) => {', '+      seen.add(n.id)', '+    })']),
-      // A private method, a module constant: not units.
+      // A private method without logic, a module constant: not units.
       hunk('  private reset() {', ['-    this.n = 0', '+    this.n = 1']),
       hunk('export const LIMITS = {', ['-  max: 10,', '+  max: 20,']),
     ],
     'api',
   )
-  assert.deepEqual(units(f), ['method api list mod high body', 'method api count add high body', 'method api remove mod high signature', 'model api User mod high', 'method api run mod high body'])
+  assert.deepEqual(units(f), ['method api list mod high body', 'method api count add high body', 'method api remove mod high signature', 'method api run mod high body'])
 })
 
 test('changedUnits: Go, Python and Swift by their own conventions of public', () => {
@@ -58,7 +58,9 @@ test('changedUnits: Go, Python and Swift by their own conventions of public', ()
     [
       hunk('func (s *Store) Load(id string) (Item, error) {', ['-\treturn s.get(id)', '+\treturn s.cached(id)']),
       hunk('func (s *Store) cached(id string) (Item, error) {', ['+\tif x { return y }']),
-      hunk('type Item struct {', ['+\tTags []string']),
+      hunk('type Item struct {', ['+\tTags []string `bson:"tags"`']),
+      // Arguments of a call: no stored data.
+      hunk('type ItemKey struct {', ['+\tID string']),
       hunk('var (', ['+\tlimit = 10']),
     ],
     'store',
@@ -68,7 +70,8 @@ test('changedUnits: Go, Python and Swift by their own conventions of public', ()
     [
       hunk('    def run(self, since):', ['-        return []', '+        return self._fetch(since)']),
       hunk('    def _fetch(self, since):', ['+        pass']),
-      hunk('class Job:', ['+    retries: int = 3']),
+      hunk('class Job(Base):', ['+    retries = Column(Integer, default=3)']),
+      hunk('class JobIn(BaseModel):', ['+    retries: int = 3']),
       hunk(undefined, ['+TIMEOUT = 30']),
     ],
     'jobs',
@@ -76,6 +79,8 @@ test('changedUnits: Go, Python and Swift by their own conventions of public', ()
   const swift = file('src/api/View.swift', [hunk('    public func reload(force: Bool) {', ['+        if force { cache.clear() }']), hunk('    private func tick() {', ['+        n += 1'])], 'api')
   assert.deepEqual(units(go, py, swift), [
     'method store Load mod high body',
+    // A private method with logic (povnyi-diff-nabir-pov-iazanykh.3): its flowchart, no interface line.
+    'method store cached mod high body',
     'model store Item mod high',
     'method jobs run mod high body',
     'model jobs Job mod high',
@@ -94,7 +99,8 @@ test('changedUnits: schemas are models by their tables, models and messages; Ter
       file('db/tables.tf', [hunk('resource "aws_dynamodb_table" "orders" {', ['+  stream_enabled = true'])], 'db'),
       file('db/queue.tf', [hunk('resource "aws_sqs_queue" "jobs" {', ['+  delay_seconds = 5'])], 'db'),
     ),
-    ['model db public.items mod high', 'model db 004_fix mod high', 'model db User mod high', 'model db Charge add high', 'model db orders mod high'],
+    // A unique field is an index too (povnyi-diff-nabir-pov-iazanykh.3).
+    ['model db public.items mod high', 'model db 004_fix mod high', 'index db User add high', 'model db User mod high', 'model db Charge add high', 'model db orders mod high'],
   )
 })
 
@@ -174,5 +180,142 @@ test('completeness: each kind on its diagram or in a note; sure ones block merge
   assert.equal(blockers.length, 3, 'the unsure unit is no blocker')
   assert.match(blockers[0], /^r:src\/api\/users\.ts:3: public method list changes: no changed interface line of api shows it/)
   assert.match(blockers[2], /api starts depending on core: no use api -> core is marked add on the set/)
-  assert.match(formatUnits(all), /Public methods:\n {2}~ api list \(r:src\/api\/users\.ts:3\), logic changes\nModels:[\s\S]*Unsure \(warnings only\):\n {2}~ api \(no name\)/)
+  assert.match(formatUnits(all), /Public methods:\n {2}~ api list \(r:src\/api\/users\.ts:3\), logic changes\nModels \(stored data\):[\s\S]*Unsure \(warnings only\):\n {2}~ api \(no name\)/)
+})
+
+test('changedUnits: a PR diff with context lines, as duff-brewery#297 (povnyi-diff-nabir-pov-iazanykh.3)', () => {
+  // The model: context lines say SentAt is in Job, a stored struct; JobKey has no tags, the arguments of a call.
+  const models = file(
+    'src/store/models.go',
+    [
+      hunk('type Response struct {', [
+        ' \tAICategory AICategoryType `bson:"ai_category"`',
+        ' }',
+        ' ',
+        '+type JobKey struct {',
+        '+\tUserID  string',
+        '+}',
+        '+',
+        ' type Job struct {',
+        ' \tUserID    string     `bson:"user_id"`',
+        '+\tSentAt    *time.Time `bson:"sent_at,omitempty"`',
+        ' \tCreatedAt time.Time  `bson:"created_at"`',
+        ' }',
+      ]),
+    ],
+    'store',
+  )
+  const service = file(
+    'src/api/request_removal.go',
+    [
+      hunk('func (s *Service) RequestRemoval(ctx context.Context, in Input) (*Result, error) {', [
+        '-\ts.sendDeletionRequest(ctx, account)',
+        '+\tif err := s.doSend(ctx, account); err != nil {',
+        '+\t\treturn nil, err',
+        '+\t}',
+        ' ',
+        ' \treturn &Result{}, nil',
+        ' }',
+        ' ',
+        '+func keyFilter(key JobKey) bson.M {',
+        '+\treturn bson.M{"user_id": key.UserID}',
+        '+}',
+        '+',
+        '+func (s *Service) doSend(',
+        '+\tctx context.Context,',
+        '+\taccount *Account,',
+        '+) error {',
+        '+\tjob, err := s.repos.DarJobs.Ensure(ctx, key)',
+        '+\tif err != nil {',
+        '+\t\treturn err',
+        '+\t}',
+        '+\treturn nil',
+        '+}',
+        '+',
+        '+func (s *Service) render(name string) string {',
+        '+\treturn fmt.Sprintf("%s", name)',
+        '+}',
+        '-func (*Service) sendDeletionRequest(ctx context.Context, account *Account) {',
+        '-\tlogger.Warn(ctx).Msg("mocked")',
+        '-}',
+      ]),
+    ],
+    'api',
+  )
+  // An index created; a mock of the repository is a test file, never read.
+  const repo = file('src/store/repository.go', [hunk('func (r *repository) EnsureIndexes(ctx context.Context) error {', ['+\t\t{Keys: bson.D{{"user_id", 1}}, Options: options.Index().SetUnique(true)},'])], 'store')
+  const mock = file('src/store/mock.go', [hunk('func (m *MockRepository) Ensure(ctx context.Context, key JobKey) (*Job, error) {', ['+\targs := m.Called(ctx, key)'])], 'store')
+  const all = changedUnits([models, service, repo, mock], ARCH, VOCABULARY)
+  assert.deepEqual(units(models, service, repo, mock), [
+    'model store Job mod high',
+    'method api RequestRemoval mod high body',
+    // A private method with a branch: sure; with a call only: a guess; keyFilter has no logic, the removed one needs none.
+    'method api doSend add high body',
+    'method api render add low body',
+    'index store EnsureIndexes add high',
+    'method store EnsureIndexes mod high body',
+  ])
+  assert.deepEqual(all.filter((u) => u.kind === 'method').map((u) => [u.name, u.public, u.line]), [
+    ['RequestRemoval', true, 10],
+    ['doSend', false, 21],
+    ['render', false, 32],
+    ['EnsureIndexes', true, 10],
+  ])
+  assert.equal(fileKind('src/store/mock.go'), 'test')
+  assert.equal(fileKind('internal/clients/sendgrid/mocks/client.go'), 'test')
+  assert.equal(fileKind('src/api/users.mock.ts'), 'test')
+})
+
+test('changedUnits: stored types by ORM decorators and bases; indexes in schemas and migrations', () => {
+  const ts = file('src/store/user.ts', [hunk(undefined, ['+@Entity()', '+export class User {', '+  @Column()', '+  email: string', '+}', '+export class UserInput {', '+  email: string', '+}'])], 'store')
+  const swift = file('src/api/Item.swift', [hunk(undefined, ['+@Model', '+final class Item {', '+    var title: String', '+}'])], 'api')
+  const sql = file('db/migrations/005_idx.sql', [hunk(undefined, ['+CREATE UNIQUE INDEX dar_jobs_key ON dar_jobs (user_id, inbox_id, domain);'])], 'db')
+  const prisma = file('db/schema.prisma', [hunk('model User {', ['+  @@unique([email, tenant])'])], 'db')
+  assert.deepEqual(units(ts, swift, sql, prisma), [
+    'model store User add high',
+    'model api Item add high',
+    'index db dar_jobs add high',
+    'model db 005_idx mod high',
+    'index db User add high',
+    'model db User mod high',
+  ])
+})
+
+test('completeness: a private method shows its logic by a flowchart of it, an index by a changed index (povnyi-diff-nabir-pov-iazanykh.3)', () => {
+  const all = [
+    unit({ name: 'doSend', public: false, bodyChanged: true, diff: 'add' }),
+    unit({ kind: 'index', name: 'EnsureIndexes', module: 'store', file: 'src/store/repository.go' }),
+  ]
+  const missing = (set: Parameters<typeof completeness>[0]) => completeness(set, all, ARCH).missing.map((m) => `${m.rule} ${m.unit.name}`)
+  // No interface line is asked of a private method: only its logic.
+  assert.deepEqual(missing([]), ['logic doSend', 'index EnsureIndexes'])
+  assert.match(describeMissing(completeness([], all, ARCH).missing[0]), /the logic of private method doSend changes: no flowchart of the set has of api#doSend/)
+  const data: Diagram = {
+    type: 'data',
+    entities: [{ id: 'dar_jobs', name: 'dar_jobs', kind: 'collection', module: 'store', fields: [{ name: 'user_id', type: 'string' }], indexes: [{ fields: ['user_id'], unique: true, diff: 'add' }] }],
+    relations: [],
+  }
+  const flow: Diagram = { type: 'flowchart', of: 'api#doSend', nodes: [], edges: [] }
+  assert.deepEqual(missing([{ id: 'd', diagram: data }, { id: 'f', diagram: flow }]), [])
+  // A step of the caller's flowchart that names it and links its flowchart shows it too.
+  const caller: Diagram = { type: 'flowchart', of: 'api#RequestRemoval', nodes: [{ id: 's', label: 'doSend(account)', shape: 'step', links: [{ to: 'g', kind: 'logic' }] }], edges: [] }
+  const callee: Diagram = { type: 'flowchart', nodes: [], edges: [] }
+  assert.deepEqual(missing([{ id: 'd', diagram: data }, { id: 'c', diagram: caller }, { id: 'g', diagram: callee }]), [])
+  assert.deepEqual(missing([{ id: 'd', diagram: data, notes: [{ kind: 'logic', name: 'doSend', why: 'one guard' }] }]), [])
+  assert.match(formatUnits(all), /Private methods with logic[^\n]*:\n {2}\+ api doSend \(r:src\/api\/users\.ts:3\), logic changes, private\nIndexes:\n {2}~ store EnsureIndexes/)
+})
+
+test('changedUnits: a Go method whose receiver alone changes is no change; a renamed Go module path resolves', () => {
+  const go = file('src/store/client.go', [hunk('func (c *Client) ensure() {', ['-func (c *Client) Get(id string) error {', '+func (c *client) Get(id string) error {', '-func (c *Client) Put(id string) error {', '+func (c *client) Put(id string, v []byte) error {'])], 'store')
+  assert.deepEqual(units(go), ['method store Put mod high signature'])
+  // A Go module named without a dot is the project's, not the standard library.
+  assert.deepEqual(units(file('src/api/h.go', [hunk(undefined, ['+\t"duff-brewery/src/jobs"', '+\t"strings"'], 3)], 'api')), ['dependency api jobs add high'])
+})
+
+test('completeness: a method renamed is one move line; it shows the removed old name too', () => {
+  const all = [unit({ name: 'renderOld', diff: 'del' }), unit({ name: 'renderNew', diff: 'add', bodyChanged: true })]
+  const app = component([
+    { id: 'api', name: 'api', description: '', uses: [], interface: [{ text: 'renderNew(data): string', diff: 'move', from: 'api#renderOld', trivialLogic: 'renamed only' }] },
+  ])
+  assert.deepEqual(completeness([{ id: 'c', diagram: app }], all, ARCH).missing, [])
 })

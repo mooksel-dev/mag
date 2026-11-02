@@ -51,3 +51,14 @@ test('contextBlocks: decisions with the precedence, then the notes; empty parts 
 test('the dev template has a Decisions section that docDecisions reads', () => {
   assert.match(docDecisions(DEFAULT_TEMPLATES.dev), /override the project's playbook/)
 })
+
+test('DEFAULT_PLAYBOOK: both reviews check the contract of calls, unique indexes under upserts, values read but unused (povnyi-diff-nabir-pov-iazanykh.3)', () => {
+  for (const s of [DEFAULT_PLAYBOOK.review, DEFAULT_PLAYBOOK.prReview]) {
+    assert.match(s, /contract of every new or changed call/)
+    assert.match(s, /upsert, ensure or "create if missing" rests on a unique index/)
+    assert.match(s, /Read but unused/)
+  }
+  assert.match(DEFAULT_PLAYBOOK.fact, /private method a flowchart/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /mocks, fakes, test harnesses and test-only types are on no diagram/)
+  assert.match(DEFAULT_PLAYBOOK.plan, /each entity with module, its owner/)
+})

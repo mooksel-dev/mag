@@ -1,7 +1,7 @@
 // Diagram sets (povnyi-diff-nabir-pov-iazanykh.1, Decisions 1–3): the diagrams of one place (an option, a step's plan,
 // a step's fact, the fact of a reviewed PR) are one set, computed, not stored. One of them is its root; explicit links
-// lead from modules, interface lines, uses and entities to the other diagrams of the set. A flowchart's `of` reads as a
-// logic link from its method, so diagrams drawn before links still hang together.
+// lead from modules, interface lines, uses, entities and flowchart steps to the other diagrams of the set. A
+// flowchart's `of` reads as a logic link from its method, so diagrams drawn before links still hang together.
 import { methodName, walkArch } from './arch.ts'
 import { LINK_KINDS, diagramSummary, parseFlowRef, type Diagram, type DiagramLink, type DiffCount, type DNode } from './diagram.ts'
 import type { Canvas } from './index.ts'
@@ -31,7 +31,7 @@ export function setRoot<C extends Pick<Canvas, 'root'>>(set: C[]): C | null {
   return roots.length === 1 ? roots[0] : set.length === 1 ? set[0] : null
 }
 
-/** A link of a diagram and what it starts at: a module id, `<module>#<method>`, `<from> -> <to>` or an entity id. */
+/** A link of a diagram and what it starts at: a module id, `<module>#<method>`, `<from> -> <to>`, an entity or flowchart node id. */
 export interface LinkFrom {
   from: string
   link: DiagramLink
@@ -48,6 +48,7 @@ export function diagramLinks(d: Diagram): LinkFrom[] {
       for (const u of n.uses) add(`${n.id} -> ${u.to}`, u.links)
     })
   if (d.type === 'data') for (const e of d.entities) add(e.id, e.links)
+  if (d.type === 'flowchart') for (const n of d.nodes) add(n.id, n.links)
   return out
 }
 
@@ -123,7 +124,7 @@ function hint<C extends Member>(c: C, set: C[]): string {
   }
   if (d.type === 'data') return `give the module that owns these tables ${link('data')}.`
   if (d.type === 'sequence') return `give the use, line or module the scenario is of ${link('scenario')}.`
-  if (d.type === 'flowchart') return `give the method's interface line ${link('logic')}.`
+  if (d.type === 'flowchart') return `give the method's interface line ${link('logic')}, or, for a private method, the step of the flowchart that calls it.`
   return `give a module of the root ${link('detail')}.`
 }
 
@@ -138,6 +139,7 @@ export function remapLinks(d: Diagram, ids: Map<string, string>): Diagram {
       n.uses.forEach((u) => fix(u.links))
     })
   if (copy.type === 'data') copy.entities.forEach((e) => fix(e.links))
+  if (copy.type === 'flowchart') copy.nodes.forEach((n) => fix(n.links))
   return copy
 }
 

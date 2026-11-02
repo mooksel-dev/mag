@@ -141,9 +141,14 @@ test('validateDiagram component: move needs from, another module of the diagram'
   assert.deepEqual(validateDiagram(moved()), [])
   const at = (l: object) => validateDiagram(moved((d) => Object.assign(d.modules[1].interface![0], l)))
   const what = 'Interface line "getState(userId): State" of dbr'
-  assert.deepEqual(at({ from: undefined }), [`${what}: move needs from, the id of the module it moved from`])
+  assert.deepEqual(at({ from: undefined }), [`${what}: move needs from, the id of the module it moved from, or "<module>#<old name>" when renamed`])
   assert.deepEqual(at({ from: 'nope' }), [`${what}: moved from "nope", no such module`])
-  assert.deepEqual(at({ from: 'dbr' }), [`${what}: moved from dbr itself; a changed method is a del line and an add line`])
+  assert.deepEqual(at({ from: 'dbr' }), [`${what}: moved from dbr itself; a renamed method gives from "dbr#<old name>", a changed one is a del line and an add line`])
+  assert.deepEqual(at({ from: 'dbr#getState' }), [`${what}: moved from dbr itself; a renamed method gives from "dbr#<old name>", a changed one is a del line and an add line`])
+  // A rename (povnyi-diff-nabir-pov-iazanykh.3, Decision 12): in its module, or on the way from another.
+  assert.deepEqual(at({ from: 'dbr#readState' }), [])
+  assert.deepEqual(at({ from: 'nope#readState' }), [`${what}: moved from "nope", no such module`])
+  assert.deepEqual(moves(moved((d) => Object.assign(d.modules[1].interface![0], { from: 'dbr#readState' }))).filter((m) => m.to === 'dbr' && m.line.text.startsWith('getState')), [])
   assert.deepEqual(at({ diff: 'add' }), [`${what}: from is only for diff move`])
   assert.deepEqual(at({ diff: 'moved' }), [`${what}: diff must be one of add, mod, del, move`, `${what}: from is only for diff move`])
   // move is for interface lines only.
@@ -356,8 +361,12 @@ test('validateDiagram data: a valid diagram with a moved field', () => {
 test('validateDiagram data: a move needs a source field of another entity that is not added', () => {
   const at = (f: Partial<DataDiagram['entities'][number]['fields'][number]>) => validateDiagram(data((d) => Object.assign(d.entities[1].fields[1], f)))
   assert.deepEqual(at({ from: undefined }), ['Field "state" of dbr_user_states: move needs from, "<entity>.<field>" it moved from'])
-  assert.deepEqual(at({ from: 'users.nope' }), ['Field "state" of dbr_user_states: moved from "users.nope", no such field; give "<entity>.<field>" of this diagram'])
-  assert.deepEqual(at({ from: 'dbr_user_states.userId' }), ['Field "state" of dbr_user_states: moved within dbr_user_states; a renamed field is a del line and an add line'])
+  assert.deepEqual(at({ from: 'users.nope' }), ['Field "state" of dbr_user_states: moved from "users.nope", no such field; give "<entity>.<field>" of this diagram, or "dbr_user_states.<old name>" when renamed'])
+  assert.deepEqual(at({ from: 'dbr_user_states.userId' }), [
+    'Field "state" of dbr_user_states: moved within dbr_user_states from a field it still has; a renamed field gives from "dbr_user_states.<old name>" and no line of the old name',
+  ])
+  // Renamed in place (povnyi-diff-nabir-pov-iazanykh.3, Decision 12): one line, from its old name.
+  assert.deepEqual(at({ from: 'dbr_user_states.status' }), [])
   assert.deepEqual(validateDiagram(data((d) => (d.entities[0].fields[1].diff = 'add'))), ['Field "state" of dbr_user_states: moved from "users.dbrState", which is added; mark the source as it was'])
   assert.deepEqual(at({ diff: 'add' }), ['Field "state" of dbr_user_states: from is only for diff move'])
 })
