@@ -32,6 +32,10 @@ export interface ToolActions {
   setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string
   /** Continue a done work (T-55.6): back to planning; `by`, the topic asking, owns it. Returns what to tell the agent. */
   reopen(taskId: string, what: string, by?: string): string
+  /** A step developer's question goes to the work's owner (ahent-vede-robotu-vlasna-pozytsiia.2); false: busy or gone. */
+  askOwner(stepId: string, question: string): boolean
+  /** The owner's answer to its step developer's waiting question; the developer goes on with it. */
+  answerDeveloper(stepId: string, text: string): Promise<void>
 }
 
 /**
@@ -248,8 +252,23 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 
       case 'set_needs_input': {
         const reason = args.reason == null || args.reason === '' ? null : String(args.reason)
+        // A step's developer asks the work's owner first (ahent-vede-robotu-vlasna-pozytsiia.2).
+        const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+        const step = session?.role === 'developer' && session.stepId ? store.task(session.stepId) : null
+        if (step) store.updateTask(step.id, { ownerQuestion: null })
+        if (reason && step && actions.askOwner(step.id, reason))
+          return "The work's owner, who planned it, gets your question first: it answers here or asks the user. Stop here until the answer comes."
         store.updateTask(task.id, { needsInput: reason })
         return reason ? 'The user will be notified.' : 'Cleared.'
+      }
+
+      case 'answer_developer': {
+        if (task.parentId || task.ownerSessionId !== ctx.sessionId) throw new Error(`answer_developer is for the owner of ${task.key}`)
+        const step = subtask(args.step)
+        const text = String(args.text ?? '').trim()
+        if (!text) throw new Error('text is required')
+        await actions.answerDeveloper(step.id, text)
+        return `Sent to the developer of ${step.key}; it goes on with your answer.`
       }
 
       case 'create_subtask': {

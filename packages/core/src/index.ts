@@ -544,6 +544,11 @@ export interface Task {
    * groomer). Its fork reviews the steps' PRs first (T-55.1). Missing or gone: a fresh reviewer reads the doc.
    */
   ownerSessionId?: string | null
+  /**
+   * Steps: its developer's question (set_needs_input) waiting for the work's owner, who answers it or asks the user
+   * (ahent-vede-robotu-vlasna-pozytsiia.2). Cleared when the developer is told anything.
+   */
+  ownerQuestion?: string | null
   /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
   review?: AgentReview | null
   /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). */

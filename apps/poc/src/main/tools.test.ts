@@ -13,6 +13,8 @@ const setup = () => {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-tools-')), 'db.json'))
   const project = store.createProject('p')
   const calls: string[] = []
+  /** What askOwner says: the owner takes the question (false: busy or gone). */
+  let owner = false
   const actions: ToolActions = {
     groom: () => {},
     architect: () => {},
@@ -34,6 +36,10 @@ const setup = () => {
       return 'Recorded.'
     },
     reopen: () => 'Reopened.',
+    askOwner: (id, question) => (calls.push(`ask owner of ${store.task(id).key}: ${question}`), owner),
+    answerDeveloper: async (id, text) => {
+      calls.push(`answer ${store.task(id).key}: ${text}`)
+    },
   }
   const tools = createTools(store, actions)
   const task = store.createTask({ projectId: project.id, title: 'Big', type: 'dev', description: '', status: 'planning' })
@@ -41,7 +47,7 @@ const setup = () => {
   // The user has answered the groomer's checkpoint: it may plan steps.
   groomer.items.push({ kind: 'user', text: 'Option A', at: 1 })
   const call = (name: string, args: Record<string, unknown> = {}, sessionId = groomer.id) => tools({ taskId: task.id, sessionId }, name, args)
-  return { store, project, task, tools, call, calls, groomer }
+  return { store, project, task, tools, call, calls, groomer, ownerTakes: (v: boolean) => (owner = v) }
 }
 
 /** A step's work in a dir that does not exist: no commits of its own. */
@@ -151,6 +157,35 @@ test('set_pr writes to the step; a second live PR for a repo is an error', async
   const info = JSON.parse(await call('get_task', {}, dev.id))
   assert.deepEqual(info.subtasks[0], { key: 'big.1', title: 'a', status: 'in_progress', startManually: false, prs: ['https://github.com/o/app/pull/1 (open)'], current: true })
   assert.equal(info.work.dir, '/nowhere/w')
+})
+
+test("set_needs_input of a step's developer goes to the work's owner first; answer_developer is the owner's (ahent-vede-robotu-vlasna-pozytsiia.2)", async () => {
+  const { store, task, call, calls, groomer, ownerTakes } = setup()
+  await call('create_subtask', { title: 'a' })
+  const [a] = store.data.tasks.filter((t) => t.parentId === task.id)
+  store.updateTask(task.id, { status: 'in_progress', ownerSessionId: groomer.id })
+  store.updateTask(a.id, { status: 'in_progress', work: work() })
+  const dev = store.createSession({ projectId: task.projectId, taskId: task.id, stepId: a.id, role: 'developer', agent: 'claude-code', status: 'running' })
+
+  ownerTakes(true)
+  assert.match(await call('set_needs_input', { reason: 'Which schema?' }, dev.id), /owner, who planned it, gets your question first/)
+  assert.deepEqual(calls, ['ask owner of big.1: Which schema?'])
+  assert.equal(store.task(task.id).needsInput, null, 'the user is not asked yet')
+
+  await assert.rejects(call('answer_developer', { step: 'big.1', text: 'v2' }, dev.id), /answer_developer is for the owner of big/)
+  await assert.rejects(call('answer_developer', { step: 'big.1', text: ' ' }), /text is required/)
+  await assert.rejects(call('answer_developer', { step: 'big.9', text: 'v2' }), /big.9 is not a subtask of big/)
+  assert.match(await call('answer_developer', { step: 'big.1', text: 'v2, by the decisions' }), /Sent to the developer of big.1/)
+  assert.deepEqual(calls.at(-1), 'answer big.1: v2, by the decisions')
+
+  // The owner busy or gone: the user is asked, as before.
+  ownerTakes(false)
+  assert.equal(await call('set_needs_input', { reason: 'Drop the cache?' }, dev.id), 'The user will be notified.')
+  assert.equal(store.task(task.id).needsInput, 'Drop the cache?')
+  // The owner's own question goes to the user.
+  await call('set_needs_input', { reason: 'Plan changed: approve?' })
+  assert.equal(store.task(task.id).needsInput, 'Plan changed: approve?')
+  assert.equal(calls.filter((c) => c.startsWith('ask owner')).length, 2)
 })
 
 test('get_task shows the work\'s tickets', async () => {
@@ -312,7 +347,7 @@ test('a doc that links a project-chat diagram adopts it; one of another task sta
   assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
   // The project chat writes a doc through update_task_doc and adopts the same way.
   const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '' })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '', askOwner: () => false, answerDeveloper: async () => {} })
   assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'big', markdown: `[l](canvas:${loose.id})` }), /Moved into big/)
   assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
@@ -423,6 +458,8 @@ test('owner tools in a project chat: the topic plans the works it owns, passing 
   assert.equal(store.data.docs[owned.id], `# Plan\n[s](canvas:${id})`)
   await chat('set_needs_input', { work: 'owned', reason: 'Plan ready for review' })
   assert.equal(store.task(owned.id).needsInput, 'Plan ready for review')
+  assert.match(await chat('answer_developer', { work: 'owned', step: 'owned.1', text: 'yes' }), /Sent to the developer of owned.1/)
+  await assert.rejects(chat('answer_developer', { work: 'owned', step: 'owned.1', text: 'yes' }, other.id), /owned is not planned in this topic/)
 
   await assert.rejects(chat('create_subtask', { title: 'x' }), /needs work/)
   await assert.rejects(chat('create_subtask', { work: 'T-9', title: 'x' }), /No work T-9/)
@@ -465,7 +502,7 @@ test('add_idea: any agent puts a finding on the project ideas, with where it cam
 test('reopen_work: a project chat continues a done work it then owns (T-55.6)', async () => {
   const { store, project, task, call } = setup()
   const reopened: string[] = []
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.') })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.'), askOwner: () => false, answerDeveloper: async () => {} })
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
   assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'big', what: 'web' }), /^Back\. Plan what is left right here: .*work: "big"/)
   assert.deepEqual(reopened, [`big: web by ${topic.id}`])
