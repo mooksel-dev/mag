@@ -673,6 +673,7 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
 }
 
 const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
+  stance: 'How every agent leads the work: its own position, disagreement with a reason, the next move. Tune the tone and how hard they push back here.',
   plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',

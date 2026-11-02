@@ -1127,7 +1127,7 @@ One or two sentences, plus the evidence that it is real.
 What the user decided for this work, one per line; they override the project's playbook. A "## <step key>" subsection holds decisions of that step only.
 
 # Open questions
-Only if any.
+Only if any. Each: the question, your recommendation and why.
 
 # Options
 Every sensible way to fix it: idea, cost, the trade-offs that set it apart. An option that changes code links its sketch diagrams: [title](canvas:<id>). Recommendation, then the choice and why the others lost. Omit when there is only one sensible way.
@@ -1154,6 +1154,7 @@ Numbered steps. Each step that changes code says, per repository it changes: wha
   design: `# Problem
 
 # Open questions
+Each: the question, your recommendation and why.
 
 # Scope
 Screens and states.
@@ -1163,6 +1164,7 @@ Screens and states.
   spike: `# Question to answer
 
 # Open questions
+Each: the question, your recommendation and why.
 
 # Approach
 
@@ -1171,6 +1173,7 @@ Screens and states.
   research: `# Question to answer
 
 # Open questions
+Each: the question, your recommendation and why.
 
 # Sources
 

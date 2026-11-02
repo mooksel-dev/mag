@@ -272,6 +272,25 @@ test('groomer prompt: frame + the playbook\'s plan, then decisions and notes as 
   assert.doesNotMatch(prompt, /One method or call per line|\(add, mod, del\)/, 'the grammar is in show_diagram')
 })
 
+test('stance: the playbook\'s stance goes into the groomer, step developer and project chat prompts (ahent-vede-robotu-vlasna-pozytsiia.1)', async () => {
+  const { store, orch, project, task } = setup()
+  orch.groom(task.id)
+  await tick()
+  const groomer = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(groomer.includes(DEFAULT_PLAYBOOK.stance))
+  assert.ok(groomer.indexOf(DEFAULT_PLAYBOOK.stance) < groomer.indexOf(DEFAULT_PLAYBOOK.plan), 'stance before the plan')
+  assert.doesNotMatch(groomer, /chat replies to one or two sentences/)
+  store.updateProject(project.id, { playbook: { stance: 'OUR STANCE' } })
+  store.updateTask(task.id, { status: 'ready' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const dev = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(dev.includes('OUR STANCE'))
+  assert.ok(!dev.includes(DEFAULT_PLAYBOOK.stance))
+  await orch.send(orch.newChat(project.id), 'hi')
+  assert.ok(specs.at(-1)!.appendSystemPrompt!.includes('OUR STANCE'))
+})
+
 test('playbook: a project\'s own section replaces the default in the prompt; the rest stays default (T-55.2)', async () => {
   const { store, orch, project, task } = setup()
   store.updateProject(project.id, { playbook: { plan: 'OUR PLANNING' } })
@@ -714,11 +733,12 @@ test('review: changes past the rounds go to the user (T-55.1)', async () => {
 
 test('review: the playbook\'s review section and the step\'s decisions go in every round; its reviewRounds limits the changes (T-55.2)', async () => {
   const { store, orch, step, task, project, dir, live } = await inReview(true)
-  store.updateProject(project.id, { playbook: { review: 'OUR REVIEW', reviewRounds: 0 } })
+  store.updateProject(project.id, { playbook: { review: 'OUR REVIEW', stance: 'OUR STANCE', reviewRounds: 0 } })
   store.data.docs[task.id] = DOC
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
   assert.ok(run.spec.prompt.includes('OUR REVIEW'))
+  assert.ok(run.spec.prompt.includes('OUR STANCE'), 'the reviewer gets the stance too')
   assert.ok(run.spec.prompt.includes('## Decisions\n- all PRs are draft\n## login.1\n- touch only core'))
   assert.ok(!run.spec.prompt.includes('keep the old API'))
   assert.ok(run.spec.disallowedTools?.includes('Bash(git push:*)'))
