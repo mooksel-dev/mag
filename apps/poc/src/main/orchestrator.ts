@@ -8,7 +8,8 @@ import type { Store } from './store'
 import type { LocalApi } from './api'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, prState, prepareWorktree, removeWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL } from './tool-defs.ts'
-import { factRecord, factReport, factSeed, stepFact } from './fact.ts'
+import { changes, check, factReport, seed } from './core/services/fact/index.ts'
+import { factCanvas, factRecord, localGit, stepComponents, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
 interface Paths {
@@ -196,7 +197,9 @@ First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's 
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
-The fact diagram (below) is yours to draw: mag started it as a copy of this step's plan (without a plan, as the modules that own the changed code, unmarked). Revise it with show_diagram (its id, the same module ids) under the diff: keep what was done as planned; change a line done otherwise; drop the mark of what was not done; add what was done outside the plan, with module ids from get_architecture. Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module (<repo>:<path> when several repos change that path). Draw only what the diff has, at the level of the architecture: modules, their public interface and dependencies; helpers, fields of types and single adapters fold into one line that gives the files of all of them. Show every changed code file: only the files a line gives count, a module mark alone shows none. mag checks each revision: which changed code files it does not show, which lines do not rest on the PR, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
+The fact diagram (below) is yours to draw: mag started it as a copy of this step's plan (without a plan, as the modules that own the changed code, unmarked). Draw it with show_diagram following the project's playbook:
+${playbookOf(project).fact}
+mag checks each revision: which changed code files it does not show, which lines do not rest on the PR, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
 ${fact}
 Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
@@ -868,18 +871,20 @@ export class Orchestrator {
   async factOf(stepId: string, heads: Record<string, string>): Promise<string> {
     const step = this.store.task(stepId)
     const project = this.store.project(step.projectId)
-    let fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases))
+    const canvases = Object.values(this.store.data.canvases)
+    const plans = stepComponents(canvases, stepId, 'plan')
+    const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
+    let canvas = factCanvas(step, canvases)
     let started = step.fact?.canvasVersion ?? null
-    if (!fact.canvas) {
-      const seed = factSeed(step, fact.plans, fact.files, project.architecture)
-      if (seed) {
-        const planOf = fact.plans.length === 1 ? fact.plans[0].id : null
-        const canvas = this.store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: `${step.key}: fact`, kind: 'diagram', diagram: seed, placement: { role: 'fact', option: null, stepId, repo: null, planOf } })
+    if (!canvas) {
+      const diagram = seed(step.key, plans, changed.files, project.architecture)
+      if (diagram) {
+        const planOf = plans.length === 1 ? plans[0].id : null
+        canvas = this.store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: `${step.key}: fact`, kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId, repo: null, planOf } })
         started = canvas.version
-        // The step's first fact diagram is its fact; the files are those just read.
-        fact = await stepFact(project, step, heads, Object.values(this.store.data.canvases), fact)
       }
     }
+    const fact = check(project, changed, canvas, plans)
     this.store.updateTask(stepId, { fact: factRecord(fact, heads, started) })
     return factReport(fact, started)
   }

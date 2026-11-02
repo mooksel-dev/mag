@@ -1,36 +1,17 @@
-// The fact of a step's PRs against its plan (T-57.4, reworked in T-58): the reviewer draws the fact diagram from the
-// diff as a revision of the plan; mag checks it against the changed files (coverage, grounding) and the plan (compare),
-// and sets the threshold for a merge verdict.
+// The fact of a step's PRs against its plan (T-57.4, reworked in T-58): a step is one caller of the fact service. Here
+// a step becomes what the service reads: its repositories' changes since they left the base branch, over local git,
+// with its plan as the intent; and the fact as the step records it and Diff shows it.
 import { existsSync } from 'node:fs'
-import { findNode, prHeads, repoWorkName, stepDiagrams, playbookOf, walkArch, type Canvas, type ComponentDiagram, type DNode, type Project, type Task, type TaskWork } from '@mag/core'
-import { compare, coverage, createDiff, describe, diagramChanges, formatComparison, formatFiles, grounding, mergeBlockers, parseSignificance, planVocabulary, withLevels, type Comparison, type Coverage, type FileChange, type Grounding, type HunkRef } from '@mag/diff'
+import { prHeads, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
+import type { HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
+import { changes, check, hunk, type ChangeSource, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { diffHunks, diffText, hunkLines, mergeBase, revParse } from './git.ts'
 
-export const diff = createDiff({ diffHunks })
-
-export interface FactRepo {
-  /** The repository's path. */
-  repo: string
-  name: string
-  baseSha: string
-  headSha: string
-}
-
-export interface Fact {
-  /** One per repository with a head, in the step's order. */
-  repos: FactRepo[]
-  /** The files the PRs change, of every repository. */
-  files: FileChange[]
-  /** The step's plan diagrams. */
-  plans: Canvas[]
-  /** The step's fact diagram; null before the review starts one. */
-  canvas: Canvas | null
-  comparison: Comparison
-  /** null without a fact diagram. */
-  coverage: Coverage | null
-  grounding: Grounding | null
-  blockers: string[]
+/** Changes as the local git checkouts of the project's repositories have them. */
+export const localGit: ChangeSource = {
+  diffHunks,
+  hunkLines: async (at, base, head, ref) => hunkLines(await diffText(at, base, head), ref.path, ref),
 }
 
 /** A step's Component diagrams of a role, in the order they were drawn. */
@@ -40,27 +21,19 @@ export const stepComponents = (canvases: Canvas[], stepId: string, role: 'plan' 
 /** Where git runs for a repository of a step: a worktree is removed once merged; the main checkout shares its objects. */
 const repoDir = (r: TaskWork['repos'][number]) => (!r.local && existsSync(r.worktree) ? r.worktree : r.repo)
 
-/**
- * The files a step's PRs at `heads` (repository path → head commit) change, each against where it left the base
- * branch, in the vocabulary of the architecture plus the modules the plan adds.
- */
-export async function stepFiles(project: Project, step: Task, heads: Record<string, string>, plans: Canvas[]): Promise<{ repos: FactRepo[]; files: FileChange[] }> {
+/** A repository's changes from where `head` left the project's base branch. */
+export async function branchTarget(project: Project, repo: string, name: string, at: string, head: string): Promise<ChangeTarget> {
+  const from = await revParse(at, `origin/${project.baseBranch}`).catch(() => revParse(at, project.baseBranch))
+  return { repo, name, at, base: await mergeBase(at, from, head), head }
+}
+
+/** The changes of a step's PRs at `heads` (repository path → head commit), in the step's order of repositories. */
+export async function stepTargets(project: Project, step: Task, heads: Record<string, string>): Promise<ChangeTarget[]> {
   const work = step.work
   if (!work) throw new Error(`${step.key} has no work`)
-  const vocabulary = planVocabulary(project.architecture?.modules ?? [], plans.map((c) => c.diagram!))
-  const repos: FactRepo[] = []
-  const files: FileChange[] = []
-  for (const r of work.repos) {
-    const head = heads[r.repo]
-    if (!head) continue
-    const dir = repoDir(r)
-    const from = await revParse(dir, `origin/${project.baseBranch}`).catch(() => revParse(dir, project.baseBranch))
-    const base = await mergeBase(dir, from, head)
-    const name = repoWorkName(work, r)
-    repos.push({ repo: r.repo, name, baseSha: base, headSha: head })
-    files.push(...(await diff.changedFiles({ path: dir, name }, base, head, vocabulary)))
-  }
-  return { repos, files }
+  const out: ChangeTarget[] = []
+  for (const r of work.repos) if (heads[r.repo]) out.push(await branchTarget(project, r.repo, repoWorkName(work, r), repoDir(r), heads[r.repo]))
+  return out
 }
 
 /** The step's fact diagram: the one its fact names, else the first one placed in its fact. */
@@ -69,52 +42,11 @@ export function factCanvas(step: Task, canvases: Canvas[]): Canvas | null {
   return facts.find((c) => c.id === step.fact?.canvasId) ?? facts[0] ?? null
 }
 
-/**
- * The fact of a step's PRs at `heads`: its changed files, its fact diagram against them (coverage, grounding) and
- * against its plan diagrams (compare), levelled by the playbook's rules, and what keeps the review from merge.
- */
-export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[], changed?: Pick<Fact, 'repos' | 'files'>): Promise<Fact> {
-  const architecture = project.architecture?.modules ?? []
+/** The fact of a step's PRs at `heads`: their changes against the step's fact diagram and plan. */
+export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[]): Promise<Fact> {
   const plans = stepComponents(canvases, step.id, 'plan')
-  const canvas = factCanvas(step, canvases)
-  const { repos, files } = changed ?? (await stepFiles(project, step, heads, plans))
-  const rules = parseSignificance(playbookOf(project).significance)
-  const plan = withLevels(plans.flatMap((c) => diagramChanges(c.diagram!)), rules)
-  const fact = canvas ? withLevels(diagramChanges(canvas.diagram!), rules) : []
-  const comparison = compare(plan, fact, architecture)
-  // Without code to show, no fact diagram is needed.
-  const nothing = !files.some((f) => f.kind === 'code')
-  const cover = canvas ? coverage(files, canvas.diagram!) : nothing ? { shown: [], unshown: [] } : null
-  const ground = canvas ? grounding(canvas.diagram!, files, architecture) : nothing ? { grounded: [], unverified: [] } : null
-  return { repos, files, plans, canvas, comparison, coverage: cover, grounding: ground, blockers: mergeBlockers(comparison, cover, ground) }
-}
-
-/**
- * Where the reviewer starts the fact diagram (Decision 9): a copy of the step's plan diagram (several: their modules
- * together, each id once). Without a plan: the modules that own the changed code, unmarked, to draw the fact from
- * scratch. null when there is nothing to draw.
- */
-export function factSeed(step: Task, plans: Canvas[], files: FileChange[], architecture: Project['architecture']): ComponentDiagram | null {
-  const modules: DNode[] = []
-  const ids = new Set<string>()
-  const take = (n: DNode) => {
-    const inner: string[] = []
-    walkArch([n], (m) => inner.push(m.id))
-    if (inner.some((id) => ids.has(id))) return
-    inner.forEach((id) => ids.add(id))
-    modules.push(structuredClone(n))
-  }
-  for (const c of plans) for (const n of (c.diagram as ComponentDiagram).modules) take(n)
-  if (plans.length) {
-    const titles = plans.map((c) => `"${c.title}"`).join(', ')
-    return { type: 'component', summary: `Fact of ${step.key}, started as a copy of its plan ${titles}: the reviewer revises it under the diff.`, modules }
-  }
-  for (const id of new Set(files.filter((f) => f.kind === 'code' && f.module).map((f) => f.module!))) {
-    const arch = findNode(architecture?.modules ?? [], id)
-    take({ id, name: arch?.name ?? id, description: arch?.description ?? '', uses: [] })
-  }
-  if (!modules.length) return null
-  return { type: 'component', summary: `Fact of ${step.key}: no plan diagram, the reviewer draws the fact from the diff over these modules.`, modules }
+  const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
+  return check(project, changed, factCanvas(step, canvases), plans)
 }
 
 /** The counts of a fact, as a step records them. */
@@ -127,26 +59,6 @@ export function factCounts(fact: Fact): NonNullable<Task['fact']>['counts'] {
 /** A step's fact as it records it: `started` is the version of the fact diagram mag started (a copy of the plan). */
 export function factRecord(fact: Fact, heads: Record<string, string>, started: number | null): NonNullable<Task['fact']> {
   return { heads, counts: factCounts(fact), blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, canvasVersion: started, at: Date.now() }
-}
-
-const link = (c: Canvas) => `[${c.title}](canvas:${c.id})`
-
-/** What the reviewer reads of a fact: the changed files, what the fact diagram does not show or ground, plan ↔ fact. */
-export function factReport(fact: Fact, started: number | null): string {
-  const plans = fact.plans.length ? fact.plans.map(link).join(', ') : 'none: the step has no plan diagram, so nothing it changes is planned'
-  const c = fact.canvas
-  const diagram = !c
-    ? 'Fact diagram: none, the PRs change no code.'
-    : c.version === started
-      ? `Fact diagram: ${link(c)} (v${c.version}), mag's copy of the plan: nothing on it rests on the PR yet.`
-      : `Fact diagram: ${link(c)} (v${c.version}), revised.`
-  const out = [`## Plan ↔ fact (mag)`, `Plan diagrams: ${plans}.`, diagram, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
-  const unshown = fact.coverage?.unshown ?? []
-  if (unshown.length) out.push('', `### Changed code the fact diagram does not show (${unshown.length})`, ...unshown.map((f) => `- ${f.repo}:${f.path} (${f.module ?? 'no module'})`))
-  const unverified = fact.grounding?.unverified ?? []
-  if (unverified.length) out.push('', `### Lines of the fact that do not rest on the PR (${unverified.length})`, ...unverified.map((u) => `- ${describe(u.change)}: ${u.reason}${u.files.length ? ` (${u.files.join(', ')})` : ''}`))
-  out.push('', '### Plan ↔ fact', formatComparison(fact.comparison, fact.blockers))
-  return out.join('\n')
 }
 
 /** The heads a step's fact is of: its open PRs, else the heads its fact was recorded at (a merged step). */
@@ -171,7 +83,7 @@ export async function factView(project: Project, step: Task, canvases: Canvas[])
     files: fact.files,
     items: fact.comparison.items,
     blockers: fact.blockers,
-    plans: fact.plans.map(canvasRef),
+    plans: fact.intent.map(canvasRef),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
     coverage: fact.coverage,
     unverified: fact.grounding?.unverified ?? [],
@@ -179,12 +91,9 @@ export async function factView(project: Project, step: Task, canvases: Canvas[])
   }
 }
 
-const SHA = /^[0-9a-f]{7,64}$/
-
 /** The lines of one hunk of a step's PR in `repo` (one of the step's), between two commits of a FactView. */
-export async function stepHunk(step: Task, repo: string, base: string, head: string, hunk: HunkRef): Promise<string[]> {
+export async function stepHunk(step: Task, repo: string, base: string, head: string, ref: HunkRef): Promise<string[]> {
   const r = step.work?.repos.find((w) => w.repo === repo)
   if (!r) throw new Error(`${step.key} does not change ${repo}`)
-  if (!SHA.test(base) || !SHA.test(head)) throw new Error('base and head must be commit shas')
-  return hunkLines(await diffText(repoDir(r), base, head), hunk.path, hunk)
+  return hunk(localGit, repoDir(r), base, head, ref)
 }

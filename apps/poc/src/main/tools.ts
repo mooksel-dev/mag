@@ -3,10 +3,11 @@ import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
-import { changedRepos, mergeBase, revParse, treeAt } from './git.ts'
+import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
-import { diff, factRecord, factReport, stepFact } from './fact.ts'
+import { changes as factChanges, factReport } from './core/services/fact/index.ts'
+import { branchTarget, factRecord, localGit, stepFact } from './fact.ts'
 import { OWNER_TOOLS, TOOL_DEFS, toolForRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -386,7 +387,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         const target = ref ? findRepoWork(work, ref) : null
         if (ref && !target) throw new Error(`${ref} is not a repo of this task; one of ${work.repos.map((r) => repoWorkName(work, r)).join(', ')}`)
         const vocabulary = vocabularyOf(project.architecture?.modules ?? [])
-        const parts = await Promise.all((target ? [target] : work.repos).map((r) => prChanges(work, r, project.baseBranch, vocabulary)))
+        const parts = await Promise.all((target ? [target] : work.repos).map((r) => prChanges(project, work, r)))
         const note = vocabulary.modules.length ? '' : 'No architecture with paths is recorded: files are not grouped by module.\n\n'
         return note + parts.join('\n\n')
       }
@@ -408,17 +409,15 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
 }
 
 /** get_pr_changes for one repo: the files its branch changes against where it left the base (T-58). */
-async function prChanges(work: TaskWork, r: RepoWork, base: string, vocabulary: ReturnType<typeof vocabularyOf>): Promise<string> {
+async function prChanges(project: Project, work: TaskWork, r: RepoWork): Promise<string> {
   const name = repoWorkName(work, r)
   // A worktree is removed once merged; the main checkout still has the branch.
   const inWorktree = !r.local && existsSync(r.worktree)
   const dir = inWorktree ? r.worktree : r.repo
   try {
-    const head = await revParse(dir, inWorktree ? 'HEAD' : r.branch)
-    const from = await revParse(dir, `origin/${base}`).catch(() => revParse(dir, base))
-    const baseSha = await mergeBase(dir, from, head)
-    if (baseSha === head) return `${name}: no commits of its own on ${r.branch}.`
-    return formatFiles(name, baseSha, head, await diff.changedFiles({ path: dir, name }, baseSha, head, vocabulary))
+    const target = await branchTarget(project, r.repo, name, dir, await revParse(dir, inWorktree ? 'HEAD' : r.branch))
+    if (target.base === target.head) return `${name}: no commits of its own on ${r.branch}.`
+    return formatFiles(name, target.base, target.head, (await factChanges(project, [target], localGit)).files)
   } catch (e) {
     return `${name}: cannot diff ${r.branch} (${e instanceof Error ? e.message.split('\n')[0] : e}).`
   }

@@ -9,7 +9,8 @@ import type { ArchDiagram, ComponentDiagram } from '@mag/core'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 import { createTools, type ToolActions } from './tools.ts'
-import { factHeads, factSeed, factView, stepFact, stepFiles, stepHunk } from './fact.ts'
+import { factHeads, factView, localGit, stepFact, stepHunk, stepTargets } from './fact.ts'
+import { changes, seed } from './core/services/fact/index.ts'
 import { hunkLines } from './git.ts'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -140,12 +141,12 @@ test('factOf: starts the fact diagram as a copy of the plan; the reviewer revise
   assert.deepEqual(store.task(step.id).fact!.blockers, [])
 })
 
-test('factSeed: without a plan, the modules that own the changed code, unmarked', async () => {
+test('seed: without a plan, the modules that own the changed code, unmarked', async () => {
   const { store, project, step, repo, head, plan } = setup()
-  const { files } = await stepFiles(project, store.task(step.id), { [repo]: head }, [plan])
-  const seed = factSeed(store.task(step.id), [], files, project.architecture)!
-  assert.deepEqual(seed.modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
-  assert.equal(factSeed(store.task(step.id), [], files.filter((f) => f.kind !== 'code'), project.architecture), null)
+  const { files } = await changes(project, await stepTargets(project, store.task(step.id), { [repo]: head }), localGit, [plan])
+  const diagram = seed(step.key, [], files, project.architecture)!
+  assert.deepEqual(diagram.modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
+  assert.equal(seed(step.key, [], files.filter((f) => f.kind !== 'code'), project.architecture), null)
 })
 
 test('factView: files, plan ↔ fact, the threshold, coverage and unverified lines; hunks open', async () => {

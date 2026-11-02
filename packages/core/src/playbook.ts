@@ -2,9 +2,9 @@
 // prompt (role, repositories, tools, what is enforced); the playbook is the part a project may rewrite.
 
 /** Phase texts of the playbook; each one goes into the prompts of the roles doing that phase. */
-export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'tracker' | 'significance'
+export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'fact' | 'tracker' | 'significance'
 
-export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'tracker', 'significance']
+export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'fact', 'tracker', 'significance']
 
 export interface Playbook {
   /** How an agent leads: its own position, disagreement with a reason, the next move. Every role. */
@@ -15,6 +15,11 @@ export interface Playbook {
   step: string
   /** What the first reviewer checks a step's PRs against. Reviewer. */
   review: string
+  /**
+   * How a reviewer draws the fact of code changes: a revision of the intent diagram under the diff. Shared by every
+   * review that reads a diff (a step's PRs now, a teammate's PR next).
+   */
+  fact: string
   /** What agents may do in a ticket tracker. Every role that sees tickets. */
   tracker: string
   /**
@@ -83,15 +88,19 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
 Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
 what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
-2. Draw the fact: revise the step's fact diagram (a copy of its plan) under the diff. Done as planned: keep it; done
-   otherwise: change the line; not done: drop its mark; done outside the plan: add it. Every changed line, dependency
-   and call gives files, the PR's paths it rests on, of its module (<repo>:<path> when several repos change that
-   path). Nothing that is not in the diff. Keep it at the level of the architecture: modules, their public interface
-   and the dependencies between them. Helpers, fields of types and single adapters fold into one line (e.g.
-   "language adapters: removed") that gives the files of all of them. A module mark alone shows no file.
+2. Draw the fact: revise the step's fact diagram (a copy of its plan) under the diff, as the fact section says.
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,
+  fact: `Revise the fact diagram (a copy of the intent: the plan) under the diff, by its id and the same module ids.
+- Done as planned: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the plan: add it,
+  with module ids from get_architecture.
+- Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module
+  (<repo>:<path> when several repos change that path). Nothing that is not in the diff.
+- Keep it at the level of the architecture: modules, their public interface and the dependencies between them.
+  Helpers, fields of types and single adapters fold into one line (e.g. "language adapters: removed") that gives the
+  files of all of them.
+- Show every changed code file: only the files a line gives count, a module mark alone shows none.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
@@ -119,6 +128,7 @@ export function playbookOf(project: { playbook?: Partial<Playbook> | null }): Pl
     plan: text('plan'),
     step: text('step'),
     review: text('review'),
+    fact: text('fact'),
     tracker: text('tracker'),
     significance: text('significance'),
     reviewRounds: typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 0 ? rounds : DEFAULT_PLAYBOOK.reviewRounds,
