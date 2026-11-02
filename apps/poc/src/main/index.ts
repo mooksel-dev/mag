@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, ideaPrompt, isLegacy, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, isLegacy, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -193,16 +193,10 @@ app.whenReady().then(async () => {
   handle('task:removeTicket', (_, id: string, url: string) => store.updateTask(id, { tickets: (store.task(id).tickets ?? []).filter((t) => t.url !== url) }))
   handle('task:reopen', (_, id: string, what: string) => void orch.reopen(id, what))
   handle('idea:add', (_, projectId: string, text: string) => void store.addIdea(projectId, text))
-  handle('idea:update', (_, ideaId: string, text: string) => store.updateIdea(ideaId, text))
+  handle('idea:update', (_, ideaId: string, text: string) => store.updateIdea(ideaId, { text }))
   handle('idea:delete', (_, ideaId: string) => store.deleteIdea(ideaId))
-  // A work starts from an idea in a new topic, which then owns it; the idea is that topic's first message now.
-  handle('idea:start', (_, ideaId: string) => {
-    const idea = store.idea(ideaId)
-    const sid = orch.newChat(idea.projectId)
-    store.deleteIdea(ideaId)
-    void orch.send(sid, ideaPrompt(idea)).catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
-    return sid
-  })
+  handle('idea:discuss', (_, ideaId: string) => orch.discussIdea(ideaId))
+  handle('idea:start', (_, ideaId: string) => orch.startIdea(ideaId))
   handle('task:groom', (_, id: string) => orch.groom(id))
   handle('task:startStep', (_, id: string) => orch.startStep(id))
   handle('task:review', (_, id: string) => orch.reviewTask(id))

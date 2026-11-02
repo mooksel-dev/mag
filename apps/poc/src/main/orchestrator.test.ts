@@ -356,6 +356,39 @@ test('deleteChat: project topics only; closes the live process, then removes the
   assert.equal(store.data.sessions.some((s) => s.id === groomer.id), true)
 })
 
+test('discussIdea: the idea\'s own topic, created once and titled after it; its agent sees the idea', async () => {
+  const { store, orch, project } = setup()
+  const idea = store.addIdea(project.id, 'Dark mode\nthe whole app, not just the editor', 'T-3.1')
+  const topic = orch.discussIdea(idea.id)
+  assert.equal(orch.discussIdea(idea.id), topic)
+  assert.deepEqual([store.idea(idea.id).topicId, store.session(topic).title, store.session(topic).role], [topic, 'Dark mode', 'chat'])
+  await orch.send(topic, 'is it worth it?')
+  assert.equal(store.session(topic).title, 'Dark mode', 'the first message does not rename it')
+  assert.match(specs.at(-1)!.appendSystemPrompt!, /## The idea this topic discusses\n.*found in T-3\.1.*the whole app, not just the editor/s)
+  await orch.deleteChat(topic)
+  assert.notEqual(orch.discussIdea(idea.id), topic, 'a deleted topic gives way to a new one')
+})
+
+test('startIdea: a discussed idea starts in its own topic and stays until the work is created; one without a discussion in a new topic, at once', async () => {
+  const { store, orch, project } = setup()
+  const discussed = store.addIdea(project.id, 'dark mode')
+  const topic = orch.discussIdea(discussed.id)
+  assert.equal(orch.startIdea(discussed.id), topic)
+  await tick()
+  const sent = store.session(topic).items.find((i) => i.kind === 'user')
+  assert.match(sent?.kind === 'user' ? sent.text : '', /^Let's start a work from the idea we discussed here:\n\ndark mode/)
+  assert.ok(store.data.ideas.some((i) => i.id === discussed.id), 'it leaves with create_work in the topic')
+  assert.throws(() => orch.startIdea(discussed.id), /still working/)
+
+  const plain = store.addIdea(project.id, 'cache rates')
+  const fresh = orch.startIdea(plain.id)
+  assert.notEqual(fresh, topic)
+  assert.ok(!store.data.ideas.some((i) => i.id === plain.id))
+  await tick()
+  const first = store.session(fresh).items.find((i) => i.kind === 'user')
+  assert.match(first?.kind === 'user' ? first.text : '', /^Let's start a work from this idea:\n\ncache rates/)
+})
+
 /** A git repository with one commit on main, no remote. */
 function gitRepo(path: string) {
   mkdirSync(path, { recursive: true })

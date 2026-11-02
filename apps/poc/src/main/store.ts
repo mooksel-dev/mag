@@ -593,8 +593,10 @@ export class Store {
     return i
   }
 
-  updateIdea(ideaId: string, text: string) {
-    this.idea(ideaId).text = ideaText(text)
+  updateIdea(ideaId: string, patch: { text?: string; topicId?: string | null }) {
+    const idea = this.idea(ideaId)
+    if (patch.text !== undefined) idea.text = ideaText(patch.text)
+    if (patch.topicId !== undefined) idea.topicId = patch.topicId
     this.changed()
   }
 
@@ -611,10 +613,11 @@ export class Store {
     return full
   }
 
-  /** Removes a session; canvases drawn in it and events stay. */
+  /** Removes a session; canvases drawn in it and events stay. An idea it discussed has no discussion again. */
   deleteSession(sid: string) {
     this.session(sid)
     this.data.sessions = this.data.sessions.filter((s) => s.id !== sid)
+    for (const i of this.data.ideas) if (i.topicId === sid) i.topicId = null
     this.changed()
   }
 }

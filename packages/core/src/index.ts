@@ -362,6 +362,8 @@ export interface Idea {
   createdAt: number
   /** Where it came from: the key of the work or step whose agent found it; missing for the user's own and a chat's. */
   source?: string | null
+  /** The project topic that discusses it, created when the user first writes there: a link to a talk, not a state. */
+  topicId?: string | null
 }
 
 /** The project's ideas, newest first; `ideas` are in the order they were added, which breaks ties. */
@@ -376,9 +378,26 @@ export function ideaText(text: string): string {
   return t
 }
 
-/** The first message of the topic a work starts in from an idea: the owner takes it from the problem on. */
-export function ideaPrompt(idea: Pick<Idea, 'text' | 'source'>): string {
-  return `Let's start a work from this idea${idea.source ? ` (found in ${idea.source})` : ''}:\n\n${idea.text}\n\nCheck list_tasks for a work about the same problem first (a done one is continued with reopen_work), then plan it with me as the playbook says.`
+const IDEA_TITLE_MAX = 100
+
+/** An idea's line in the list: its first non-empty line, cut at IDEA_TITLE_MAX characters. */
+export function ideaTitle(idea: Pick<Idea, 'text'>): string {
+  const line = idea.text.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return line.length > IDEA_TITLE_MAX ? `${line.slice(0, IDEA_TITLE_MAX - 1).trimEnd()}…` : line
+}
+
+/**
+ * The message that starts a work from an idea: the topic gets it and owns the work from the problem on. `discussed`:
+ * the idea's own topic, where it was talked over; else a new topic and the idea is its first message.
+ */
+export function ideaPrompt(idea: Pick<Idea, 'text' | 'source'>, discussed = false): string {
+  const found = idea.source ? ` (found in ${idea.source})` : ''
+  return `Let's start a work from ${discussed ? 'the idea we discussed here' : 'this idea'}${found}:\n\n${idea.text}\n\nCheck list_tasks for a work about the same problem first (a done one is continued with reopen_work), then plan it with me as the playbook says.`
+}
+
+/** What the agent of an idea's topic knows about it: the idea as it was when the topic started. */
+export function ideaContext(idea: Pick<Idea, 'text' | 'source'>): string {
+  return `## The idea this topic discusses\nThe user opened this topic from an idea on the project's list${idea.source ? ` (found in ${idea.source})` : ''}. Discuss it; a work starts from it only when the user asks (create_work here; the idea then leaves the list).\n\n${idea.text}`
 }
 
 /** Branch of a step: T-41.3 → mag/t-41-3. */
@@ -1017,9 +1036,9 @@ export function lastTaskSession(taskId: string, sessions: AgentSession[]): Agent
   return sessions.filter((s) => s.taskId === taskId && TASK_AGENTS.includes(s.role)).reduce<AgentSession | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
 }
 
-/** One item for a top-level task; its steps' PRs and Start count for it. */
+/** One item for a top-level task; its steps' PRs and Start count for it. A finished work waits on nobody. */
 function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
-  if (task.parentId || task.status === 'canceled') return null
+  if (task.parentId || task.status === 'done' || task.status === 'canceled') return null
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
   if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }

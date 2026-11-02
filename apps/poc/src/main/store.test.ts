@@ -277,11 +277,22 @@ test('ideas (T-55.6): none in an older file; add, edit and delete persist', () =
   const b = store.addIdea(p.id, 'dark mode')
   assert.deepEqual([a.text, a.source, 'source' in b], ['cache rates', 'T-1.2', false])
   assert.throws(() => store.addIdea('nope', 'x'), /No project nope/)
-  store.updateIdea(b.id, 'dark mode everywhere')
-  assert.throws(() => store.updateIdea(b.id, ''), /An idea needs a text/)
+  store.updateIdea(b.id, { text: 'dark mode everywhere' })
+  assert.throws(() => store.updateIdea(b.id, { text: '' }), /An idea needs a text/)
   store.deleteIdea(a.id)
   store.flush()
   assert.deepEqual(new Store(file).data.ideas.map((i) => i.text), ['dark mode everywhere'])
+})
+
+test('an idea links the topic that discusses it; deleting the topic drops the link', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const idea = store.addIdea(p.id, 'dark mode')
+  const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  store.updateIdea(idea.id, { topicId: s.id })
+  assert.deepEqual([store.idea(idea.id).topicId, store.idea(idea.id).text], [s.id, 'dark mode'])
+  store.deleteSession(s.id)
+  assert.equal(store.idea(idea.id).topicId, null)
 })
 
 test('a restart keeps a step in progress: its work, PR, sessions and diagrams stay; migrations run once', () => {

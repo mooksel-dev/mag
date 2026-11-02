@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canCancel, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -310,6 +310,31 @@ export class Orchestrator {
   newChat(projectId: string) {
     this.store.project(projectId)
     return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
+  }
+
+  /** The topic that discusses an idea: its own, created the first time and titled after it. */
+  discussIdea(ideaId: string) {
+    const idea = this.store.idea(ideaId)
+    if (idea.topicId && this.store.data.sessions.some((s) => s.id === idea.topicId)) return idea.topicId
+    const topic = this.store.session(this.newChat(idea.projectId))
+    topic.title = ideaTitle(idea).slice(0, 60)
+    topic.titleGenerated = true
+    this.store.updateIdea(ideaId, { topicId: topic.id })
+    return topic.id
+  }
+
+  /**
+   * Starts a work from an idea; returns the topic that plans and owns it. A discussed idea starts in its own topic and
+   * leaves the list once the work is created there (create_work); one without a discussion in a new topic, at once.
+   */
+  startIdea(ideaId: string) {
+    const idea = this.store.idea(ideaId)
+    const topic = idea.topicId ? this.store.data.sessions.find((s) => s.id === idea.topicId) : undefined
+    if (topic && this.isRunning(topic.id)) throw new Error('The idea\'s topic is still working; start the work when it is done')
+    const sid = topic?.id ?? this.newChat(idea.projectId)
+    if (!topic) this.store.deleteIdea(ideaId)
+    void this.send(sid, ideaPrompt(idea, !!topic)).catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
+    return sid
   }
 
   private projectChat(sessionId: string) {
@@ -944,10 +969,12 @@ export class Orchestrator {
     const [first = homedir(), ...rest] = project.repos
     const arch = project.enforceArchitecture ? `\n\n${ARCH_RULES}` : ''
     if (session.role === 'chat' || !session.taskId) {
+      // A topic opened from an idea discusses it (its text as of the topic's first run).
+      const idea = this.store.data.ideas.find((i) => i.topicId === session.id)
       return {
         cwd: first,
         addDirs: [...rest, this.paths.attachmentsDir, this.paths.logsDir],
-        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(contextBlocks({ notes: project.notes })),
+        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
         // Bash reads tickets through CLIs like acli or gh (T-37); read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],

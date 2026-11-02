@@ -130,7 +130,7 @@ export function ApproveButton({ task, tasks, sessions, small }: { task: Task; ta
 /** Finished works shown before "Show all". */
 const FINISHED_SHOWN = 10
 
-/** The Tasks tab: works by state. No backlog (ideas are on Home), priority or archive (T-55.7). */
+/** The Tasks tab: works by state. No backlog (ideas have their own tab), priority or archive (T-55.7). */
 export function TasksPage({ project, tasks, sessions, onOpen, fromTicket }: {
   project: Project
   tasks: Task[]
@@ -155,7 +155,7 @@ export function TasksPage({ project, tasks, sessions, onOpen, fromTicket }: {
       </div>
       {ticket && <WorkFromTicket projectId={project.id} onOpen={onOpen} onClose={() => setTicket(false)} />}
       {empty ? (
-        <p className="muted">No works yet. Discuss a problem in a project chat (it plans the work with you), start one from an idea on Home or from a ticket link.</p>
+        <p className="muted">No works yet. Discuss a problem in a project chat (it plans the work with you), start one from an idea or from a ticket link.</p>
       ) : (
         <>
           <Section title="In progress" list={s.inProgress} empty="No work in progress." {...row} />
