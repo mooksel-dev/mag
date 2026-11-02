@@ -161,18 +161,39 @@ test('compare: match by key, differs by mark or line, missing, unplanned; inner 
   assert.deepEqual(compare(diagramChanges(outer), diagramChanges(inner), architecture).items.map((i) => i.status), ['match'])
 })
 
-test('coverage: a changed code file is shown when a line gives it or its module is drawn changed', () => {
+test('coverage: a changed code file is shown only when a changed line gives it in files', () => {
   const files = owned([file(ORCH), file(GIT), file('apps/app/src/tools.ts'), file('scripts/x.ts'), file('apps/app/src/a.test.ts'), file('README.md')])
   const fact = diagram([
     dnode('orchestrator', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH, 'scripts/x.ts'] }] }),
     dnode('git'),
     dnode('tools', { interface: [{ text: 'run()' }] }),
   ])
-  const cov = coverage(files, fact, architecture)
+  const cov = coverage(files, fact)
   assert.deepEqual(cov.shown.map((f) => f.path), [ORCH, 'scripts/x.ts'])
   assert.deepEqual(cov.unshown.map((f) => f.path), [GIT, 'apps/app/src/tools.ts'], 'tests and docs are not code')
-  // A change drawn on the app shows the files of its inner modules.
-  assert.deepEqual(coverage(files, diagram([dnode('app', { diff: 'mod' })]), architecture).unshown.map((f) => f.path), ['scripts/x.ts'])
+  // A module marked changed without lines that give files shows none of them (Decision 11).
+  const marked = diagram([dnode('app', { diff: 'mod' }), dnode('orchestrator', { diff: 'mod', interface: [{ text: 'run()', diff: 'mod' }] })])
+  assert.deepEqual(coverage(files, marked).shown, [])
+  const blockers = mergeBlockers({ items: [] }, coverage(files, marked), grounding(marked, files, architecture))
+  assert.ok(blockers.includes('r:apps/app/src/orchestrator.ts (orchestrator) is changed, the fact diagram does not show it'))
+})
+
+test('repo:path: the same path in two repositories is told apart; a plain one is ambiguous (Decision 13)', () => {
+  const files = [file(ORCH, 'mod', { module: 'orchestrator' }), file(ORCH, 'mod', { repo: 'web', module: 'orchestrator' }), file(GIT, 'mod', { repo: 'web', module: 'git' })]
+  const fact = diagram([
+    dnode('orchestrator', {
+      interface: [
+        { text: 'factOf()', diff: 'add', files: [`r:${ORCH}`] },
+        { text: 'groom()', diff: 'mod', files: [ORCH] },
+      ],
+    }),
+    dnode('git', { interface: [{ text: 'diffHunks()', diff: 'add', files: [GIT] }] }),
+  ])
+  assert.deepEqual(coverage(files, fact).unshown.map((f) => `${f.repo}:${f.path}`), [`web:${ORCH}`])
+  const g = grounding(fact, files, architecture)
+  assert.deepEqual(g.grounded.map((c) => c.key), ['orchestrator#factOf', 'git#diffHunks'], 'a path only one repository changes needs no repo')
+  assert.deepEqual(g.unverified.map((u) => [u.change.key, u.reason, u.files]), [['orchestrator#groom', 'ambiguous', [ORCH]]])
+  assert.match(mergeBlockers({ items: [] }, coverage(files, fact), g).join('\n'), /orchestrator groom\(\): gives a path several repositories change: write <repo>:<path>/)
 })
 
 test('grounding: files in the PR and of the module; none, outside the PR or of another module is unverified', () => {
@@ -221,17 +242,17 @@ test('mergeBlockers: unshown files, unverified lines and significant differences
   ])
   const plan = withLevels(diagramChanges(PLAN), [])
   const cmp = compare(plan, withLevels(diagramChanges(fact), []), architecture)
-  const blockers = mergeBlockers(cmp, coverage(files, fact, architecture), grounding(fact, files, architecture))
+  const blockers = mergeBlockers(cmp, coverage(files, fact), grounding(fact, files, architecture))
   assert.deepEqual(blockers, ['high: git diffHunks(repo, base, head) is on the fact, not on the plan'])
   assert.match(formatComparison(cmp, blockers), /^Threshold: merge is NOT allowed/)
 
   const planned = { ...PLAN, modules: [PLAN.modules[0], fact.modules[1]] }
   const ok = compare(withLevels(diagramChanges(planned), []), withLevels(diagramChanges(fact), []), architecture)
-  assert.deepEqual(mergeBlockers(ok, coverage(files, fact, architecture), grounding(fact, files, architecture)), [])
+  assert.deepEqual(mergeBlockers(ok, coverage(files, fact), grounding(fact, files, architecture)), [])
   assert.match(formatComparison(ok, []), /^Threshold: merge is allowed/)
 
   // The plan copied as it is: nothing rests on the PR.
-  const copy = mergeBlockers(compare(plan, plan, architecture), coverage(files, PLAN, architecture), grounding(PLAN, files, architecture))
+  const copy = mergeBlockers(compare(plan, plan, architecture), coverage(files, PLAN), grounding(PLAN, files, architecture))
   assert.ok(copy.some((b) => b === 'r:apps/app/src/git.ts (git) is changed, the fact diagram does not show it'))
   assert.equal(copy.filter((b) => b.endsWith('gives no files of the PR')).length, 5)
   assert.deepEqual(mergeBlockers({ items: [] }, null, null), ['there is no fact diagram of the PRs yet'])

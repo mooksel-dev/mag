@@ -114,11 +114,11 @@ test('factOf: starts the fact diagram as a copy of the plan; the reviewer revise
   const canvas = store.data.canvases[fact.canvasId!]
   assert.deepEqual([canvas.role, canvas.stepId, canvas.planOf, canvas.version, fact.canvasVersion], ['fact', step.id, plan.id, 1, 1])
   assert.deepEqual((canvas.diagram as ComponentDiagram).modules, PLAN.modules, 'a copy of the plan')
-  // Nothing of the copy rests on the PR, and src/extra.ts is not shown.
-  assert.deepEqual(fact.counts, { match: 2, differs: 0, missing: 0, unplanned: 0, unshown: 1, unverified: 2 })
+  // Nothing of the copy rests on the PR, so it shows no changed file (Decision 11).
+  assert.deepEqual(fact.counts, { match: 2, differs: 0, missing: 0, unplanned: 0, unshown: 2, unverified: 2 })
   assert.match(text, /mag's copy of the plan: nothing on it rests on the PR yet\./)
   assert.match(text, /### Changed files\napp: [0-9a-f]{12} → [0-9a-f]{12}, 3 file\(s\) changed, 2 of them code\./)
-  assert.match(text, /### Changed code the fact diagram does not show \(1\)\n- app:src\/extra\.ts \(app\)/)
+  assert.match(text, /### Changed code the fact diagram does not show \(2\)\n- app:src\/extra\.ts \(app\)\n- app:src\/store\.ts \(store\)/)
   assert.match(text, /### Lines of the fact that do not rest on the PR \(2\)\n- store load\(id, fresh\?\): Item: no-files/)
   assert.match(text, /merge is NOT allowed/)
 
@@ -162,9 +162,9 @@ test('factView: files, plan ↔ fact, the threshold, coverage and unverified lin
   assert.deepEqual(view.items.map((i) => i.status), ['match', 'match'])
   assert.deepEqual(view.plans.map((p) => p.title), ['Plan'])
   assert.equal(view.fact!.id, s.fact!.canvasId)
-  assert.deepEqual(view.coverage!.unshown.map((f) => f.path), ['src/extra.ts'])
+  assert.deepEqual(view.coverage!.unshown.map((f) => f.path), ['src/extra.ts', 'src/store.ts'])
   assert.deepEqual(view.unverified.map((u) => [u.change.key, u.reason]), [['store#load', 'no-files'], ['store#remove', 'no-files']])
-  assert.equal(view.blockers.length, 3)
+  assert.equal(view.blockers.length, 4)
 
   const save = view.files.find((f) => f.path === 'src/store.ts')!
   const hunk = { path: save.path, ...save.hunks.at(-1)! }

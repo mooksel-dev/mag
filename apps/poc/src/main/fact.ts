@@ -84,7 +84,7 @@ export async function stepFact(project: Project, step: Task, heads: Record<strin
   const comparison = compare(plan, fact, architecture)
   // Without code to show, no fact diagram is needed.
   const nothing = !files.some((f) => f.kind === 'code')
-  const cover = canvas ? coverage(files, canvas.diagram!, architecture) : nothing ? { shown: [], unshown: [] } : null
+  const cover = canvas ? coverage(files, canvas.diagram!) : nothing ? { shown: [], unshown: [] } : null
   const ground = canvas ? grounding(canvas.diagram!, files, architecture) : nothing ? { grounded: [], unverified: [] } : null
   return { repos, files, plans, canvas, comparison, coverage: cover, grounding: ground, blockers: mergeBlockers(comparison, cover, ground) }
 }

@@ -47,7 +47,11 @@ export function filesOf(c: Change, files: FileChange[]): FileChange[] {
 export function unverified(c: Change, view: Pick<FactView, 'unverified'>): string | null {
   const u = view.unverified.find((x) => x.change.key === c.key && x.change.diff === c.diff)
   if (!u) return null
-  return u.reason === 'no-files' ? 'unverified: no files' : u.reason === 'not-in-pr' ? `unverified: not in the PR (${u.files.join(', ')})` : `unverified: another module's (${u.files.join(', ')})`
+  const files = u.files.join(', ')
+  if (u.reason === 'no-files') return 'unverified: no files'
+  if (u.reason === 'not-in-pr') return `unverified: not in the PR (${files})`
+  if (u.reason === 'ambiguous') return `unverified: in several repos, give <repo>:<path> (${files})`
+  return `unverified: another module's (${files})`
 }
 
 /** The rows Diff lists: changes to look at by status and level; low / noise and matches counted apart. */

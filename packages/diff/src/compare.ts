@@ -55,31 +55,42 @@ export function compare(plan: Change[], fact: Change[], architecture: ArchNode[]
 }
 
 /**
- * Which changed code files a fact diagram shows (Decision 2): a file is shown when a changed line of the diagram gives
- * it in `files`, or when the module that owns it (or one around it) is drawn with a change.
+ * The changed files a path a fact gives stands for: `<repo>:<path>` that file of that repo; a plain path every file
+ * of the PR with that path (at head, or at base when renamed), so it is ambiguous when two repositories change it.
  */
-export function coverage(files: FileChange[], fact: Diagram, architecture: ArchNode[]): Coverage {
-  const changes = diagramChanges(fact)
-  const cited = new Set(changes.flatMap((c) => c.files ?? []))
-  const changed = new Set(changes.map((c) => c.module))
-  const innerOf = innerModules(architecture, modulesOf(fact))
-  const shows = (f: FileChange) =>
-    [f.path, `${f.repo}:${f.path}`, ...(f.oldPath ? [f.oldPath] : [])].some((p) => cited.has(p)) || (!!f.module && [...changed].some((m) => innerOf(m).has(f.module!)))
+function fileRefs(files: FileChange[]): (ref: string) => FileChange[] {
+  const repos = new Set(files.map((f) => f.repo))
+  return (ref) => {
+    const at = ref.indexOf(':')
+    const repo = at > 0 ? ref.slice(0, at) : ''
+    const path = repos.has(repo) ? ref.slice(at + 1) : ref
+    return files.filter((f) => (path === f.path || path === f.oldPath) && (!repos.has(repo) || f.repo === repo))
+  }
+}
+
+/**
+ * Which changed code files a fact diagram shows (Decisions 2, 11): a file is shown only when a changed line, use or
+ * call of the diagram gives it in `files`; a module marked changed without such lines shows none. A plain path two
+ * repositories change shows neither: it takes `<repo>:<path>` (Decision 13).
+ */
+export function coverage(files: FileChange[], fact: Diagram): Coverage {
+  const refs = fileRefs(files)
+  const shown = new Set(diagramChanges(fact).flatMap((c) => (c.files ?? []).map(refs).filter((hit) => hit.length === 1).flat()))
   const code = files.filter((f) => f.kind === 'code')
-  return { shown: code.filter(shows), unshown: code.filter((f) => !shows(f)) }
+  return { shown: code.filter((f) => shown.has(f)), unshown: code.filter((f) => !shown.has(f)) }
 }
 
 /**
  * Whether each changed line, dependency and call of a fact diagram rests on the PR (Decision 9): it gives `files`,
- * each one the PR changes (`path` or `<repo>:<path>`), owned by the line's module or one inside it. A file no module
- * owns may stand behind any line. Module marks are not lines: coverage speaks for them.
+ * each one a file the PR changes (`path`, or `<repo>:<path>` when two repositories change that path, Decision 13),
+ * owned by the line's module or one inside it. A file no module owns may stand behind any line. Module marks are not
+ * lines: they are neither grounded nor show files.
  */
 export function grounding(fact: Diagram, files: FileChange[], architecture: ArchNode[]): Grounding {
   const innerOf = innerModules(architecture, modulesOf(fact))
   // A module the fact adds with a path owns its files too.
   const ownerOf = moduleResolver(planVocabulary(architecture, [fact]))
-  const byPath = new Map<string, FileChange>()
-  for (const f of files) for (const p of [f.path, `${f.repo}:${f.path}`, ...(f.oldPath ? [f.oldPath] : [])]) byPath.set(p, f)
+  const refs = fileRefs(files)
   const out: Grounding = { grounded: [], unverified: [] }
   for (const c of diagramChanges(fact)) {
     if (c.kind === 'module') continue
@@ -88,14 +99,18 @@ export function grounding(fact: Diagram, files: FileChange[], architecture: Arch
       out.unverified.push({ change: c, reason: 'no-files', files: [] })
       continue
     }
-    const outside = given.filter((p) => !byPath.has(p))
+    const outside = given.filter((p) => !refs(p).length)
     if (outside.length) {
       out.unverified.push({ change: c, reason: 'not-in-pr', files: outside })
       continue
     }
+    const ambiguous = given.filter((p) => refs(p).length > 1)
+    if (ambiguous.length) {
+      out.unverified.push({ change: c, reason: 'ambiguous', files: ambiguous })
+      continue
+    }
     const elsewhere = given.filter((p) => {
-      const f = byPath.get(p)!
-      const owner = ownerOf(f.path)
+      const owner = ownerOf(refs(p)[0].path)
       return owner && !innerOf(c.module).has(owner)
     })
     if (elsewhere.length) out.unverified.push({ change: c, reason: 'other-module', files: elsewhere })
@@ -118,7 +133,12 @@ export function mergeBlockers(comparison: Comparison, cover: Coverage | null, gr
   ]
 }
 
-const UNVERIFIED = { 'no-files': 'gives no files of the PR', 'not-in-pr': 'gives files the PR does not change', 'other-module': 'gives files of another module' }
+const UNVERIFIED = {
+  'no-files': 'gives no files of the PR',
+  'not-in-pr': 'gives files the PR does not change',
+  ambiguous: 'gives a path several repositories change: write <repo>:<path>',
+  'other-module': 'gives files of another module',
+}
 const BLOCKS: Record<CompareStatus, string> = { differs: 'is done otherwise than planned', missing: 'is planned, not on the fact', unplanned: 'is on the fact, not on the plan', match: '' }
 
 const mark = (c: Change) => (c.diff === 'mod' && c.part ? `mod (${c.part})` : c.diff === 'move' && c.from ? `move from ${c.from}` : c.diff)

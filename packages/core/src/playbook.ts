@@ -70,7 +70,10 @@ what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
 2. Draw the fact: revise the step's fact diagram (a copy of its plan) under the diff. Done as planned: keep it; done
    otherwise: change the line; not done: drop its mark; done outside the plan: add it. Every changed line, dependency
-   and call gives files, the PR's paths it rests on, of its module. Nothing that is not in the diff.
+   and call gives files, the PR's paths it rests on, of its module (<repo>:<path> when several repos change that
+   path). Nothing that is not in the diff. Keep it at the level of the architecture: modules, their public interface
+   and the dependencies between them. Helpers, fields of types and single adapters fold into one line (e.g.
+   "language adapters: removed") that gives the files of all of them. A module mark alone shows no file.
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Something worth doing that is outside the step and need not block it: add_idea, not a finding.`,

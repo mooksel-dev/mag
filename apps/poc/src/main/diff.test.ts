@@ -141,7 +141,7 @@ test('PR #51 (T-50.1): the fact a reviewer drew from the diff shows every change
   const files = await filesOf(PRS[51])
   const fact = normalizeDiagram(JSON.parse(readFileSync(new URL('./fixtures/fact-pr51.json', import.meta.url), 'utf8')))
   assert.deepEqual(validateDiagram(fact), [])
-  assert.deepEqual(coverage(files, fact, ARCH).unshown, [])
+  assert.deepEqual(coverage(files, fact).unshown, [])
   const g = grounding(fact, files, ARCH)
   assert.deepEqual(g.unverified, [])
   assert.ok(g.grounded.length >= 20)

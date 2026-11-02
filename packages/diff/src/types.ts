@@ -106,8 +106,11 @@ export interface Coverage {
   unshown: FileChange[]
 }
 
-/** Why a changed line of a fact cannot be taken on its word: no files, files the PR does not change, of another module. */
-export type UnverifiedReason = 'no-files' | 'not-in-pr' | 'other-module'
+/**
+ * Why a changed line of a fact cannot be taken on its word: no files, files the PR does not change, a plain path two
+ * repositories change (Decision 13), files of another module.
+ */
+export type UnverifiedReason = 'no-files' | 'not-in-pr' | 'ambiguous' | 'other-module'
 
 /** The changes of a fact diagram that rest on its PR's files, and those that do not (T-58 Decision 9). */
 export interface Grounding {
