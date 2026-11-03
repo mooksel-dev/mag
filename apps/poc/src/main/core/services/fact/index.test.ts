@@ -73,7 +73,8 @@ test('check: no inventory blocks; the inventory is checked against the hunks and
   const fact = check(project, changed, [root], plan)
   assert.deepEqual(fact.blockers, [])
   assert.equal(fact.canvas, root)
-  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync'], ['match', 'api#list']], 'a planned call is not compared: the inventory has none')
+  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['differs', 'api#list'], ['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared: the inventory has none')
+  assert.equal(fact.comparison.items[0].level, 'medium', 'another argument list differs without blocking')
   assert.match(factReport(fact), /### Inventory against the hunks\nInventory: 3 unit\(s\) over 2 block\(s\) of changed code \(3 in all\)\.\nEvery block/)
   assert.match(factReport(fact), /Threshold: merge is allowed/)
 

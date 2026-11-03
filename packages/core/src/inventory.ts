@@ -2,7 +2,7 @@
 // by the reviewer from the diff, each unit citing the blocks of changed lines it rests on. mag checks it against the
 // hunks (@mag/diff checkInventory) and generates the fact's Component and Data diagrams from it; the reviewer draws only
 // scenarios and method logic.
-import { findNode, type ArchNode } from './arch.ts'
+import { findNode, type ArchLayer, type ArchNode } from './arch.ts'
 import type { ComponentDiagram, DataDiagram, DEntity, DField, DLine, DNode, DiagramLink, SequenceDiagram } from './diagram.ts'
 
 export type UnitKind = 'method' | 'model' | 'field' | 'index' | 'dependency' | 'config' | 'template'
@@ -145,7 +145,11 @@ function lineText(u: InventoryUnit, sig: string | undefined, name = unitLeaf(u.n
   return u.kind === 'config' || u.kind === 'template' ? `${u.name}: ${s}` : `${name}: ${s}`
 }
 
-/** A unit's lines in its module: a changed signature is a del and an add line, a rename one move line. */
+/**
+ * A unit's lines in its module: a changed signature is a del and an add line, a rename one move line. A signature that
+ * reads the same from its name on (only the receiver or whitespace differs, `func (Client) Get(id)` → `func (c *client)
+ * Get(id)`) is no change of it: one mod line, as for a body that alone changes.
+ */
 function unitLines(u: InventoryUnit, files: string[]): DLine[] {
   const extra: Partial<DLine> = {
     ...(files.length && { files }),
@@ -155,7 +159,8 @@ function unitLines(u: InventoryUnit, files: string[]): DLine[] {
   if (u.change === 'rename') return [{ text: lineText(u, u.after ?? u.before), diff: 'move', from: `${u.module}#${unitLeaf(u.from!)}`, ...extra }]
   if (u.change === 'add') return [{ text: lineText(u, u.after), diff: 'add', ...extra }]
   if (u.change === 'del') return [{ text: lineText(u, u.before), diff: 'del', ...extra }]
-  if (u.before && u.after && norm(u.before) !== norm(u.after))
+  const same = (x: string, y: string) => lineText(u, x).replace(/\s+/g, '') === lineText(u, y).replace(/\s+/g, '')
+  if (u.before && u.after && !same(u.before, u.after))
     return [
       { text: lineText(u, u.before), diff: 'del', ...extra },
       { text: lineText(u, u.after), diff: 'add', ...extra },
@@ -163,14 +168,26 @@ function unitLines(u: InventoryUnit, files: string[]): DLine[] {
   return [{ text: lineText(u, u.after ?? u.before), diff: 'mod', ...extra }]
 }
 
-/** A module of the fact: named as the architecture has it; an id it does not have is new (or outside the project). */
+/** Folder names that say a module's layer, for modules no architecture describes (a teammate's PR outside the project). */
+const FOLDER_LAYERS: Record<string, ArchLayer> = { handlers: 'app', cmd: 'app', services: 'service', clients: 'client', repositories: 'client' }
+
+/** The layer a module's folders say (`internal/services/billing` → service), the innermost first; none when no folder says one. */
+export function folderLayer(id: string): ArchLayer | undefined {
+  return id.split(/[/-]/).reverse().map((f) => FOLDER_LAYERS[f.toLowerCase()]).find(Boolean)
+}
+
+/**
+ * A module of the fact: named as the architecture has it, with its layer; an id it does not have is new (or, with no
+ * architecture, a folder: its layer from the folder's name).
+ */
 function moduleNode(id: string, architecture: ArchNode[], known: boolean): DNode {
   const arch = findNode(architecture, id)
+  const layer = arch ? arch.layer : folderLayer(id)
   return {
     id,
     name: arch?.name ?? id,
     description: arch?.description ?? '',
-    ...(arch?.layer && { layer: arch.layer }),
+    ...(layer && { layer }),
     ...(arch?.kind && { kind: arch.kind }),
     uses: [],
     ...(known && !arch && architecture.length ? { diff: 'add' as const } : {}),
@@ -247,11 +264,13 @@ export function inventoryDiagrams(inventory: ChangeInventory, architecture: Arch
       e.indexes = [...(e.indexes ?? []), { fields: on, ...(/unique/i.test(`${def} ${u.name} ${u.note ?? ''}`) && { unique: true }), diff: u.change === 'rename' ? 'mod' : u.change }]
     }
   }
+  // The PR's own modules: a dependency on one of them is inside the change, never outside it.
+  const own = new Set(inventory.units.map((u) => u.module))
   for (const u of inventory.units) {
     if (u.kind !== 'dependency') continue
     const from = node(u.module)
     const to = node(u.name, false)
-    if (!findNode(architecture, u.name)) to.kind = to.kind ?? 'external'
+    if (!own.has(u.name) && !findNode(architecture, u.name)) to.kind = to.kind ?? 'external'
     const files = filesOf(u.hunks)
     from.uses.push({ to: to.id, calls: [], diff: u.change === 'rename' ? 'mod' : u.change, ...(files.length && { files }) })
   }

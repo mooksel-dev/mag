@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ArchNode, ComponentDiagram, DNode } from '@mag/core'
-import { compare, formatComparison, mergeBlockers } from './compare.ts'
+import { callSignature, compare, formatComparison, mergeBlockers } from './compare.ts'
 import { createDiff, fileKind } from './files.ts'
 import { formatFiles } from './format.ts'
 import { diagramChanges, lineName, planWarnings } from './plan.ts'
@@ -119,7 +119,7 @@ const PLAN = diagram([
   dnode('git'),
 ])
 
-test('compare: match by key and mark (a line read otherwise is a note), differs by mark, missing, unplanned; inner modules stand for an outer one', () => {
+test('compare: match by key, mark and call (other text is a note), differs by mark or call, missing, unplanned; inner modules stand for an outer one', () => {
   // The fact: the plan as it was done.
   const fact = diagram([
     dnode('orchestrator', {
@@ -127,7 +127,7 @@ test('compare: match by key and mark (a line read otherwise is a note), differs 
       interface: [
         { text: 'review(stepId): void', diff: 'del', files: [ORCH] },
         { text: 'review(stepId, heads, round): void', diff: 'add', files: [ORCH] },
-        { text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH] },
+        { text: 'factOf( stepId ): Promise<Fact> - the fact of a step', diff: 'add', files: [ORCH] },
         { text: 'cancel(taskId): void' },
         { text: 'groom(taskId): void', diff: 'del', files: [ORCH] },
         { text: 'develop(stepId): void', diff: 'add', files: [ORCH] },
@@ -140,19 +140,28 @@ test('compare: match by key and mark (a line read otherwise is a note), differs 
   const rows = items.map((i) => [i.status, (i.plan ?? i.fact)!.key, i.level])
   assert.deepEqual(rows, [
     ['differs', 'orchestrator#groom', 'high'],
+    ['differs', 'orchestrator#review', 'medium'],
     ['missing', 'orchestrator#cancel', 'high'],
     ['unplanned', 'orchestrator#develop', 'high'],
-    ['match', 'orchestrator#review', 'high'],
     ['match', 'orchestrator#factOf', 'high'],
     ['match', 'orchestrator -> git', 'high'],
     ['match', 'orchestrator', 'medium'],
   ])
   assert.equal(items[0].note, 'planned mod (body), done del')
-  assert.equal(items[3].note, 'planned review(stepId, heads): void, done review(stepId, heads, round): void')
+  assert.equal(items[1].note, 'planned review(stepId, heads): void, done review(stepId, heads, round): void', 'another argument list: differs, not blocking')
+  assert.equal(items[4].note, 'planned factOf(stepId): Fact, done factOf( stepId ): Promise<Fact> - the fact of a step', 'another result or description: a match')
+  assert.deepEqual(mergeBlockers({ items: items.filter((i) => i.plan?.key === 'orchestrator#review') }, []), [])
   // A plan drawn on the app is matched by the fact on its inner module.
   const outer = diagram([dnode('app', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add' }] })])
   const inner = diagram([dnode('orchestrator', { interface: [{ text: 'factOf(stepId)  :  Fact', diff: 'add', files: [ORCH] }] })])
   assert.deepEqual(compare(diagramChanges(outer), diagramChanges(inner), architecture).items.map((i) => i.status), ['match'])
+})
+
+test('callSignature: name and arguments, without the result and the description', () => {
+  assert.equal(callSignature('check(project, set: Canvas[]): Fact - checks it'), 'check(project,set:Canvas[])')
+  assert.equal(callSignature('run(fn: (x: number) => void) error'), 'run(fn:(x:number)=>void)')
+  assert.equal(callSignature('DEFAULT_PLAYBOOK.fact: string - the fact'), 'DEFAULT_PLAYBOOK.fact')
+  assert.equal(callSignature(undefined), '')
 })
 
 test('mergeBlockers: the fact\'s own blockers, then significant differences; none for a planned fact', () => {

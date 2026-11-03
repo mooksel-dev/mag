@@ -8,6 +8,23 @@ const highest = (levels: (Level | undefined)[]): Level => LEVELS.find((l) => lev
 
 const ORDER: CompareStatus[] = ['differs', 'missing', 'unplanned', 'match']
 
+/**
+ * The call a line is about: its name and argument list, whitespace aside, without the description after " - " and the
+ * result after the arguments (`check(project, set)` of `check(project, set): Fact - checks it`); a line without
+ * arguments is its name (`DEFAULT_PLAYBOOK.fact` of `DEFAULT_PLAYBOOK.fact: string`).
+ */
+export function callSignature(text?: string): string {
+  const t = (text ?? '').split(/\s[-–—]\s/)[0].replace(/\s+/g, '')
+  const open = t.indexOf('(')
+  if (open < 0) return t.split(':')[0]
+  let depth = 0
+  for (let i = open; i < t.length; i++) {
+    if (t[i] === '(') depth++
+    else if (t[i] === ')' && !--depth) return t.slice(0, i + 1)
+  }
+  return t
+}
+
 /** Each module of the trees (the architecture, a diagram that adds modules to it) with itself and its inner modules. */
 function innerModules(...trees: { id: string; uses: unknown[]; children?: unknown[] }[][]): (id: string) => Set<string> {
   const inner = new Map<string, Set<string>>()
@@ -25,16 +42,17 @@ const tail = (c: Change) => (c.kind === 'module' ? '' : c.kind === 'element' ? `
 /**
  * The plan's changes (diagramChanges of the step's plan diagrams) against the fact's (of its fact diagram), over the
  * project's `architecture`. Changes match by key; a plan change on a module also matches the same change on one of its
- * inner modules. The fact's lines are generated from the inventory, so their text is not the plan's: the same mark is
- * a match, and a signature that reads otherwise is its note. Levels are the higher of the two.
+ * inner modules. The fact's lines are generated from the inventory, so their text is not the plan's: a line is
+ * compared by its call (name and arguments, callSignature); another call differs at medium, which does not block
+ * merge, and text that reads otherwise around the same call is a note of the match. Levels are the higher of the two.
  */
 export function compare(plan: Change[], fact: Change[], architecture: ArchNode[]): Comparison {
   const innerOf = innerModules(architecture)
   const used = new Set<Change>()
   const items: CompareItem[] = []
-  const item = (status: CompareStatus, p: Change | undefined, f: Change | undefined, note?: string) => {
+  const item = (status: CompareStatus, p: Change | undefined, f: Change | undefined, note?: string, level?: Level) => {
     if (f) used.add(f)
-    items.push({ status, ...(p && { plan: p }), ...(f && { fact: f }), level: highest([p && (p.level ?? significance(p, [])), f && (f.level ?? significance(f, []))]), ...(note && { note }) })
+    items.push({ status, ...(p && { plan: p }), ...(f && { fact: f }), level: level ?? highest([p && (p.level ?? significance(p, [])), f && (f.level ?? significance(f, []))]), ...(note && { note }) })
   }
   const same = (a?: string, b?: string) => (a ?? '').replace(/\s+/g, '') === (b ?? '').replace(/\s+/g, '')
   for (const p of plan) {
@@ -43,6 +61,8 @@ export function compare(plan: Change[], fact: Change[], architecture: ArchNode[]
       fact.find((c) => !used.has(c) && c.kind === p.kind && c.module !== p.module && innerOf(p.module).has(c.module) && tail(c) === tail(p))
     if (!f) item('missing', p, undefined)
     else if (f.diff !== p.diff || (p.part && f.part && p.part !== f.part)) item('differs', p, f, `planned ${mark(p)}, done ${mark(f)}`)
+    else if (callSignature(p.after) !== callSignature(f.after) || callSignature(p.before) !== callSignature(f.before))
+      item('differs', p, f, `planned ${p.after ?? p.before}, done ${f.after ?? f.before}`, 'medium')
     else if (!same(p.after, f.after) || !same(p.before, f.before)) item('match', p, f, `planned ${p.after ?? p.before}, done ${f.after ?? f.before}`)
     else item('match', p, f)
   }

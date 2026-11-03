@@ -52,6 +52,12 @@ function ownerNames(u: InventoryUnit): string[] {
   return [u.owner, u.name.split(/[.#/:]/)[0]].filter((n): n is string => !!n && IDENT.test(n))
 }
 
+/** A file's base name without its extension, without each one for several: `review` and `review.md` of `prompts/review.md.tmpl`. */
+function fileStems(path: string): string[] {
+  const parts = (path.split('/').at(-1) ?? path).split('.')
+  return parts.length < 2 ? parts : parts.slice(1).map((_, i) => parts.slice(0, i + 1).join('.')).filter(Boolean)
+}
+
 // Declarations a changed line may make, by the shape most languages give them (a warning only, never a blocker).
 const DECL = [
   /^[+-]\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[([]/, // go
@@ -68,7 +74,7 @@ const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'fu
 /**
  * The inventory against the numbered hunks of `files`. A hunk id stands for every block of its hunk. Blockers: a
  * block of a code file in no unit and not in noise; an id that is not a block or hunk; a unit whose name (the last
- * segment; both for a rename; a file's name in its path) is not in the lines (changed and context) or the header of
+ * segment; both for a rename; the base name of its file, without the extension) is not in the lines (changed and context) or the header of
  * the hunks of its blocks, nor, for a config unit, its constant in a hunk of its file; a unit on a module that owns none of its blocks. Dependencies are
  * checked for their blocks only: the module they use is often not named there.
  */
@@ -100,7 +106,7 @@ export function checkInventory(inventory: ChangeInventory, files: FileChange[]):
     // A name is borne out by the hunks around its blocks: a body change shows its method in the context or the header.
     const around = [...new Set(of.map((b) => b.hunk))].map((id) => hunks.get(id)!)
     const seen = words(around.map(({ hunk }) => [hunk.header ?? '', ...(hunk.lines ?? [])].join('\n')).join('\n'))
-    const byFile = around.some(({ file }) => file.path.includes(u.name) || (!!file.oldPath && file.oldPath.includes(u.name)))
+    const byFile = around.some(({ file }) => [file.path, file.oldPath].some((p) => !!p && fileStems(p).some((n) => n === u.name || n === unitLeaf(u.name))))
     const names = keyNames(u)
     const missing = names.filter((n) => !seen.has(n))
     const inFile = () => words(around.flatMap(({ file }) => file.hunks.flatMap((h) => [h.header ?? '', ...(h.lines ?? [])])).join('\n'))

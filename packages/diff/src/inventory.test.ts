@@ -69,7 +69,7 @@ test('checkInventory: blocks in no unit, unknown ids, names the hunks do not bea
   assert.match(inventoryBlockers(check)[0], /^H1\.2 \(mag:apps\/poc\/src\/main\/orchestrator\.ts, orchestrator\) is changed code in no unit/)
 })
 
-test('checkInventory: a rename needs both names; a file name in its path grounds a template; code called noise warns', () => {
+test('checkInventory: a rename needs both names; the base name of its file grounds a template; code called noise warns', () => {
   const files = numberHunks([
     file('src/a.go', 'jobs', [hunk('func (r *Repo) Send(ctx context.Context) error {', ['-\tsendNow(ctx)', '+\tdeliver(ctx)'])]),
     file('prompts/review.md.tmpl', 'prompts', [hunk('', ['+Review it.'])]),
@@ -77,8 +77,11 @@ test('checkInventory: a rename needs both names; a file name in its path grounds
   const rename = (from: string) => unit({ id: 'u1', module: 'jobs', name: 'deliver', change: 'rename', from, hunks: ['H1.1'] })
   assert.deepEqual(checkInventory(inv([rename('sendNow')]), files).ungrounded, [])
   assert.deepEqual(checkInventory(inv([rename('push')]), files).ungrounded.map((u) => u.why), ['push is not in its hunks'])
-  const tmpl = unit({ id: 'u2', kind: 'template', module: 'prompts', name: 'review.md.tmpl', hunks: ['H2.1'] })
-  assert.deepEqual(checkInventory(inv([rename('sendNow'), tmpl]), files).ungrounded, [])
+  const tmpl = (name: string) => unit({ id: 'u2', kind: 'template', module: 'prompts', name, hunks: ['H2.1'] })
+  assert.deepEqual(checkInventory(inv([rename('sendNow'), tmpl('review')]), files).ungrounded, [])
+  assert.deepEqual(checkInventory(inv([rename('sendNow'), tmpl('prompts/review')]), files).ungrounded, [], 'by the last segment of its name')
+  assert.deepEqual(checkInventory(inv([rename('sendNow'), tmpl('view')]), files).ungrounded.map((u) => u.why), ['view is not in its hunks'], 'a substring of the path is not its file')
+  assert.deepEqual(checkInventory(inv([rename('sendNow'), tmpl('prompts')]), files).ungrounded.map((u) => u.why), ['prompts is not in its hunks'], 'a folder is not its file')
   const noisy = checkInventory(inv([], [{ hunks: ['H1', 'H2'], reason: 'formatting' }]), files)
   assert.deepEqual(noisy.unaccounted, [])
   assert.deepEqual(noisy.noiseClaims.map((n) => [n.block, n.lines]), [['H1.1', 2], ['H2.1', 1]])
@@ -116,4 +119,22 @@ test('checkInventory: a config unit deep in a long constant is borne out by the 
   assert.deepEqual(checkInventory(inv([unit_('DEFAULT_PLAYBOOK.prReview', ['H2.1'])]), files).ungrounded, [])
   assert.deepEqual(checkInventory(inv([unit_('OTHER.prReview', ['H2.1'])]), files).ungrounded.map((u) => u.why), ['prReview is not in its hunks'])
   assert.deepEqual(checkInventory(inv([unit_('DEFAULT_PLAYBOOK.x', ['H3.1'])]), files).ungrounded.map((u) => u.why), ['x is not in its hunks'], 'another file does not count')
+})
+
+test('formatHunks: at most about maxChars of whole hunks, then the ids of the rest; lock and generated files left out', () => {
+  const files = numberHunks([
+    file('src/a.ts', 'a', [hunk('', ['+'.padEnd(60, 'a')]), hunk('', ['+'.padEnd(60, 'b')]), hunk('', ['+'.padEnd(60, 'c')])]),
+    file('pnpm-lock.yaml', null, [hunk('', ['+x'])], { kind: 'lock' }),
+    file('dist/a.js', null, [hunk('', ['+x'])], { kind: 'generated' }),
+    file('README.md', null, [hunk('', ['+x'])], { kind: 'docs' }),
+  ])
+  const all = formatHunks(files)
+  assert.match(all, /### H3 /)
+  assert.match(all, /\nNot code, need not be cited: mag:README\.md \(docs: H6\)$/)
+  assert.doesNotMatch(all, /pnpm-lock|dist\/a\.js/)
+  const cut = formatHunks(files, 250)
+  assert.match(cut, /### H2 /)
+  assert.doesNotMatch(cut, /### H3 /)
+  assert.match(cut, /\n1 more hunk\(s\) not listed here \(H3\): get_pr_changes lists them all\./)
+  assert.match(formatHunks(files, 10), /^### H1 [\s\S]*2 more hunk\(s\) not listed here \(H2…H3\)/, 'one hunk at least')
 })

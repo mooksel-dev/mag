@@ -199,9 +199,12 @@ export function factReport(fact: Fact): string {
   return out.join('\n')
 }
 
-/** The hunks of the changes as an inventory cites them, under a heading; '' without code hunks. */
-export function hunkListing(changed: Pick<Changes, 'files'>): string {
-  const text = formatHunks(changed.files)
+/** How much of the hunks a reviewer's round message carries; get_pr_changes gives the rest. */
+export const ROUND_HUNKS_CHARS = 40_000
+
+/** The hunks of the changes as an inventory cites them, under a heading, at most about `maxChars`; '' without code hunks. */
+export function hunkListing(changed: Pick<Changes, 'files'>, maxChars = Infinity): string {
+  const text = formatHunks(changed.files, maxChars)
   return text ? `### Hunks (cite their blocks in the inventory)\n${text}` : ''
 }
 

@@ -32,14 +32,15 @@ export function formatFiles(repo: string, baseSha: string, headSha: string, file
 /**
  * The hunks of code files with their ids and lines, as an inventory cites them (diff-iak-inventar-zmin-ai.1): a header per
  * hunk (id, repo:path, owner module, git's header), each block of changed lines marked [<id>.<k>] on the line before it,
- * context lines as git gives them. Files that are not code are named, without lines: they need not be cited.
+ * context lines as git gives them. Tests, styles and docs are named without lines (they need not be cited); lock files
+ * and generated code are left out. `maxChars`: whole hunks up to about that many characters, then the ids of the rest.
  */
-export function formatHunks(files: FileChange[]): string {
-  const out: string[] = []
+export function formatHunks(files: FileChange[], maxChars = Infinity): string {
+  const hunks: { id: string; text: string }[] = []
   for (const f of files.filter((x) => x.kind === 'code'))
     for (const h of f.hunks) {
       if (!h.id) continue
-      out.push(`### ${h.id}  ${f.repo}:${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ''}  [module: ${f.module ?? NO_MODULE}]  @@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@${h.header ? ` ${h.header}` : ''}`)
+      const out = [`### ${h.id}  ${f.repo}:${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ''}  [module: ${f.module ?? NO_MODULE}]  @@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@${h.header ? ` ${h.header}` : ''}`]
       let k = 0
       let changed = false
       for (const l of h.lines ?? []) {
@@ -48,8 +49,21 @@ export function formatHunks(files: FileChange[]): string {
         changed = c
         out.push(l)
       }
+      hunks.push({ id: h.id, text: out.join('\n') })
     }
-  const rest = files.filter((x) => x.kind !== 'code' && x.hunks.length)
+  const out: string[] = []
+  let size = 0
+  let shown = 0
+  // At least one hunk, however long.
+  for (; shown < hunks.length && (!shown || size + hunks[shown].text.length <= maxChars); shown++) {
+    out.push(hunks[shown].text)
+    size += hunks[shown].text.length + 1
+  }
+  if (shown < hunks.length) {
+    const left = hunks.slice(shown)
+    out.push('', `${left.length} more hunk(s) not listed here (${left[0].id}${left.length > 1 ? `…${left.at(-1)!.id}` : ''}): get_pr_changes lists them all.`)
+  }
+  const rest = files.filter((x) => (x.kind === 'test' || x.kind === 'style' || x.kind === 'docs') && x.hunks.length)
   if (rest.length) out.push('', `Not code, need not be cited: ${rest.map((x) => `${x.repo}:${x.path} (${x.kind}: ${x.hunks.map((h) => h.id).filter(Boolean).join(', ')})`).join('; ')}`)
   return out.join('\n')
 }

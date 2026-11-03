@@ -9,7 +9,7 @@ import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
-import { changes, check, factReport, hunkListing } from './core/services/fact/index.ts'
+import { ROUND_HUNKS_CHARS, changes, check, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
@@ -206,7 +206,7 @@ First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's 
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
-The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (get_pr_changes lists them again); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
+The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
 ${playbookOf(project).fact}
 mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
 ${fact}
@@ -971,7 +971,8 @@ export class Orchestrator {
     const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
     const fact = check(project, changed, stepSet(canvases, stepId, 'fact'), plans)
     this.store.updateTask(stepId, { fact: factRecord(fact, heads) })
-    return [factReport(fact), hunkListing(changed)].filter(Boolean).join('\n\n')
+    // A large PR's hunks go through get_pr_changes: the message carries the first ones.
+    return [factReport(fact), hunkListing(changed, ROUND_HUNKS_CHARS)].filter(Boolean).join('\n\n')
   }
 
   /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */

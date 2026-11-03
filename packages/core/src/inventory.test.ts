@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { inventoryDiagrams, logicUnit, normalizeInventory, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
+import { folderLayer, inventoryDiagrams, logicUnit, normalizeInventory, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
 
 const node = (id: string, extra: Partial<ArchNode> = {}): ArchNode => ({ id, name: id, description: '', uses: [], ...extra })
 const architecture: ArchNode[] = [node('poc', { children: [node('orchestrator', { name: 'Orchestrator', layer: 'service' }), node('git', { layer: 'client' })] }), node('github', { kind: '3rd-party API' })]
@@ -103,4 +103,52 @@ test('withScenarioLinks / logicUnit: modules link the scenarios they take part i
   assert.equal(logicUnit(INVENTORY, 'orchestrator', 'factOf')?.id, 'u1')
   assert.equal(logicUnit(INVENTORY, 'git', 'diffText'), undefined, 'trivial logic')
   assert.equal(logicUnit(INVENTORY, 'git', 'factOf'), undefined, 'another module')
+})
+
+test('inventoryDiagrams: a signature that differs only by receiver or whitespace is one mod line, its logic badge kept', () => {
+  const method = (id: string, before: string, after: string): ChangeInventory['units'][number] => ({ id, kind: 'method', module: 'docs', name: `Client.${id}`, change: 'mod', before, after, logic: 'nontrivial', visibility: 'private', hunks: ['H1.1'] })
+  const inventory: ChangeInventory = {
+    summary: ['s'],
+    units: [
+      method('fetch', 'func (c *Client) fetch(ctx context.Context, id string) ([]byte, error)', 'func (c *client) fetch(ctx context.Context, id string) ([]byte, error)'),
+      method('store', 'func (Client) store(ctx context.Context,  doc Doc) error', 'func (cl client) store(ctx context.Context, doc Doc) error'),
+      method('send', 'func (c *Client) send(ctx context.Context) error', 'func (c *client) send(ctx context.Context, to string) error'),
+    ],
+    noise: [],
+  }
+  const { component } = inventoryDiagrams(inventory, [])
+  assert.deepEqual(component.modules[0].interface, [
+    { text: 'fetch(ctx context.Context, id string) ([]byte, error)', diff: 'mod', logic: true, private: true },
+    { text: 'store(ctx context.Context, doc Doc) error', diff: 'mod', logic: true, private: true },
+    { text: 'send(ctx context.Context) error', diff: 'del', logic: true, private: true },
+    { text: 'send(ctx context.Context, to string) error', diff: 'add', logic: true, private: true },
+  ])
+})
+
+test('inventoryDiagrams without an architecture: own folder modules are not external and take their layer from the folder; a package is', () => {
+  const unit = (id: string, module: string, extra: Partial<ChangeInventory['units'][number]> = {}): ChangeInventory['units'][number] => ({ id, kind: 'method', module, name: id, change: 'add', after: `${id}()`, logic: 'trivial', hunks: ['H1.1'], ...extra })
+  const inventory: ChangeInventory = {
+    summary: ['s'],
+    units: [
+      unit('serve', 'internal/handlers/billing'),
+      unit('charge', 'internal/services/billing'),
+      unit('save', 'internal/repositories/invoices'),
+      unit('main', 'cmd'),
+      unit('format', 'pkg/money'),
+      unit('d1', 'internal/handlers/billing', { kind: 'dependency', name: 'internal/services/billing' }),
+      unit('d2', 'internal/services/billing', { kind: 'dependency', name: 'internal/repositories/invoices' }),
+      unit('d3', 'internal/services/billing', { kind: 'dependency', name: 'github.com/stripe/stripe-go' }),
+    ],
+    noise: [],
+  }
+  const { component } = inventoryDiagrams(inventory, [])
+  assert.deepEqual(component.modules.map((m) => [m.id, m.layer ?? null, m.kind ?? null, m.diff ?? null]), [
+    ['internal/handlers/billing', 'app', null, 'mod'],
+    ['internal/services/billing', 'service', null, 'mod'],
+    ['internal/repositories/invoices', 'client', null, 'mod'],
+    ['cmd', 'app', null, 'mod'],
+    ['pkg/money', null, null, 'mod'],
+    ['github.com/stripe/stripe-go', null, 'external', null],
+  ])
+  assert.deepEqual([folderLayer('src-clients'), folderLayer('apps/web/handlers/x'), folderLayer('servicesx'), folderLayer('lib')], ['client', 'app', undefined, undefined])
 })

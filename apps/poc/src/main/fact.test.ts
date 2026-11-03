@@ -110,7 +110,7 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
     { text: 'load(id: string, fresh = false)', diff: 'add', files: ['src/store.ts'], logic: true },
     { text: 'save(id: string)', diff: 'add', files: ['src/store.ts'] },
   ])
-  assert.deepEqual(fact.counts, { match: 1, differs: 0, missing: 1, unplanned: 4, unaccounted: 0, ungrounded: 0 })
+  assert.deepEqual(fact.counts, { match: 0, differs: 1, missing: 1, unplanned: 4, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: differs, not blocking')
   assert.deepEqual(fact.blockers, ['high: store remove(id): void is planned, not on the fact', 'high: store save(id: string) is on the fact, not on the plan', 'high: app extra() is on the fact, not on the plan'])
 
   // A unit left out is a block in no unit; the inventory is written again whole and revises the same root.
