@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { folderLayer, inventoryDiagrams, logicUnit, normalizeInventory, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
+import { folderLayer, inventoryDiagrams, logicUnit, groupedName, normalizeInventory, parseCall, unitRuleProblems, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
 
 const node = (id: string, extra: Partial<ArchNode> = {}): ArchNode => ({ id, name: id, description: '', uses: [], ...extra })
 const architecture: ArchNode[] = [node('poc', { children: [node('orchestrator', { name: 'Orchestrator', layer: 'service' }), node('git', { layer: 'client' })] }), node('github', { kind: '3rd-party API' })]
@@ -14,7 +14,7 @@ test('normalizeInventory: JSON or an object, runs read as hunks, ids filled in; 
   const bad = normalizeInventory({ units: [{ id: 'x', kind: 'func', change: 'rename', hunks: [] }, { id: 'x', kind: 'method', module: 'm', name: 'b', change: 'mod', hunks: ['H1'] }], noise: [{ hunks: [] }] })
   assert.deepEqual(bad.errors, [
     'summary is required: 3–6 short bullets on what the change does, by meaning',
-    'Unit x: kind must be one of method, model, field, index, dependency, config, template',
+    'Unit x: kind must be one of method, model, field, index, dependency, call, config, template',
     'Unit x: name is required, copied from the diff',
     'Unit x (): module is required, the module of its hunks as the listing names it',
     'Unit x (): hunks is required, the ids of the blocks of changed lines it rests on',
@@ -151,4 +151,91 @@ test('inventoryDiagrams without an architecture: own folder modules are not exte
     ['github.com/stripe/stripe-go', null, 'external', null],
   ])
   assert.deepEqual([folderLayer('src-clients'), folderLayer('apps/web/handlers/x'), folderLayer('servicesx'), folderLayer('lib')], ['client', 'app', undefined, undefined])
+})
+
+test('inventoryDiagrams: a method line says what it does, "signature - note"; a changed signature carries the note on its add line (diff-iak-inventar-zmin-ai.2)', () => {
+  const method = (id: string, change: 'add' | 'mod' | 'del', before: string | undefined, after: string | undefined, note?: string): ChangeInventory['units'][number] => ({ id, kind: 'method', module: 'svc', name: id, change, ...(before && { before }), ...(after && { after }), ...(note && { note }), logic: 'trivial', hunks: ['H1.1'] })
+  const inventory: ChangeInventory = {
+    summary: ['s'],
+    units: [
+      method('Send', 'add', undefined, 'func (s *Svc) Send(ctx context.Context) error', 'emails the request'),
+      method('Log', 'del', 'func (s *Svc) Log(msg string)', undefined, 'the mock goes'),
+      method('RequestRemoval', 'mod', 'func (s *Svc) RequestRemoval(ctx context.Context, id string) error', 'func (s *Svc) RequestRemoval(ctx context.Context, id string) error', 'sends the email   instead of logging'),
+      method('Get', 'mod', 'func (s *Svc) Get(id string) Doc', 'func (s *Svc) Get(id string) (Doc, error)', 'returns integrity errors'),
+      method('Plain', 'add', undefined, 'Plain()'),
+    ],
+    noise: [],
+  }
+  assert.deepEqual(inventoryDiagrams(inventory, []).component.modules[0].interface, [
+    { text: 'Send(ctx context.Context) error - emails the request', diff: 'add' },
+    { text: 'Log(msg string) - the mock goes', diff: 'del' },
+    { text: 'RequestRemoval(ctx context.Context, id string) error - sends the email instead of logging', diff: 'mod' },
+    { text: 'Get(id string) Doc', diff: 'del' },
+    { text: 'Get(id string) (Doc, error) - returns integrity errors', diff: 'add' },
+    { text: 'Plain()', diff: 'add' },
+  ])
+})
+
+test('inventoryDiagrams: call units are marked lines on the use of their caller; one makes the use when no dependency did (diff-iak-inventar-zmin-ai.2)', () => {
+  const call = (id: string, name: string, change: 'add' | 'mod' | 'del', before?: string, after?: string, extra: Partial<ChangeInventory['units'][number]> = {}): ChangeInventory['units'][number] => ({ id, kind: 'call', module: 'orchestrator', name, change, ...(before && { before }), ...(after && { after }), hunks: ['H1.1'], ...extra })
+  const inventory: ChangeInventory = {
+    summary: ['s'],
+    units: [
+      { id: 'd1', kind: 'dependency', module: 'orchestrator', name: 'git', change: 'add', hunks: ['H1.1'] },
+      call('c1', 'git#Ensure', 'add', undefined, 'err := o.git.Ensure(ctx, key)'),
+      call('c2', 'git#MarkSent', 'add', undefined, 'o.git.MarkSent(ctx, key, now)'),
+      call('c3', 'github#Fetch', 'mod', 'gh.Fetch(ctx, id)', 'gh.Fetch(ctx, id, opts)'),
+      call('c4', 'github#Close', 'mod', 'gh.Close(ctx,id)', 'gh.Close(ctx, id)'),
+      call('c5', 'git#Deliver', 'del', 'o.git.Deliver(ctx)'),
+      call('c6', 'github.com/sendgrid/sendgrid-go#Send', 'add', undefined, 'client.Send(msg)', { external: true, hunks: ['H2.1'] }),
+    ],
+    noise: [],
+  }
+  const files: Record<string, string> = { H1: 'orchestrator.ts', H2: 'mail.ts' }
+  const { component } = inventoryDiagrams(inventory, architecture, { filesOf: (ids) => [...new Set(ids.map((id) => files[id.split('.')[0]]))] })
+  assert.deepEqual(validateDiagram(component), [])
+  const o = component.modules.find((m) => m.id === 'orchestrator')!
+  assert.deepEqual(o.uses, [
+    {
+      to: 'git', diff: 'add', files: ['orchestrator.ts'],
+      calls: [
+        { text: 'Ensure(ctx, key)', diff: 'add', files: ['orchestrator.ts'] },
+        { text: 'MarkSent(ctx, key, now)', diff: 'add', files: ['orchestrator.ts'] },
+        { text: 'Deliver(ctx)', diff: 'del', files: ['orchestrator.ts'] },
+      ],
+    },
+    {
+      to: 'github', diff: 'mod', files: ['orchestrator.ts'],
+      calls: [
+        { text: 'Fetch(ctx, id)', diff: 'del', files: ['orchestrator.ts'] },
+        { text: 'Fetch(ctx, id, opts)', diff: 'add', files: ['orchestrator.ts'] },
+        { text: 'Close(ctx, id)', diff: 'mod', files: ['orchestrator.ts'] },
+      ],
+    },
+    { to: 'github.com/sendgrid/sendgrid-go', diff: 'mod', files: ['mail.ts'], calls: [{ text: 'Send(msg)', diff: 'add', files: ['mail.ts'] }] },
+  ], 'a use no dependency unit made changes by its calls: mod')
+  assert.equal(o.interface, undefined, 'calls are no interface lines')
+  assert.equal(component.modules.find((m) => m.id === 'github.com/sendgrid/sendgrid-go')?.kind, 'external')
+  assert.equal(component.modules.find((m) => m.id === 'github')?.kind, '3rd-party API', 'a module of the architecture keeps its kind')
+})
+
+test('normalizeInventory / unitRuleProblems: one name per unit; a call is "<target>#<method>"; a changed method needs before, after and note (diff-iak-inventar-zmin-ai.2)', () => {
+  const unit = (extra: Record<string, unknown>) => ({ id: 'u1', kind: 'method', module: 'm', change: 'add', logic: 'trivial', hunks: ['H1.1'], ...extra })
+  for (const name of ['ErrDocumentIntegrity, ErrDocumentNotFound', 'get / ensureActive', 'Get/Set'])
+    assert.deepEqual(normalizeInventory({ summary: ['s'], units: [unit({ kind: 'model', name })], noise: [] }).errors, [`Unit u1 (${name}): one name per unit; give each its own unit`])
+  assert.deepEqual(normalizeInventory({ summary: ['s'], units: [unit({ name: 'app.whenReady callback' }), unit({ id: 'u2', kind: 'dependency', name: 'internal/services/billing' }), unit({ id: 'u3', kind: 'template', name: 'prompts/review.md' })], noise: [] }).errors, [])
+  assert.equal(groupedName({ kind: 'dependency', name: 'a, b' }), true)
+  assert.equal(groupedName({ kind: 'call', name: 'pkg/x#Get/Set' }), true)
+  assert.deepEqual(normalizeInventory({ summary: ['s'], units: [unit({ kind: 'call', name: 'Ensure' }), unit({ id: 'u2', kind: 'call', name: 'git#Ensure', change: 'rename', from: 'git#Make' })], noise: [] }).errors, [
+    'Unit u1 (Ensure): a call is named "<target module>#<method>" ("<package>#<func>" outside the project)',
+    'Unit u2 (git#Ensure): a call changes by add, del or mod (its arguments)',
+  ])
+  const ok = normalizeInventory({ summary: ['s'], units: [unit({ kind: 'call', name: 'github.com/x/y#Send', external: true })], noise: [] })
+  assert.deepEqual([ok.errors, ok.inventory.units[0].external], [[], true])
+  assert.deepEqual([parseCall('dar_jobs#Ensure'), parseCall('a#b#c'), parseCall('#x'), parseCall('x#'), parseCall('x')], [{ target: 'dar_jobs', method: 'Ensure' }, { target: 'a#b', method: 'c' }, null, null, null])
+  const mod = (extra: Partial<ChangeInventory['units'][number]>): ChangeInventory['units'][number] => ({ id: 'u1', kind: 'method', module: 'm', name: 'Get', change: 'mod', logic: 'trivial', hunks: ['H1.1'], ...extra })
+  assert.deepEqual(unitRuleProblems(mod({ before: 'Get()', after: 'Get()', note: 'reads the cache first' })), [])
+  assert.deepEqual(unitRuleProblems(mod({ after: 'Get()' })), ['a changed method needs before, note: its old and new signature and what changes in it'])
+  assert.deepEqual(unitRuleProblems(mod({ kind: 'model' })), [], 'only methods')
+  assert.deepEqual(unitRuleProblems(mod({ change: 'add', name: 'a, b' })), ['one name per unit: give each its own unit'])
 })

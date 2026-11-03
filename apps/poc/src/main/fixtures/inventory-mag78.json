@@ -775,7 +775,8 @@
    "runs": [
     "H53.2",
     "H53.3"
-   ]
+   ],
+   "note": "takes a limit (default BOX_LINES, Infinity for a box opened in full) instead of the fixed BOX_LINES for shown and more"
   },
   {
    "id": "u52",
@@ -893,7 +894,8 @@
    "logic": "trivial",
    "runs": [
     "H68.1"
-   ]
+   ],
+   "note": "the flowchart hint also says a private method's flowchart is linked from the step of the flowchart that calls it"
   },
   {
    "id": "u60",
@@ -976,7 +978,8 @@
    "logic": "trivial",
    "runs": [
     "H76.1"
-   ]
+   ],
+   "note": "the heading of the blocking list mentions indexes"
   },
   {
    "id": "u65",
@@ -1266,6 +1269,85 @@
    "stored": false,
    "runs": [
     "H92.1"
+   ]
+  },
+  {
+   "id": "c1",
+   "kind": "call",
+   "module": "change-fact",
+   "name": "core-diagram#diagramWarnings",
+   "change": "add",
+   "after": "set.flatMap((c) => diagramWarnings(c.diagram!).map((w) => `\"${c.title}\" (${c.id}): ${w}`))",
+   "runs": [
+    "H4.1"
+   ]
+  },
+  {
+   "id": "c2",
+   "kind": "call",
+   "module": "agent-tools",
+   "name": "core-diagram#diagramWarnings",
+   "change": "add",
+   "after": "const own = diagramWarnings(canvas.diagram!)",
+   "runs": [
+    "H17.2"
+   ]
+  },
+  {
+   "id": "c3",
+   "kind": "call",
+   "module": "component-diagram",
+   "name": "core-diagram#boxLines",
+   "change": "mod",
+   "before": "const changed = boxLines(n, d)",
+   "after": "const changed = boxLines(n, d, limit)",
+   "runs": [
+    "H24.2"
+   ]
+  },
+  {
+   "id": "c4",
+   "kind": "call",
+   "module": "data-diagram",
+   "name": "graph-layout#indexText",
+   "change": "add",
+   "after": "indexText(ix)",
+   "runs": [
+    "H29.1"
+   ]
+  },
+  {
+   "id": "c5",
+   "kind": "call",
+   "module": "core-diagram",
+   "name": "core-arch#walkArch",
+   "change": "add",
+   "after": "walkArch(d.modules, (n: DNode) => { ... })",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "c6",
+   "kind": "call",
+   "module": "core-diagram",
+   "name": "core-arch#methodName",
+   "change": "add",
+   "after": "methodName(l.text)",
+   "runs": [
+    "H40.1",
+    "H49.1"
+   ]
+  },
+  {
+   "id": "c7",
+   "kind": "call",
+   "module": "diff-completeness",
+   "name": "core-diagram#moveSource",
+   "change": "add",
+   "after": "const old = l.diff === 'move' && l.from ? moveSource(l.from) : null",
+   "runs": [
+    "H72.3"
    ]
   }
  ],

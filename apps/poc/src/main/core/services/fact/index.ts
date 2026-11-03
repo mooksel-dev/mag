@@ -4,7 +4,7 @@
 // plan (compare). It knows no step: a step's PRs (against its plan) and a teammate's PR (no plan:
 // reviews-prybraty-spysok-pr-i.1) are two callers of the same diff.
 import {
-  diagramWarnings, inventoryDiagrams, logicUnit, parseFlowRef, playbookOf, setRoot, validateLinks,
+  diagramWarnings, inventoryDiagrams, logicUnit, parseFlowRef, playbookOf, setRoot, validateLinks, walkArch,
   type ArchNode, type Canvas, type ChangeInventory, type ComponentDiagram, type DataDiagram, type Diagram, type Project, type SequenceDiagram,
 } from '@mag/core'
 import {
@@ -146,11 +146,11 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
   const canvas = factRoot(set)
   const inventory = canvas?.inventory ?? null
   const rules = parseSignificance(playbookOf(project).significance)
-  // The inventory has no calls: a planned call cannot be on the fact, so only modules, lines and uses compare.
+  // Planned calls are not compared with the inventory's call units yet: only modules, lines and uses compare.
   const planned = withLevels((plan ?? []).flatMap((c) => diagramChanges(c.diagram!)).filter((c) => !inventory || c.kind !== 'call'), rules)
   const fact = withLevels((inventory ? [canvas!] : set).flatMap((c) => diagramChanges(c.diagram!)), rules)
   const comparison = plan ? compare(planned, fact, architecture) : { items: [] }
-  const inventoryCheck = inventory ? checkInventory(inventory, files) : null
+  const inventoryCheck = inventory ? checkInventory(inventory, files, { modules: changed.outside ? undefined : knownModules(architecture, plan ?? []) }) : null
   // Without code to show, no inventory is needed.
   const code = files.some((f) => f.kind === 'code')
   const own = inventoryCheck
@@ -167,6 +167,14 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
     warnings: set.length ? [...validateLinks(set), ...drawn.flatMap((c) => diagramWarnings(c.diagram!).map((w) => `"${c.title}" (${c.id}): ${w}`)), ...flows] : [],
     blockers: mergeBlockers(comparison, own),
   }
+}
+
+/** The ids a call of the fact may target: the architecture's modules and those the plan's Component diagrams draw. */
+function knownModules(architecture: ArchNode[], plan: Canvas[]): string[] {
+  const out: string[] = []
+  walkArch(architecture, (n) => out.push(n.id))
+  for (const d of plan.map((c) => c.diagram!)) if (d.type === 'component') walkArch(d.modules as unknown as ArchNode[], (n) => out.push(n.id))
+  return out
 }
 
 const link = (c: Canvas) => `[${c.title}](canvas:${c.id})`
@@ -194,7 +202,7 @@ export function factReport(fact: Fact): string {
   const out = [...head, diagram, ...outside, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
   if (fact.inventoryCheck) out.push('', '### Inventory against the hunks', formatInventoryCheck(fact.inventoryCheck))
   if (fact.warnings.length) out.push('', `### Where the fact set does not hang together or breaks a rule of the diff (${fact.warnings.length})`, ...fact.warnings.map((w) => `- ${w}`))
-  if (plan) out.push('', '### Plan ↔ fact', ...(fact.inventory ? ['(Calls are not in the inventory: planned calls are not compared.)'] : []), formatComparison(fact.comparison, fact.blockers))
+  if (plan) out.push('', '### Plan ↔ fact', ...(fact.inventory ? ['(Planned calls are not compared with the call units of the inventory.)'] : []), formatComparison(fact.comparison, fact.blockers))
   else out.push('', fact.blockers.length ? `### The fact is not complete yet\n${fact.blockers.map((b) => `  - ${b}`).join('\n')}` : '### The fact is complete: the inventory accounts for every block of changed code and rests on its hunks.')
   return out.join('\n')
 }

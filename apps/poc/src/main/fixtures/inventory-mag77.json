@@ -20,7 +20,9 @@
     "H1.1",
     "H2.1"
    ],
-   "note": "ToolActions stub gains approve/develop/startStep/restartReview/agentOf/send/stopAgents, then wired to orch.approve/develop/startStep/reviewTask/agentOf/send/stopAgents"
+   "note": "ToolActions stub gains approve/develop/startStep/restartReview/agentOf/send/stopAgents, then wired to orch.approve/develop/startStep/reviewTask/agentOf/send/stopAgents",
+   "before": "app.whenReady().then(async () => { …ToolActions stub of 12 actions… })",
+   "after": "app.whenReady().then(async () => { …ToolActions stub of 19 actions, wired to orch… })"
   },
   {
    "id": "u2",
@@ -326,7 +328,9 @@
    "runs": [
     "H19.1"
    ],
-   "note": "routes the six control tools to controlTool"
+   "note": "routes the six control tools to controlTool",
+   "before": "function sharedTool(store, actions, project, ctx, name, args, byKey)",
+   "after": "function sharedTool(store, actions, project, ctx, name, args, byKey)"
   },
   {
    "id": "u23",
@@ -360,6 +364,118 @@
     "H21.1"
    ],
    "note": "new persisted project event kind for chat-driven actions"
+  },
+  {
+   "id": "c1",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#approve",
+   "change": "add",
+   "after": "orch.approve(id)",
+   "runs": [
+    "H2.1",
+    "H3.1"
+   ]
+  },
+  {
+   "id": "c2",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#develop",
+   "change": "add",
+   "after": "orch.develop(id, undefined, localRepos)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c3",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#startStep",
+   "change": "add",
+   "after": "orch.startStep(id)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c4",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#reviewTask",
+   "change": "add",
+   "after": "orch.reviewTask(id)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c5",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#agentOf",
+   "change": "add",
+   "after": "orch.agentOf(id, role)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c6",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#send",
+   "change": "add",
+   "after": "orch.send(sessionId, text)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c7",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#stopAgents",
+   "change": "add",
+   "after": "orch.stopAgents(id)",
+   "runs": [
+    "H2.1"
+   ]
+  },
+  {
+   "id": "c8",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "orchestrator#isRunning",
+   "change": "del",
+   "before": "orch.isRunning(s.id)",
+   "runs": [
+    "H3.1"
+   ]
+  },
+  {
+   "id": "c9",
+   "kind": "call",
+   "module": "main-entry",
+   "name": "core-model#canApprove",
+   "change": "del",
+   "before": "canApprove(task, projectTasks(task.projectId))",
+   "runs": [
+    "H3.1"
+   ]
+  },
+  {
+   "id": "c10",
+   "kind": "call",
+   "module": "orchestrator",
+   "name": "core-model#canApprove",
+   "change": "add",
+   "after": "canApprove(task, this.store.data.tasks.filter((t) => t.projectId === task.projectId))",
+   "runs": [
+    "H6.1",
+    "H8.1"
+   ]
   }
  ],
  "noise": [

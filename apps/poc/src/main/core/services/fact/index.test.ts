@@ -43,7 +43,7 @@ const canvas = (id: string, diagram: Diagram, extra: Partial<Canvas> = {}) => ({
 const INVENTORY: ChangeInventory = {
   summary: ['list takes a limit', 'a sync job'],
   units: [
-    { id: 'u1', kind: 'method', module: 'api', owner: 'Users', name: 'list', change: 'mod', after: 'list(limit: number): User[]', logic: 'nontrivial', hunks: ['H1.1'] },
+    { id: 'u1', kind: 'method', module: 'api', owner: 'Users', name: 'list', change: 'mod', before: 'list(limit: number): User[]', after: 'list(limit: number): User[]', note: 'at most limit users', logic: 'nontrivial', hunks: ['H1.1'] },
     { id: 'u2', kind: 'method', module: 'jobs', name: 'sync', change: 'add', after: 'sync(): void', logic: 'trivial', hunks: ['H2'] },
     { id: 'u3', kind: 'dependency', module: 'api', name: 'jobs', change: 'add', hunks: ['H1.1'] },
   ],
@@ -68,12 +68,12 @@ test('check: no inventory blocks; the inventory is checked against the hunks and
 
   const { component, data } = factDiagrams(INVENTORY, changed, project, [])
   assert.equal(data, null)
-  assert.deepEqual(component.modules.find((m) => m.id === 'api')!.interface, [{ text: 'list(limit: number): User[]', diff: 'mod', files: ['src/api/users.ts'], logic: true }])
+  assert.deepEqual(component.modules.find((m) => m.id === 'api')!.interface, [{ text: 'list(limit: number): User[] - at most limit users', diff: 'mod', files: ['src/api/users.ts'], logic: true }])
   const root = canvas('root', component, { root: true, inventory: INVENTORY })
   const fact = check(project, changed, [root], plan)
   assert.deepEqual(fact.blockers, [])
   assert.equal(fact.canvas, root)
-  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['differs', 'api#list'], ['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared: the inventory has none')
+  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['differs', 'api#list'], ['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared with the call units')
   assert.equal(fact.comparison.items[0].level, 'medium', 'another argument list differs without blocking')
   assert.match(factReport(fact), /### Inventory against the hunks\nInventory: 3 unit\(s\) over 2 block\(s\) of changed code \(3 in all\)\.\nEvery block/)
   assert.match(factReport(fact), /Threshold: merge is allowed/)
@@ -86,10 +86,19 @@ test('check: no inventory blocks; the inventory is checked against the hunks and
 
 test("check without a plan (a teammate's PR): only the inventory against the hunks, no plan ↔ fact (reviews-prybraty-spysok-pr-i.1)", async () => {
   const changed = await changes(project, [target], source)
-  const wrong = { ...INVENTORY, units: [...INVENTORY.units, { id: 'u4', kind: 'method' as const, module: 'api', name: 'remove', change: 'del' as const, logic: 'none' as const, hunks: ['H1.1'] }] }
+  const wrong: ChangeInventory = {
+    ...INVENTORY,
+    units: [
+      ...INVENTORY.units,
+      { id: 'u4', kind: 'method', module: 'api', name: 'remove', change: 'del', logic: 'none', hunks: ['H1.1'] },
+      // A call is checked against the project's modules (diff-iak-inventar-zmin-ai.2): billing is none, lodash says it is outside.
+      { id: 'u5', kind: 'call', module: 'api', name: 'lodash#slice', change: 'add', after: 'all.slice(0, limit)', external: true, hunks: ['H1.1'] },
+      { id: 'u6', kind: 'call', module: 'api', name: 'billing#slice', change: 'add', after: 'all.slice(0, limit)', hunks: ['H1.1'] },
+    ],
+  }
   const fact = check(project, changed, [canvas('root', factDiagrams(wrong, changed, project, []).component, { root: true, inventory: wrong })], null)
   assert.deepEqual(fact.comparison.items, [])
-  assert.deepEqual(fact.blockers, ['unit u4 (remove): remove is not in its hunks'])
+  assert.deepEqual(fact.blockers, ['unit u4 (remove): remove is not in its hunks', 'unit u6 (billing#slice): billing is no module of the project: name the module it calls, or say external: true'])
   assert.match(factReport(fact), /^## Fact \(mag\)\n/)
   assert.match(factReport(fact), /### The fact is not complete yet\n {2}- unit u4/)
 })

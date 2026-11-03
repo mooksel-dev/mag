@@ -19,7 +19,8 @@ const FILES = numberHunks([
   file('apps/poc/src/main/orchestrator.test.ts', 'orchestrator', [hunk('', ['+test()'])], { kind: 'test' }),
 ])
 
-const unit = (u: Partial<InventoryUnit> & Pick<InventoryUnit, 'id' | 'name' | 'hunks'>): InventoryUnit => ({ kind: 'method', module: 'orchestrator', change: 'mod', logic: 'nontrivial', ...u })
+// A changed method says its old and new signature and what changes in it (diff-iak-inventar-zmin-ai.2): `…` adds no name.
+const unit = (u: Partial<InventoryUnit> & Pick<InventoryUnit, 'id' | 'name' | 'hunks'>): InventoryUnit => ({ kind: 'method', module: 'orchestrator', change: 'mod', logic: 'nontrivial', before: '…', after: '…', note: 'n', ...u })
 const inv = (units: InventoryUnit[], noise: ChangeInventory['noise'] = []): ChangeInventory => ({ summary: ['s'], units, noise })
 
 test('numberHunks / hunkBlocks: hunk ids in diff order across files, a block per run of changed lines', () => {
@@ -152,4 +153,39 @@ test('checkInventory: a renamed template is its file, with or without the extens
   assert.deepEqual(why(rename('notice.tpl', 'letter.tpl', 'mail', ['H2.1'])), [], 'a name without a dash is a file when it is the file')
   assert.deepEqual(why(rename('removal-request.tpl', 'other-request.tpl')), ['other-request.tpl is not in its hunks'], 'the old name is the old path\'s')
   assert.deepEqual(why(rename('cleanup-request.tpl', 'removal-request.tpl')), ['cleanup-request.tpl, removal-request.tpl is not in its hunks'], 'not the other way round')
+})
+
+test('checkInventory: a call is borne out by its method in its hunks; its target is a module unless it says external (diff-iak-inventar-zmin-ai.2)', () => {
+  const files = numberHunks([
+    file('svc/accounts.go', 'digital_accounts', [hunk('func (s *Service) RequestRemoval(ctx context.Context, id string) error {', ['+\tif err := s.jobs.Ensure(ctx, key); err != nil {', '+\t\treturn err', '+\t}', '+\ts.mail.SendEmail(ctx, p)'])]),
+  ])
+  const call = (id: string, name: string, extra: Partial<InventoryUnit> = {}) => unit({ id, kind: 'call', module: 'digital_accounts', name, change: 'add', hunks: ['H1.1'], ...extra })
+  const ok = inv([
+    unit({ id: 'u1', module: 'digital_accounts', name: 'RequestRemoval', before: 'RequestRemoval(ctx, id) error', after: 'RequestRemoval(ctx, id) error', note: 'ensures the job, emails it', hunks: ['H1.1'] }),
+    call('c1', 'dar_jobs#Ensure'),
+    call('c2', 'github.com/sendgrid/sendgrid-go#SendEmail', { external: true }),
+  ])
+  assert.deepEqual(inventoryBlockers(checkInventory(ok, files, { modules: ['dar_jobs'] })), [])
+  const bad = inv([...ok.units.slice(0, 1), call('c1', 'dar_jobs#MarkSent'), call('c2', 'sendgrid#SendEmail'), call('c3', 'templates#Render', { hunks: ['H1.1'] })])
+  assert.deepEqual(checkInventory(bad, files, { modules: ['dar_jobs', 'templates'] }).ungrounded.map((u) => [u.unit, u.why]), [
+    ['c1', 'MarkSent is not in its hunks'],
+    ['c2', 'sendgrid is no module of the project: name the module it calls, or say external: true'],
+    ['c3', 'Render is not in its hunks'],
+  ])
+  assert.deepEqual(checkInventory(bad, files, { modules: ['dar_jobs', 'templates', 'sendgrid'] }).ungrounded.map((u) => u.unit), ['c1', 'c3'])
+  assert.deepEqual(checkInventory(inv([call('c1', 'digital_accounts#Ensure')]), files, { modules: [] }).ungrounded, [], 'a module of the hunks is known')
+  assert.deepEqual(checkInventory(inv([call('c2', 'sendgrid#SendEmail')]), files).ungrounded, [], 'without modules (outside the project) the target is not checked')
+})
+
+test('checkInventory: a changed method without before, after or note and a unit with several names block (diff-iak-inventar-zmin-ai.2)', () => {
+  const units = [
+    unit({ id: 'u1', name: 'Orchestrator.factOf', before: undefined, note: undefined, hunks: ['H1.1'] }),
+    unit({ id: 'u2', kind: 'model', name: 'seedless, factOf', change: 'add', hunks: ['H2'] }),
+    unit({ id: 'u3', kind: 'config', module: 'core-playbook', name: 'DEFAULT_PLAYBOOK.fact', before: undefined, after: undefined, note: undefined, hunks: ['H3.1'] }),
+  ]
+  const check = checkInventory(inv(units, [{ hunks: ['H1.2'], reason: 'comment' }]), FILES)
+  assert.deepEqual(inventoryBlockers(check), [
+    'unit u1 (Orchestrator.factOf): a changed method needs before, note: its old and new signature and what changes in it',
+    'unit u2 (seedless, factOf): one name per unit: give each its own unit',
+  ], 'a config needs no signature')
 })

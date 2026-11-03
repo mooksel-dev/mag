@@ -2,8 +2,10 @@
 // hunk of the PRs has an id (H1…, in diff order across the repositories of the fact) and every block of consecutive
 // changed lines in it one more (H1.1, H1.2…); the inventory cites the blocks. What it checks is what the spike's
 // check.py did: blocks in no unit, ids that do not exist, units whose name their hunks do not bear out, units on a
-// module that owns none of their hunks; and, as warnings, code called noise and declarations no unit names.
-import { unitLeaf, type ChangeInventory, type InventoryUnit } from '@mag/core'
+// module that owns none of their hunks; since step .2 also calls to no module and units that break a rule of the
+// inventory (several names, a changed method without before, after and note); and, as warnings, code called noise and
+// declarations no unit names.
+import { parseCall, unitLeaf, unitRuleProblems, type ChangeInventory, type InventoryUnit } from '@mag/core'
 import type { FileChange, HunkBlock, InventoryCheck } from './types.ts'
 
 /** The files with an id on every hunk, H1… in their order (the order of the repositories, then of git's diff). */
@@ -94,15 +96,25 @@ const DECL = [
 ]
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'function', 'constructor', 'else', 'do', 'try'])
 
+export interface InventoryCheckOptions {
+  /**
+   * The modules a call may target besides those of the hunks: the project's architecture and vocabulary. Without it
+   * (a repository outside the project, whose modules are its folders) a call's target is not checked.
+   */
+  modules?: string[]
+}
+
 /**
  * The inventory against the numbered hunks of `files`. A hunk id stands for every block of its hunk. Blockers: a
  * block of a code file in no unit and not in noise; an id that is not a block or hunk; a unit whose name (the last
  * segment, a file name whole; both for a rename; the base name of its file, with or without the extension, the old
  * path's for the old name) is not in the lines (changed and context) or the header of
  * the hunks of its blocks, nor, for a config unit, its constant in a hunk of its file; a unit on a module that owns none of its blocks. Dependencies are
- * checked for their blocks only: the module they use is often not named there.
+ * checked for their blocks only: the module they use is often not named there. A call is borne out by its method; its
+ * target must be a module (`options.modules` or of the hunks) unless the unit says it is external. A unit that breaks
+ * a rule of the inventory (several names, a changed method without before, after and note) is ungrounded too.
  */
-export function checkInventory(inventory: ChangeInventory, files: FileChange[]): InventoryCheck {
+export function checkInventory(inventory: ChangeInventory, files: FileChange[], options: InventoryCheckOptions = {}): InventoryCheck {
   const blocks = hunkBlocks(files)
   const byId = new Map(blocks.map((b) => [b.id, b]))
   const ofHunk = new Map<string, HunkBlock[]>()
@@ -119,7 +131,12 @@ export function checkInventory(inventory: ChangeInventory, files: FileChange[]):
   const claimed = new Set<string>()
   const ungrounded: InventoryCheck['ungrounded'] = []
   const otherModule: InventoryCheck['otherModule'] = []
+  const known = options.modules && new Set([...options.modules, ...files.map((f) => f.module).filter((m): m is string => !!m)])
   for (const u of inventory.units) {
+    for (const why of unitRuleProblems(u)) ungrounded.push({ unit: u.id, name: u.name, why })
+    const call = u.kind === 'call' ? parseCall(u.name) : null
+    if (call && known && !u.external && !known.has(call.target))
+      ungrounded.push({ unit: u.id, name: u.name, why: `${call.target} is no module of the project: name the module it calls, or say external: true` })
     const of = expand(u.hunks, u.id)
     of.forEach((b) => claimed.add(b.id))
     if (!of.length) {

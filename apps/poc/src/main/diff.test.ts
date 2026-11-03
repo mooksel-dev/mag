@@ -117,7 +117,8 @@ test('get_pr_changes: the step branch against the base, by module of the archite
 })
 
 // Merged PRs of mag: the files they change by module (T-58.1), and the change inventories a fresh agent wrote of #77 and
-// #78 in the spike of diff-iak-inventar-zmin-ai (its own hunks, numbered as mag numbers them).
+// #78 in the spike of diff-iak-inventar-zmin-ai (its own hunks, numbered as mag numbers them), with the calls between
+// modules added in its step .2.
 const ROOT = git(process.cwd(), 'rev-parse', '--show-toplevel')
 const has = (sha: string) => {
   try {
@@ -158,11 +159,13 @@ test('PR #77, #78 (diff-iak-inventar-zmin-ai.1): the inventories pass the check;
     const files = numberHunks(await engine.changedFiles({ path: ROOT, name: 'mag' }, `${PRS[pr]}^1`, `${PRS[pr]}^2`, vocabulary))
     const { inventory, errors } = normalizeInventory(fixture(`inventory-mag${pr}.json`))
     assert.deepEqual(errors, [])
-    const check = checkInventory(inventory, files)
+    const options = { modules: vocabulary.modules.map((m) => m.id) }
+    const check = checkInventory(inventory, files, options)
     assert.deepEqual(inventoryBlockers(check), [], `#${pr}`)
+    assert.ok(inventory.units.some((u) => u.kind === 'call'), `#${pr} has its calls`)
     for (const u of inventory.units.filter((x) => ['method', 'model', 'field'].includes(x.kind))) {
       total++
-      const less = checkInventory({ ...inventory, units: inventory.units.filter((x) => x !== u) }, files)
+      const less = checkInventory({ ...inventory, units: inventory.units.filter((x) => x !== u) }, files, options)
       if (inventoryBlockers(less).length || less.undeclared.length > check.undeclared.length) caught++
     }
   }

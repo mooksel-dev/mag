@@ -156,21 +156,25 @@ diagrams from it; you never draw those.
   with why. Cite the blocks that change a unit, not the other blocks of its hunk; H3 stands for every block of H3.
   Tests, docs, styles and lock files need not be cited.
 - One unit per change, by kind. method: every function or method added, removed or changed, public and private;
-  before / after its signature; logic nontrivial when branches, loops, error handling, external calls or data access
+  before / after its signature (both for a changed one, also when only its body changes), note what it does now or
+  what changes in it (required for a changed one); logic nontrivial when branches, loops, error handling, external calls or data access
   change, trivial for wiring, renames and one-liners, none when only the signature changes. model / field: a type of
   data and its fields (name "<model>.<field>"); stored: true only for persisted data (a table, collection, document,
   cache entry), never arguments, options or DTOs. index: an index or unique key added, removed or changed, owner its
   model. dependency: a module starts or stops using another module or system (name: its module id or package), not
-  imports inside a module. config / template: a prompt, template or config entry whose change alters behaviour, one
+  imports inside a module. call: a call from one module to another added, removed or with changed arguments (mod),
+  one per target method: module the module that calls, name "<target module id>#<method>" ("<package>#<func>" with
+  external: true outside the project), before / after the call as the code makes it. config / template: a prompt, template or config entry whose change alters behaviour, one
   per constant.
 - module as the listing names the hunk's module; owner the type or file a method belongs to; names copied from the
-  diff. A rename is one unit, change rename with from, never a del and an add. Mocks, fakes and test helpers are
-  never units.
+  diff, one name per unit (never "a, b" or "a / b"). A rename is one unit, change rename with from, never a del and an
+  add. Mocks, fakes and test helpers are never units.
 - summary: 3–6 bullets on what the change does, by meaning.
 Then draw with show_diagram (without role: it joins the fact set) only what the inventory cannot give and the review
 needs: a scenario (sequence, its participants with module ids) and the logic of a method whose logic is nontrivial
 (flowchart with of "<module>#<method>"). mag answers each save with its check: fix the blockers (blocks in no unit,
-cited ids that do not exist, units their hunks do not bear out, units on another module) and answer the warnings
+cited ids that do not exist, units their hunks do not bear out, units on another module, calls to no module,
+several names in a unit, changed methods without before, after and note) and answer the warnings
 (code blocks called noise, declarations no unit names).`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
