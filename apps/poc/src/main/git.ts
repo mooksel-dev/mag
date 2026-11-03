@@ -1,10 +1,9 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import { parsePrUrl, type PostReview, type TaskWork } from '@mag/core'
-import { FUNCNAME_DRIVERS, funcnameAttributes, type FileDiff, type Hunk } from '@mag/diff'
+import type { FileDiff, Hunk } from '@mag/diff'
 import type { PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
@@ -188,71 +187,14 @@ export async function githubDiffText(repo: string, base: string, head: string): 
   return run('gh', ['api', '-H', 'Accept: application/vnd.github.diff', `repos/${repo}/compare/${base}...${head}`])
 }
 
-/** The changed files between two commits of a GitHub repository, with zero-context hunks: what diffHunks gives locally. */
+/** The changed files between two commits of a GitHub repository, with its hunks as GitHub gives them (with context). */
 export async function githubDiffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
-  return parseDiff(zeroContext(await githubDiffText(repo, base, head)))
+  return parseDiff(await githubDiffText(repo, base, head))
 }
 
 /** Where `head` left `base` (a branch or a commit) in a GitHub repository (owner/repo). */
 export async function githubMergeBase(repo: string, base: string, head: string): Promise<string> {
   return run('gh', ['api', `repos/${repo}/compare/${encodeURIComponent(base)}...${head}`, '--jq', '.merge_base_commit.sha'])
-}
-
-/**
- * A unified diff with context (GitHub's) as `git diff --unified=0` prints it: each run of changed lines a hunk of its
- * own, context lines dropped. A hunk without old (new) lines starts at the line before, as git has it.
- */
-export function zeroContext(text: string): string {
-  const out: string[] = []
-  let oldNo = 0
-  let newNo = 0
-  let run: { old: number; new: number; lines: string[]; dels: number; adds: number } | null = null
-  // Lines of the current hunk still to come: a context or changed line may itself look like a header.
-  let oldLeft = 0
-  let newLeft = 0
-  const flush = () => {
-    if (!run) return
-    const range = (start: number, lines: number) => `${lines ? start : start - 1}${lines === 1 ? '' : `,${lines}`}`
-    out.push(`@@ -${range(run.old, run.dels)} +${range(run.new, run.adds)} @@`, ...run.lines)
-    run = null
-  }
-  for (const line of text.split('\n')) {
-    if (oldLeft > 0 || newLeft > 0) {
-      const c = line[0]
-      if (c === ' ' || (c === undefined && line === '')) {
-        flush()
-        oldNo++, newNo++, oldLeft--, newLeft--
-        continue
-      }
-      if (c === '-' || c === '+') {
-        run ??= { old: oldNo, new: newNo, lines: [], dels: 0, adds: 0 }
-        run.lines.push(line)
-        if (c === '-') (run.dels++, oldNo++, oldLeft--)
-        else (run.adds++, newNo++, newLeft--)
-        continue
-      }
-      if (c === '\\') {
-        run?.lines.push(line)
-        continue
-      }
-    }
-    flush()
-    oldLeft = newLeft = 0
-    const h = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
-    if (h) {
-      oldNo = +h[1]
-      newNo = +h[3]
-      oldLeft = h[2] === undefined ? 1 : +h[2]
-      newLeft = h[4] === undefined ? 1 : +h[4]
-      // An empty side (-0,0 / +0,0) counts from line 1.
-      if (!oldLeft) oldNo++
-      if (!newLeft) newNo++
-      continue
-    }
-    out.push(line)
-  }
-  flush()
-  return out.join('\n')
 }
 
 /** Runs a command with `input` on its stdin. */
@@ -302,31 +244,22 @@ export async function treeAt(repo: string, sha: string): Promise<{ path: string;
     .map(({ path, blob }) => ({ path, blob }))
 }
 
-/** Changed files between two commits with zero-context hunks; renames detected (T-57). */
+/** Changed files between two commits with their hunks, three lines of context each; renames detected (T-57). */
 export async function diffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
   return parseDiff(await diffText(repo, base, head))
 }
 
 /**
- * git options that name the declaration of each hunk in its header with mag's diff drivers (povnyi-diff-nabir-pov-iazanykh.1,
- * Decision 9): an attributes file of mag's own and the drivers' xfuncname, never written into the user's repository.
- * Their own .gitattributes still wins.
+ * The diff between two commits as git prints it, renames detected, three lines of context, the hunk headers git's own
+ * (diff-iak-inventar-zmin-ai.1: the context and the header bear out an inventory's names): the text diffHunks parses.
  */
-export function funcnameConfig(): string[] {
-  // git ignores a missing attributes file: written again when the system cleaned the temporary folder.
-  const file = join(tmpdir(), `mag-diff-attributes-${process.pid}`)
-  if (!existsSync(file)) writeFileSync(file, funcnameAttributes())
-  return ['-c', `core.attributesFile=${file}`, ...FUNCNAME_DRIVERS.flatMap((d) => (d.xfuncname ? ['-c', `diff.${d.name}.xfuncname=${d.xfuncname}`] : []))]
-}
-
-/** The zero-context diff between two commits as git prints it, renames detected, hunk headers by mag's drivers: the text diffHunks parses. */
 export async function diffText(repo: string, base: string, head: string): Promise<string> {
-  const args = ['-c', 'core.quotePath=false', ...funcnameConfig(), 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=0', base, head]
+  const args = ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '--unified=3', base, head]
   const { stdout } = await exec('git', args, { cwd: repo, maxBuffer: 256 * 1024 * 1024 })
   return stdout
 }
 
-/** The lines (`-…`, `+…`) of one hunk of `path` (its path at head; at base when deleted) in a diffText; [] if absent. */
+/** The lines (` …`, `-…`, `+…`) of one hunk of `path` (its path at head; at base when deleted) in a diffText; [] if absent. */
 export function hunkLines(text: string, path: string, hunk: Hunk): string[] {
   const range = (start: number, lines: number) => `${start}${lines === 1 ? '' : `,${lines}`}`
   const header = `@@ -${range(hunk.oldStart, hunk.oldLines)} +${range(hunk.newStart, hunk.newLines)} @@`
@@ -335,9 +268,16 @@ export function hunkLines(text: string, path: string, hunk: Hunk): string[] {
     const at = file.lines.findIndex((l) => l.startsWith(header))
     if (at < 0) continue
     const out: string[] = []
+    let oldLeft = hunk.oldLines
+    let newLeft = hunk.newLines
     for (const l of file.lines.slice(at + 1)) {
-      if (out.length === hunk.oldLines + hunk.newLines || !/^[-+\\]/.test(l)) break
-      if (!l.startsWith('\\')) out.push(l)
+      if (oldLeft <= 0 && newLeft <= 0) break
+      if (l.startsWith('\\')) continue
+      if (l[0] === '-') oldLeft--
+      else if (l[0] === '+') newLeft--
+      else if (l[0] === ' ' || l === '') (oldLeft--, newLeft--)
+      else break
+      out.push(l)
     }
     return out
   }
@@ -351,8 +291,8 @@ function parseDiffSections(text: string): { path: string; lines: string[] }[] {
 }
 
 /**
- * A unified diff, as `git diff --unified=0` prints it, into files and hunks; each hunk with the declaration its header
- * names and its changed lines.
+ * A unified diff, as git (or GitHub) prints it, into files and hunks; each hunk with what its header names and its
+ * lines, context among them.
  */
 export function parseDiff(text: string): FileDiff[] {
   const out: FileDiff[] = []
@@ -368,17 +308,20 @@ export function parseDiff(text: string): FileDiff[] {
     cur = null
   }
   const strip = (p: string) => (p === '/dev/null' ? null : p.replace(/^[ab]\//, '').replace(/\t$/, ''))
-  // Lines of the current hunk still to come: a removed line may itself start with "--- ".
-  let left = 0
+  // Lines of the current hunk still to come, old and new: a removed line may itself start with "--- ".
+  let oldLeft = 0
+  let newLeft = 0
   let hunk: Hunk | null = null
   for (const line of text.split('\n')) {
-    if (left > 0 && /^[-+ ]/.test(line)) {
-      left--
-      if (line[0] !== ' ') hunk!.lines!.push(line)
+    if (oldLeft + newLeft > 0 && (/^[-+ ]/.test(line) || (line === '' && oldLeft > 0 && newLeft > 0))) {
+      if (line[0] === '-') oldLeft--
+      else if (line[0] === '+') newLeft--
+      else (oldLeft--, newLeft--)
+      hunk!.lines!.push(line || ' ')
       continue
     }
     if (line.startsWith('\\')) continue
-    left = 0
+    oldLeft = newLeft = 0
     if (line.startsWith('diff --git ')) {
       flush()
       // Paths from the header for diffs without ---/+++ (pure renames, mode changes, binaries); the lines below win.
@@ -396,7 +339,8 @@ export function parseDiff(text: string): FileDiff[] {
       if (!h) continue
       hunk = { oldStart: +h[1], oldLines: h[2] === undefined ? 1 : +h[2], newStart: +h[3], newLines: h[4] === undefined ? 1 : +h[4], ...(h[5]?.trim() && { header: h[5] }), lines: [] }
       cur.hunks.push(hunk)
-      left = hunk.oldLines + hunk.newLines
+      oldLeft = hunk.oldLines
+      newLeft = hunk.newLines
     }
   }
   flush()

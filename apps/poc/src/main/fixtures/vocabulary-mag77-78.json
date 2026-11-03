@@ -1,0 +1,471 @@
+{
+ "modules": [
+  {
+   "id": "workspace-root",
+   "paths": [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
+    ".gitignore"
+   ]
+  },
+  {
+   "id": "poc",
+   "paths": [
+    "apps/poc"
+   ]
+  },
+  {
+   "id": "main-entry",
+   "paths": [
+    "apps/poc/src/main/index.ts"
+   ]
+  },
+  {
+   "id": "scheduler",
+   "paths": [
+    "apps/poc/src/main/scheduler.ts"
+   ]
+  },
+  {
+   "id": "attention",
+   "paths": [
+    "apps/poc/src/main/attention.ts"
+   ]
+  },
+  {
+   "id": "app-menu",
+   "paths": [
+    "apps/poc/src/main/menu.ts"
+   ]
+  },
+  {
+   "id": "local-api",
+   "paths": [
+    "apps/poc/src/main/api.ts"
+   ]
+  },
+  {
+   "id": "task-mcp",
+   "paths": [
+    "apps/poc/src/main/task-mcp.ts"
+   ]
+  },
+  {
+   "id": "window-manager",
+   "paths": [
+    "apps/poc/src/main/windows.ts"
+   ]
+  },
+  {
+   "id": "orchestrator",
+   "paths": [
+    "apps/poc/src/main/orchestrator*.ts"
+   ]
+  },
+  {
+   "id": "plan-check",
+   "paths": [
+    "apps/poc/src/main/plan-check*.ts"
+   ]
+  },
+  {
+   "id": "step-fact",
+   "paths": [
+    "apps/poc/src/main/fact*.ts",
+    "apps/poc/src/main/diff.test.ts",
+    "apps/poc/src/main/fixtures"
+   ]
+  },
+  {
+   "id": "change-fact",
+   "paths": [
+    "apps/poc/src/main/core/services/fact"
+   ]
+  },
+  {
+   "id": "approvals",
+   "paths": [
+    "apps/poc/src/main/approvals*.ts"
+   ]
+  },
+  {
+   "id": "agent-tools",
+   "paths": [
+    "apps/poc/src/main/tools*.ts"
+   ]
+  },
+  {
+   "id": "store",
+   "paths": [
+    "apps/poc/src/main/store*.ts"
+   ]
+  },
+  {
+   "id": "git-github",
+   "paths": [
+    "apps/poc/src/main/git.ts"
+   ]
+  },
+  {
+   "id": "logger",
+   "paths": [
+    "apps/poc/src/main/log*.ts"
+   ]
+  },
+  {
+   "id": "crash-reports",
+   "paths": [
+    "apps/poc/src/main/crash.ts"
+   ]
+  },
+  {
+   "id": "preload-bridge",
+   "paths": [
+    "apps/poc/src/preload"
+   ]
+  },
+  {
+   "id": "window-bounds",
+   "paths": [
+    "apps/poc/src/main/bounds*.ts"
+   ]
+  },
+  {
+   "id": "attention-items",
+   "paths": [
+    "apps/poc/src/main/attention-items*.ts"
+   ]
+  },
+  {
+   "id": "tool-defs",
+   "paths": [
+    "apps/poc/src/main/tool-defs.ts"
+   ]
+  },
+  {
+   "id": "renderer-app",
+   "paths": [
+    "apps/poc/src/renderer/src/App.tsx",
+    "apps/poc/src/renderer/src/main.tsx",
+    "apps/poc/src/renderer/src/env.d.ts",
+    "apps/poc/src/renderer/index.html",
+    "apps/poc/src/renderer/src/styles.css",
+    "apps/poc/src/renderer/public"
+   ]
+  },
+  {
+   "id": "reviews-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Reviews.tsx"
+   ]
+  },
+  {
+   "id": "ideas-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Ideas.tsx"
+   ]
+  },
+  {
+   "id": "local-mode-view",
+   "paths": [
+    "apps/poc/src/renderer/src/LocalMode.tsx"
+   ]
+  },
+  {
+   "id": "tasks-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Tasks.tsx"
+   ]
+  },
+  {
+   "id": "link-pills",
+   "paths": [
+    "apps/poc/src/renderer/src/LinkPill.tsx"
+   ]
+  },
+  {
+   "id": "diff-tab",
+   "paths": [
+    "apps/poc/src/renderer/src/DiffTab.tsx"
+   ]
+  },
+  {
+   "id": "diff-set-view",
+   "paths": [
+    "apps/poc/src/renderer/src/DiffSetView.tsx"
+   ]
+  },
+  {
+   "id": "fact-panel",
+   "paths": [
+    "apps/poc/src/renderer/src/FactPanel.tsx"
+   ]
+  },
+  {
+   "id": "project-picker",
+   "paths": [
+    "apps/poc/src/renderer/src/Picker.tsx",
+    "apps/poc/src/renderer/src/Logo.tsx"
+   ]
+  },
+  {
+   "id": "popout-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Popout.tsx"
+   ]
+  },
+  {
+   "id": "error-boundary",
+   "paths": [
+    "apps/poc/src/renderer/src/ErrorBoundary.tsx"
+   ]
+  },
+  {
+   "id": "home-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Home.tsx"
+   ]
+  },
+  {
+   "id": "chat-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Chat.tsx"
+   ]
+  },
+  {
+   "id": "agents-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Agents.tsx"
+   ]
+  },
+  {
+   "id": "theme-hook",
+   "paths": [
+    "apps/poc/src/renderer/src/useTheme.ts"
+   ]
+  },
+  {
+   "id": "architecture-view",
+   "paths": [
+    "apps/poc/src/renderer/src/Architecture.tsx"
+   ]
+  },
+  {
+   "id": "diagram-views",
+   "paths": [
+    "apps/poc/src/renderer/src/diagrams"
+   ]
+  },
+  {
+   "id": "component-diagram",
+   "paths": [
+    "apps/poc/src/renderer/src/diagrams/Component.tsx"
+   ]
+  },
+  {
+   "id": "graph-diagrams",
+   "paths": [
+    "apps/poc/src/renderer/src/diagrams/Graph.tsx"
+   ]
+  },
+  {
+   "id": "sequence-diagram",
+   "paths": [
+    "apps/poc/src/renderer/src/diagrams/Sequence.tsx"
+   ]
+  },
+  {
+   "id": "data-diagram",
+   "paths": [
+    "apps/poc/src/renderer/src/diagrams/Data.tsx"
+   ]
+  },
+  {
+   "id": "component-diff",
+   "paths": [
+    "apps/poc/src/renderer/src/componentDiff*.ts"
+   ]
+  },
+  {
+   "id": "fact-view",
+   "paths": [
+    "apps/poc/src/renderer/src/factView*.ts"
+   ]
+  },
+  {
+   "id": "arch-edges",
+   "paths": [
+    "apps/poc/src/renderer/src/archEdges*.ts"
+   ]
+  },
+  {
+   "id": "graph-layout",
+   "paths": [
+    "apps/poc/src/renderer/src/graphLayout*.ts"
+   ]
+  },
+  {
+   "id": "sequence-layout",
+   "paths": [
+    "apps/poc/src/renderer/src/sequenceLayout*.ts"
+   ]
+  },
+  {
+   "id": "link-services",
+   "paths": [
+    "apps/poc/src/renderer/src/linkServices*.ts"
+   ]
+  },
+  {
+   "id": "renderer-markdown",
+   "paths": [
+    "apps/poc/src/renderer/src/markdown*.ts"
+   ]
+  },
+  {
+   "id": "renderer-format",
+   "paths": [
+    "apps/poc/src/renderer/src/format*.ts"
+   ]
+  },
+  {
+   "id": "agents-pkg",
+   "paths": [
+    "packages/agents"
+   ]
+  },
+  {
+   "id": "claude-code-agent",
+   "paths": [
+    "packages/agents/src"
+   ]
+  },
+  {
+   "id": "arch-pkg",
+   "paths": [
+    "packages/arch"
+   ]
+  },
+  {
+   "id": "arch-analyzer",
+   "paths": [
+    "packages/arch/src"
+   ]
+  },
+  {
+   "id": "diff-pkg",
+   "paths": [
+    "packages/diff"
+   ]
+  },
+  {
+   "id": "diff-engine",
+   "paths": [
+    "packages/diff/src/files.ts",
+    "packages/diff/src/types.ts",
+    "packages/diff/src/index.ts"
+   ]
+  },
+  {
+   "id": "diff-units",
+   "paths": [
+    "packages/diff/src/units*.ts"
+   ]
+  },
+  {
+   "id": "diff-completeness",
+   "paths": [
+    "packages/diff/src/completeness*.ts"
+   ]
+  },
+  {
+   "id": "diff-vocabulary",
+   "paths": [
+    "packages/diff/src/vocabulary*.ts",
+    "packages/diff/src/ownership*.ts"
+   ]
+  },
+  {
+   "id": "diff-plan",
+   "paths": [
+    "packages/diff/src/plan*.ts"
+   ]
+  },
+  {
+   "id": "diff-compare",
+   "paths": [
+    "packages/diff/src/compare*.ts",
+    "packages/diff/src/significance.ts",
+    "packages/diff/src/format.ts"
+   ]
+  },
+  {
+   "id": "core-pkg",
+   "paths": [
+    "packages/core"
+   ]
+  },
+  {
+   "id": "core-model",
+   "paths": [
+    "packages/core/src"
+   ]
+  },
+  {
+   "id": "core-arch",
+   "paths": [
+    "packages/core/src/arch*.ts"
+   ]
+  },
+  {
+   "id": "core-diagram",
+   "paths": [
+    "packages/core/src/diagram*.ts",
+    "packages/core/src/canvases*.ts"
+   ]
+  },
+  {
+   "id": "core-sets",
+   "paths": [
+    "packages/core/src/sets*.ts"
+   ]
+  },
+  {
+   "id": "core-playbook",
+   "paths": [
+    "packages/core/src/playbook*.ts"
+   ]
+  },
+  {
+   "id": "core-pr-review",
+   "paths": [
+    "packages/core/src/pr-review*.ts"
+   ]
+  },
+  {
+   "id": "json-db",
+   "paths": []
+  },
+  {
+   "id": "claude-cli",
+   "paths": []
+  },
+  {
+   "id": "codex-cli",
+   "paths": []
+  },
+  {
+   "id": "git-cli",
+   "paths": []
+  },
+  {
+   "id": "github",
+   "paths": []
+  },
+  {
+   "id": "jira-linear",
+   "paths": []
+  }
+ ]
+}

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Change, FileChange } from '@mag/diff/types'
-import { filesOf, mark, rows, statusCounts, unverified, what, type FactItem } from './factView.ts'
+import { countLabel, filesOf, mark, rows, statusCounts, what, type FactItem } from './factView.ts'
 
 const change = (c: Partial<Change>): Change => ({ key: 'store#save', kind: 'element', diff: 'add', module: 'store', name: 'save', ...c })
 const file = (path: string, repo = 'app'): FileChange => ({ path, status: 'mod', hunks: [], repo, module: 'store', kind: 'code' })
@@ -16,13 +16,10 @@ test('mark, what: a change in a few words', () => {
   assert.equal(what(change({ kind: 'module', key: 'store' })), 'module store')
 })
 
-test('filesOf and unverified: the files a line rests on, and why it is not verified', () => {
+test('filesOf and countLabel: the files a line rests on; the counts a step records, named', () => {
   const files = [file('src/store.ts'), file('src/db.ts', 'web')]
   assert.deepEqual(filesOf(change({ files: ['web:src/db.ts', 'src/store.ts', 'nope.ts'] }), files).map((f) => f.path), ['src/db.ts', 'src/store.ts'])
-  const c = change({})
-  const view = { unverified: [{ change: c, reason: 'not-in-pr' as const, files: ['nope.ts'] }] }
-  assert.equal(unverified(c, view), 'unverified: not in the PR (nope.ts)')
-  assert.equal(unverified(change({ key: 'other' }), view), null)
+  assert.deepEqual(['match', 'unaccounted', 'ungrounded', 'unshown'].map(countLabel), ['as planned', 'in no unit', 'ungrounded', 'not shown'])
 })
 
 test('rows: matches apart, low and noise folded unless all; counts in order', () => {

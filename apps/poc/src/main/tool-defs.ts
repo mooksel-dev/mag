@@ -96,7 +96,6 @@ const INTERFACE = {
       from: { type: 'string', description: 'With move: the id of the module it moved from, another module of this diagram; a renamed method (here or on the way) is "<module>#<old name>", one line, not a del and an add.' },
       files: FILES,
       links: LINKS,
-      trivialLogic: { type: 'string', description: 'Fact diagrams: instead of a flowchart for a method whose logic changes, one line on why it is trivial ("логіка тривіальна: rename", "passes one more argument").' },
     },
   },
 }
@@ -437,6 +436,55 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'set_inventory',
+    scope: 'task',
+    reviewer: 'also',
+    description:
+      "The fact of the PRs under review (a step's reviewer; the topic that owns a review of a teammate's PR): their change inventory, a flat list of what changed at the level a reviewer designs at, written from the hunks get_pr_changes lists. mag checks it against the hunks (blockers: a block of changed code in no unit and not in noise, an id that is no block, a unit whose name its hunks do not bear out, a unit on a module that owns none of its blocks; warnings: code called noise, declarations no unit of their module names), generates the fact's Component and Data diagrams from it (the root of the fact set, replacing those drawn before) and answers with the check and plan ↔ fact. Call it again with the whole inventory to fix it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        inventory: {
+          type: 'object',
+          required: ['summary', 'units', 'noise'],
+          properties: {
+            summary: { type: 'array', items: { type: 'string' }, description: '3–6 short bullets: what the change does, by meaning.' },
+            units: {
+              type: 'array',
+              description: 'One per change. method: every function or method added, removed or changed, public and private. model / field: types of data and their fields; stored only for persisted data. index: DB indexes and unique keys. dependency: a module starts or stops using another module or system. config / template: prompts, templates, config entries whose change alters behaviour, one per constant. Mocks and test helpers are never units; a rename is one unit.',
+              items: {
+                type: 'object',
+                required: ['kind', 'module', 'name', 'change', 'hunks'],
+                properties: {
+                  id: { type: 'string', description: 'u1, u2…; filled in when left out.' },
+                  kind: { type: 'string', enum: ['method', 'model', 'field', 'index', 'dependency', 'config', 'template'] },
+                  module: { type: 'string', description: 'The module of its hunks, as the listing names it.' },
+                  owner: { type: 'string', description: 'method: the type, class or file it belongs to; field / index: its model.' },
+                  name: { type: 'string', description: 'Copied from the diff. method / model: its name; field: "<model>.<field>"; index: its name; dependency: the module id or package used; config: the constant, e.g. DEFAULT_PLAYBOOK.fact.' },
+                  change: { type: 'string', enum: ['add', 'mod', 'del', 'rename'] },
+                  visibility: { type: 'string', enum: ['public', 'private'] },
+                  before: { type: 'string', description: 'The old signature (field type, definition), one line; none for add.' },
+                  after: { type: 'string', description: 'The new one; none for del.' },
+                  from: { type: 'string', description: 'rename: the old name.' },
+                  logic: { type: 'string', enum: ['none', 'trivial', 'nontrivial'], description: 'method: nontrivial when branches, loops, error handling, external calls or data access change; trivial for wiring, renames, one-liners; none when only the signature changes.' },
+                  stored: { type: 'boolean', description: 'model / field: true only for persisted data (a table, collection, document, cache entry); never arguments, options or DTOs.' },
+                  hunks: { type: 'array', items: { type: 'string' }, description: 'The blocks that change it, e.g. ["H3.1", "H4.2"]; not the other blocks of their hunks. "H3" stands for every block of H3.' },
+                  note: { type: 'string', description: 'One line: what changes in meaning.' },
+                },
+              },
+            },
+            noise: {
+              type: 'array',
+              description: 'Blocks of code that are no change of the design, with why: formatting, comments, generated code. Tests, docs and lock files need not be cited.',
+              items: { type: 'object', required: ['hunks', 'reason'], properties: { hunks: { type: 'array', items: { type: 'string' } }, reason: { type: 'string' } } },
+            },
+          },
+        },
+      },
+      required: ['inventory'],
+    },
+  },
+  {
     name: 'set_review',
     scope: 'task',
     reviewer: 'only',
@@ -479,7 +527,7 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'also',
     description:
-      "The files the step's branches change against the base, any language: per module of the project's architecture that owns them, each changed code file with its hunks (old → new lines); tests, styles, lock files, generated code and docs listed apart. Read the diff itself with git diff or gh pr diff. Every changed code file has to be on the fact diagram; its lines give these paths as files. A review of a teammate's PR: its fact, without a plan; the first call starts the fact diagram over the modules that own the changed code.",
+      "The files the step's branches change against the base, any language: per module of the project's architecture that owns them, each changed code file with its hunk ids (H1…, old → new lines); tests, styles, lock files, generated code and docs listed apart. Then every hunk of code with its id, owner module, git's header and lines (three lines of context), each block of changed lines marked [H<n>.<k>]: what set_inventory cites. The reviewer gets the heads under review, numbered as mag checks them. A review of a teammate's PR: its fact at the PR's head, without a plan.",
     inputSchema: {
       type: 'object',
       properties: { repo: { type: 'string', description: 'Repo name as get_task lists it (work.repos[].name) or its path. Default: every repo of the step.' } },
@@ -711,7 +759,7 @@ export const TOOL_DEFS = [
     // The reviewer draws the fact set of its step only (T-57.4, T-58, povnyi-diff-nabir-pov-iazanykh.1).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (collections, tables, fields, indexes and unique keys; each entity with module, its owner, and a relation for each reference field; never arguments of calls, interfaces or clients). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. Mocks, fakes and test-only types are never on a diagram. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind); a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A reviewer draws the fact set of its step (role fact, started by mag as a copy of the plan set with its links): it revises its diagrams by id and adds new ones (without role, they join the fact set). It draws what the diff did at the level of the architecture (modules, their public interface, dependencies; helpers and single adapters fold into one line that gives the files of all of them), and every changed interface line, use and call gives files, the paths of the PR it rests on, owned by its module (<repo>:<path> when several repos change that path). Only files a line gives count as shown; a module mark alone shows none. Every changed public method get_pr_changes lists is its own interface line, a changed logic (of private methods too) has a flowchart linked kind logic (or of) or trivialLogic, a changed model is an entity on a data diagram, a changed index an index marked on its entity, a dependency added or removed is a use marked add or del; what is not worth a diagram goes in notes with why. The answer lists the changed code files the set does not show, the lines that do not rest on the PR, the changed methods, models, logic and dependencies it neither shows nor explains, and plan ↔ fact.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (collections, tables, fields, indexes and unique keys; each entity with module, its owner, and a relation for each reference field; never arguments of calls, interfaces or clients). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. Mocks, fakes and test-only types are never on a diagram. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind); a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A fact set (the reviewer\'s of its step, a review\'s of a teammate\'s PR) takes only sequence and flowchart diagrams: mag generates its Component and Data diagrams from the change inventory (set_inventory). Draw a scenario (participants with module ids: mag links it from those modules) or the logic of a method the inventory lists with logic nontrivial (flowchart with of "<module>#<method>", the last segment of its name), without role: it joins the fact set. The answer is mag\'s check of the fact: the inventory against the hunks, links, plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -719,16 +767,7 @@ export const TOOL_DEFS = [
         diagram: DIAGRAM,
         id: { type: 'string', description: 'Existing diagram id to revise.' },
         ...PLACEMENT,
-        root: { type: 'boolean', description: 'true: the entry of its set (the system level or the top component diagram); the other diagrams of the set stop being root.' },
-        notes: {
-          type: 'array',
-          description: 'Fact diagrams: changes of the code the set does not draw, each with why in one line (a utility method, an internal type, trivial logic, a dependency of no weight). name as get_pr_changes names it.',
-          items: {
-            type: 'object',
-            required: ['kind', 'name', 'why'],
-            properties: { kind: { type: 'string', enum: ['method', 'model', 'logic', 'dependency'], description: 'model also for an index.' }, name: { type: 'string' }, file: { type: 'string' }, why: { type: 'string' } },
-          },
-        },
+        root: { type: 'boolean', description: 'true: the entry of its set (the system level or the top component diagram); the other diagrams of the set stop being root. Not in a fact set: its root is mag\'s.' },
       },
       required: ['title', 'diagram'],
     },
@@ -754,7 +793,7 @@ export const APPROVE_TOOL = 'mcp__mag__approve_tool'
  * reviews a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2). In a
  * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
  */
-export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_pr_review'] as const
+export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_inventory', 'set_pr_review'] as const
 
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 

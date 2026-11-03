@@ -1,5 +1,5 @@
-// Plan ↔ fact as Diff shows it (T-57.5, T-58): what a change is in a few words, which files it rests on, whether it is
-// verified, and what folds away.
+// Plan ↔ fact as Diff shows it (T-57.5, T-58): what a change is in a few words, which files it rests on, and what folds
+// away.
 import type { Change, CompareStatus, FileChange, HunkRef, Level } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 
@@ -43,15 +43,10 @@ export function filesOf(c: Change, files: FileChange[]): FileChange[] {
   return (c.files ?? []).flatMap((p) => files.filter((f) => f.path === p || `${f.repo}:${f.path}` === p || f.oldPath === p).slice(0, 1))
 }
 
-/** Why a change of the fact is not verified, in a few words; null when it rests on the PR or is not the fact's. */
-export function unverified(c: Change, view: Pick<FactView, 'unverified'>): string | null {
-  const u = view.unverified.find((x) => x.change.key === c.key && x.change.diff === c.diff)
-  if (!u) return null
-  const files = u.files.join(', ')
-  if (u.reason === 'no-files') return 'unverified: no files'
-  if (u.reason === 'not-in-pr') return `unverified: not in the PR (${files})`
-  if (u.reason === 'ambiguous') return `unverified: in several repos, give <repo>:<path> (${files})`
-  return `unverified: another module's (${files})`
+/** A count a step records (StepFact.counts), as the collapsed panel names it. */
+export function countLabel(key: string): string {
+  if (key in STATUS_LABEL) return STATUS_LABEL[key as CompareStatus]
+  return key === 'unaccounted' ? 'in no unit' : key === 'unshown' ? 'not shown' : key
 }
 
 /** The rows Diff lists: changes to look at by status and level; low / noise and matches counted apart. */

@@ -1,0 +1,384 @@
+{
+ "summary": [
+  "A project chat gets six control tools that do what the user's buttons do: approve_plan, start_work, start_step, restart_review, message_agent, stop_agent",
+  "Approve logic moves from the IPC handler in index.ts into Orchestrator.approve, shared by the button and the chat tool",
+  "Orchestrator gains agentOf (which session a message goes to) and stopAgents (stop all running agents of a work/step)",
+  "ToolActions grows seven actions wired in index.ts to orchestrator methods; tools.ts routes the new tools to controlTool, which checks the caller is a project chat and logs each action",
+  "ProjectEvent kind 'chat' added for the log of chat-driven actions; chat prompt and tool descriptions say to act only on the user's explicit request"
+ ],
+ "units": [
+  {
+   "id": "u1",
+   "kind": "method",
+   "module": "main-entry",
+   "owner": "apps/poc/src/main/index.ts",
+   "name": "app.whenReady callback",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "trivial",
+   "runs": [
+    "H1.1",
+    "H2.1"
+   ],
+   "note": "ToolActions stub gains approve/develop/startStep/restartReview/agentOf/send/stopAgents, then wired to orch.approve/develop/startStep/reviewTask/agentOf/send/stopAgents"
+  },
+  {
+   "id": "u2",
+   "kind": "method",
+   "module": "main-entry",
+   "owner": "apps/poc/src/main/index.ts",
+   "name": "task:approve handler",
+   "change": "mod",
+   "visibility": "public",
+   "before": "handle('task:approve', (_, id: string) => { ...checks...; store.updateTask(id, { status: 'ready', needsInput: null }) })",
+   "after": "handle('task:approve', (_, id: string) => orch.approve(id))",
+   "logic": "trivial",
+   "runs": [
+    "H3.1"
+   ],
+   "note": "checks and status change moved into Orchestrator.approve"
+  },
+  {
+   "id": "u3",
+   "kind": "config",
+   "module": "orchestrator",
+   "owner": "Orchestrator",
+   "name": "project chat prompt rules",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H7.1"
+   ],
+   "note": "new rule: do what the user's buttons do via the control tools, only when the user asked; never tell the user to press a button"
+  },
+  {
+   "id": "u4",
+   "kind": "method",
+   "module": "orchestrator",
+   "owner": "Orchestrator",
+   "name": "approve",
+   "change": "add",
+   "visibility": "public",
+   "after": "approve(taskId: string)",
+   "logic": "nontrivial",
+   "runs": [
+    "H6.1",
+    "H8.1"
+   ],
+   "note": "planning -> ready with status, running-agent and canApprove checks (moved from index.ts)"
+  },
+  {
+   "id": "u5",
+   "kind": "method",
+   "module": "orchestrator",
+   "owner": "Orchestrator",
+   "name": "agentOf",
+   "change": "add",
+   "visibility": "public",
+   "after": "agentOf(taskId: string, role?: MessagedRole): AgentSession | null",
+   "logic": "nontrivial",
+   "runs": [
+    "H6.2",
+    "H8.1"
+   ],
+   "note": "session of the role, else the one that worked last, scoped to the work's current step or the step itself"
+  },
+  {
+   "id": "u6",
+   "kind": "method",
+   "module": "orchestrator",
+   "owner": "Orchestrator",
+   "name": "stopAgents",
+   "change": "add",
+   "visibility": "public",
+   "after": "async stopAgents(taskId: string): Promise<AgentSession[]>",
+   "logic": "nontrivial",
+   "runs": [
+    "H8.1"
+   ],
+   "note": "stops every running session of a work (incl. steps) or of a step; returns them"
+  },
+  {
+   "id": "u7",
+   "kind": "model",
+   "module": "tool-defs",
+   "owner": "tool-defs.ts",
+   "name": "MessagedRole",
+   "change": "add",
+   "visibility": "public",
+   "after": "export const MESSAGED_ROLES = ['developer', 'reviewer', 'groomer'] as const; export type MessagedRole = (typeof MESSAGED_ROLES)[number]",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H9.1"
+   ]
+  },
+  {
+   "id": "u8",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "tool-defs.ts",
+   "name": "ASKED",
+   "change": "add",
+   "visibility": "private",
+   "after": "const ASKED = 'Only when the user has asked for exactly this in this conversation ...'",
+   "logic": "none",
+   "runs": [
+    "H9.1"
+   ],
+   "note": "shared description suffix restricting control tools to explicit user requests"
+  },
+  {
+   "id": "u9",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "approve_plan",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'approve_plan', scope: 'project', inputSchema: { key } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u10",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "start_work",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'start_work', scope: 'project', inputSchema: { key, local_repos? } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u11",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "start_step",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'start_step', scope: 'project', inputSchema: { key } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u12",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "restart_review",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'restart_review', scope: 'project', inputSchema: { key } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u13",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "message_agent",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'message_agent', scope: 'project', inputSchema: { key, text, role?: MESSAGED_ROLES } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u14",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "stop_agent",
+   "change": "add",
+   "visibility": "public",
+   "after": "{ name: 'stop_agent', scope: 'project', inputSchema: { key } }",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u15",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "approve",
+   "change": "add",
+   "visibility": "public",
+   "after": "approve(taskId: string): void",
+   "logic": "none",
+   "runs": [
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u16",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "develop",
+   "change": "add",
+   "visibility": "public",
+   "after": "develop(taskId: string, localRepos?: string[]): Promise<void>",
+   "logic": "none",
+   "runs": [
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u17",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "startStep",
+   "change": "add",
+   "visibility": "public",
+   "after": "startStep(taskId: string): Promise<void>",
+   "logic": "none",
+   "runs": [
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u18",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "restartReview",
+   "change": "add",
+   "visibility": "public",
+   "after": "restartReview(taskId: string): Promise<void>",
+   "logic": "none",
+   "runs": [
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u19",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "agentOf",
+   "change": "add",
+   "visibility": "public",
+   "after": "agentOf(taskId: string, role?: MessagedRole): AgentSession | null",
+   "logic": "none",
+   "runs": [
+    "H16.1",
+    "H17.1",
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u20",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "send",
+   "change": "add",
+   "visibility": "public",
+   "after": "send(sessionId: string, text: string): Promise<void>",
+   "logic": "none",
+   "runs": [
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u21",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "ToolActions",
+   "name": "stopAgents",
+   "change": "add",
+   "visibility": "public",
+   "after": "stopAgents(taskId: string): Promise<AgentSession[]>",
+   "logic": "none",
+   "runs": [
+    "H16.1",
+    "H18.1"
+   ]
+  },
+  {
+   "id": "u22",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "tools.ts",
+   "name": "sharedTool",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "trivial",
+   "runs": [
+    "H19.1"
+   ],
+   "note": "routes the six control tools to controlTool"
+  },
+  {
+   "id": "u23",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "tools.ts",
+   "name": "controlTool",
+   "change": "add",
+   "visibility": "private",
+   "after": "async function controlTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>, byKey: (key: unknown) => Task): Promise<string>",
+   "logic": "nontrivial",
+   "runs": [
+    "H17.1",
+    "H20.1"
+   ],
+   "note": "chat-session-only guard, step/current-step checks, role/text validation, calls ToolActions, logs a 'chat' event per action"
+  },
+  {
+   "id": "u24",
+   "kind": "model",
+   "module": "core-model",
+   "owner": "core",
+   "name": "EventKind",
+   "change": "mod",
+   "visibility": "public",
+   "before": "'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review'",
+   "after": "'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review' | 'chat'",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H21.1"
+   ],
+   "note": "new persisted project event kind for chat-driven actions"
+  }
+ ],
+ "noise": [
+  {
+   "runs": [
+    "H4",
+    "H5"
+   ],
+   "reason": "test: orchestrator.test.ts imports and chat control tool tests"
+  },
+  {
+   "runs": [
+    "H11",
+    "H12",
+    "H13",
+    "H14",
+    "H15"
+   ],
+   "reason": "test: tools.test.ts NO_CONTROL mock and tool listing test"
+  }
+ ]
+}

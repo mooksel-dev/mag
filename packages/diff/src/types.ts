@@ -12,13 +12,15 @@ export interface Vocabulary {
 }
 
 export interface Hunk {
+  /** H1…, in diff order across the repositories of a fact (numberHunks, diff-iak-inventar-zmin-ai.1). */
+  id?: string
   oldStart: number
   oldLines: number
   newStart: number
   newLines: number
-  /** The declaration git names after the hunk's `@@ … @@`, with its indentation (povnyi-diff-nabir-pov-iazanykh.1). */
+  /** What git names after the hunk's `@@ … @@`: the line its default heuristic takes for the enclosing declaration. */
   header?: string
-  /** The changed lines (`-…`, `+…`), as read for changedUnits; dropped before the files go anywhere else. */
+  /** Its lines with their context (` …`, `-…`, `+…`), for the inventory check; never sent to the renderer. */
   lines?: string[]
 }
 
@@ -36,8 +38,8 @@ export interface HunkRef extends Hunk {
 }
 
 /**
- * What a changed file is, by its path alone, whatever the language. Only code has to be on a fact diagram; the rest is
- * noise to coverage: tests, styles, lock files, generated code, documentation.
+ * What a changed file is, by its path alone, whatever the language. Only code has to be in a fact's inventory; the
+ * rest need not be cited: tests, styles, lock files, generated code, documentation.
  */
 export type FileKind = 'code' | 'test' | 'style' | 'lock' | 'generated' | 'docs'
 
@@ -104,24 +106,6 @@ export interface Comparison {
   items: CompareItem[]
 }
 
-/** Which changed code files of a PR a fact diagram shows (T-58 Decision 2). Files that are not code are left out. */
-export interface Coverage {
-  shown: FileChange[]
-  unshown: FileChange[]
-}
-
-/**
- * Why a changed line of a fact cannot be taken on its word: no files, files the PR does not change, a plain path two
- * repositories change (Decision 13), files of another module.
- */
-export type UnverifiedReason = 'no-files' | 'not-in-pr' | 'ambiguous' | 'other-module'
-
-/** The changes of a fact diagram that rest on its PR's files, and those that do not (T-58 Decision 9). */
-export interface Grounding {
-  grounded: Change[]
-  unverified: { change: Change; reason: UnverifiedReason; files: string[] }[]
-}
-
 /**
  * Where a plan diagram disagrees with the vocabulary (T-58 Decision 8): unknown-module: an id the architecture does
  * not have and the diagram does not add; no-path: an added module without the code it will own; exists: an add of a
@@ -136,47 +120,35 @@ export interface PlanWarning {
   message: string
 }
 
-/**
- * A change of one kind a fact has to show (povnyi-diff-nabir-pov-iazanykh.1, Decision 8), read from the hunk headers
- * and changed lines git gives, no code parsed. method: a function or method, public, or private with logic
- * (povnyi-diff-nabir-pov-iazanykh.3); model: stored data, a type with persistence tags or an ORM base, or a schema (a
- * table, a Prisma model, a proto message…); index: an index or unique key created, changed or dropped; dependency: an
- * import of another module added or removed.
- */
-export interface ChangedUnit {
-  /** The repository's name. */
+/** A block of consecutive changed lines of a hunk (diff-iak-inventar-zmin-ai.1): what an inventory unit cites. */
+export interface HunkBlock {
+  /** `<hunk id>.<k>`, e.g. H3.2. */
+  id: string
+  hunk: string
   repo: string
-  file: string
-  kind: 'method' | 'model' | 'index' | 'dependency'
-  /** method / model: its name; index: the table it is on, else the declaration it is in; dependency: the module (or package) imported. */
-  name: string
-  /** The module that owns the file; null when none does. */
+  path: string
   module: string | null
-  diff: 'add' | 'mod' | 'del'
-  /** method: lines of its body changed, not only its signature (the logic rule). */
-  bodyChanged?: boolean
-  /**
-   * method: public by its language's convention, so a line of its module's interface; a private one only needs its
-   * logic shown (a flowchart linked from the step that calls it), so it is a unit only when its body has logic.
-   */
-  public?: boolean
-  /**
-   * high: named by a hunk header or a changed declaration or import line, a missing one blocks merge; low: a guess
-   * (no name, a package outside the project, a removed import), a warning only (Decision 9).
-   */
-  confidence: 'high' | 'low'
-  /** A line of the file where it changes, at head (at base when removed). */
-  line: number
+  kind: FileKind
+  lines: string[]
 }
 
-/** A changed unit the fact set neither shows nor explains: method, model, index, logic (no flowchart, not trivial) or dependency. */
-export interface MissingUnit {
-  unit: ChangedUnit
-  rule: 'method' | 'model' | 'index' | 'logic' | 'dependency'
-}
-
-export interface Completeness {
-  missing: MissingUnit[]
+/** A change inventory against the hunks (checkInventory): what blocks merge, then the warnings to answer. */
+export interface InventoryCheck {
+  blocks: number
+  codeBlocks: number
+  units: number
+  /** Blocks of code files in no unit and not in noise. */
+  unaccounted: HunkBlock[]
+  /** Ids a unit (its id) or noise (`noise[<i>]`) cites that are no block or hunk. */
+  unknown: { id: string; by: string }[]
+  /** Units whose name their hunks do not bear out. */
+  ungrounded: { unit: string; name: string; why: string }[]
+  /** Units on a module that owns none of their blocks. */
+  otherModule: { unit: string; name: string; module: string; hunkModules: string[] }[]
+  /** Warning: code blocks only noise claims, though they change more than comments and blank lines. */
+  noiseClaims: { block: string; reason: string; lines: number }[]
+  /** Warning: declarations in changed lines that no unit of their module names. */
+  undeclared: { block: string; name: string; line: string }[]
 }
 
 /** The git operation the diff needs; the app's git client implements it. */

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, remapLinks, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChatItem, type Diagram, type FactNote, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -442,11 +442,11 @@ export class Store {
   }
 
   /**
-   * A new canvas, or a new version of `id`; a revision keeps the kind, and its placement, root and notes unless given.
+   * A new canvas, or a new version of `id`; a revision keeps the kind, and its placement, root and inventory unless given.
    * root: true makes it the only root of its set (povnyi-diff-nabir-pov-iazanykh.1).
    */
   saveCanvas(
-    c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string; placement?: CanvasPlacement; root?: boolean; notes?: FactNote[] } & (
+    c: { id?: string; projectId: string; taskId: string | null; sessionId: string | null; title: string; placement?: CanvasPlacement; root?: boolean; inventory?: ChangeInventory } & (
       | { kind: 'html'; html: string }
       | { kind: 'diagram'; diagram: Diagram }
     ),
@@ -455,7 +455,7 @@ export class Store {
     if (c.id && !prev) throw new Error(`No canvas ${c.id}`)
     if (prev && prev.kind !== c.kind) throw new Error(`Canvas ${prev.id} is ${prev.kind === 'diagram' ? 'a diagram: revise it with show_diagram' : 'HTML: revise it with show_canvas'}`)
     const content = c.kind === 'html' ? { kind: c.kind, html: c.html } : { kind: c.kind, diagram: c.diagram }
-    const extra = { ...(c.root !== undefined && { root: c.root }), ...(c.notes !== undefined && { notes: c.notes }) }
+    const extra = { ...(c.root !== undefined && { root: c.root }), ...(c.inventory !== undefined && { inventory: c.inventory }) }
     const canvas: Canvas = prev
       ? { ...prev, title: c.title || prev.title, ...content, ...c.placement, ...extra, version: prev.version + 1, updatedAt: Date.now() }
       : { id: id(), projectId: c.projectId, taskId: c.taskId, sessionId: c.sessionId, title: c.title, ...content, ...c.placement, ...extra, version: 1, updatedAt: Date.now() }
@@ -463,28 +463,6 @@ export class Store {
     if (canvas.root) for (const o of setOf(canvas, Object.values(this.data.canvases))) if (o.id !== canvas.id && o.root) this.data.canvases[o.id] = { ...o, root: false }
     this.changed()
     return canvas
-  }
-
-  /**
-   * New diagrams of one set at once (a fact set mag starts as a copy of the plan set): their links to the diagrams
-   * they copy (`from`) lead to the copies.
-   */
-  saveCanvasSet(
-    base: { projectId: string; taskId: string | null; placement: CanvasPlacement },
-    drafts: { from: string | null; title: string; diagram: Diagram; root: boolean }[],
-  ): Canvas[] {
-    const ids = new Map(drafts.flatMap((d) => (d.from ? [[d.from, id()] as const] : [])))
-    const out = drafts.map((d) => {
-      const canvas: Canvas = {
-        id: (d.from && ids.get(d.from)) || id(), projectId: base.projectId, taskId: base.taskId, sessionId: null, title: d.title, kind: 'diagram',
-        // A copy is the fact of the plan diagram it copies.
-        diagram: remapLinks(d.diagram, ids), ...base.placement, ...(d.from && base.placement.role === 'fact' && { planOf: d.from }), root: d.root, version: 1, updatedAt: Date.now(),
-      }
-      this.data.canvases[canvas.id] = canvas
-      return canvas
-    })
-    this.changed()
-    return out
   }
 
   /** Places a diagram in its work (T-55.3); the content and its version stay. */

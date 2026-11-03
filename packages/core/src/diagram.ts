@@ -30,8 +30,10 @@ export interface DLine extends Omit<Line, 'diff'> {
   /** With move: the id of the module it moved from; "<module>#<old name>" when it is renamed (there or here). */
   from?: string
   links?: DiagramLink[]
-  /** On a fact diagram: why the method's changed logic needs no flowchart ("логіка тривіальна: …", Decision 8). */
-  trivialLogic?: string
+  /** On a fact diagram (generated from its inventory): the method's logic changes nontrivially, a flowchart may show it. */
+  logic?: boolean
+  /** On a fact diagram: a private method. */
+  private?: boolean
 }
 
 /** A module of a Component diagram: an ArchNode with diff marks. */
@@ -361,8 +363,6 @@ export function validateDiagram(d: Diagram): string[] {
           const what = `Interface line "${l.text}" of ${n.id}`
           files(what, l.files)
           links(what, l.links)
-          if (l.trivialLogic !== undefined && (typeof l.trivialLogic !== 'string' || !l.trivialLogic.trim()))
-            errors.push(`${what}: trivialLogic is one line on why the changed logic needs no flowchart`)
           if (l.diff !== undefined && !LINE_MARKS.includes(l.diff)) errors.push(`${what}: diff must be one of ${LINE_MARKS.join(', ')}`)
           if (looksGrouped(l.text)) errors.push(`${what}: ${grouped('method', 'name(args): Result - what it does')}`)
           if (l.diff === 'move') {

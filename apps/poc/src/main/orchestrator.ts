@@ -9,7 +9,7 @@ import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
-import { changes, check, factReport, seed } from './core/services/fact/index.ts'
+import { changes, check, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
@@ -206,9 +206,9 @@ First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's 
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
-The fact set (below) is yours to draw: mag started it as a copy of this step's plan set with its links (without a plan, as one diagram of the modules that own the changed code, unmarked). Revise its diagrams by id and add the ones it lacks (data, sequence, flowchart) with show_diagram, without role: they join the step's fact set. Draw it following the project's playbook:
+The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (get_pr_changes lists them again); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
 ${playbookOf(project).fact}
-mag checks each revision: which changed code files the set does not show, which lines do not rest on the PR, which changed public methods, models, method logic and dependencies it neither shows nor explains in notes, whether it hangs together (root, links), and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
+mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
 ${fact}
 Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
@@ -245,7 +245,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
 Review it following the project's playbook:
 ${playbook.prReview}
-The fact set (show_diagram without role: its diagrams join the review's fact set), by the project's playbook:
+The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:
 ${playbook.fact}
 mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
 Changed files (mag):
@@ -943,10 +943,10 @@ export class Orchestrator {
       log.warn('agent', `${step.key}: plan ↔ fact failed: ${(e as Error).message}`)
       // Nothing proves the PRs match their plan: merge waits for the user.
       const prev = this.store.task(stepId).fact
-      const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unshown: 0, unverified: 0 }
+      const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unaccounted: 0, ungrounded: 0 }
       const blockers = [`mag could not compare the PRs with the plan (${(e as Error).message.split('\n')[0]})`]
-      this.store.updateTask(stepId, { fact: { heads: now, counts, blockers, canvasId: prev?.canvasId ?? null, canvasVersion: prev?.canvasVersion ?? null, at: Date.now() } })
-      return `(mag could not compare: ${(e as Error).message.split('\n')[0]}; draw the fact from the diff and compare it with the plan yourself.)`
+      this.store.updateTask(stepId, { fact: { heads: now, counts, blockers, canvasId: prev?.canvasId ?? null, at: Date.now() } })
+      return `(mag could not compare: ${(e as Error).message.split('\n')[0]}; read the diff and compare it with the plan yourself.)`
     })
     // Canceled while mag compared.
     if (this.store.task(stepId).status !== 'in_progress') {
@@ -959,9 +959,9 @@ export class Orchestrator {
   }
 
   /**
-   * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58), recorded on the step. The first time, mag starts the fact
-   * set (role fact) as a copy of the step's plan set with its links (povnyi-diff-nabir-pov-iazanykh.1) for the reviewer
-   * to revise under the diff; their revisions stay on new heads. Returns what the reviewer reads.
+   * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58), recorded on the step: their changes against the fact set the
+   * reviewer writes (its inventory, diff-iak-inventar-zmin-ai.1) and the plan. Returns what the reviewer reads, the hunks
+   * to cite among it.
    */
   async factOf(stepId: string, heads: Record<string, string>): Promise<string> {
     const step = this.store.task(stepId)
@@ -969,18 +969,9 @@ export class Orchestrator {
     const canvases = Object.values(this.store.data.canvases)
     const plans = stepSet(canvases, stepId, 'plan')
     const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
-    let set = stepSet(canvases, stepId, 'fact')
-    let started = step.fact?.canvasVersion ?? null
-    if (!set.length) {
-      const drafts = seed(step.key, plans, changed.files, project.architecture)
-      if (drafts.length) {
-        set = this.store.saveCanvasSet({ projectId: project.id, taskId: step.parentId, placement: { role: 'fact', option: null, stepId, repo: null, planOf: null } }, drafts)
-        started = 1
-      }
-    }
-    const fact = check(project, changed, set, plans)
-    this.store.updateTask(stepId, { fact: factRecord(fact, heads, started) })
-    return factReport(fact, started)
+    const fact = check(project, changed, stepSet(canvases, stepId, 'fact'), plans)
+    this.store.updateTask(stepId, { fact: factRecord(fact, heads) })
+    return [factReport(fact), hunkListing(changed)].filter(Boolean).join('\n\n')
   }
 
   /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */
@@ -1130,29 +1121,17 @@ export class Orchestrator {
 
   /**
    * The fact of a review's PR at its head (get_pr_changes), recorded on the review; no plan to compare
-   * (reviews-prybraty-spysok-pr-i.1). mag starts the fact set over the modules that own the changed code for the
-   * topic to draw under the diff. Returns what the topic reads.
+   * (reviews-prybraty-spysok-pr-i.1). Returns what the topic reads: the fact so far and the hunks its inventory cites.
    */
   async reviewFactOf(workId: string): Promise<string> {
     const work = this.store.task(workId)
     const pr = work.prReview?.pr
     if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
     const project = this.store.project(work.projectId)
-    const canvases = Object.values(this.store.data.canvases)
     const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work))
-    const same = work.fact?.heads[pr.repo] === pr.head
-    let set = reviewFacts(canvases, workId)
-    let started = same ? (work.fact?.canvasVersion ?? null) : null
-    if (!set.length) {
-      const drafts = seed(work.key, [], changed.files, pr.outside ? null : project.architecture)
-      if (drafts.length) {
-        set = this.store.saveCanvasSet({ projectId: project.id, taskId: workId, placement: { role: 'fact', option: null, stepId: null, repo: pr.repo, planOf: null } }, drafts)
-        started = 1
-      }
-    }
-    const fact = check(project, changed, set, null)
-    this.store.updateTask(workId, { fact: factRecord(fact, { [pr.repo]: pr.head }, started) })
-    return factReport(fact, started)
+    const fact = check(project, changed, reviewFacts(Object.values(this.store.data.canvases), workId), null)
+    this.store.updateTask(workId, { fact: factRecord(fact, { [pr.repo]: pr.head }) })
+    return [factReport(fact), hunkListing(changed)].filter(Boolean).join('\n\n')
   }
 
   /** The topic's set_pr_review: the review of the PR at the head mag gave it. Nothing goes to GitHub. */
