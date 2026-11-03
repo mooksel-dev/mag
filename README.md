@@ -17,7 +17,7 @@ packages/
   core/       Domain model: Project, Task, AgentSession, AgentEvent, plan rules, doc templates
   agents/     Agent adapters. Claude Code via `claude -p --output-format stream-json`
   arch/       Import-based layering rule checker behind check_architecture
-  diff/       Architecture diff, any language: the files a PR changes by owner module (get_pr_changes), the changes a plan or fact diagram draws, plan ↔ fact, coverage of changed files and grounding of the fact's lines (the review)
+  diff/       Architecture diff, any language: the files a PR changes by owner module with numbered hunks (get_pr_changes), the change inventory checked against them (the review), the changes a plan or fact diagram draws, plan ↔ fact
 ```
 
 Everything is TypeScript. Workspace packages ship sources (`exports: ./src/index.ts`) and are bundled by each app.

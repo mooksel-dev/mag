@@ -12,21 +12,6 @@ export type CanvasRole = 'option' | 'plan' | 'fact'
 
 export const CANVAS_ROLES: CanvasRole[] = ['option', 'plan', 'fact']
 
-/**
- * A change of the code a fact set does not draw, and why (povnyi-diff-nabir-pov-iazanykh.1, Decision 8): a utility
- * method, a type with no meaning for the model, logic too trivial for a flowchart, a dependency of no weight. One line.
- */
-export interface FactNote {
-  kind: 'method' | 'model' | 'logic' | 'dependency'
-  /** The method, type or table, or the module (package) a dependency is on, as mag names the change. */
-  name: string
-  /** The file it changes in; none: every file it changes in. */
-  file?: string
-  why: string
-}
-
-export const FACT_NOTE_KINDS: FactNote['kind'][] = ['method', 'model', 'logic', 'dependency']
-
 /** A diagram's place in its work; the fields of other roles are null. */
 export type CanvasPlacement = Pick<Canvas, 'role' | 'option' | 'stepId' | 'repo' | 'planOf'>
 

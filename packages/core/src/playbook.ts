@@ -22,8 +22,8 @@ export interface Playbook {
    */
   prReview: string
   /**
-   * How a reviewer draws the fact of code changes under the diff: a revision of a step's plan diagram, or, for a
-   * teammate's PR (no plan), drawn over the modules that own the changed code. Shared by every review that reads a diff.
+   * How a reviewer writes the fact of code changes: the change inventory from the diff, then the scenarios and method
+   * logic the review needs (diff-iak-inventar-zmin-ai.1). Shared by every review that reads a diff.
    */
   fact: string
   /** What agents may do in a ticket tracker. Every role that sees tickets. */
@@ -118,7 +118,7 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
 Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
 what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
-2. Draw the fact: revise the step's fact set (a copy of its plan set) under the diff, as the fact section says.
+2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
 3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
    Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
 4. Check the code, as the checks of the code below say.
@@ -132,8 +132,8 @@ have done it: no diagram of your own design and no list of differences from it.
    add_ticket. Without access to the tracker, say what is missing and work from the description.
 3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
    framing or a problem that is not real.
-4. Fact: get_pr_changes starts the fact set over the modules that own the changed code; draw what the PR did under
-   the diff, from scratch, as the fact section says.
+4. Fact: get_pr_changes lists the PR's hunks with their ids; write its change inventory (set_inventory), as the fact
+   section says.
 5. Check the fact and the code:
    - Does the change solve the problem, all of it, and nothing it was not asked to do?
    - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
@@ -149,30 +149,29 @@ have done it: no diagram of your own design and no list of differences from it.
    otherwise.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
 ${CODE_CHECKS}`,
-  fact: `Revise the fact set under the diff: its diagrams by their ids, with the same module ids, and new ones where the
-diff needs them. A step's fact starts as a copy of its plan set with its links; a teammate's PR has no plan, so its fact
-starts as one diagram of the modules that own the changed code, unmarked.
-- Done as planned: keep it. Done otherwise: change the line. Not done: drop its mark. Done outside the plan, or
-  anything a teammate's PR did: add it, with module ids from get_architecture.
-- One linked set: a root (the top component diagram) and every other diagram reached from it through links, as the
-  plan section says; show every level the change touches, none it does not.
-- Every changed line, dependency and call gives files: the paths of the diff it rests on, owned by its module
-  (<repo>:<path> when several repos change that path). Nothing that is not in the diff.
-- Keep it at the level of the architecture: modules, their public interface and the dependencies between them.
-  Helpers, fields of types and single adapters fold into one line (e.g. "language adapters: removed") that gives the
-  files of all of them.
-- Show every changed code file: only the files a line gives count, a module mark alone shows none.
-- Show every change get_pr_changes lists by kind: a public method is its own interface line of its module; its changed
-  logic a flowchart linked kind logic (or with of), or trivialLogic "логіка тривіальна: <why>"; the changed logic of a
-  private method a flowchart with of <module>#<method>, linked from the step of the flowchart that calls it; a model
-  an entity with its fields on a data diagram; an index an index of its entity, marked; a dependency added or removed
-  a use marked add or del. What is not worth a diagram (a utility, trivial logic, a dependency of no weight) goes in
-  notes on a diagram of the set, one line with why. mag blocks merge on the ones it is sure of and warns on the rest.
-- The data diagram: stored data only, each entity with module and a relation for each reference field, as the plan
-  section says; arguments of calls, interfaces, clients and mocks are not data.
-- No noise: mocks, fakes, test harnesses and test-only types are on no diagram and in no line ("testify mock added" is
-  not a change of the design). A renamed method, entity or field is one line, move with from (a method
-  "<module>#<old name>", a field "<entity>.<old name>"), never a del and an add.`,
+  fact: `The fact is the change inventory of the PR: write it with set_inventory from the hunk listing (get_pr_changes,
+or the review's message) and the diff. mag checks it against the hunks and generates the fact's Component and Data
+diagrams from it; you never draw those.
+- Every block of changed lines of a code hunk (marked [H3.1] in the listing) is in the hunks of a unit or in noise
+  with why. Cite the blocks that change a unit, not the other blocks of its hunk; H3 stands for every block of H3.
+  Tests, docs, styles and lock files need not be cited.
+- One unit per change, by kind. method: every function or method added, removed or changed, public and private;
+  before / after its signature; logic nontrivial when branches, loops, error handling, external calls or data access
+  change, trivial for wiring, renames and one-liners, none when only the signature changes. model / field: a type of
+  data and its fields (name "<model>.<field>"); stored: true only for persisted data (a table, collection, document,
+  cache entry), never arguments, options or DTOs. index: an index or unique key added, removed or changed, owner its
+  model. dependency: a module starts or stops using another module or system (name: its module id or package), not
+  imports inside a module. config / template: a prompt, template or config entry whose change alters behaviour, one
+  per constant.
+- module as the listing names the hunk's module; owner the type or file a method belongs to; names copied from the
+  diff. A rename is one unit, change rename with from, never a del and an add. Mocks, fakes and test helpers are
+  never units.
+- summary: 3–6 bullets on what the change does, by meaning.
+Then draw with show_diagram (without role: it joins the fact set) only what the inventory cannot give and the review
+needs: a scenario (sequence, its participants with module ids) and the logic of a method whose logic is nontrivial
+(flowchart with of "<module>#<method>"). mag answers each save with its check: fix the blockers (blocks in no unit,
+cited ids that do not exist, units their hunks do not bear out, units on another module) and answer the warnings
+(code blocks called noise, declarations no unit names).`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no

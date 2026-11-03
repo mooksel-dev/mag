@@ -1,10 +1,10 @@
 // The fact service knows no step and no git: changes from any source, against a plan or none (reviews-ahent-reviuit-pr-timeitiv.1,
-// reviews-prybraty-spysok-pr-i.1).
+// reviews-prybraty-spysok-pr-i.1); the fact is the reviewer's change inventory, checked against the hunks (diff-iak-inventar-zmin-ai.1).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Canvas, ComponentDiagram, Project } from '@mag/core'
+import type { Canvas, ChangeInventory, ComponentDiagram, Diagram, Project } from '@mag/core'
 import type { FileDiff } from '@mag/diff'
-import { changes, check, factReport, hunk, seed, type ChangeSource } from './index.ts'
+import { changes, check, factDiagrams, factReport, filesOfHunks, flowchartRefusal, hunk, hunkListing, withoutLines, type ChangeSource } from './index.ts'
 
 const project = {
   baseBranch: 'main',
@@ -12,8 +12,13 @@ const project = {
 } as unknown as Project
 
 const DIFF: FileDiff[] = [
-  { path: 'src/api/users.ts', status: 'mod', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }] },
-  { path: 'src/jobs/sync.ts', status: 'add', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 3 }] },
+  {
+    path: 'src/api/users.ts',
+    status: 'mod',
+    hunks: [{ oldStart: 9, oldLines: 3, newStart: 9, newLines: 4, header: 'export class Users {', lines: ['   list(limit: number): User[] {', '-    return all', '+    if (!limit) return []', '+    return all.slice(0, limit)', '   }'] }],
+  },
+  { path: 'src/jobs/sync.ts', status: 'add', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, lines: ['+export function sync(): void {', '+}'] }] },
+  { path: 'src/api/users.test.ts', status: 'mod', hunks: [{ oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: ['+test()'] }] },
 ] as FileDiff[]
 
 /** A source that is not git: what a PR's diff from GitHub will be. */
@@ -28,75 +33,89 @@ const PLAN: ComponentDiagram = {
   type: 'component',
   summary: 'users gets list',
   modules: [
-    { id: 'api', name: 'api', description: '', uses: [], interface: [{ text: 'list(): User[]', diff: 'add' }] },
+    { id: 'api', name: 'api', description: '', uses: [{ to: 'jobs', calls: [{ text: 'sync()', diff: 'add' }], diff: 'add' }], interface: [{ text: 'list(limit): User[]', diff: 'mod' }] },
     { id: 'jobs', name: 'jobs', description: '', uses: [], path: 'src/jobs', diff: 'add', interface: [{ text: 'sync(): void', diff: 'add' }] },
   ],
 }
 
-const canvas = (id: string, diagram: ComponentDiagram, version = 1) => ({ id, title: id, version, diagram }) as unknown as Canvas
+const canvas = (id: string, diagram: Diagram, extra: Partial<Canvas> = {}) => ({ id, title: id, version: 1, kind: 'diagram', diagram, ...extra }) as unknown as Canvas
 
-test('changes: files of any source, owned by the architecture and the modules the plan adds', async () => {
+const INVENTORY: ChangeInventory = {
+  summary: ['list takes a limit', 'a sync job'],
+  units: [
+    { id: 'u1', kind: 'method', module: 'api', owner: 'Users', name: 'list', change: 'mod', after: 'list(limit: number): User[]', logic: 'nontrivial', hunks: ['H1.1'] },
+    { id: 'u2', kind: 'method', module: 'jobs', name: 'sync', change: 'add', after: 'sync(): void', logic: 'trivial', hunks: ['H2'] },
+    { id: 'u3', kind: 'dependency', module: 'api', name: 'jobs', change: 'add', hunks: ['H1.1'] },
+  ],
+  noise: [],
+}
+
+test('changes: files of any source, owned by the architecture and the modules the plan adds, hunks numbered', async () => {
   const none = await changes(project, [target], source)
-  assert.deepEqual(none.files.map((f) => [f.repo, f.path, f.module]), [['app', 'src/api/users.ts', 'api'], ['app', 'src/jobs/sync.ts', null]])
+  assert.deepEqual(none.files.map((f) => [f.repo, f.path, f.module, f.hunks.map((h) => h.id)]), [['app', 'src/api/users.ts', 'api', ['H1']], ['app', 'src/jobs/sync.ts', null, ['H2']], ['app', 'src/api/users.test.ts', 'api', ['H3']]])
   assert.deepEqual(none.repos, [{ repo: 'o/app', name: 'app', baseSha: 'aaaaaaa', headSha: 'bbbbbbb' }])
   const withPlan = await changes(project, [target], source, [canvas('plan', PLAN)])
-  assert.deepEqual(withPlan.files.map((f) => f.module), ['api', 'jobs'])
+  assert.deepEqual(withPlan.files.map((f) => f.module), ['api', 'jobs', 'api'])
+  assert.deepEqual(withoutLines(withPlan.files)[0].hunks[0].lines, undefined, 'lines stay in the main process')
+  assert.match(hunkListing(withPlan), /^### Hunks \(cite their blocks in the inventory\)\n### H1 {2}app:src\/api\/users\.ts {2}\[module: api\]/)
 })
 
-test('seed and check: the fact starts as a copy of the plan and is checked against files and plan', async () => {
+test('check: no inventory blocks; the inventory is checked against the hunks and its generated fact against the plan', async () => {
   const plan = [canvas('plan', PLAN)]
   const changed = await changes(project, [target], source, plan)
-  const [start] = seed('o/app#7', plan, changed.files, project.architecture)
-  assert.deepEqual([start.from, start.root, start.title], ['plan', true, 'o/app#7: fact'])
-  assert.deepEqual((start.diagram as ComponentDiagram).modules, PLAN.modules)
-  assert.match((start.diagram as ComponentDiagram).summary ?? '', /^Fact of o\/app#7, started as a copy/)
+  assert.equal(check(project, changed, [], plan).blockers[0], 'there is no inventory of the PRs yet: the review writes it with set_inventory')
+  assert.deepEqual(check(project, changed, [canvas('drawn', PLAN, { root: true })], plan).blockers[0], 'the fact set has no inventory (drawn before mag checked inventories): restart the review')
 
-  const unchecked = check(project, changed, [], plan)
-  assert.equal(unchecked.blockers[0], 'there is no fact diagram of the PRs yet')
-
-  const drawn: ComponentDiagram = {
-    ...PLAN,
-    modules: [
-      { ...PLAN.modules[0], interface: [{ text: 'list(): User[]', diff: 'add', files: ['src/api/users.ts'] }] },
-      { ...PLAN.modules[1], interface: [{ text: 'sync(): void', diff: 'add', files: ['src/jobs/sync.ts'] }] },
-    ],
-  }
-  const fact = check(project, changed, [canvas('fact', drawn, 2)], plan)
-  assert.deepEqual(fact.coverage!.unshown, [])
-  assert.deepEqual(fact.comparison.items.map((i) => i.status), ['match', 'match', 'match'])
+  const { component, data } = factDiagrams(INVENTORY, changed, project, [])
+  assert.equal(data, null)
+  assert.deepEqual(component.modules.find((m) => m.id === 'api')!.interface, [{ text: 'list(limit: number): User[]', diff: 'mod', files: ['src/api/users.ts'], logic: true }])
+  const root = canvas('root', component, { root: true, inventory: INVENTORY })
+  const fact = check(project, changed, [root], plan)
   assert.deepEqual(fact.blockers, [])
-  assert.match(factReport(fact, 1), /## Plan ↔ fact \(mag\)[\s\S]*Fact set: root \[fact\]\(canvas:fact\) \(v2\), revised\./)
+  assert.equal(fact.canvas, root)
+  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['differs', 'api#list'], ['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared: the inventory has none')
+  assert.equal(fact.comparison.items[0].level, 'medium', 'another argument list differs without blocking')
+  assert.match(factReport(fact), /### Inventory against the hunks\nInventory: 3 unit\(s\) over 2 block\(s\) of changed code \(3 in all\)\.\nEvery block/)
+  assert.match(factReport(fact), /Threshold: merge is allowed/)
+
+  // A unit left out: its block is in no unit; a planned line not on the fact is missing.
+  const less = { ...INVENTORY, units: INVENTORY.units.filter((u) => u.id !== 'u2') }
+  const short = check(project, changed, [canvas('root', factDiagrams(less, changed, project, []).component, { root: true, inventory: less })], plan)
+  assert.deepEqual(short.blockers, ['H2.1 (app:src/jobs/sync.ts, jobs) is changed code in no unit and not in noise', 'high: module jobs is planned, not on the fact', 'high: jobs sync(): void is planned, not on the fact'])
 })
 
-test("check without a plan (a teammate's PR): coverage and grounding only, no plan ↔ fact (reviews-prybraty-spysok-pr-i.1)", async () => {
+test("check without a plan (a teammate's PR): only the inventory against the hunks, no plan ↔ fact (reviews-prybraty-spysok-pr-i.1)", async () => {
   const changed = await changes(project, [target], source)
-  const seeded = seed('o/app#7', [], changed.files, project.architecture)
-  assert.deepEqual(seeded.map((d) => [d.from, d.root]), [[null, true]])
-  const start = seeded[0].diagram as ComponentDiagram
-  // The architecture's api, then src/jobs by its folder: no module owns it.
-  assert.deepEqual(start.modules.map((m) => [m.id, m.path]), [['api', undefined], ['src-jobs', 'src/jobs']])
-  assert.match(start.summary ?? '', /no plan diagram/)
+  const wrong = { ...INVENTORY, units: [...INVENTORY.units, { id: 'u4', kind: 'method' as const, module: 'api', name: 'remove', change: 'del' as const, logic: 'none' as const, hunks: ['H1.1'] }] }
+  const fact = check(project, changed, [canvas('root', factDiagrams(wrong, changed, project, []).component, { root: true, inventory: wrong })], null)
+  assert.deepEqual(fact.comparison.items, [])
+  assert.deepEqual(fact.blockers, ['unit u4 (remove): remove is not in its hunks'])
+  assert.match(factReport(fact), /^## Fact \(mag\)\n/)
+  assert.match(factReport(fact), /### The fact is not complete yet\n {2}- unit u4/)
+})
 
-  // Everything on the fact would be unplanned against an empty plan; without one nothing is compared.
-  const drawn: ComponentDiagram = {
-    ...PLAN,
-    modules: [
-      { ...PLAN.modules[0], interface: [{ text: 'list(): User[]', diff: 'add', files: ['src/api/users.ts'] }] },
-      { ...PLAN.modules[1], interface: [{ text: 'sync(): void', diff: 'add', files: ['src/jobs/sync.ts'] }] },
-    ],
-  }
-  const fact = check(project, changed, [canvas('fact', drawn, 2)], null)
-  assert.deepEqual([fact.plan, fact.comparison.items], [null, []])
-  assert.deepEqual(fact.blockers, [])
-  const empty = check(project, changed, [canvas('fact', drawn, 2)], []).comparison.items
-  assert.ok(empty.length && empty.every((i) => i.status === 'unplanned'))
-  const report = factReport(fact, 1)
-  assert.match(report, /^## Fact \(mag\)\n/)
-  assert.match(report, /### The fact is complete: it shows every changed code file, method, model, logic and dependency and rests on the PR\./)
-  assert.doesNotMatch(report, /Plan|plan ↔ fact/)
+test('flowchartRefusal and warnings: a fact flowchart is of a method with nontrivial logic; scenarios link from their modules', async () => {
+  const flow = (of?: string): Diagram => ({ type: 'flowchart', ...(of && { of }), nodes: [{ id: 's', label: 's', shape: 'start' }], edges: [] })
+  assert.match(flowchartRefusal(null, flow('api#list'))!, /Write the inventory first/)
+  assert.equal(flowchartRefusal(INVENTORY, flow('api#list')), null)
+  assert.match(flowchartRefusal(INVENTORY, flow('jobs#sync'))!, /no method unit of the inventory with logic nontrivial/)
+  assert.match(flowchartRefusal(INVENTORY, flow())!, /needs of/)
+  assert.equal(flowchartRefusal(INVENTORY, PLAN), null)
 
-  const unshown = factReport(check(project, changed, [canvas('fact', start, 1)], null), 1)
-  assert.match(unshown, /started by mag: nothing on it rests on the PR yet[\s\S]*### The fact is not complete yet\n  - app:src\/api\/users\.ts \(api\) is changed/)
+  const changed = await changes(project, [target], source)
+  const seq = canvas('seq', { type: 'sequence', participants: [{ id: 'api', label: 'api' }, { id: 'jobs', label: 'jobs' }], messages: [] }, { role: 'fact' })
+  const { component } = factDiagrams(INVENTORY, changed, project, [seq])
+  assert.deepEqual(component.modules.find((m) => m.id === 'api')!.links, [{ to: 'seq', node: 'api', kind: 'scenario' }])
+  const set = [canvas('root', component, { root: true, inventory: INVENTORY }), seq, canvas('old', flow('jobs#sync'))]
+  assert.deepEqual(check(project, changed, set, null).warnings, ['"old" (old): its of jobs#sync is no method of the inventory with logic nontrivial.'])
+})
+
+test('filesOfHunks: blocks and hunks to paths; <repo>:<path> when the fact spans repositories', async () => {
+  const one = await changes(project, [target], source)
+  assert.deepEqual(filesOfHunks(one.files)(['H1.1', 'H2', 'H9']), ['src/api/users.ts', 'src/jobs/sync.ts'])
+  const two = await changes(project, [target, { ...target, name: 'web' }], source)
+  assert.deepEqual(two.files.flatMap((f) => f.hunks.map((h) => h.id)), ['H1', 'H2', 'H3', 'H4', 'H5', 'H6'], 'numbered across repositories')
+  assert.deepEqual(filesOfHunks(two.files)(['H4.1']), ['web:src/api/users.ts'])
 })
 
 test('hunk: through the source, between commit shas only', async () => {
@@ -108,61 +127,9 @@ test('changes: a repository outside the project reads by its folders, not the pr
   const outside = await changes(project, [{ ...target, outside: true }], source, [canvas('plan', PLAN)])
   assert.equal(outside.outside, true)
   // The plan's jobs module (src/jobs) first, then the folders: src/api is a folder module, not the project's api.
-  assert.deepEqual(outside.files.map((f) => [f.path, f.module]), [['src/api/users.ts', 'src-api'], ['src/jobs/sync.ts', 'jobs']])
-  const fact = check(project, outside, [canvas('fact', PLAN, 2)], [canvas('plan', PLAN)])
+  assert.deepEqual(outside.files.map((f) => [f.path, f.module]), [['src/api/users.ts', 'src-api'], ['src/jobs/sync.ts', 'jobs'], ['src/api/users.test.ts', 'src-api']])
+  const fact = check(project, outside, [], [canvas('plan', PLAN)])
   assert.equal(fact.outside, true)
-  assert.match(factReport(fact, null), /Without the project architecture: the repository is outside the project/)
+  assert.match(factReport(fact), /Without the project architecture: the repository is outside the project/)
   assert.equal((await changes(project, [target], source)).outside, false)
-})
-
-/** A diff with hunk headers and lines, as local git gives it (povnyi-diff-nabir-pov-iazanykh.1). */
-const UNITS_DIFF: FileDiff[] = [
-  {
-    path: 'src/api/users.ts',
-    status: 'mod',
-    hunks: [
-      { oldStart: 10, oldLines: 1, newStart: 10, newLines: 2, header: 'export function list(limit: number): User[] {', lines: ['-  return all', '+  if (!limit) return []', '+  return all.slice(0, limit)'] },
-      { oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: ["+import { sync } from '../jobs/sync'"] },
-    ],
-  },
-] as FileDiff[]
-
-const unitsSource: ChangeSource = { diffHunks: async () => UNITS_DIFF, hunkLines: async () => [] }
-
-test('check: changed methods, logic and dependencies must be on the fact set or in its notes; links hold the set together (povnyi-diff-nabir-pov-iazanykh.1)', async () => {
-  const arch = { ...project, architecture: { ...project.architecture!, modules: [...project.architecture!.modules, { id: 'jobs', name: 'jobs', description: '', uses: [], paths: ['src/jobs'] }] } } as Project
-  const changed = await changes(arch, [target], unitsSource)
-  assert.deepEqual(changed.units.map((u) => [u.kind, u.name, u.diff, u.confidence, u.bodyChanged]), [['method', 'list', 'mod', 'high', true], ['dependency', 'jobs', 'add', 'high', undefined]])
-  // The files go on without the lines changedUnits read.
-  assert.equal(changed.files[0].hunks[0].lines, undefined)
-
-  const component = (iface: ComponentDiagram['modules'][number]['interface'], uses: ComponentDiagram['modules'][number]['uses'] = []): ComponentDiagram => ({
-    type: 'component',
-    summary: 's',
-    modules: [{ id: 'api', name: 'api', description: '', uses, interface: iface }, { id: 'jobs', name: 'jobs', description: '', uses: [] }],
-  })
-  const line = { text: 'list(limit: number): User[]', diff: 'mod' as const, files: ['src/api/users.ts'] }
-  const bare = check(arch, changed, [canvas('fact', component([line]), 2)], null)
-  assert.deepEqual(bare.completeness!.missing.map((m) => m.rule), ['logic', 'dependency'])
-  assert.equal(bare.blockers.length, 2)
-  assert.match(factReport(bare, 1), /### Changed methods, models, indexes, logic and dependencies\n[\s\S]*the logic of list changes[\s\S]*api starts depending on jobs/)
-
-  // A flowchart linked from the line, the dependency drawn: complete; the flowchart is reached from the root.
-  const flow = { id: 'flow', title: 'list', version: 1, root: false, diagram: { type: 'flowchart', nodes: [{ id: 'a', label: 'a', shape: 'start' }], edges: [] } } as unknown as Canvas
-  const linked = component([{ ...line, links: [{ to: 'flow', kind: 'logic' }] }], [{ to: 'jobs', calls: [], diff: 'add', files: ['src/api/users.ts'] }])
-  const root = { ...canvas('fact', linked, 2), root: true }
-  const done = check(arch, changed, [root, flow], null)
-  assert.deepEqual([done.completeness!.missing, done.warnings, done.blockers], [[], [], []])
-  assert.match(factReport(done, 1), /Other diagrams of the set: \[list\]\(canvas:flow\) \(flowchart, v1\)/)
-
-  // Without the link the flowchart is an orphan, and the logic is not shown.
-  const orphan = check(arch, changed, [{ ...canvas('fact', component([line], linked.modules[0].uses), 2), root: true }, flow], null)
-  assert.deepEqual(orphan.completeness!.missing.map((m) => m.rule), ['logic'])
-  assert.match(orphan.warnings.join('\n'), /"list" \(flow\) is not reached from the root/)
-
-  // trivialLogic, or a note, explain it instead.
-  const trivial = check(arch, changed, [canvas('fact', component([{ ...line, trivialLogic: 'логіка тривіальна: a guard' }], linked.modules[0].uses), 2)], null)
-  assert.deepEqual(trivial.blockers, [])
-  const noted = { ...canvas('fact', component([line], linked.modules[0].uses), 2), notes: [{ kind: 'logic' as const, name: 'list', why: 'a guard' }] }
-  assert.deepEqual(check(arch, changed, [noted], null).blockers, [])
 })

@@ -339,22 +339,19 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   })
 })
 
-test('saveCanvasSet: a copy of a set links its own diagrams; root stays on one diagram of a set (povnyi-diff-nabir-pov-iazanykh.1)', () => {
+test('saveCanvas: root stays on one diagram of a set; a revision keeps root and inventory unless given (povnyi-diff-nabir-pov-iazanykh.1)', () => {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
   const placement = { role: 'fact' as const, option: null, stepId: 's1', repo: null, planOf: null }
-  const component = { type: 'component' as const, summary: 's', modules: [{ id: 'api', name: 'api', description: '', uses: [], links: [{ to: 'planData', kind: 'data' as const }] }] }
+  const component = { type: 'component' as const, summary: 's', modules: [{ id: 'api', name: 'api', description: '', uses: [] }] }
   const data = { type: 'data' as const, entities: [{ id: 'users', name: 'users', kind: 'table' as const, fields: [] }], relations: [] }
-  const [root, copy] = store.saveCanvasSet({ projectId: 'p', taskId: 't', placement }, [
-    { from: 'planRoot', title: 'fact', diagram: component, root: true },
-    { from: 'planData', title: 'fact — data', diagram: data, root: false },
-  ])
-  assert.deepEqual([root.role, root.stepId, root.root, root.version, copy.root], ['fact', 's1', true, 1, false])
-  assert.equal(root.diagram!.type === 'component' && root.diagram!.modules[0].links![0].to, copy.id)
-  assert.equal(component.modules[0].links[0].to, 'planData', 'the plan diagram stays as it was')
-
-  // Another diagram of the set made root takes it over; a revision without root keeps it.
-  store.saveCanvas({ id: copy.id, projectId: 'p', taskId: 't', sessionId: null, title: 'data', kind: 'diagram', diagram: data, root: true })
-  assert.deepEqual([store.data.canvases[root.id].root, store.data.canvases[copy.id].root, store.data.canvases[root.id].version], [false, true, 1])
-  store.saveCanvas({ id: copy.id, projectId: 'p', taskId: 't', sessionId: null, title: 'data', kind: 'diagram', diagram: data, notes: [{ kind: 'model', name: 'users', why: 'internal' }] })
-  assert.deepEqual([store.data.canvases[copy.id].root, store.data.canvases[copy.id].notes!.length], [true, 1])
+  const inventory = { summary: ['s'], units: [], noise: [] }
+  const base = { projectId: 'p', taskId: 't', sessionId: null, kind: 'diagram' as const, placement }
+  const root = store.saveCanvas({ ...base, title: 'fact', diagram: component, root: true, inventory })
+  const other = store.saveCanvas({ ...base, title: 'data', diagram: data })
+  assert.deepEqual([root.role, root.stepId, root.root, root.inventory, other.root], ['fact', 's1', true, inventory, undefined])
+  // Another diagram of the set made root takes it over; a revision without root or inventory keeps them.
+  store.saveCanvas({ id: other.id, projectId: 'p', taskId: 't', sessionId: null, title: 'data', kind: 'diagram', diagram: data, root: true })
+  assert.deepEqual([store.data.canvases[root.id].root, store.data.canvases[other.id].root, store.data.canvases[root.id].version], [false, true, 1])
+  store.saveCanvas({ id: root.id, projectId: 'p', taskId: 't', sessionId: null, title: 'fact', kind: 'diagram', diagram: component })
+  assert.deepEqual(store.data.canvases[root.id].inventory, inventory)
 })

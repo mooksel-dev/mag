@@ -1,4 +1,4 @@
-import type { ChangedUnit, FileChange } from './types.ts'
+import type { FileChange } from './types.ts'
 
 const MARK: Record<FileChange['status'], string> = { add: '+', mod: '~', del: '-', rename: '>' }
 const NO_MODULE = '(no module)'
@@ -6,20 +6,21 @@ const NO_MODULE = '(no module)'
 const range = (start: number, lines: number) => (lines === 1 ? `${start}` : lines ? `${start}-${start + lines - 1}` : `${start} (none)`)
 
 /**
- * Compact text for agents (get_pr_changes, T-58): the changed files of a repo by owner module, with their hunks; files
- * that are not code (tests, styles, lock files, generated, docs) listed apart, as nothing a fact diagram has to show.
+ * Compact text for agents (get_pr_changes, T-58): the changed files of a repo by owner module, with their hunks (their
+ * ids when numbered); files that are not code (tests, styles, lock files, generated, docs) listed apart, as nothing a
+ * fact's inventory has to cite.
  */
 export function formatFiles(repo: string, baseSha: string, headSha: string, files: FileChange[]): string {
   const code = files.filter((f) => f.kind === 'code')
   const lines = [
     `${repo}: ${baseSha.slice(0, 12)} → ${headSha.slice(0, 12)}, ${files.length} file(s) changed, ${code.length} of them code.`,
-    'Marks: + added, - removed, ~ changed, > renamed. Hunks: old lines → new lines; read them with git diff.',
+    'Marks: + added, - removed, ~ changed, > renamed. Hunks: id, old lines → new lines.',
   ]
   const modules = [...new Set(code.map((f) => f.module ?? NO_MODULE))].sort((a, b) => (a === NO_MODULE ? 1 : b === NO_MODULE ? -1 : a.localeCompare(b)))
   for (const m of modules) {
     lines.push('', m)
     for (const f of code.filter((f) => (f.module ?? NO_MODULE) === m)) {
-      const hunks = f.hunks.map((h) => `${range(h.oldStart, h.oldLines)} → ${range(h.newStart, h.newLines)}`)
+      const hunks = f.hunks.map((h) => `${h.id ? `${h.id} ` : ''}${range(h.oldStart, h.oldLines)} → ${range(h.newStart, h.newLines)}`)
       lines.push(`  ${MARK[f.status]} ${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ''}: ${f.hunks.length} hunk(s)${hunks.length ? ` ${hunks.slice(0, 8).join(', ')}${hunks.length > 8 ? ', …' : ''}` : ''}`)
     }
   }
@@ -28,34 +29,41 @@ export function formatFiles(repo: string, baseSha: string, headSha: string, file
   return lines.join('\n')
 }
 
-const UNIT_MARK: Record<ChangedUnit['diff'], string> = { add: '+', mod: '~', del: '-' }
-
 /**
- * The changed methods, models, indexes and dependencies of a PR (povnyi-diff-nabir-pov-iazanykh.1, .3) as agents read
- * them: each is a line on a diagram of the fact set (a private method's logic a flowchart), or a note there says why
- * not. Sure ones first; unsure ones apart.
+ * The hunks of code files with their ids and lines, as an inventory cites them (diff-iak-inventar-zmin-ai.1): a header per
+ * hunk (id, repo:path, owner module, git's header), each block of changed lines marked [<id>.<k>] on the line before it,
+ * context lines as git gives them. Tests, styles and docs are named without lines (they need not be cited); lock files
+ * and generated code are left out. `maxChars`: whole hunks up to about that many characters, then the ids of the rest.
  */
-export function formatUnits(units: ChangedUnit[]): string {
-  if (!units.length) return ''
-  const line = (u: ChangedUnit) =>
-    u.kind === 'dependency'
-      ? `  ${UNIT_MARK[u.diff]} ${u.module} -> ${u.name} (${u.repo}:${u.file}:${u.line})`
-      : `  ${UNIT_MARK[u.diff]} ${u.module ?? NO_MODULE} ${u.name || '(no name)'} (${u.repo}:${u.file}:${u.line})${u.bodyChanged && u.diff !== 'del' ? ', logic changes' : ''}${u.public === false ? ', private' : ''}`
-  const out = [
-    'Changed methods, models, indexes and dependencies (mag reads them from the hunk headers and changed lines; the fact set shows each, a changed logic with a flowchart or trivialLogic, or a note says why not):',
-  ]
-  const groups: [string, (u: ChangedUnit) => boolean][] = [
-    ['Public methods', (u) => u.kind === 'method' && u.public !== false],
-    ['Private methods with logic (a flowchart with of <module>#<method>, linked from the step that calls it; no interface line)', (u) => u.kind === 'method' && u.public === false],
-    ['Models (stored data)', (u) => u.kind === 'model'],
-    ['Indexes', (u) => u.kind === 'index'],
-    ['Dependencies between modules', (u) => u.kind === 'dependency'],
-  ]
-  for (const [title, is] of groups) {
-    const of = units.filter((u) => is(u) && u.confidence === 'high')
-    if (of.length) out.push(`${title}:`, ...of.map(line))
+export function formatHunks(files: FileChange[], maxChars = Infinity): string {
+  const hunks: { id: string; text: string }[] = []
+  for (const f of files.filter((x) => x.kind === 'code'))
+    for (const h of f.hunks) {
+      if (!h.id) continue
+      const out = [`### ${h.id}  ${f.repo}:${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ''}  [module: ${f.module ?? NO_MODULE}]  @@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@${h.header ? ` ${h.header}` : ''}`]
+      let k = 0
+      let changed = false
+      for (const l of h.lines ?? []) {
+        const c = l[0] === '+' || l[0] === '-'
+        if (c && !changed) out.push(`[${h.id}.${++k}]`)
+        changed = c
+        out.push(l)
+      }
+      hunks.push({ id: h.id, text: out.join('\n') })
+    }
+  const out: string[] = []
+  let size = 0
+  let shown = 0
+  // At least one hunk, however long.
+  for (; shown < hunks.length && (!shown || size + hunks[shown].text.length <= maxChars); shown++) {
+    out.push(hunks[shown].text)
+    size += hunks[shown].text.length + 1
   }
-  const low = units.filter((u) => u.confidence === 'low')
-  if (low.length) out.push('Unsure (warnings only):', ...low.map((u) => `${line(u)} [${u.kind}]`))
+  if (shown < hunks.length) {
+    const left = hunks.slice(shown)
+    out.push('', `${left.length} more hunk(s) not listed here (${left[0].id}${left.length > 1 ? `…${left.at(-1)!.id}` : ''}): get_pr_changes lists them all.`)
+  }
+  const rest = files.filter((x) => (x.kind === 'test' || x.kind === 'style' || x.kind === 'docs') && x.hunks.length)
+  if (rest.length) out.push('', `Not code, need not be cited: ${rest.map((x) => `${x.repo}:${x.path} (${x.kind}: ${x.hunks.map((h) => h.id).filter(Boolean).join(', ')})`).join('; ')}`)
   return out.join('\n')
 }

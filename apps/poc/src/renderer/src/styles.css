@@ -337,6 +337,9 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbox .bline { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
 .archbox .bline .text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* "flow ›": opens the flow of a method in place (T-48) */
+/* a line of a fact generated from its inventory: private, nontrivial logic (diff-iak-inventar-zmin-ai.1) */
+.linebadge { flex: none; padding: 0 5px; border-radius: 6px; border: 1px solid var(--line); font-size: 10px; font-family: inherit; color: var(--muted, inherit); }
+.linebadge.logic { border-color: var(--diff-mod); color: var(--diff-mod); }
 button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit; white-space: nowrap; }
 .archside .bline button.flowlink { margin-left: auto; padding-left: 6px; }
 .flowmain { flex: 1; min-width: 0; overflow: auto; }

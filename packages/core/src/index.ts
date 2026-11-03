@@ -2,7 +2,8 @@
 // Keep it free of runtime dependencies.
 
 import type { ArchDiagram } from './arch.ts'
-import type { CanvasRole, FactNote } from './canvases.ts'
+import type { CanvasRole } from './canvases.ts'
+import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLevel, type PrReview } from './pr-review.ts'
@@ -11,6 +12,7 @@ export * from './arch.ts'
 export * from './canvases.ts'
 export * from './diagram.ts'
 export * from './diagram-rules.ts'
+export * from './inventory.ts'
 export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
@@ -452,19 +454,17 @@ export interface AgentReview {
 }
 
 /**
- * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58): the reviewer's fact diagram against the plan diagrams (how
- * many plan changes were done as planned, otherwise or not at all, what the fact has outside the plan) and against the
- * PRs' files; and why the review may not say merge (T-58 Decision 5: a changed code file the fact does not show, a
- * line of it that does not rest on the PR, a significant difference from the plan).
+ * Plan ↔ fact of a step's PRs at `heads` (T-57.4, T-58): the fact generated from the reviewer's inventory against the
+ * plan diagrams (how many plan changes were done as planned, otherwise or not at all, what the fact has outside the
+ * plan) and the inventory against the PRs' hunks (diff-iak-inventar-zmin-ai.1); and why the review may not say merge.
  */
 export interface StepFact {
   heads: Record<string, string>
-  /** Plan ↔ fact by status; unshown: changed code files the fact diagram does not show; unverified: its lines that do not rest on the PR (T-58). */
-  counts: { match: number; differs: number; missing: number; unplanned: number; unshown: number; unverified: number }
+  /** Plan ↔ fact by status; unaccounted: code blocks in no unit and not noise; ungrounded: units the hunks do not bear out. */
+  counts: { match: number; differs: number; missing: number; unplanned: number; unaccounted: number; ungrounded: number }
   blockers: string[]
-  /** The fact diagram (role fact) and the version mag started it at, a copy of the plan; a higher version is the reviewer's. */
+  /** The root of the fact set, the diagram with the inventory. */
   canvasId: string | null
-  canvasVersion: number | null
   at: number
 }
 
@@ -1248,8 +1248,8 @@ export interface Canvas {
   planOf?: string | null
   /** The entry of its set: the level "System" or the top Component diagram (povnyi-diff-nabir-pov-iazanykh.1). */
   root?: boolean
-  /** role 'fact': the changes of the code its set does not draw, each with why (Decision 8). */
-  notes?: FactNote[]
+  /** The root of a fact set: the change inventory its Component and Data diagrams are generated from (diff-iak-inventar-zmin-ai.1). */
+  inventory?: ChangeInventory
   version: number
   updatedAt: number
 }

@@ -8,8 +8,8 @@ import { existsSync } from 'node:fs'
 import { prHeads, prRepoName, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
 import type { HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
-import { changes, check, hunk, type ChangeSource, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
-import { diffHunks, diffText, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse, zeroContext } from './git.ts'
+import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type Fact } from './core/services/fact/index.ts'
+import { diffHunks, diffText, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse } from './git.ts'
 
 /** Changes as the local git checkouts of the project's repositories have them. */
 export const localGit: ChangeSource = {
@@ -20,7 +20,7 @@ export const localGit: ChangeSource = {
 /** Changes as GitHub has them, for a repository without a local checkout: `at` is its owner/repo. */
 export const github: ChangeSource = {
   diffHunks: githubDiffHunks,
-  hunkLines: async (at, base, head, ref) => hunkLines(zeroContext(await githubDiffText(at, base, head)), ref.path, ref),
+  hunkLines: async (at, base, head, ref) => hunkLines(await githubDiffText(at, base, head), ref.path, ref),
 }
 
 /** Where a review reads its PR: the local checkout of a project repository, else GitHub. */
@@ -52,23 +52,28 @@ export async function stepTargets(project: Project, step: Task, heads: Record<st
   return out
 }
 
+/** The changes of a step's PRs at `heads`, in the vocabulary of its plan. */
+export async function stepChanges(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[]): Promise<Changes> {
+  return changes(project, await stepTargets(project, step, heads), localGit, stepSet(canvases, step.id, 'plan'))
+}
+
 /** The fact of a step's PRs at `heads`: their changes against the step's fact set and plan set. */
-export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[]): Promise<Fact> {
+export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[], changed?: Changes): Promise<Fact> {
   const plans = stepSet(canvases, step.id, 'plan')
-  const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
-  return check(project, changed, stepSet(canvases, step.id, 'fact'), plans)
+  return check(project, changed ?? (await stepChanges(project, step, heads, canvases)), stepSet(canvases, step.id, 'fact'), plans)
 }
 
 /** The counts of a fact, as a step records them. */
 export function factCounts(fact: Fact): NonNullable<Task['fact']>['counts'] {
-  const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unshown: fact.coverage?.unshown.length ?? 0, unverified: fact.grounding?.unverified.length ?? 0 }
+  const check = fact.inventoryCheck
+  const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unaccounted: check?.unaccounted.length ?? 0, ungrounded: (check?.ungrounded.length ?? 0) + (check?.otherModule.length ?? 0) + (check?.unknown.length ?? 0) }
   for (const i of fact.comparison.items) counts[i.status]++
   return counts
 }
 
-/** A step's fact as it records it: `started` is the version of the fact diagram mag started (a copy of the plan). */
-export function factRecord(fact: Fact, heads: Record<string, string>, started: number | null): NonNullable<Task['fact']> {
-  return { heads, counts: factCounts(fact), blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, canvasVersion: started, at: Date.now() }
+/** A step's (or a review's) fact as it records it. */
+export function factRecord(fact: Fact, heads: Record<string, string>): NonNullable<Task['fact']> {
+  return { heads, counts: factCounts(fact), blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, at: Date.now() }
 }
 
 /** The heads a step's fact is of: its open PRs, else the heads its fact was recorded at (a merged step). */
@@ -80,8 +85,8 @@ export function factHeads(step: Task): Record<string, string> {
 const canvasRef = (c: Canvas): FactCanvas => ({ id: c.id, title: c.title, version: c.version })
 
 /**
- * Plan ↔ fact of a step as Diff shows it (T-57.5): its fact at factHeads, compared with its plan diagrams, which
- * changed files its fact diagram shows and which of its lines do not rest on the PR. null when the step has no heads.
+ * Plan ↔ fact of a step as Diff shows it (T-57.5): its fact at factHeads, compared with its plan diagrams, and its
+ * inventory against the hunks. null when the step has no heads.
  */
 export async function factView(project: Project, step: Task, canvases: Canvas[]): Promise<FactView | null> {
   const heads = factHeads(step)
@@ -94,15 +99,15 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
   return {
     heads,
     repos: fact.repos,
-    files: fact.files,
+    files: withoutLines(fact.files),
     items: fact.comparison.items,
     blockers: fact.blockers,
     plans: (fact.plan ?? []).map(canvasRef),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
     set: fact.set.map(canvasRef),
-    coverage: fact.coverage,
-    unverified: fact.grounding?.unverified ?? [],
-    missing: fact.completeness?.missing ?? [],
+    inventory: fact.inventory ? { units: fact.inventory.units.length, summary: fact.inventory.summary } : null,
+    // The blocks' lines stay in the main process, as the hunks' do.
+    check: fact.inventoryCheck && { ...fact.inventoryCheck, unaccounted: fact.inventoryCheck.unaccounted.map(({ lines: _, ...b }) => b) },
     warnings: fact.warnings,
     outside: fact.outside,
     at: Date.now(),
@@ -124,10 +129,14 @@ export async function reviewTarget(project: Project, work: Task, head?: string, 
   return { repo: pr.repo, name, at: pr.repo, base: await mergeBase(pr.repo, from, at), head: at }
 }
 
+/** The changes of a reviewed PR at `head`. */
+export async function reviewChanges(project: Project, work: Task, head?: string): Promise<Changes> {
+  return changes(project, [await reviewTarget(project, work, head)], reviewSource(work))
+}
+
 /** The fact of a reviewed PR at `head`: its changes against the review's fact set; no plan to compare. */
-export async function reviewFact(project: Project, work: Task, canvases: Canvas[], head?: string): Promise<Fact> {
-  const changed = await changes(project, [await reviewTarget(project, work, head)], reviewSource(work))
-  return check(project, changed, reviewFacts(canvases, work.id), null)
+export async function reviewFact(project: Project, work: Task, canvases: Canvas[], head?: string, changed?: Changes): Promise<Fact> {
+  return check(project, changed ?? (await reviewChanges(project, work, head)), reviewFacts(canvases, work.id), null)
 }
 
 /** The fact of a review as its page shows it: at the head its fact is of, else the PR's. null before it has a PR. */

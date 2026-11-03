@@ -567,7 +567,7 @@ function DiffDetails({ all, flows, node, onReveal, onOpen, onFlow }: {
         <>
           <div className="label">Інтерфейс</div>
           {lines.filter((l) => l.diff).map((l, i) => (
-            <CallLine key={i} text={l.text} mark={l.diff} note={l.diff === 'move' && l.from ? <>← {link(l.from)}</> : undefined} onFlow={flowFor(flows, node.id, l, onFlow)} />
+            <CallLine key={i} text={l.text} mark={l.diff} note={l.diff === 'move' && l.from ? <>← {link(l.from)}</> : undefined} badges={<LineBadges line={l} />} onFlow={flowFor(flows, node.id, l, onFlow)} />
           ))}
           {movedOut.map((m, i) => <CallLine key={`out${i}`} text={m.line.text} mark="move" note={<>→ {link(m.to)}</>} />)}
           {withFlow.map((l, i) => <CallLine key={`flow${i}`} text={l.text} onFlow={flowFor(flows, node.id, l, onFlow)} />)}
@@ -607,12 +607,26 @@ function FlowLink({ onFlow }: { onFlow: () => void }) {
   )
 }
 
+/**
+ * What a line of a fact generated from its inventory says beyond its signature (diff-iak-inventar-zmin-ai.1): a private
+ * method, and logic that changes nontrivially (a flowchart may show it).
+ */
+function LineBadges({ line }: { line: { logic?: boolean; private?: boolean } }) {
+  return (
+    <>
+      {line.private && <span className="linebadge" title="A private method">private</span>}
+      {line.logic && <span className="linebadge logic" title="Its logic changes nontrivially: the reviewer may draw its flowchart">logic</span>}
+    </>
+  )
+}
+
 /** One interface line or call of the side panel: its sign (none when unchanged) and full text. */
-function CallLine({ text, mark, note, onFlow }: { text: string; mark?: LineMark; note?: ReactNode; onFlow?: () => void }) {
+function CallLine({ text, mark, note, badges, onFlow }: { text: string; mark?: LineMark; note?: ReactNode; badges?: ReactNode; onFlow?: () => void }) {
   return (
     <div className={`bline d-${mark ?? 'none'}`} title={mark ? `${mark === 'move' ? 'moved' : DIFF_NAMES[mark]}: ${text}` : text}>
       <b>{mark ? SIGNS[mark] : ''}</b>
       <code className={mark === 'del' ? 'struck' : undefined}>{text}</code>
+      {badges}
       {note && <span className="muted small"> {note}</span>}
       {onFlow && <FlowLink onFlow={onFlow} />}
     </div>
@@ -629,6 +643,7 @@ function BoxLineView({ all, line, onFlow }: { all: DNode[]; line: BoxLine; onFlo
   return (
     <span className={`bline d-${mark ?? 'none'}`} title={`${what}: ${line.text}`}>
       <span className={`text${mark === 'del' ? ' struck' : ''}`}><b>{mark ? SIGNS[mark] : ''}</b> {text}</span>
+      {!out && <LineBadges line={line} />}
       {onFlow && <FlowLink onFlow={onFlow} />}
     </span>
   )

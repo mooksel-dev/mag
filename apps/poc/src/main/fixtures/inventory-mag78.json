@@ -1,0 +1,1442 @@
+{
+ "summary": [
+  "Adds diagramWarnings (new core diagram-rules): non-blocking rule checks on diff diagrams (owner module, stored data only, a relation per reference field, cross between modules, no mocks, renames as one move line), surfaced by show_diagram and the fact check.",
+  "Data diagrams gain entity module (owner), indexes (DIndex) and relation cross; layout groups entities into module boxes, renders index rows and dashed cross relations.",
+  "Renames become one move line: interface line from \"<module>#<old name>\" (moveSource) and field from \"<entity>.<old name>\", accepted by validateDiagram, moves, fieldNotes and completeness.",
+  "Flowchart steps can link to other flowcharts (FlowNode.links), so private methods' logic is reachable; completeness and changedUnits now cover private methods with logic and a new 'index' unit kind.",
+  "changedUnits counts only stored types as models (persistence tags, ORM bases/decorators), detects index changes, reads PR context lines, ignores mocks and receiver-only Go changes; mocks count as test files.",
+  "Playbook and tool descriptions updated: shared CODE_CHECKS for both reviews, data-diagram and no-noise rules for plan and fact; Component boxes can be opened in full ('+N more')."
+ ],
+ "units": [
+  {
+   "id": "u1",
+   "kind": "method",
+   "module": "change-fact",
+   "owner": "fact/index.ts",
+   "name": "check",
+   "change": "mod",
+   "visibility": "public",
+   "before": "check(project: Project, changed: Changes, set: Canvas[], plan: C...)",
+   "after": "check(project: Project, changed: Changes, set: Canvas[], plan: C...)",
+   "logic": "trivial",
+   "runs": [
+    "H2.1",
+    "H4.1"
+   ],
+   "note": "warnings now also include diagramWarnings of each canvas of the set, prefixed by title and id"
+  },
+  {
+   "id": "u2",
+   "kind": "method",
+   "module": "change-fact",
+   "owner": "fact/index.ts",
+   "name": "factReport",
+   "change": "mod",
+   "visibility": "public",
+   "before": "factReport(fact: Fact, started: number | null): string",
+   "after": "factReport(fact: Fact, started: number | null): string",
+   "logic": "trivial",
+   "runs": [
+    "H5.1"
+   ],
+   "note": "section headings mention indexes and rule-of-the-diff warnings"
+  },
+  {
+   "id": "u3",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "INTERFACE",
+   "name": "INTERFACE.properties.from",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H6.1"
+   ],
+   "note": "describes renamed method as from \"<module>#<old name>\""
+  },
+  {
+   "id": "u4",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.nodes.items.links",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H7.1"
+   ],
+   "note": "flowchart node schema accepts links (kind logic to a called method's flowchart)"
+  },
+  {
+   "id": "u5",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.entities.description",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H8.1"
+   ],
+   "note": "data diagram: stored data only, indexes, owner module; no call args/clients/mocks"
+  },
+  {
+   "id": "u6",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.entities.items.module",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H9.1"
+   ]
+  },
+  {
+   "id": "u7",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.entities.items.indexes",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H9.1"
+   ],
+   "note": "indexes: [{ fields, unique, diff }]"
+  },
+  {
+   "id": "u8",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.entities.items.fields.description",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H9.2"
+   ],
+   "note": "a renamed field is one move line"
+  },
+  {
+   "id": "u9",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.entities.items.fields.items.from",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H10.1"
+   ]
+  },
+  {
+   "id": "u10",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.relations.description",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H11.1"
+   ],
+   "note": "every reference field of a changed entity needs a relation"
+  },
+  {
+   "id": "u11",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "DIAGRAM",
+   "name": "DIAGRAM.relations.items.cross",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H12.1"
+   ]
+  },
+  {
+   "id": "u12",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "show_diagram.description",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H13.1"
+   ],
+   "note": "adds stored-data/module/relation rules, no mocks, renames as move, private-method flowcharts, index rules, warnings"
+  },
+  {
+   "id": "u13",
+   "kind": "config",
+   "module": "tool-defs",
+   "owner": "TOOL_DEFS",
+   "name": "notes.items.properties.kind.description",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H14.1"
+   ],
+   "note": "note kind model also covers an index"
+  },
+  {
+   "id": "u14",
+   "kind": "method",
+   "module": "agent-tools",
+   "owner": "tools.ts",
+   "name": "setNote",
+   "change": "mod",
+   "visibility": "private",
+   "before": "setNote(store: Store, canvas: Canvas): string",
+   "after": "setNote(store: Store, canvas: Canvas): string",
+   "logic": "nontrivial",
+   "runs": [
+    "H16.1",
+    "H17.2"
+   ],
+   "note": "adds diagramWarnings of the diagram ('Saved, but fix it...') to set link warnings; no longer returns early without a set"
+  },
+  {
+   "id": "u15",
+   "kind": "config",
+   "module": "fact-panel",
+   "owner": "FactPanel.tsx",
+   "name": "MISSING.index",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H19.1"
+   ]
+  },
+  {
+   "id": "u16",
+   "kind": "method",
+   "module": "component-diagram",
+   "owner": "Component.tsx",
+   "name": "Level",
+   "change": "mod",
+   "visibility": "private",
+   "before": "function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover, ... })",
+   "after": "function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover, ... })",
+   "logic": "nontrivial",
+   "runs": [
+    "H20.1",
+    "H21.1",
+    "H22.1",
+    "H23.1"
+   ],
+   "note": "opened state + toggleOpened; '+N more' becomes a button opening a box in full / 'show less'"
+  },
+  {
+   "id": "u17",
+   "kind": "method",
+   "module": "component-diagram",
+   "owner": "Component.tsx",
+   "name": "cardLines",
+   "change": "mod",
+   "visibility": "private",
+   "before": "cardLines(n: DNode, d: ComponentDiagram, flows: FlowItem[]): { shown: BoxLine[]; more: number }",
+   "after": "cardLines(n: DNode, d: ComponentDiagram, flows: FlowItem[], full = false): { shown: BoxLine[]; more: number }",
+   "logic": "trivial",
+   "runs": [
+    "H24.2",
+    "H24.3"
+   ],
+   "note": "limit Infinity when full, passed to boxLines"
+  },
+  {
+   "id": "u18",
+   "kind": "method",
+   "module": "data-diagram",
+   "owner": "Data.tsx",
+   "name": "entityDiff",
+   "change": "mod",
+   "visibility": "private",
+   "before": "entityDiff(e: DEntity, movedOut: Set<string>): DataMark | undefined",
+   "after": "entityDiff(e: DEntity, movedOut: Set<string>): DataMark | undefined",
+   "logic": "trivial",
+   "runs": [
+    "H25.3"
+   ],
+   "note": "a changed index also makes the entity mod"
+  },
+  {
+   "id": "u19",
+   "kind": "method",
+   "module": "data-diagram",
+   "owner": "Data.tsx",
+   "name": "DataView",
+   "change": "mod",
+   "visibility": "public",
+   "before": "DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; focus?: string; onSelect?: (id: string | null) => void })",
+   "after": "DataView({ diagram, focus, onSelect }: { diagram: DataDiagram; focus?: string; onSelect?: (id: string | null) => void })",
+   "logic": "nontrivial",
+   "runs": [
+    "H25.1",
+    "H26.1",
+    "H27.1",
+    "H27.2",
+    "H28.1",
+    "H29.1"
+   ],
+   "note": "draws module group boxes, dashed cross relations, module in entity title, index rows with diff marks"
+  },
+  {
+   "id": "u20",
+   "kind": "field",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "PlacedEntity.indexRows",
+   "change": "add",
+   "visibility": "public",
+   "after": "indexRows: { y: number; text: string }[]",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H33.1"
+   ]
+  },
+  {
+   "id": "u21",
+   "kind": "model",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "PlacedGroup",
+   "change": "add",
+   "visibility": "public",
+   "after": "interface PlacedGroup { module: string; x: number; y: number; w: number; h: number }",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H33.1"
+   ]
+  },
+  {
+   "id": "u22",
+   "kind": "field",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "DataLayout.groups",
+   "change": "add",
+   "visibility": "public",
+   "after": "groups: PlacedGroup[]",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H34.1"
+   ]
+  },
+  {
+   "id": "u23",
+   "kind": "method",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "indexText",
+   "change": "add",
+   "visibility": "public",
+   "after": "indexText(i: NonNullable<DataDiagram['entities'][number]['indexes']>[number]): string",
+   "logic": "trivial",
+   "runs": [
+    "H34.2"
+   ],
+   "note": "\"unique (a, b)\" or \"index (a)\""
+  },
+  {
+   "id": "u24",
+   "kind": "config",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "GROUP_HEAD",
+   "change": "add",
+   "visibility": "public",
+   "after": "GROUP_HEAD = 22",
+   "logic": "none",
+   "runs": [
+    "H34.2"
+   ]
+  },
+  {
+   "id": "u25",
+   "kind": "method",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "fieldNotes",
+   "change": "mod",
+   "visibility": "public",
+   "before": "fieldNotes(d: DataDiagram): Map<string, string>",
+   "after": "fieldNotes(d: DataDiagram): Map<string, string>",
+   "logic": "nontrivial",
+   "runs": [
+    "H34.4"
+   ],
+   "note": "adds 'renamed from <old>' for a field moved within its entity"
+  },
+  {
+   "id": "u26",
+   "kind": "method",
+   "module": "graph-layout",
+   "owner": "graphLayout.ts",
+   "name": "layoutData",
+   "change": "mod",
+   "visibility": "public",
+   "before": "layoutData(d: DataDiagram): Promise<DataLayout>",
+   "after": "layoutData(d: DataDiagram): Promise<DataLayout>",
+   "logic": "nontrivial",
+   "runs": [
+    "H35.1",
+    "H35.2",
+    "H35.3",
+    "H36.1",
+    "H37.1"
+   ],
+   "note": "sizes index rows; ELK hierarchical layout with a group node per module; unpacks groups and entities in root coords, keeps diagram order"
+  },
+  {
+   "id": "u27",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "diagramWarnings",
+   "change": "add",
+   "visibility": "public",
+   "after": "diagramWarnings(d: Diagram): string[]",
+   "logic": "trivial",
+   "runs": [
+    "H40.1",
+    "H56.1"
+   ],
+   "note": "noise + data rules + component rename hints; re-exported from @mag/core index"
+  },
+  {
+   "id": "u28",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "noise",
+   "change": "add",
+   "visibility": "private",
+   "after": "noise(d: Diagram): string[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H40.1"
+   ],
+   "note": "flags mock/fake/test-only modules, interface lines (also lines resting on test files only), calls, entities, fields"
+  },
+  {
+   "id": "u29",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "data",
+   "change": "add",
+   "visibility": "private",
+   "after": "data(d: DataDiagram): string[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H40.1"
+   ],
+   "note": "entity without module, not stored data, reference field without relation, cross missing between modules, rename drawn as del+add"
+  },
+  {
+   "id": "u30",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "renames",
+   "change": "add",
+   "visibility": "private",
+   "after": "renames(d: ComponentDiagram): string[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H40.1"
+   ],
+   "note": "del+add interface lines differing by name only (2+ args) suggest move with from \"<module>#<old>\""
+  },
+  {
+   "id": "u31",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "signature",
+   "change": "add",
+   "visibility": "private",
+   "after": "signature(text: string): string",
+   "logic": "trivial",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u32",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "changes",
+   "change": "add",
+   "visibility": "private",
+   "after": "changes(e: DEntity): boolean",
+   "logic": "trivial",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u33",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "stored",
+   "change": "add",
+   "visibility": "private",
+   "after": "stored(e: DEntity): boolean",
+   "logic": "trivial",
+   "runs": [
+    "H40.1"
+   ],
+   "note": "kind collection or table"
+  },
+  {
+   "id": "u34",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "NOISE.test",
+   "change": "add",
+   "visibility": "private",
+   "after": "NOISE.test(s: string): boolean",
+   "logic": "trivial",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u35",
+   "kind": "config",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "NOISE_NAME",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u36",
+   "kind": "config",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "NOISE_WORD",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u37",
+   "kind": "config",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "TEST_FILE",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u38",
+   "kind": "config",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "NOT_DATA",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u39",
+   "kind": "config",
+   "module": "core-diagram",
+   "owner": "diagram-rules.ts",
+   "name": "REFERENCE",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H40.1"
+   ]
+  },
+  {
+   "id": "u40",
+   "kind": "field",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "FlowchartDiagram.nodes",
+   "change": "mod",
+   "visibility": "public",
+   "before": "nodes: { id: string; label: string; shape: FlowShape; diff?: DiffMark }[]",
+   "after": "nodes: FlowNode[]",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H44.1"
+   ]
+  },
+  {
+   "id": "u41",
+   "kind": "model",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "FlowNode",
+   "change": "add",
+   "visibility": "public",
+   "after": "interface FlowNode { id: string; label: string; shape: FlowShape; diff?: DiffMark; links?: DiagramLink[] }",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H44.2"
+   ]
+  },
+  {
+   "id": "u42",
+   "kind": "field",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "FlowNode.links",
+   "change": "add",
+   "visibility": "public",
+   "after": "links?: DiagramLink[]",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H44.2"
+   ],
+   "note": "a step links the flowchart of the method it calls (private ones too)"
+  },
+  {
+   "id": "u43",
+   "kind": "field",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "DEntity.module",
+   "change": "add",
+   "visibility": "public",
+   "after": "module?: string",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H46.1"
+   ]
+  },
+  {
+   "id": "u44",
+   "kind": "field",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "DEntity.indexes",
+   "change": "add",
+   "visibility": "public",
+   "after": "indexes?: DIndex[]",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H46.1"
+   ]
+  },
+  {
+   "id": "u45",
+   "kind": "model",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "DIndex",
+   "change": "add",
+   "visibility": "public",
+   "after": "interface DIndex { fields: string[]; unique?: boolean; diff?: DiffMark }",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H46.2"
+   ]
+  },
+  {
+   "id": "u46",
+   "kind": "field",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "DRelation.cross",
+   "change": "add",
+   "visibility": "public",
+   "after": "cross?: boolean",
+   "logic": "none",
+   "stored": true,
+   "runs": [
+    "H47.1"
+   ]
+  },
+  {
+   "id": "u47",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "normalizeDiagram",
+   "change": "mod",
+   "visibility": "public",
+   "before": "normalizeDiagram(raw: unknown): Diagram",
+   "after": "normalizeDiagram(raw: unknown): Diagram",
+   "logic": "nontrivial",
+   "runs": [
+    "H48.1"
+   ],
+   "note": "normalizes entity indexes; fields given as 'a, b' string split into a list"
+  },
+  {
+   "id": "u48",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "validateDiagram",
+   "change": "mod",
+   "visibility": "public",
+   "before": "validateDiagram(d: Diagram): string[]",
+   "after": "validateDiagram(d: Diagram): string[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H49.1",
+    "H50.1",
+    "H51.1",
+    "H51.2",
+    "H51.3"
+   ],
+   "note": "accepts method rename from \"<module>#<old>\" and field rename in place; validates flowchart node links, entity module, indexes (fields exist, unique bool, mark), relation cross"
+  },
+  {
+   "id": "u49",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "moves",
+   "change": "mod",
+   "visibility": "public",
+   "before": "moves(d: ComponentDiagram): Move[]",
+   "after": "moves(d: ComponentDiagram): Move[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H52.1"
+   ],
+   "note": "source module read through moveSource; a rename within the module is no move"
+  },
+  {
+   "id": "u50",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "moveSource",
+   "change": "add",
+   "visibility": "public",
+   "after": "moveSource(from: string): { module: string; method?: string } | null",
+   "logic": "nontrivial",
+   "runs": [
+    "H52.2"
+   ]
+  },
+  {
+   "id": "u51",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "boxLines",
+   "change": "mod",
+   "visibility": "public",
+   "before": "boxLines(n: DNode, d?: ComponentDiagram): { shown: BoxLine[]; more: number }",
+   "after": "boxLines(n: DNode, d?: ComponentDiagram, limit = BOX_LINES): { shown: BoxLine[]; more: number }",
+   "logic": "trivial",
+   "runs": [
+    "H53.2",
+    "H53.3"
+   ]
+  },
+  {
+   "id": "u52",
+   "kind": "method",
+   "module": "core-diagram",
+   "owner": "diagram.ts",
+   "name": "diagramSummary",
+   "change": "mod",
+   "visibility": "public",
+   "before": "diagramSummary(d: Diagram): DiffCount",
+   "after": "diagramSummary(d: Diagram): DiffCount",
+   "logic": "trivial",
+   "runs": [
+    "H55.1"
+   ],
+   "note": "data counts index marks too"
+  },
+  {
+   "id": "u53",
+   "kind": "config",
+   "module": "core-playbook",
+   "owner": "playbook.ts",
+   "name": "CODE_CHECKS",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H58.1"
+   ],
+   "note": "call contracts, unique index under upserts, migrations/defaults, read-but-unused values"
+  },
+  {
+   "id": "u54",
+   "kind": "config",
+   "module": "core-playbook",
+   "owner": "DEFAULT_PLAYBOOK",
+   "name": "DEFAULT_PLAYBOOK.plan",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H59.1"
+   ],
+   "note": "private-method flowchart links, data diagram rules, no mocks, rename as move"
+  },
+  {
+   "id": "u55",
+   "kind": "config",
+   "module": "core-playbook",
+   "owner": "DEFAULT_PLAYBOOK",
+   "name": "DEFAULT_PLAYBOOK.review",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H60.1"
+   ],
+   "note": "new step 4 'check the code' and appended CODE_CHECKS"
+  },
+  {
+   "id": "u56",
+   "kind": "config",
+   "module": "core-playbook",
+   "owner": "DEFAULT_PLAYBOOK",
+   "name": "DEFAULT_PLAYBOOK.prReview",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H61.1",
+    "H62.1"
+   ],
+   "note": "bugs and risks include the code checks; CODE_CHECKS appended"
+  },
+  {
+   "id": "u57",
+   "kind": "config",
+   "module": "core-playbook",
+   "owner": "DEFAULT_PLAYBOOK",
+   "name": "DEFAULT_PLAYBOOK.fact",
+   "change": "mod",
+   "visibility": "public",
+   "logic": "none",
+   "runs": [
+    "H63.1"
+   ],
+   "note": "private-method flowcharts, indexes, data diagram rules, no noise, renames as move"
+  },
+  {
+   "id": "u58",
+   "kind": "method",
+   "module": "core-sets",
+   "owner": "sets.ts",
+   "name": "diagramLinks",
+   "change": "mod",
+   "visibility": "public",
+   "before": "diagramLinks(d: Diagram): LinkFrom[]",
+   "after": "diagramLinks(d: Diagram): LinkFrom[]",
+   "logic": "trivial",
+   "runs": [
+    "H67.1"
+   ],
+   "note": "flowchart node links count"
+  },
+  {
+   "id": "u59",
+   "kind": "method",
+   "module": "core-sets",
+   "owner": "sets.ts",
+   "name": "hint",
+   "change": "mod",
+   "visibility": "private",
+   "before": "hint<C extends Member>(c: C, set: C[]): string",
+   "after": "hint<C extends Member>(c: C, set: C[]): string",
+   "logic": "trivial",
+   "runs": [
+    "H68.1"
+   ]
+  },
+  {
+   "id": "u60",
+   "kind": "method",
+   "module": "core-sets",
+   "owner": "sets.ts",
+   "name": "remapLinks",
+   "change": "mod",
+   "visibility": "public",
+   "before": "remapLinks(d: Diagram, ids: Map<string, string>): Diagram",
+   "after": "remapLinks(d: Diagram, ids: Map<string, string>): Diagram",
+   "logic": "trivial",
+   "runs": [
+    "H69.1"
+   ],
+   "note": "remaps flowchart node links"
+  },
+  {
+   "id": "u61",
+   "kind": "method",
+   "module": "diff-completeness",
+   "owner": "completeness.ts",
+   "name": "completeness",
+   "change": "mod",
+   "visibility": "public",
+   "before": "completeness(set: SetDiagram[], units: ChangedUnit[], architectu...)",
+   "after": "completeness(set: SetDiagram[], units: ChangedUnit[], architectu...)",
+   "logic": "nontrivial",
+   "runs": [
+    "H70.1",
+    "H72.1",
+    "H72.2",
+    "H72.3",
+    "H72.4",
+    "H73.1",
+    "H74.1"
+   ],
+   "note": "renamed lines also show the old name; private methods need only logic (flow of, linked step, trivialLogic); index units shown by a changed index"
+  },
+  {
+   "id": "u62",
+   "kind": "method",
+   "module": "diff-completeness",
+   "owner": "WHY",
+   "name": "logic",
+   "change": "mod",
+   "visibility": "private",
+   "before": "logic: (u) => string",
+   "after": "logic: (u) => string",
+   "logic": "nontrivial",
+   "runs": [
+    "H75.1"
+   ],
+   "note": "separate message for private methods"
+  },
+  {
+   "id": "u63",
+   "kind": "method",
+   "module": "diff-completeness",
+   "owner": "WHY",
+   "name": "index",
+   "change": "add",
+   "visibility": "private",
+   "after": "index: (u) => string",
+   "logic": "nontrivial",
+   "runs": [
+    "H75.1"
+   ]
+  },
+  {
+   "id": "u64",
+   "kind": "method",
+   "module": "diff-completeness",
+   "owner": "completeness.ts",
+   "name": "formatCompleteness",
+   "change": "mod",
+   "visibility": "public",
+   "before": "formatCompleteness(c: Completeness): string",
+   "after": "formatCompleteness(c: Completeness): string",
+   "logic": "trivial",
+   "runs": [
+    "H76.1"
+   ]
+  },
+  {
+   "id": "u65",
+   "kind": "config",
+   "module": "diff-engine",
+   "owner": "files.ts",
+   "name": "TEST",
+   "change": "mod",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H77.1"
+   ],
+   "note": "mocks, fakes, testutils and Mock*/Fake* Swift files classify as test"
+  },
+  {
+   "id": "u66",
+   "kind": "field",
+   "module": "diff-engine",
+   "owner": "types.ts",
+   "name": "ChangedUnit.kind",
+   "change": "mod",
+   "visibility": "public",
+   "before": "kind: 'method' | 'model' | 'dependency'",
+   "after": "kind: 'method' | 'model' | 'index' | 'dependency'",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H79.2"
+   ]
+  },
+  {
+   "id": "u67",
+   "kind": "field",
+   "module": "diff-engine",
+   "owner": "types.ts",
+   "name": "ChangedUnit.public",
+   "change": "add",
+   "visibility": "public",
+   "after": "public?: boolean",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H79.3"
+   ]
+  },
+  {
+   "id": "u68",
+   "kind": "field",
+   "module": "diff-engine",
+   "owner": "types.ts",
+   "name": "MissingUnit.rule",
+   "change": "mod",
+   "visibility": "public",
+   "before": "rule: 'method' | 'model' | 'logic' | 'dependency'",
+   "after": "rule: 'method' | 'model' | 'index' | 'logic' | 'dependency'",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H80.2"
+   ]
+  },
+  {
+   "id": "u69",
+   "kind": "method",
+   "module": "diff-compare",
+   "owner": "format.ts",
+   "name": "formatUnits",
+   "change": "mod",
+   "visibility": "public",
+   "before": "formatUnits(units: ChangedUnit[]): string",
+   "after": "formatUnits(units: ChangedUnit[]): string",
+   "logic": "nontrivial",
+   "runs": [
+    "H78.2"
+   ],
+   "note": "groups by predicate: public methods, private methods with logic, models (stored data), indexes, dependencies; marks ', private'"
+  },
+  {
+   "id": "u70",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "sameDecl",
+   "change": "add",
+   "visibility": "private",
+   "after": "sameDecl(lang: Lang, text: string): string",
+   "logic": "nontrivial",
+   "runs": [
+    "H88.1"
+   ],
+   "note": "collapses spaces, drops Go receiver"
+  },
+  {
+   "id": "u71",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "importTarget",
+   "change": "mod",
+   "visibility": "private",
+   "before": "importTarget(lang: Lang, file: string, spec: string, vocabulary: Vocabu...)",
+   "after": "importTarget(lang: Lang, file: string, spec: string, vocabulary: Vocabu...)",
+   "logic": "nontrivial",
+   "runs": [
+    "H89.1",
+    "H90.1"
+   ],
+   "note": "Go stdlib check moved after module matching: dotless Go module paths resolve to project modules"
+  },
+  {
+   "id": "u72",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "STORED",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ],
+   "note": "per-language persistence tags, ORM decorators/bases"
+  },
+  {
+   "id": "u73",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "INDEX_CALL",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u74",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "INDEX_SQL",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u75",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "INDEX_ON",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u76",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "BRANCH",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u77",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "CALL",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u78",
+   "kind": "config",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "MOCK",
+   "change": "add",
+   "visibility": "private",
+   "logic": "none",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u79",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "isIndex",
+   "change": "add",
+   "visibility": "private",
+   "after": "isIndex(text: string): boolean",
+   "logic": "trivial",
+   "runs": [
+    "H91.1"
+   ]
+  },
+  {
+   "id": "u80",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "units.ts",
+   "name": "changedUnits",
+   "change": "mod",
+   "visibility": "public",
+   "before": "changedUnits(files: FileChange[], architecture: ArchNode[], vocabulary: Vocabulary): ChangedUnit[]",
+   "after": "changedUnits(files: FileChange[], architecture: ArchNode[], vocabulary: Vocabulary): ChangedUnit[]",
+   "logic": "nontrivial",
+   "runs": [
+    "H92.1",
+    "H93.1",
+    "H93.3",
+    "H93.5",
+    "H93.6",
+    "H94.1",
+    "H94.2",
+    "H94.3",
+    "H94.4",
+    "H95.1",
+    "H95.2",
+    "H95.3"
+   ],
+   "note": "reads context lines; tracks stored types and branchy functions; index units; drops unstored models; private methods only with logic (branch high, call low); skips receiver-only Go changes and mocks"
+  },
+  {
+   "id": "u81",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "changedUnits",
+   "name": "touch",
+   "change": "mod",
+   "visibility": "private",
+   "before": "touch(d: Decl, confidence: ChangedUnit['confidence'], line: number, sign: string | null)",
+   "after": "touch(d: Decl, line: number, sign: string | null, text: string)",
+   "logic": "nontrivial",
+   "runs": [
+    "H93.2",
+    "H94.2",
+    "H94.4"
+   ],
+   "note": "no longer public-only; skips mocks; records public, declaration texts, branch/call in body"
+  },
+  {
+   "id": "u82",
+   "kind": "method",
+   "module": "diff-units",
+   "owner": "changedUnits",
+   "name": "mark",
+   "change": "add",
+   "visibility": "private",
+   "after": "mark(at: Decl | null, text: string)",
+   "logic": "nontrivial",
+   "runs": [
+    "H93.4"
+   ],
+   "note": "a persistence line inside a type marks it stored; a decorator flags the next declaration"
+  },
+  {
+   "id": "u83",
+   "kind": "model",
+   "module": "diff-units",
+   "owner": "changedUnits",
+   "name": "Acc",
+   "change": "add",
+   "visibility": "private",
+   "after": "type Acc = ChangedUnit & { signs: Set<string>; decls?: Record<string, Set<string>>; branch?: boolean; call?: boolean }",
+   "logic": "none",
+   "stored": false,
+   "runs": [
+    "H92.1"
+   ]
+  }
+ ],
+ "noise": [
+  {
+   "runs": [
+    "H1"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H3.1"
+   ],
+   "reason": "comment (doc of Fact.warnings)"
+  },
+  {
+   "runs": [
+    "H15"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H17.1"
+   ],
+   "reason": "comment (doc of setNote)"
+  },
+  {
+   "runs": [
+    "H18.1"
+   ],
+   "reason": "comment (doc of FactView.missing)"
+  },
+  {
+   "runs": [
+    "H24.1"
+   ],
+   "reason": "comment (doc of cardLines)"
+  },
+  {
+   "runs": [
+    "H25.2",
+    "H25.4"
+   ],
+   "reason": "comment (docs of entityDiff and DataView)"
+  },
+  {
+   "runs": [
+    "H30",
+    "H31"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H32.1"
+   ],
+   "reason": "comment"
+  },
+  {
+   "runs": [
+    "H34.3"
+   ],
+   "reason": "comment (doc of fieldNotes)"
+  },
+  {
+   "runs": [
+    "H38"
+   ],
+   "reason": "asset: styles for index rows, module groups, dashed cross relations"
+  },
+  {
+   "runs": [
+    "H39",
+    "H41",
+    "H42"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H43.1"
+   ],
+   "reason": "comment (doc of DLine.from; rename format is implemented in moveSource/validateDiagram)"
+  },
+  {
+   "runs": [
+    "H45.1",
+    "H45.2"
+   ],
+   "reason": "comment (docs of DField and DField.from)"
+  },
+  {
+   "runs": [
+    "H53.1"
+   ],
+   "reason": "comment (doc of boxLines)"
+  },
+  {
+   "runs": [
+    "H54.1"
+   ],
+   "reason": "comment (doc of diagramSummary)"
+  },
+  {
+   "runs": [
+    "H57"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H64"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H65.1"
+   ],
+   "reason": "comment (file header)"
+  },
+  {
+   "runs": [
+    "H66.1"
+   ],
+   "reason": "comment (doc of LinkFrom)"
+  },
+  {
+   "runs": [
+    "H71.1",
+    "H71.2"
+   ],
+   "reason": "comment (doc of completeness rules)"
+  },
+  {
+   "runs": [
+    "H78.1"
+   ],
+   "reason": "comment (doc of formatUnits)"
+  },
+  {
+   "runs": [
+    "H79.1"
+   ],
+   "reason": "comment (doc of ChangedUnit)"
+  },
+  {
+   "runs": [
+    "H80.1"
+   ],
+   "reason": "comment (doc of MissingUnit)"
+  },
+  {
+   "runs": [
+    "H81",
+    "H82",
+    "H83",
+    "H84",
+    "H85",
+    "H86",
+    "H87"
+   ],
+   "reason": "test"
+  },
+  {
+   "runs": [
+    "H91.2"
+   ],
+   "reason": "comment (doc of changedUnits)"
+  }
+ ]
+}

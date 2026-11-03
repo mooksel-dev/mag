@@ -128,21 +128,6 @@ function hint<C extends Member>(c: C, set: C[]): string {
   return `give a module of the root ${link('detail')}.`
 }
 
-/** A diagram with the ids its links lead to replaced (`ids`: old id → new), e.g. a copy of a set. */
-export function remapLinks(d: Diagram, ids: Map<string, string>): Diagram {
-  const copy = JSON.parse(JSON.stringify(d)) as Diagram
-  const fix = (links?: DiagramLink[]) => links?.forEach((l) => (l.to = ids.get(l.to) ?? l.to))
-  if (copy.type === 'component')
-    walkArch(copy.modules, (n: DNode) => {
-      fix(n.links)
-      n.interface?.forEach((l) => fix(l.links))
-      n.uses.forEach((u) => fix(u.links))
-    })
-  if (copy.type === 'data') copy.entities.forEach((e) => fix(e.links))
-  if (copy.type === 'flowchart') copy.nodes.forEach((n) => fix(n.links))
-  return copy
-}
-
 // The one diff window (povnyi-diff-nabir-pov-iazanykh.2, Decision 6): the levels a set shows, the way from its root
 // to a diagram for the breadcrumbs, and what a node opens.
 

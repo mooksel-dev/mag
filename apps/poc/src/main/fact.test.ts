@@ -1,16 +1,16 @@
-// Plan ↔ fact over real git (T-57.4, T-58): a step's PR, its fact diagram started as a copy of the plan, its revision.
+// Plan ↔ fact over real git (T-57.4, T-58): a step's PR, the reviewer's change inventory of it and what mag generates and
+// checks from it (diff-iak-inventar-zmin-ai.1).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ArchDiagram, ComponentDiagram } from '@mag/core'
+import type { ArchDiagram, ChangeInventory, ComponentDiagram, DataDiagram } from '@mag/core'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 import { createTools, type ToolActions } from './tools.ts'
-import { factHeads, factView, localGit, stepFact, stepHunk, stepTargets } from './fact.ts'
-import { changes, seed } from './core/services/fact/index.ts'
+import { factHeads, factView, stepFact, stepHunk } from './fact.ts'
 import { hunkLines } from './git.ts'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -62,124 +62,133 @@ function setup() {
   const reviewer = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'reviewer', agent: 'claude-code', status: 'idle' })
   const tools = createTools(store, {} as ToolActions)
   const show = (diagram: unknown, id?: string) => tools({ taskId: task.id, sessionId: reviewer.id }, 'show_diagram', { title: 'Fact', diagram, ...(id && { id }) })
-  return { repo, head, store, project, task, step, plan, orch, show }
+  const inventory = (inv: unknown) => tools({ taskId: task.id, sessionId: reviewer.id }, 'set_inventory', { inventory: inv })
+  return { repo, head, store, project, task, step, plan, orch, show, inventory }
 }
 
-const FACT: ComponentDiagram = {
-  type: 'component',
-  summary: 'load takes fresh; save and extra came instead of remove',
-  modules: [
-    {
-      id: 'app', name: 'app', description: '', uses: [],
-      interface: [{ text: 'extra(): number', diff: 'add', files: ['src/extra.ts'], trivialLogic: 'returns a constant' }],
-      children: [
-        {
-          id: 'store', name: 'store', description: '', uses: [],
-          interface: [
-            { text: 'load(id): Item', diff: 'del', files: ['src/store.ts'] },
-            { text: 'load(id, fresh?): Item', diff: 'add', files: ['src/store.ts'], trivialLogic: 'one more argument, no new branch' },
-            { text: 'remove(id): void' },
-            { text: 'save(id): Item', diff: 'add', files: ['src/store.ts'], trivialLogic: 'returns its argument' },
-          ],
-        },
-      ],
-    },
+/** What the step did, as its reviewer lists it from the hunks: README is docs (H1), extra.ts H2, store.ts one block H3.1. */
+const INVENTORY: ChangeInventory = {
+  summary: ['load takes fresh', 'save and extra came instead of remove'],
+  units: [
+    { id: 'u1', kind: 'method', module: 'store', name: 'load', change: 'mod', before: 'load(id: string)', after: 'load(id: string, fresh = false)', logic: 'nontrivial', hunks: ['H3.1'] },
+    { id: 'u2', kind: 'method', module: 'store', name: 'save', change: 'add', after: 'save(id: string)', logic: 'trivial', hunks: ['H3.1'] },
+    { id: 'u3', kind: 'method', module: 'app', name: 'extra', change: 'add', after: 'extra()', logic: 'trivial', hunks: ['H2.1'] },
   ],
+  noise: [],
 }
 
-test('stepFact: changed files; without a fact diagram nothing is shown; a revised one against files and plan', async () => {
+test('stepFact: changed files with numbered hunks; without an inventory nothing is on the fact and merge is blocked', async () => {
   const { store, project, step, repo, head } = setup()
-  const heads = { [repo]: head }
-  const none = await stepFact(project, store.task(step.id), heads, Object.values(store.data.canvases))
-  assert.deepEqual(none.files.map((f) => [f.path, f.module, f.kind]), [['README.md', null, 'docs'], ['src/extra.ts', 'app', 'code'], ['src/store.ts', 'store', 'code']])
+  const none = await stepFact(project, store.task(step.id), { [repo]: head }, Object.values(store.data.canvases))
+  assert.deepEqual(none.files.map((f) => [f.path, f.module, f.kind, f.hunks.map((h) => h.id).join()]), [['README.md', null, 'docs', 'H1'], ['src/extra.ts', 'app', 'code', 'H2'], ['src/store.ts', 'store', 'code', 'H3']])
   assert.equal(none.canvas, null)
   assert.deepEqual(none.comparison.items.map((i) => i.status), ['missing', 'missing'])
-  assert.equal(none.blockers[0], 'there is no fact diagram of the PRs yet')
-
-  store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: 'Fact', kind: 'diagram', diagram: FACT, placement: { role: 'fact', option: null, stepId: step.id, repo: null, planOf: null } })
-  const fact = await stepFact(project, store.task(step.id), heads, Object.values(store.data.canvases))
-  assert.deepEqual(fact.coverage!.unshown, [])
-  assert.deepEqual(fact.grounding!.unverified, [])
-  assert.deepEqual(fact.comparison.items.map((i) => `${i.status} ${i.level} ${(i.plan ?? i.fact)!.key}`), ['missing high store#remove', 'unplanned high app#extra', 'unplanned high store#save', 'match high store#load'])
-  assert.deepEqual(fact.blockers, ['high: store remove(id): void is planned, not on the fact', 'high: app extra(): number is on the fact, not on the plan', 'high: store save(id): Item is on the fact, not on the plan'])
-  // The playbook's rules level the fact by the files it gives: a project that does not care about src/extra.ts.
-  store.updateProject(project.id, { playbook: { significance: 'low: src/extra.ts' } })
-  const ruled = await stepFact(store.project(project.id), store.task(step.id), heads, Object.values(store.data.canvases))
-  assert.equal(ruled.blockers.length, 2)
+  assert.equal(none.blockers[0], 'there is no inventory of the PRs yet: the review writes it with set_inventory')
 })
 
-test('factOf: starts the fact diagram as a copy of the plan; the reviewer revises it and hears what mag checks', async () => {
-  const { store, step, repo, head, plan, orch, show } = setup()
+test('factOf and set_inventory: the reviewer gets the hunks, writes the inventory; mag generates the fact, checks and records it', async () => {
+  const { store, step, repo, head, plan, orch, show, inventory } = setup()
   const text = await orch.factOf(step.id, { [repo]: head })
-  const fact = store.task(step.id).fact!
-  const canvas = store.data.canvases[fact.canvasId!]
-  assert.deepEqual([canvas.role, canvas.stepId, canvas.planOf, canvas.version, fact.canvasVersion], ['fact', step.id, plan.id, 1, 1])
-  assert.deepEqual((canvas.diagram as ComponentDiagram).modules, PLAN.modules, 'a copy of the plan')
-  // Nothing of the copy rests on the PR, so it shows no changed file (Decision 11).
-  assert.deepEqual(fact.counts, { match: 2, differs: 0, missing: 0, unplanned: 0, unshown: 2, unverified: 2 })
-  assert.match(text, /mag's copy of the plan: nothing on it rests on the PR yet\./)
+  assert.equal(store.task(step.id).fact!.canvasId, null, 'mag starts no fact set: the inventory makes it')
+  assert.match(text, /Fact: no inventory yet: write it with set_inventory from the hunks below\./)
   assert.match(text, /### Changed files\napp: [0-9a-f]{12} → [0-9a-f]{12}, 3 file\(s\) changed, 2 of them code\./)
-  assert.match(text, /### Changed code the fact diagram does not show \(2\)\n- app:src\/extra\.ts \(app\)\n- app:src\/store\.ts \(store\)/)
-  assert.match(text, /### Lines of the fact that do not rest on the PR \(2\)\n- store load\(id, fresh\?\): Item: no-files/)
-  assert.match(text, /merge is NOT allowed/)
+  assert.match(text, /### H3 {2}app:src\/store\.ts {2}\[module: store\] {2}@@ -1,3 \+1,7 @@\n\[H3\.1\]\n-export function load\(id: string\) \{/)
+  assert.match(text, /\n\+export function save\(id: string\) \{\n {3}return id\n \}\n/, 'context lines as git gives them')
+  assert.match(text, /Not code, need not be cited: app:README\.md \(docs: H1\)/)
+  await assert.rejects(show({ type: 'flowchart', of: 'store#load', nodes: [], edges: [] }), /Write the inventory first/)
 
-  // On the next heads the copy is not started again.
-  await orch.factOf(step.id, { [repo]: head })
-  assert.equal(store.data.canvases[fact.canvasId!].version, 1)
+  await assert.rejects(inventory({ units: [] }), /Not saved\. Fix and call again:\n- summary is required/)
+  const answer = await inventory(INVENTORY)
+  const fact = store.task(step.id).fact!
+  const root = store.data.canvases[fact.canvasId!]
+  assert.deepEqual([root.role, root.stepId, root.root, root.inventory], ['fact', step.id, true, INVENTORY])
+  assert.match(answer, /^Inventory saved: 3 units; mag generated \[x\.1: fact\]\(canvas:\w+\) \(v1, the root\)\. /)
+  assert.match(answer, /Every block of changed code is in a unit or noise, and every unit rests on its hunks\./)
+  const store_ = (root.diagram as ComponentDiagram).modules.find((m) => m.id === 'store')!
+  assert.deepEqual(store_.interface, [
+    { text: 'load(id: string)', diff: 'del', files: ['src/store.ts'], logic: true },
+    { text: 'load(id: string, fresh = false)', diff: 'add', files: ['src/store.ts'], logic: true },
+    { text: 'save(id: string)', diff: 'add', files: ['src/store.ts'] },
+  ])
+  assert.deepEqual(fact.counts, { match: 0, differs: 1, missing: 1, unplanned: 4, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: differs, not blocking')
+  assert.deepEqual(fact.blockers, ['high: store remove(id): void is planned, not on the fact', 'high: store save(id: string) is on the fact, not on the plan', 'high: app extra() is on the fact, not on the plan'])
 
-  // The reviewer's revision is checked and recorded at once.
-  const answer = await show(FACT, fact.canvasId!)
-  assert.match(answer, /Fact set: root \[.*\]\(canvas:\w+\) \(v2\), revised\./)
-  assert.doesNotMatch(answer, /does not show|do not rest/)
-  assert.deepEqual(store.task(step.id).fact!.counts, { match: 1, differs: 0, missing: 1, unplanned: 2, unshown: 0, unverified: 0 })
-  await assert.rejects(show(FACT, plan.id), /only the fact set of the step under review/)
-  // A new diagram of the reviewer joins the step's fact set (povnyi-diff-nabir-pov-iazanykh.1).
-  const added = await show({ type: 'data', entities: [{ id: 'item', name: 'Item', fields: [{ name: 'id', type: 'string' }] }], relations: [] })
-  const id = added.match(/^Diagram (\w+)/)![1]
-  assert.deepEqual([store.data.canvases[id].role, store.data.canvases[id].stepId], ['fact', step.id])
-  // Not linked from the root yet: the set says so.
-  assert.match(added, /"Fact" \(\w+\) is not reached from the root: give the module that owns these tables links: \[\{ to: "\w+", kind: "data" \}\]/)
-  store.data.canvases[id] = { ...store.data.canvases[id], role: null, stepId: null }
+  // A unit left out is a block in no unit; the inventory is written again whole and revises the same root.
+  const again = await inventory({ ...INVENTORY, units: INVENTORY.units.slice(0, 2) })
+  assert.match(again, /- H2\.1 \(app:src\/extra\.ts, app\) is changed code in no unit and not in noise/)
+  assert.equal(store.task(step.id).fact!.canvasId, root.id)
+  assert.equal(store.data.canvases[root.id].version, 2)
+  assert.equal(store.task(step.id).fact!.counts.unaccounted, 1)
+  await inventory(INVENTORY)
+
+  // A fact set takes only scenarios and the logic of a nontrivial method.
+  await assert.rejects(show(PLAN), /mag generates the fact's Component and Data diagrams from the inventory/)
+  await assert.rejects(show({ type: 'flowchart', of: 'store#load', nodes: [], edges: [] }, root.id), /is generated by mag from the inventory/)
+  await assert.rejects(show({ type: 'flowchart', of: 'store#save', nodes: [], edges: [] }), /store#save is no method unit of the inventory with logic nontrivial/)
+  const flow = await show({ type: 'flowchart', of: 'store#load', summary: 'fresh', nodes: [{ id: 'a', label: 'fresh?', shape: 'decision' }], edges: [] })
+  assert.match(flow, /^Diagram \w+ \(v1\) in the fact of /)
+  const seq = await show({ type: 'sequence', participants: [{ id: 'app', label: 'app' }, { id: 'store', label: 'store' }], messages: [{ from: 'app', to: 'store', text: 'load(id, true)', kind: 'call' }] })
+  const seqId = seq.match(/^Diagram (\w+)/)![1]
+  assert.deepEqual((store.data.canvases[root.id].diagram as ComponentDiagram).modules.find((m) => m.id === 'store')!.links, [{ to: seqId, node: 'store', kind: 'scenario' }], 'the root links the scenario from its modules')
+  assert.doesNotMatch(seq, /not reached from the root/)
+  await assert.rejects(show(PLAN, plan.id), /only the fact set of the step under review/)
 
   // A plan the fact agrees with: merge is allowed.
-  store.saveCanvas({ id: plan.id, projectId: plan.projectId, taskId: plan.taskId, sessionId: null, title: 'Plan', kind: 'diagram', diagram: { ...FACT, modules: FACT.modules } })
-  assert.match(await show(FACT, fact.canvasId!), /merge is allowed\.$/)
+  const agreed = store.data.canvases[root.id].diagram as ComponentDiagram
+  store.saveCanvas({ id: plan.id, projectId: plan.projectId, taskId: plan.taskId, sessionId: null, title: 'Plan', kind: 'diagram', diagram: agreed })
+  assert.match(await show({ type: 'flowchart', of: 'store#load', summary: 'fresh', nodes: [{ id: 'a', label: 'fresh?', shape: 'decision' }], edges: [] }, flow.match(/^Diagram (\w+)/)![1]), /merge is allowed\.$/)
   assert.deepEqual(store.task(step.id).fact!.blockers, [])
 })
 
-test('seed: without a plan, the modules that own the changed code, unmarked', async () => {
-  const { store, project, step, repo, head, plan } = setup()
-  const { files } = await changes(project, await stepTargets(project, store.task(step.id), { [repo]: head }), localGit, [plan])
-  const [{ diagram }] = seed(step.key, [], files, project.architecture)
-  assert.deepEqual((diagram as ComponentDiagram).modules.map((m) => [m.id, m.diff, m.interface]), [['app', undefined, undefined], ['store', undefined, undefined]])
-  assert.deepEqual(seed(step.key, [], files.filter((f) => f.kind !== 'code'), project.architecture), [])
+test('set_inventory: stored data gets a Data diagram linked from its module; drawn Component and Data diagrams leave the set', async () => {
+  const { store, project, step, repo, head, orch, inventory } = setup()
+  await orch.factOf(step.id, { [repo]: head })
+  // A fact set drawn before inventories: a component and a data diagram.
+  const placement = { role: 'fact' as const, option: null, stepId: step.id, repo: null, planOf: null }
+  const old = store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: 'Drawn', kind: 'diagram', diagram: PLAN, placement, root: true })
+  const oldData = store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: 'Drawn data', kind: 'diagram', diagram: { type: 'data', entities: [{ id: 'x', name: 'x', kind: 'table', fields: [{ name: 'a', type: 'b' }] }], relations: [] }, placement })
+  assert.match((await stepFact(project, store.task(step.id), { [repo]: head }, Object.values(store.data.canvases))).blockers[0], /no inventory .*restart the review/)
+  const withData = { ...INVENTORY, units: [...INVENTORY.units, { id: 'u4', kind: 'field' as const, module: 'store', name: 'Item.stale', change: 'add' as const, stored: true, after: 'boolean', hunks: ['H3.1'] }] }
+  const answer = await inventory(withData)
+  const fact = store.task(step.id).fact!
+  assert.equal(fact.canvasId, old.id, 'the drawn root is revised into the generated one')
+  const data = store.data.canvases[oldData.id]
+  assert.deepEqual((data.diagram as DataDiagram).entities.map((e) => [e.id, e.module, e.fields.map((f) => f.name)]), [['Item', 'store', ['stale']]])
+  assert.match(answer, /and \[x\.1: fact — data\]\(canvas:\w+\) \(v2\)/)
+  assert.deepEqual((store.data.canvases[old.id].diagram as ComponentDiagram).modules.find((m) => m.id === 'store')!.links, [{ to: oldData.id, kind: 'data' }])
+  // stale is not a word of its hunks: the unit is not borne out.
+  assert.ok(fact.blockers.includes('unit u4 (Item.stale): stale is not in its hunks'))
+  const third = store.saveCanvas({ projectId: project.id, taskId: step.parentId, sessionId: null, title: 'Another', kind: 'diagram', diagram: PLAN, placement })
+  await inventory(INVENTORY)
+  assert.equal(store.data.canvases[third.id].role, null, 'a drawn Component diagram leaves the set')
+  assert.equal(store.data.canvases[oldData.id].role, null, 'no stored data changes: the Data diagram leaves the set')
 })
 
-test('factView: files, plan ↔ fact, the threshold, coverage and unverified lines; hunks open', async () => {
-  const { store, step, repo, head, orch } = setup()
+test('factView: files without lines, plan ↔ fact, the threshold and the inventory check; hunks open', async () => {
+  const { store, step, repo, head, orch, inventory } = setup()
   // No open PR head yet, no recorded fact: nothing to show.
   assert.equal(await factView(store.project(store.task(step.id).projectId), store.task(step.id), Object.values(store.data.canvases)), null)
   store.updateTask(step.id, { work: { ...store.task(step.id).work!, repos: store.task(step.id).work!.repos.map((r) => ({ ...r, prHead: head })) } })
   await orch.factOf(step.id, { [repo]: head })
+  await inventory({ ...INVENTORY, units: INVENTORY.units.slice(2) })
   const s = store.task(step.id)
   const view = (await factView(store.project(s.projectId), s, Object.values(store.data.canvases)))!
   assert.deepEqual(view.heads, { [repo]: head })
   assert.deepEqual(view.repos.map((r) => [r.repo, r.name, r.headSha]), [[repo, 'app', head]])
   assert.equal(view.files.length, 3)
-  assert.deepEqual(view.items.map((i) => i.status), ['match', 'match'])
+  assert.ok(view.files.every((f) => f.hunks.every((h) => h.lines === undefined)), 'lines stay in the main process')
   assert.deepEqual(view.plans.map((p) => p.title), ['Plan'])
   assert.equal(view.fact!.id, s.fact!.canvasId)
-  assert.deepEqual(view.coverage!.unshown.map((f) => f.path), ['src/extra.ts', 'src/store.ts'])
-  assert.deepEqual(view.unverified.map((u) => [u.change.key, u.reason]), [['store#load', 'no-files'], ['store#remove', 'no-files']])
-  // The copy of the plan shows neither extra nor save, nor the changed logic of load (povnyi-diff-nabir-pov-iazanykh.1).
-  assert.deepEqual(view.missing.map((m) => [m.rule, m.unit.name]), [['method', 'extra'], ['logic', 'load'], ['method', 'save']])
-  assert.deepEqual(view.set.map((c) => c.id), [s.fact!.canvasId])
-  assert.equal(view.blockers.length, 7)
+  assert.deepEqual(view.inventory, { units: 1, summary: INVENTORY.summary })
+  assert.deepEqual(view.check!.unaccounted.map((b) => [b.id, b.path]), [['H3.1', 'src/store.ts']])
+  assert.equal('lines' in view.check!.unaccounted[0], false)
+  assert.ok(view.blockers.includes('H3.1 (app:src/store.ts, store) is changed code in no unit and not in noise'))
 
   const save = view.files.find((f) => f.path === 'src/store.ts')!
   const hunk = { path: save.path, ...save.hunks.at(-1)! }
   const lines = await stepHunk(s, repo, view.repos[0].baseSha, head, hunk)
   assert.ok(lines.includes('+export function save(id: string) {'), lines.join('\n'))
+  assert.ok(lines.includes(' }'), 'with its context')
   await assert.rejects(stepHunk(s, '/elsewhere', view.repos[0].baseSha, head, hunk), /does not change/)
   await assert.rejects(stepHunk(s, repo, 'HEAD', head, hunk), /commit shas/)
 
@@ -188,7 +197,7 @@ test('factView: files, plan ↔ fact, the threshold, coverage and unverified lin
   assert.deepEqual(factHeads(store.task(step.id)), { [repo]: head })
 })
 
-test('hunkLines: one hunk of one file, renames by their new path, no-newline markers left out', () => {
+test('hunkLines: one hunk of one file with its context, renames by their new path, no-newline markers left out', () => {
   const text = [
     'diff --git a/src/a.ts b/src/a.ts',
     'index 1..2 100644',
@@ -207,13 +216,15 @@ test('hunkLines: one hunk of one file, renames by their new path, no-newline mar
     'rename to src/c.ts',
     '--- a/src/b.ts',
     '+++ b/src/c.ts',
-    '@@ -3 +3 @@',
+    '@@ -3,3 +3,3 @@',
+    ' a',
     '-x',
     '+y',
-    '',
+    ' b',
+    'diff --git a/src/d.ts b/src/d.ts',
   ].join('\n')
   assert.deepEqual(hunkLines(text, 'src/a.ts', { oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }), ['-old', '+new', '+-- not a header'])
   assert.deepEqual(hunkLines(text, 'src/a.ts', { oldStart: 5, oldLines: 0, newStart: 7, newLines: 1 }), ['+later'])
-  assert.deepEqual(hunkLines(text, 'src/c.ts', { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }), ['-x', '+y'])
-  assert.deepEqual(hunkLines(text, 'src/b.ts', { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1 }), [])
+  assert.deepEqual(hunkLines(text, 'src/c.ts', { oldStart: 3, oldLines: 3, newStart: 3, newLines: 3 }), [' a', '-x', '+y', ' b'])
+  assert.deepEqual(hunkLines(text, 'src/b.ts', { oldStart: 3, oldLines: 3, newStart: 3, newLines: 3 }), [])
 })

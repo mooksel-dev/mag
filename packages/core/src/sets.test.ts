@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { linksAt, nodeFiles, normalizeDiagram, remapLinks, setKey, setLevels, setOf, setRoot, setTrail, validateDiagram, validateLinks, type Canvas, type Diagram } from './index.ts'
+import { linksAt, nodeFiles, normalizeDiagram, setKey, setLevels, setOf, setRoot, setTrail, validateDiagram, validateLinks, type Canvas, type Diagram } from './index.ts'
 
 const canvas = (id: string, diagram: Diagram, extra: Partial<Canvas> = {}): Canvas =>
   ({ id, projectId: 'p', taskId: 't', sessionId: null, title: id, kind: 'diagram', diagram, role: 'plan', option: null, stepId: 's1', repo: null, planOf: null, version: 1, updatedAt: 0, ...extra }) as Canvas
@@ -56,7 +56,7 @@ test('validateLinks: no root, several roots, links outside the set or to no node
   assert.deepEqual(validateLinks([canvas('c', linked('data', 'orders'), { root: true }), canvas('data', DATA)]), ['"c" (c): api links to node "orders" of "data" (data), which has no such node.'])
 })
 
-test('a step of a flowchart links the flowchart of the private method it calls; remapLinks follows it (povnyi-diff-nabir-pov-iazanykh.3)', () => {
+test('a step of a flowchart links the flowchart of the private method it calls (povnyi-diff-nabir-pov-iazanykh.3)', () => {
   const caller: Diagram = { type: 'flowchart', nodes: [{ id: 'send', label: 'doSend(account)', shape: 'step', links: [{ to: 'private', node: 'start', kind: 'logic' }] }], edges: [] }
   const callee: Diagram = { type: 'flowchart', nodes: [{ id: 'start', label: 'start', shape: 'start' }], edges: [] }
   assert.deepEqual(validateDiagram(caller), [])
@@ -66,25 +66,15 @@ test('a step of a flowchart links the flowchart of the private method it calls; 
   assert.deepEqual(validateLinks(set), [])
   assert.deepEqual(linksAt(set, 'flow', 'send').map((l) => l.link.to), ['private'])
   assert.deepEqual(setTrail(set, 'private'), [{ id: 'c' }, { id: 'flow', via: 'api#list' }, { id: 'private', via: 'send' }])
-  const copy = remapLinks(caller, new Map([['private', 'P']])) as typeof caller
-  assert.equal(copy.nodes[0].links![0].to, 'P')
 })
 
-test('remapLinks: a copy of a set links its own diagrams', () => {
-  const copy = remapLinks(COMPONENT, new Map([['data', 'D'], ['flow', 'F']]))
-  assert.ok(copy.type === 'component')
-  assert.deepEqual([copy.modules[0].links![0].to, copy.modules[0].interface![0].links![0].to, copy.modules[0].uses[0].links![0].to], ['D', 'F', 'seq'])
-  assert.equal((COMPONENT as { modules: { links?: { to: string }[] }[] }).modules[0].links![0].to, 'data', 'the original stays')
-})
-
-test('validateDiagram: links need to and a kind; trivialLogic is one line', () => {
+test('validateDiagram: links need to and a kind', () => {
   const bad = normalizeDiagram({
     ...COMPONENT,
-    modules: [{ ...COMPONENT.modules[0], links: [{ to: '', kind: 'data' }], interface: [{ text: 'list()', trivialLogic: ' ' }], uses: [{ to: 'db', calls: [], links: [{ to: 'x', kind: 'other' }] }] }, COMPONENT.modules[1]],
+    modules: [{ ...COMPONENT.modules[0], links: [{ to: '', kind: 'data' }], interface: [{ text: 'list()' }], uses: [{ to: 'db', calls: [], links: [{ to: 'x', kind: 'other' }] }] }, COMPONENT.modules[1]],
   })
   assert.deepEqual(validateDiagram(bad), [
     'Module api: a link needs to, the id of a diagram of the set',
-    'Interface line "list()" of api: trivialLogic is one line on why the changed logic needs no flowchart',
     'Use api → db: link to x: kind must be one of detail, data, scenario, logic',
   ])
   assert.deepEqual(validateDiagram(normalizeDiagram({ ...DATA, entities: [{ ...(DATA as { entities: object[] }).entities[0], links: 'api' }] })), ['Entity users: links must be a list of { to, node?, kind }'])

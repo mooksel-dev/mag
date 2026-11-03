@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { CompareItem, Coverage, FileChange, Grounding, HunkRef, MissingUnit } from '@mag/diff/types'
+import type { CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -89,8 +89,8 @@ export interface FactCanvas {
 
 /**
  * Plan ↔ fact of a step's PRs as Diff shows it (T-57.5, T-58): what `stepFact` found at `heads`: the files the PRs
- * change, plan ↔ fact of the diagrams, which changed code files the fact diagram shows and which of its lines do not
- * rest on the PR. A file carries its repository's name; `repos` gives the commits to open its hunks (stepHunk).
+ * change, plan ↔ fact of the diagrams, and the change inventory against the hunks (diff-iak-inventar-zmin-ai.1). A
+ * file carries its repository's name; `repos` gives the commits to open its hunks (stepHunk).
  */
 export interface FactView {
   heads: Record<string, string>
@@ -103,11 +103,10 @@ export interface FactView {
   fact: FactCanvas | null
   /** Every diagram of the fact set, the root among them (povnyi-diff-nabir-pov-iazanykh.1). */
   set: FactCanvas[]
-  /** null without a fact diagram. */
-  coverage: Coverage | null
-  unverified: Grounding['unverified']
-  /** Changed methods, models, indexes, logic and dependencies the fact set neither shows nor explains; high ones block merge. */
-  missing: MissingUnit[]
+  /** The fact's inventory in short; null before the review writes one (or for a set drawn before inventories). */
+  inventory: { units: number; summary: string[] } | null
+  /** The inventory against the hunks, its blocks without their lines; null without an inventory. */
+  check: (Omit<InventoryCheck, 'unaccounted'> & { unaccounted: Omit<HunkBlock, 'lines'>[] }) | null
   /** Where the fact set does not hang together: root, links, orphans. */
   warnings: string[]
   /** Read without the project's architecture (a PR outside the project): modules are folders. */

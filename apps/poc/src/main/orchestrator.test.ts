@@ -712,13 +712,13 @@ test('review: the first round forks the owner session; changes go to the develop
   assert.equal(runs.at(-1), second)
 })
 
-test('review: the reviewer draws the fact and reads plan ↔ fact; merge is refused over the threshold (T-57.4, T-58)', async () => {
+test('review: the reviewer writes the inventory and reads plan ↔ fact; merge is refused over the threshold (T-57.4, T-58)', async () => {
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact set \(below\) is yours to draw[\s\S]*Every changed line, dependency and call gives files[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
-  const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unshown: 0, unverified: 0 }
-  store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, canvasVersion: null, at: 1 } })
+  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
+  const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
+  store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
   assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
   assert.equal(store.task(step.id).review, undefined)
   assert.match(orch.setReview(step.id, 'look', [{ text: 'x is unplanned' }]), /user gets your verdict/)
@@ -877,7 +877,7 @@ test("a topic never writes to a PR: review, comment, close, edit, gh api writes 
   assert.ok(!denied.includes('Bash'))
 })
 
-test("a teammate's PR: mag starts its fact without a plan; the verdict goes to Needs you (reviews-ahent-reviuit-pr-timeitiv.2, reviews-prybraty-spysok-pr-i.1)", async () => {
+test("a teammate's PR: its fact is the topic's inventory, without a plan; the verdict goes to Needs you (reviews-ahent-reviuit-pr-timeitiv.2, reviews-prybraty-spysok-pr-i.1)", async () => {
   const { dir, store, orch, project } = setup()
   const app = gitRepo(join(dir, 'repos', 'app'))
   git(app, 'checkout', '-q', '-b', 'feature')
@@ -892,13 +892,17 @@ test("a teammate's PR: mag starts its fact without a plan; the verdict goes to N
   const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
   store.updateTask(work.id, { prReview: { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null } })
 
-  // No plan to copy: mag starts the fact over the modules that own the changed code, and compares it with nothing.
+  // No plan: the topic reads the hunks and writes the inventory; mag compares it with nothing.
   const report = await orch.reviewFactOf(work.id)
-  const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
-  assert.match(report, /^## Fact \(mag\)\nFact set: root \[[^\]]+\]\(canvas:\w+\) \(v1\), started by mag: nothing on it rests on the PR yet\.[\s\S]*src\/charge\.ts[\s\S]*### The fact is not complete yet/)
+  assert.match(report, /^## Fact \(mag\)\nFact: no inventory yet: write it with set_inventory from the hunks below\.[\s\S]*### The fact is not complete yet[\s\S]*### H1 {2}app:src\/charge\.ts {2}\[module: [^\]]+\] {2}@@ -0,0 \+1,1 @@\n\[H1\.1\]\n\+export const charge = 1/)
   assert.doesNotMatch(report, /Intent|Plan ↔ fact/)
-  assert.deepEqual([fact.stepId, fact.repo, fact.planOf, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, app, null, fact.id, { [app]: head }])
-  assert.match((fact.diagram as { summary: string }).summary, /no plan diagram/)
+  assert.deepEqual([store.task(work.id).fact?.canvasId, store.task(work.id).fact?.heads], [null, { [app]: head }])
+  const module = /\[module: ([^\]]+)\]/.exec(report)![1]
+  const tools = createTools(store, {} as ToolActions)
+  const answer = await tools({ projectId: project.id, sessionId: topic.id }, 'set_inventory', { work: work.key, inventory: { summary: ['charge'], units: [{ kind: 'config', module, name: 'charge', change: 'add', hunks: ['H1.1'] }], noise: [] } })
+  assert.match(answer, /^Inventory saved: 1 units;[\s\S]*### The fact is complete/)
+  const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
+  assert.deepEqual([fact.stepId, fact.repo, fact.root, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.blockers], [null, app, true, fact.id, []])
 
   assert.match(orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /Nothing goes to GitHub/)
   const r = store.task(work.id).prReview!
