@@ -16,6 +16,12 @@ export const inputPreview = (input: unknown, max = 160) => {
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
+/** A job card's one line: the first non-empty line of the job, cut at `max` characters. */
+export const jobPreview = (text: string, max = 140) => {
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return line.length > max ? `${line.slice(0, max).trimEnd()}…` : line
+}
+
 /** When a chat thread started, for the thread list: now, 5m, 2h, yesterday, Oct 3. */
 export const threadTime = (ts: number, now = Date.now()) => {
   const m = Math.floor((now - ts) / 60000)

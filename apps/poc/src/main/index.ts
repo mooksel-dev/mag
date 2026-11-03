@@ -262,6 +262,7 @@ app.whenReady().then(async () => {
     return sessionId
   })
   handle('review:close', (_, id: string) => orch.closeReview(id))
+  handle('review:delete', (_, id: string) => orch.deleteReview(id))
   // Publishing is the user's button only (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): mag posts, not an agent.
   handle('review:publish', async (_, id: string, verdict: PrVerdict, picks: number[]) => {
     try {

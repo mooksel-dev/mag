@@ -213,8 +213,8 @@ test('askOwner: a topic that owns the work is told to pass work (ahent-vede-robo
   store.updateTask(task.id, { ownerSessionId: topic })
   assert.equal(orch.askOwner(step.id, 'Which schema?'), true)
   await tick()
-  const said = store.session(topic).items.find((i) => i.kind === 'user')
-  assert.ok(said?.kind === 'user' && said.text.includes('answer_developer(step: "login.1", work: "login", text)') && said.text.includes('set_needs_input(work: "login", reason)'))
+  const said = store.session(topic).items.find((i) => i.kind === 'job')
+  assert.ok(said?.kind === 'job' && said.title === 'login.1 asks' && said.text.includes('answer_developer(step: "login.1", work: "login", text)') && said.text.includes('set_needs_input(work: "login", reason)'))
 })
 
 test('developer: a message during a turn joins it', async () => {
@@ -441,8 +441,9 @@ test('startIdea: a discussed idea starts in its own topic and stays until the wo
   const topic = orch.discussIdea(discussed.id)
   assert.equal(orch.startIdea(discussed.id), topic)
   await tick()
-  const sent = store.session(topic).items.find((i) => i.kind === 'user')
-  assert.match(sent?.kind === 'user' ? sent.text : '', /^Let's start a work from the idea we discussed here:\n\ndark mode/)
+  const sent = store.session(topic).items.find((i) => i.kind === 'job')
+  assert.equal(sent?.kind === 'job' && sent.title, 'Start a work from an idea')
+  assert.match(sent?.kind === 'job' ? sent.text : '', /^Let's start a work from the idea we discussed here:\n\ndark mode/)
   assert.ok(store.data.ideas.some((i) => i.id === discussed.id), 'it leaves with create_work in the topic')
   assert.throws(() => orch.startIdea(discussed.id), /still working/)
 
@@ -451,8 +452,8 @@ test('startIdea: a discussed idea starts in its own topic and stays until the wo
   assert.notEqual(fresh, topic)
   assert.ok(!store.data.ideas.some((i) => i.id === plain.id))
   await tick()
-  const first = store.session(fresh).items.find((i) => i.kind === 'user')
-  assert.match(first?.kind === 'user' ? first.text : '', /^Let's start a work from this idea:\n\ncache rates/)
+  const first = store.session(fresh).items.find((i) => i.kind === 'job')
+  assert.match(first?.kind === 'job' ? first.text : '', /^Let's start a work from this idea:\n\ncache rates/)
 })
 
 /** A git repository with one commit on main, no remote. */
@@ -596,8 +597,9 @@ test('resolveLocal: Stash, Switch, Use worktree and Discuss (T-50)', async () =>
     await orch.resolveLocal(step.id, app, 'discuss')
     assert.equal(git(app, 'branch', '--show-current'), 'feature')
     assert.equal(store.task(task.id).needsInput, null)
-    const first = sessions()[0].items.find((i) => i.kind === 'user')
-    assert.match(first?.kind === 'user' ? first.text : '', /In .*app: app is on branch feature, not main\.\nBefore anything else, talk with the user/)
+    const first = sessions()[0].items.find((i) => i.kind === 'job')
+    assert.equal(first?.kind === 'job' && first.title, `Implement ${store.task(sessions()[0].stepId!).key}`)
+    assert.match(first?.kind === 'job' ? first.text : '', /In .*app: app is on branch feature, not main\.\nBefore anything else, talk with the user/)
     assert.deepEqual(store.task(step.id).localChecks, [])
   }
 })
@@ -830,8 +832,8 @@ test('reopen from the app: the owner topic is told what is needed; without an ow
   doneWork(s, topic)
   assert.match(orch.reopen(task.id, 'the web part'), /its owner plans the rest/)
   await tick()
-  const said = store.session(topic).items.find((i) => i.kind === 'user')
-  assert.ok(said?.kind === 'user' && said.text.includes('more is needed: the web part') && said.text.includes('pass work: "login"'))
+  const said = store.session(topic).items.find((i) => i.kind === 'job')
+  assert.ok(said?.kind === 'job' && said.title === 'More needed: login' && said.text.includes('more is needed: the web part') && said.text.includes('pass work: "login"'))
   assert.equal(store.task(task.id).ownerSessionId, topic)
 
   const t = setup()
@@ -913,6 +915,56 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   orch.closeReview(work.id)
   assert.equal(store.task(work.id).status, 'done')
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions), [])
+})
+
+test('send with a job: the chat gets a job item, the agent its text; a new topic takes the job as its title (reviews-normalnyi-ux-stan-reviu.1)', async () => {
+  const { store, orch, project } = setup()
+  const topic = orch.newChat(project.id)
+  await orch.send(topic, 'Review the PR https://github.com/acme/app/pull/7 (app#7 …)\nthe playbook…', [], 'Review app#7')
+  const s = store.session(topic)
+  assert.deepEqual(s.items.map((i) => i.kind), ['job'])
+  assert.deepEqual(s.items[0].kind === 'job' && [s.items[0].title, s.items[0].text.split('\n')[1]], ['Review app#7', 'the playbook…'])
+  assert.equal(s.title, 'Review app#7')
+  assert.match(opened.at(-1)!.sent.at(-1)!, /^Review the PR https:\/\/github\.com\/acme\/app\/pull\/7/)
+})
+
+test('deleteReview: the review, its doc, diagrams and own topic go; a topic that asked for it stays, and while it works nothing is deleted (reviews-normalnyi-ux-stan-reviu.1)', async () => {
+  const { store, orch, project } = setup()
+  const pr = { url: 'https://github.com/acme/app/pull/7', repo: '/r/app', number: 7, author: 'olena', base: 'main', head: 'abc' }
+  const fresh = { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null }
+  const newReview = (owner: string) => {
+    const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: owner })
+    store.updateTask(work.id, { prReview: fresh })
+    store.data.docs[work.id] = '# Problem'
+    store.saveCanvas({ projectId: project.id, taskId: work.id, sessionId: null, title: 'Fact', kind: 'diagram', diagram: { type: 'component', summary: '', modules: [] }, placement: { role: 'fact', option: null, stepId: null, repo: null, planOf: null } })
+    return work
+  }
+
+  // mag's own topic, in a turn: its run ends and it goes with the review.
+  const own = orch.newChat(project.id)
+  const work = newReview(own)
+  store.session(own).reviewOf = work.id
+  await orch.send(own, 'job', [], 'Review app#7')
+  await orch.deleteReview(work.id)
+  assert.equal(store.data.tasks.some((t) => t.id === work.id), false)
+  assert.equal(store.data.sessions.some((s) => s.id === own), false)
+  assert.equal(store.data.docs[work.id], undefined)
+  assert.equal(Object.values(store.data.canvases).some((c) => c.taskId === work.id), false)
+
+  // A topic of the user's that asked for the review (review_pr) owns it: it stays.
+  const asked = orch.newChat(project.id)
+  const borrowed = newReview(asked)
+  await orch.send(asked, 'review https://github.com/acme/app/pull/7')
+  await assert.rejects(orch.deleteReview(borrowed.id), /still working/)
+  assert.ok(store.data.tasks.some((t) => t.id === borrowed.id))
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await orch.deleteReview(borrowed.id)
+  assert.equal(store.data.tasks.some((t) => t.id === borrowed.id), false)
+  assert.ok(store.data.sessions.some((s) => s.id === asked))
+
+  const step = store.createTask({ projectId: project.id, title: 'w', type: 'dev', description: '', status: 'planning' })
+  await assert.rejects(orch.deleteReview(step.id), /not a review/)
 })
 
 /**

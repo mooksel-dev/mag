@@ -4,7 +4,14 @@ import {
   currentStep,
   inbox,
   isLegacy,
+  isReview,
   pipelineCounts,
+  prRepoName,
+  projectReviews,
+  reviewLine,
+  reviewOfTopic,
+  reviewState,
+  reviewTopic,
   runningAgents,
   taskPrs,
   type InboxItem,
@@ -12,6 +19,7 @@ import {
   type PipelineStage,
   type Project,
   type AgentSession,
+  type ReviewState,
   type Task,
 } from '@mag/core'
 import type { AppState, CrashReport } from '../../preload/api'
@@ -38,6 +46,16 @@ const PILLS: Record<InboxKind, [string, string]> = {
   ready_to_merge: ['green', 'Ready to merge'],
   review_ready: ['violet', 'Review ready'],
   ready_to_start: ['amber', 'Waits for Start'],
+}
+
+const REVIEW_PILLS: Record<ReviewState, [string, string]> = {
+  reviewing: ['', 'Reviewing'],
+  question: ['amber', 'Question'],
+  ready: ['violet', 'Ready'],
+  failed: ['red', 'Failed'],
+  outdated: ['amber', 'New commits'],
+  waiting: ['', 'Waiting'],
+  closed: ['', 'Closed'],
 }
 
 const RECENT = 15
@@ -68,7 +86,10 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
     mag.lastCrash().then(setCrash, () => {})
   }, [])
   const waiting = items.length + (crash ? 1 : 0)
-  const topics = projectTopics(state.sessions, project.id)
+  const reviews = projectReviews(tasks).filter((t) => t.status === 'in_progress')
+  // A topic mag created for a review shows as its review, not among the topics.
+  const reviewTopics = new Set(projectReviews(tasks).map((t) => reviewTopic(t, state.sessions)?.id))
+  const topics = projectTopics(state.sessions, project.id).filter((t) => !reviewTopics.has(t.id))
 
   return (
     <section className="page home">
@@ -100,19 +121,26 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
             : i.task && <InboxRow key={i.task.id} item={{ ...i, task: i.task }} state={state} now={now} onOpen={onOpen} />,
           ) : <p className="muted">Nothing is waiting on you.</p>}
         </div>
+        {reviews.length > 0 && <Reviews project={project} reviews={reviews} sessions={state.sessions} onOpen={onOpen} />}
         <Topics topics={topics} openId={topicId} now={now} onOpen={onOpenTopic} onNew={() => mag.newChat(project.id).then(onOpenTopic)} />
       </div>
 
       <div className="side">
         <div className="card">
           <h2>Now · {running.length}</h2>
-          {running.length ? running.map((s) => (
-            <div key={s.id} className="q">
-              {s.taskId ? <button className="link key" onClick={() => onOpen(s.taskId!)}>{keyOf(s.taskId)}</button> : s.role === 'chat' ? <span className="muted small">chat</span> : null}
-              <span className="grow" />
-              <AgentDot state={{ kind: 'working', role: s.role, since: s.runStartedAt ?? s.createdAt }} now={now} />
-            </div>
-          )) : <div className="muted small">No agents working.</div>}
+          {running.length ? running.map((s) => {
+            // A review's topic goes by its review.
+            const review = s.taskId ? undefined : reviewOfTopic(tasks, s.id)
+            return (
+              <div key={s.id} className="q">
+                {s.taskId ? <button className="link key" onClick={() => onOpen(s.taskId!)}>{keyOf(s.taskId)}</button>
+                  : review ? <button className="link key" onClick={() => onOpen(review.id)}>{review.key}</button>
+                  : s.role === 'chat' ? <span className="muted small">chat</span> : null}
+                <span className="grow" />
+                <AgentDot state={{ kind: 'working', role: s.role, since: s.runStartedAt ?? s.createdAt }} now={now} />
+              </div>
+            )
+          }) : <div className="muted small">No agents working.</div>}
           <button className="link small" onClick={() => mag.checkPrs()}>check PRs now</button>
         </div>
 
@@ -127,6 +155,34 @@ export function Home({ project, tasks, state, topicId, onOpenTopic, onOpen, onOp
         </div>
       </div>
     </section>
+  )
+}
+
+/** Open reviews of teammates' PRs with their state: a click opens the review, ✕ deletes it after a confirm. */
+function Reviews({ project, reviews, sessions, onOpen }: { project: Project; reviews: Task[]; sessions: AgentSession[]; onOpen: (id: string) => void }) {
+  return (
+    <div className="card">
+      <h2>Reviews <span className="muted">{reviews.length}</span></h2>
+      {reviews.map((t) => {
+        const pr = t.prReview?.pr
+        const [color, label] = REVIEW_PILLS[reviewState(t, sessions)]
+        const remove = () => {
+          if (!confirm(`Delete review ${t.key} "${t.title}"? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`)) return
+          mag.deleteReview(t.id).catch((e) => alert(String((e as Error).message ?? e)))
+        }
+        return (
+          <div key={t.id} className="topicrow" title={reviewLine(t, sessions)} onClick={() => onOpen(t.id)}>
+            {reviewState(t, sessions) === 'reviewing' && <span className="dot live" />}
+            {pr && <span className="key">{prRepoName(project, pr)}#{pr.number}</span>}
+            <span className="title">{t.title.replace(/^[^:]*#\d+: /, '')}</span>
+            {pr && <span className="muted small">@{pr.author}</span>}
+            <span className="grow" />
+            <span className={`pill ${color}`}>{label}</span>
+            <button className="iconbtn" aria-label="Delete review" title="Delete review" onClick={act(remove)}>✕</button>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -258,6 +314,8 @@ function InboxRow({ item, state, now, onOpen }: { item: InboxItem & { task: Task
   const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
   const restart = () => {
     const last = item.session
+    // A review of a teammate's PR whose topic failed: its PR gets another look.
+    if (isReview(task)) return mag.reviewAgain(task.id)
     if (last?.role === 'reviewer') return mag.review(task.id)
     // A task in progress is never groomed again: its developer goes on.
     if (last?.role !== 'groomer' || task.status === 'in_progress') return mag.develop(task.id)

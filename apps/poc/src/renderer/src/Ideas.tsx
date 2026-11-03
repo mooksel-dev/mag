@@ -83,7 +83,7 @@ function Source({ idea, onOpenKey }: { idea: Idea; onOpenKey: (key: string) => v
 }
 
 /** Messages in a discussion: the user's and the agent's replies. */
-const messages = (topic: AgentSession) => topic.items.filter((i) => i.kind === 'user' || i.kind === 'assistant').length
+const messages = (topic: AgentSession) => topic.items.filter((i) => i.kind === 'user' || i.kind === 'job' || i.kind === 'assistant').length
 
 function IdeaRow({ idea, topic, now, onOpen, onOpenKey }: { idea: Idea; topic?: AgentSession; now: number; onOpen: () => void; onOpenKey: (key: string) => void }) {
   const said = topic ? messages(topic) : 0

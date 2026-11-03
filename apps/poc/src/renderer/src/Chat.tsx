@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify'
 import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, interimReplies, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
-import { inputPreview, threadTime } from './format'
+import { inputPreview, jobPreview, threadTime } from './format'
 import { useAppliedTheme } from './useTheme'
 import { mdSegments } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
@@ -219,6 +219,8 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
                   {i.attachments && <Attachments items={i.attachments} />}
                 </div>
               )
+            case 'job':
+              return <JobCard key={n} item={i} />
             case 'assistant': {
               if (interim.has(n)) return <InterimReply key={n} text={i.text} onOpenTask={onOpenTask} />
               const meta = metaAt.get(n)
@@ -270,6 +272,21 @@ function InterimReply({ text, onOpenTask }: { text: string; onOpenTask?: (key: s
 }
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+type JobItem = Extract<ChatItem, { kind: 'job' }>
+
+/** mag's job for the agent, not the user's message: "⚙ <title>" and its first line; a click shows the whole job. */
+function JobCard({ item }: { item: JobItem }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="jobcard">
+      <button className="jobhead" aria-expanded={open} title={open ? 'Hide the job' : 'Show the whole job mag gave the agent'} onClick={() => setOpen((o) => !o)}>
+        <span>⚙ <b>{item.title}</b></span>
+        {!open && <span className="muted small">{jobPreview(item.text)}</span>}
+      </button>
+      {open && <pre className="jobtext">{item.text}</pre>}
+    </div>
+  )
+}
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
 const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }

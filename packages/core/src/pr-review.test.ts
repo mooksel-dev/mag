@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, openWorkCount, parsePrUrl, pipelineCounts, projectReviews, reviewOf, reviewReady, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, openWorkCount, parsePrUrl, pipelineCounts, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -126,4 +126,44 @@ test('reviewPollOutcome: done when merged or closed; new commits after a review 
   assert.equal(reviewPollOutcome({ ...reviewed, pr: { ...reviewed.pr, head: 'def' } }, { state: 'OPEN', head: 'def' }), null)
   // Not reviewed yet: the agent is at it.
   assert.equal(reviewPollOutcome(prReview(), { state: 'OPEN', head: 'def' }), null)
+})
+
+test('reviewState: one state of a review for every view, in order (reviews-normalnyi-ux-stan-reviu.1)', () => {
+  const ready = prReview({ verdict: 'request_changes', head: 'abc', at: 2, findings: [{ text: 'x', level: 'blocker' }] })
+  const states = (t: Task, s: AgentSession['status']) => [reviewState(t, [topic(s)]), reviewLine(t, [topic(s)])]
+  assert.deepEqual(states(review('r', { status: 'done', prReview: ready }), 'running'), ['closed', 'closed'])
+  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'q' }), 'running'), ['reviewing', 'the agent is reviewing…'])
+  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'No access' }), 'error'), ['question', 'asks: No access'])
+  assert.deepEqual(states(review('r', { prReview: ready }), 'idle'), ['ready', 'Request changes · 1 blocker'])
+  // A borrowed topic that errors later in another chat keeps the review ready.
+  assert.equal(reviewState(review('r', { prReview: ready }), [topic('error')]), 'ready')
+  assert.deepEqual(states(review('r'), 'error'), ['failed', 'the agent failed: review again'])
+  assert.deepEqual(states(review('r', { prReview: { ...ready, head: 'old' } }), 'error'), ['failed', 'the agent failed: review again'])
+  assert.deepEqual(states(review('r', { prReview: { ...ready, head: 'old' } }), 'idle'), ['outdated', 'Request changes · 1 blocker · new commits since'])
+  assert.deepEqual(states(review('r'), 'idle'), ['waiting', 'waits for the agent'])
+  assert.equal(reviewState(review('r', { ownerSessionId: 'gone' }), []), 'waiting')
+})
+
+test('Needs you: a review whose topic failed before a verdict on its head is Review failed', () => {
+  assert.deepEqual(inbox('p', [review('r')], [topic('error')]).map((i) => [i.kind, i.text, i.session?.id]), [['agent_failed', 'Review failed', 'topic']])
+  assert.deepEqual(inbox('p', [review('r', { status: 'done' })], [topic('error')]), [])
+})
+
+test('reviewTopic: the topic mag created for a review; legacy by its first job; never a topic that asked for it', () => {
+  const r = review('r')
+  const own = { ...topic('idle'), id: 'own', reviewOf: 'r' }
+  assert.equal(reviewTopic(r, [topic('idle'), own])?.id, 'own')
+  // Before reviewOf: mag's topic opens with the job as a user item.
+  const job = (text: string): AgentSession => ({ ...topic('idle'), items: [{ kind: 'user', text, at: 1 }] })
+  assert.equal(reviewTopic(r, [job('Review the PR https://github.com/acme/api/pull/418 (api#418 by @olena…')])?.id, 'topic')
+  // The user's topic that called review_pr, and a job of another PR.
+  assert.equal(reviewTopic(r, [job('please review https://github.com/acme/api/pull/418')]), undefined)
+  assert.equal(reviewTopic(r, [job('Review the PR https://github.com/acme/api/pull/4180 (api#4180…')]), undefined)
+  assert.equal(reviewTopic(r, [topic('idle')]), undefined)
+})
+
+test('reviewOfTopic: the open review a topic owns', () => {
+  const tasks = [review('old', { status: 'done' }), task('w', { ownerSessionId: 'topic' }), review('r')]
+  assert.equal(reviewOfTopic(tasks, 'topic')?.id, 'r')
+  assert.equal(reviewOfTopic(tasks, 'other'), undefined)
 })

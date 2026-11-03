@@ -346,6 +346,7 @@ export class Store {
         if (s.title) s.title = rw(s.title)
         s.items = s.items.map((i): ChatItem => {
           if (i.kind === 'user' || i.kind === 'assistant' || i.kind === 'error') return { ...i, text: rw(i.text) }
+          if (i.kind === 'job') return { ...i, title: rw(i.title), text: rw(i.text) }
           if (i.kind === 'tool') return { ...i, summary: rw(i.summary) }
           if (i.kind === 'canvas') return { ...i, canvas: { ...i.canvas, title: rw(i.canvas.title) } }
           return i

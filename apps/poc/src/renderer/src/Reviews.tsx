@@ -7,6 +7,7 @@ import {
   findingsByLevel,
   prRepoName,
   projectReviews,
+  reviewLine,
   reviewRunning,
   setOf,
   type PrVerdict,
@@ -28,15 +29,6 @@ const mag = window.mag
 const VERDICT_PILLS: Record<PrVerdict, string> = { approve: 'green', request_changes: 'red', comment: 'amber' }
 const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '' }
 const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending: '…', skipping: '–', cancel: '–' }
-
-/** The review's line in a list: the agent at work, its verdict, or not reviewed yet. */
-function reviewStatus(work: Task, state: AppState): string {
-  if (work.status !== 'in_progress') return 'closed'
-  if (reviewRunning(work, state.sessions)) return 'the agent is reviewing…'
-  const r = work.prReview
-  if (!r?.verdict) return 'waits for the agent'
-  return `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}${r.head === r.pr.head ? '' : ' · new commits since'}`
-}
 
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
 const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'].includes(f.level ?? 'should_fix')
@@ -88,7 +80,7 @@ export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopi
             <div key={w.id} className={`reviewrow${w.id === reviewId ? ' on' : ''}`} role="button" tabIndex={0} onClick={() => onOpenReview(w.id)} onKeyDown={(e) => e.key === 'Enter' && onOpenReview(w.id)}>
               <div className="grow">
                 <div className="title">{w.title}</div>
-                <div className="muted small">{w.prReview && `@${w.prReview.pr.author} · `}{reviewStatus(w, state)} · {ago(w.updatedAt, now)}</div>
+                <div className="muted small">{w.prReview && `@${w.prReview.pr.author} · `}{reviewLine(w, state.sessions)} · {ago(w.updatedAt, now)}</div>
               </div>
             </div>
           ))
@@ -97,7 +89,7 @@ export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopi
         )}
       </div>
       {open ? (
-        <ReviewView key={open.id} work={open} project={project} state={state} now={now} onOpenTopic={onOpenTopic} onOpenKey={onOpenKey} />
+        <ReviewView key={open.id} work={open} project={project} state={state} now={now} onOpenTopic={onOpenTopic} onOpenKey={onOpenKey} onDeleted={() => onOpenReview(null)} />
       ) : (
         <p className="muted reviewempty">Paste a PR link, or ask in chat: an agent reads the PR and its ticket, draws the fact, and checks it against the problem and the project's agreements, with findings by level. Nothing goes to GitHub without your button.</p>
       )}
@@ -153,13 +145,15 @@ function NodeLink({ node }: { node: string }) {
 }
 
 /** A review's page: the PR, what the agent understood, its fact, CI and the findings by level. */
-function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
+function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey, onDeleted }: {
   work: Task
   project: Project
   state: AppState
   now: number
   onOpenTopic: (id: string) => void
   onOpenKey: (key: string) => void
+  /** The review is gone: the pane clears. */
+  onDeleted: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
   const r = work.prReview
@@ -204,6 +198,16 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey }: {
           {work.status === 'in_progress' ? 'Review again' : 'Reopen review'}
         </button>
         {work.status === 'in_progress' && <button onClick={act(() => mag.closeReview(work.id))}>Close review</button>}
+        <button
+          title="Delete the review for good, with its diagrams and the topic mag created for it; nothing changes on GitHub"
+          onClick={act(async () => {
+            if (!confirm(`Delete review ${work.key}? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`)) return
+            await mag.deleteReview(work.id)
+            onDeleted()
+          })}
+        >
+          Delete review
+        </button>
         <div className="grow" />
         <span className="muted small">Nothing goes to GitHub without your button.</span>
       </div>

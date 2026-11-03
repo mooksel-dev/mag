@@ -6,7 +6,7 @@ import type { CanvasRole } from './canvases.ts'
 import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
-import { isReview, reviewReady, reviewReadyText, reviewRunning, type FindingLevel, type PrReview } from './pr-review.ts'
+import { isReview, reviewReadyText, reviewState, type FindingLevel, type PrReview } from './pr-review.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -664,6 +664,11 @@ export interface CanvasRef {
 
 export type ChatItem =
   | { kind: 'user'; text: string; attachments?: Attachment[]; at: number }
+  /**
+   * mag's instructions to an agent (a review's job, a review round, a developer's job): the agent gets `text` as its
+   * prompt; the chat shows `title` as a card that expands to the text.
+   */
+  | { kind: 'job'; title: string; text: string; at: number }
   | { kind: 'canvas'; canvas: CanvasRef; at: number }
   | { kind: 'assistant'; text: string; at: number }
   | { kind: 'tool'; id: string; name: string; summary: string; ok?: boolean; at: number }
@@ -699,6 +704,8 @@ export interface AgentSession {
   forkOf?: string | null
   /** A project topic branched from another one (Branch): that topic's id. */
   branchOf?: string | null
+  /** A project topic mag created for a review of a PR: that review's id. A topic that asked for it (review_pr) has none. */
+  reviewOf?: string
   /** Model the agent reported when its session started. */
   activeModel?: string
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
@@ -807,7 +814,7 @@ export function turnMeta(items: ChatItem[], resultIndex: number, model?: string)
   for (let n = resultIndex - 1; n >= 0 && start === undefined; n--) {
     const i = items[n]
     if (i.kind === 'result') break
-    if (i.kind === 'user') start = i.at
+    if (i.kind === 'user' || i.kind === 'job') start = i.at
   }
   const secs = start === undefined ? undefined : Math.max(0, Math.round((result.at - start) / 1000))
   const time = secs === undefined ? null : secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
@@ -815,8 +822,8 @@ export function turnMeta(items: ChatItem[], resultIndex: number, model?: string)
 }
 
 /**
- * Indices of assistant replies followed by another assistant reply in the same turn (before the next user item or
- * result). A turn still running counts too: a new reply makes the one before it interim.
+ * Indices of assistant replies followed by another assistant reply in the same turn (before the next user or job
+ * item, or result). A turn still running counts too: a new reply makes the one before it interim.
  */
 export function interimReplies(items: ChatItem[]): Set<number> {
   const interim = new Set<number>()
@@ -825,7 +832,7 @@ export function interimReplies(items: ChatItem[]): Set<number> {
     if (i.kind === 'assistant') {
       if (lastReply >= 0) interim.add(lastReply)
       lastReply = n
-    } else if (i.kind === 'user' || i.kind === 'result') lastReply = -1
+    } else if (i.kind === 'user' || i.kind === 'job' || i.kind === 'result') lastReply = -1
   })
   return interim
 }
@@ -1088,11 +1095,13 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   return null
 }
 
-/** A review of a teammate's PR in progress: its question, else its verdict once ready, unless its topic is in a turn. */
+/** A review of a teammate's PR in progress, by its state: its question, its verdict once ready, or its topic failed. */
 function reviewItem(task: Task, sessions: AgentSession[]): InboxItem | null {
-  if (task.needsInput) return { task, kind: 'question', text: task.needsInput }
-  if (reviewRunning(task, sessions) || !task.prReview || !reviewReady(task)) return null
-  return { task, kind: 'review_ready', text: reviewReadyText(task.prReview) }
+  const state = reviewState(task, sessions)
+  if (state === 'question') return { task, kind: 'question', text: task.needsInput! }
+  if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!) }
+  if (state === 'failed') return { task, kind: 'agent_failed', text: 'Review failed', session: sessions.find((s) => s.id === task.ownerSessionId) }
+  return null
 }
 
 /** One item per pending approval in the project's sessions, task sessions and chats alike. */
