@@ -36,11 +36,34 @@ const IDENT = /^[A-Za-z_$][\w$]*$/
 /** A changed line that is a comment or blank: no change of the design by itself. */
 const COMMENT = /^[+-]\s*(\/\/|#|\/\*|\*|--|$)/
 
-/** Names that must occur in a unit's hunks: the last segment of its name, and of its old one for a rename. */
-function keyNames(u: InventoryUnit): string[] {
-  const out = [unitLeaf(u.name)]
-  if (u.change === 'rename' && u.from) out.push(unitLeaf(u.from))
-  return out.filter((n) => IDENT.test(n))
+/** A path's last segment: `review.tpl` of `prompts/review.tpl`. */
+const baseName = (path: string) => path.split('/').at(-1) ?? path
+
+/**
+ * A name that reads as a file name (`dar-request.tpl`, `prompts/review.md`): a base name with an extension that has a
+ * character no identifier has, or is the base name of one of `paths`. Such a name is never cut at its dots.
+ */
+function fileLike(name: string, paths: string[]): boolean {
+  const base = baseName(name)
+  return /^[\w-]+(\.[\w-]+)+$/.test(base) && (base.includes('-') || paths.some((p) => baseName(p) === base))
+}
+
+/** Whether a name is the file at one of `paths`: its base name, with or without its extension. */
+const namesFile = (name: string, paths: string[]) => paths.some((p) => baseName(p) === baseName(name) || fileStems(p).includes(baseName(name)))
+
+/**
+ * What a name must be found as in its hunks: a file name whole (its base name), else the last segment of the name
+ * (`save` of `Repository.save`); null when that is no identifier, nothing to look for.
+ */
+function keyName(name: string, paths: string[]): string | null {
+  if (fileLike(name, paths)) return baseName(name)
+  const leaf = unitLeaf(name)
+  return IDENT.test(leaf) ? leaf : null
+}
+
+/** Names that must occur in a unit's hunks: its name's, and its old name's for a rename (keyName). */
+function keyNames(u: InventoryUnit, paths: string[] = []): string[] {
+  return [u.name, ...(u.change === 'rename' && u.from ? [u.from] : [])].map((n) => keyName(n, paths)).filter((n): n is string => !!n)
 }
 
 /**
@@ -74,7 +97,8 @@ const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'fu
 /**
  * The inventory against the numbered hunks of `files`. A hunk id stands for every block of its hunk. Blockers: a
  * block of a code file in no unit and not in noise; an id that is not a block or hunk; a unit whose name (the last
- * segment; both for a rename; the base name of its file, without the extension) is not in the lines (changed and context) or the header of
+ * segment, a file name whole; both for a rename; the base name of its file, with or without the extension, the old
+ * path's for the old name) is not in the lines (changed and context) or the header of
  * the hunks of its blocks, nor, for a config unit, its constant in a hunk of its file; a unit on a module that owns none of its blocks. Dependencies are
  * checked for their blocks only: the module they use is often not named there.
  */
@@ -106,11 +130,22 @@ export function checkInventory(inventory: ChangeInventory, files: FileChange[]):
     // A name is borne out by the hunks around its blocks: a body change shows its method in the context or the header.
     const around = [...new Set(of.map((b) => b.hunk))].map((id) => hunks.get(id)!)
     const seen = words(around.map(({ hunk }) => [hunk.header ?? '', ...(hunk.lines ?? [])].join('\n')).join('\n'))
-    const byFile = around.some(({ file }) => [file.path, file.oldPath].some((p) => !!p && fileStems(p).some((n) => n === u.name || n === unitLeaf(u.name))))
-    const names = keyNames(u)
-    const missing = names.filter((n) => !seen.has(n))
+    const text = around.map(({ hunk }) => [hunk.header ?? '', ...(hunk.lines ?? [])].join('\n')).join('\n')
+    const paths = around.map(({ file }) => file.path)
+    // A renamed file's old name is its old path's.
+    const oldPaths = around.map(({ file }) => file.oldPath ?? file.path)
+    const allPaths = [...paths, ...oldPaths]
+    const borneOut = (name: string, own: string[]) => {
+      if (namesFile(name, own)) return true
+      const key = keyName(name, allPaths)
+      return !key || (fileLike(name, allPaths) ? text.includes(key) : seen.has(key))
+    }
+    const missing = [
+      ...(borneOut(u.name, u.change === 'rename' ? paths : allPaths) ? [] : [keyName(u.name, allPaths)!]),
+      ...(u.change === 'rename' && u.from && !borneOut(u.from, oldPaths) ? [keyName(u.from, allPaths)!] : []),
+    ]
     const inFile = () => words(around.flatMap(({ file }) => file.hunks.flatMap((h) => [h.header ?? '', ...(h.lines ?? [])])).join('\n'))
-    if (names.length && missing.length && !byFile && !(ownerNames(u).length && ownerNames(u).some((n) => inFile().has(n))))
+    if (missing.length && !(ownerNames(u).length && ownerNames(u).some((n) => inFile().has(n))))
       ungrounded.push({ unit: u.id, name: u.name, why: `${missing.join(', ')} is not in its hunks` })
     const modules = [...new Set(of.map((b) => b.module ?? ''))]
     if (of.every((b) => b.module !== null && b.module !== u.module)) otherModule.push({ unit: u.id, name: u.name, module: u.module, hunkModules: modules })

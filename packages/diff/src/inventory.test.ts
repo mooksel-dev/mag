@@ -138,3 +138,18 @@ test('formatHunks: at most about maxChars of whole hunks, then the ids of the re
   assert.match(cut, /\n1 more hunk\(s\) not listed here \(H3\): get_pr_changes lists them all\./)
   assert.match(formatHunks(files, 10), /^### H1 [\s\S]*2 more hunk\(s\) not listed here \(H2…H3\)/, 'one hunk at least')
 })
+
+test('checkInventory: a renamed template is its file, with or without the extension; its old name the old path\'s', () => {
+  const files = numberHunks([
+    file('templates/removal-request.tpl', 'templates', [hunk('', ['-Dear {{.Name}},', '+Hello {{.Name}},'])], { status: 'rename', oldPath: 'templates/cleanup-request.tpl' }),
+    file('mail/notice.tpl', 'mail', [hunk('', ['+Hi'])], { status: 'rename', oldPath: 'mail/letter.tpl' }),
+  ])
+  const rename = (name: string, from: string, module = 'templates', hunks = ['H1.1']) => unit({ id: 'u1', kind: 'template', module, name, change: 'rename', from, hunks })
+  const why = (u: InventoryUnit) => checkInventory(inv([u]), files).ungrounded.map((x) => x.why)
+  assert.deepEqual(why(rename('removal-request.tpl', 'cleanup-request.tpl')), [])
+  assert.deepEqual(why(rename('removal-request', 'cleanup-request')), [], 'without the extension')
+  assert.deepEqual(why(rename('templates/removal-request.tpl', 'templates/cleanup-request.tpl')), [], 'with its folder')
+  assert.deepEqual(why(rename('notice.tpl', 'letter.tpl', 'mail', ['H2.1'])), [], 'a name without a dash is a file when it is the file')
+  assert.deepEqual(why(rename('removal-request.tpl', 'other-request.tpl')), ['other-request.tpl is not in its hunks'], 'the old name is the old path\'s')
+  assert.deepEqual(why(rename('cleanup-request.tpl', 'removal-request.tpl')), ['cleanup-request.tpl, removal-request.tpl is not in its hunks'], 'not the other way round')
+})
