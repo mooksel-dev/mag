@@ -208,6 +208,20 @@ test("set_needs_input of a step's developer goes to the work's owner first; answ
   assert.equal(calls.filter((c) => c.startsWith('ask owner')).length, 2)
 })
 
+test('set_needs_input keeps the questions with their recommendations for the card; they go with needsInput (ux-odna-rozmova-na-robotu.2)', async () => {
+  const { store, task, call } = setup()
+  const questions = [{ text: 'Delete for good?', recommendation: 'Yes: nothing on GitHub' }, { text: 'One PR?', recommendation: 'Yes: small' }]
+  assert.equal(await call('set_needs_input', { reason: '2 decisions', questions }), 'The user will be notified, with 2 questions and your recommendations on a card.')
+  assert.deepEqual(store.task(task.id).needsQuestions, questions)
+  await assert.rejects(call('set_needs_input', { reason: 'x', questions: [{ recommendation: 'y' }] }), /needs a text/)
+  // Anything that clears or replaces needsInput takes the questions with it.
+  store.updateTask(task.id, { needsInput: null })
+  assert.equal(store.task(task.id).needsQuestions, null)
+  await call('set_needs_input', { reason: 'Again', questions })
+  assert.equal(await call('set_needs_input', { reason: null, questions }), 'Cleared.')
+  assert.equal(store.task(task.id).needsQuestions, null)
+})
+
 test('get_task shows the work\'s tickets', async () => {
   const { store, task, call } = setup()
   store.updateTask(task.id, { tickets: [{ url: 'https://acme.atlassian.net/browse/ABC-12', key: 'ABC-12' }] })

@@ -1,4 +1,4 @@
-import { CANVAS_ROLES, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -289,8 +289,9 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (step) store.updateTask(step.id, { ownerQuestion: null })
         if (reason && step && actions.askOwner(step.id, reason))
           return "The work's owner, who planned it, gets your question first: it answers here or asks the user. Stop here until the answer comes."
-        store.updateTask(task.id, { needsInput: reason })
-        return reason ? 'The user will be notified.' : 'Cleared.'
+        const questions = reason ? needsQuestions(args.questions) : null
+        store.updateTask(task.id, { needsInput: reason, needsQuestions: questions })
+        return reason ? `The user will be notified${questions ? `, with ${questions.length} question${questions.length > 1 ? 's' : ''} and your recommendations on a card` : ''}.` : 'Cleared.'
       }
 
       case 'answer_developer': {

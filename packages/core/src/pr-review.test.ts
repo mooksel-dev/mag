@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, openWorkCount, parsePrUrl, pipelineCounts, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -51,12 +51,10 @@ test('githubSlug: owner/repo of https and ssh remotes, lower case; other hosts n
   assert.equal(githubSlug(null), null)
 })
 
-test('reviews stay out of the Tasks tab and its counts', () => {
+test('reviews stay out of workSections', () => {
   const tasks = [task('w'), review('r'), review('old', { status: 'done', updatedAt: Date.now() })]
   const s = workSections(tasks)
   assert.deepEqual([...s.inProgress, ...s.finished].map((t) => t.id), ['w'])
-  assert.equal(openWorkCount(tasks), 1)
-  assert.equal(pipelineCounts(tasks, Date.now()).done7d, 0)
 })
 
 test('projectReviews: in progress first, newest first; reviewOf finds the PR by its link', () => {

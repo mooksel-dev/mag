@@ -553,6 +553,8 @@ export class Store {
   updateTask(tid: string, patch: Partial<Task>) {
     const t = this.task(tid)
     const prev = { ...t }
+    // The questions behind needsInput go with it (ux-odna-rozmova-na-robotu.2).
+    if ('needsInput' in patch && !('needsQuestions' in patch)) patch = { ...patch, needsQuestions: null }
     Object.assign(t, patch, { id: tid, updatedAt: Date.now() })
     for (const e of taskChangeEvents(prev, t)) this.logEvent(e)
     this.changed()

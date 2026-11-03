@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify'
 import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, interimReplies, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
-import { inputPreview, jobPreview, threadTime } from './format'
+import { inputPreview, jobPreview } from './format'
 import { useAppliedTheme } from './useTheme'
 import { mdSegments } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
@@ -145,37 +145,19 @@ export function CanvasOverlay({ canvas, focus, onClose }: { canvas: CanvasRef; f
   )
 }
 
-/** Project canvases that belong to no task; otherwise they are only reachable by scrolling a chat. */
-function CanvasMenu({ canvases }: { canvases: AppState['canvases'] }) {
-  const [open, setOpen] = useState(false)
-  const [shownId, setShownId] = useState<string | null>(null)
-  const shown = canvases.find((c) => c.id === shownId)
-  if (!canvases.length) return null
-  return (
-    <div className="menu">
-      <button className="iconbtn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" aria-label="Canvases" title="Canvases">
-        ▣<span className="cnt">{canvases.length}</span>
-      </button>
-      {open && (
-        <>
-          <div className="menuscrim" onClick={() => setOpen(false)} />
-          <div className="menulist" role="menu">
-            {canvases.map((c) => (
-              <button key={c.id} role="menuitem" onClick={() => { setShownId(c.id); setOpen(false) }}>
-                <span className="title" title={c.title}>{c.title}</span>
-                <span className="muted small">v{c.version}</span>
-                <span className="muted small">{new Date(c.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      {shown && <CanvasOverlay canvas={shown} onClose={() => setShownId(null)} />}
-    </div>
-  )
-}
-
-export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { session: AgentSession; sessions: AgentSession[]; onOpenTask?: (key: string) => void; placeholder?: string; chip?: ReactNode }) {
+/**
+ * A session's chat. `readOnly`: an agent's log, without a composer (ux-odna-rozmova-na-robotu.2): the user talks to the
+ * work's owner only. `cards`: what the work needs from the user, after the last item.
+ */
+export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards }: {
+  session: AgentSession
+  sessions: AgentSession[]
+  onOpenTask?: (key: string) => void
+  placeholder?: string
+  chip?: ReactNode
+  readOnly?: boolean
+  cards?: ReactNode
+}) {
   const busy = session.status === 'running'
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [session.items.length, busy])
@@ -245,10 +227,11 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}
+        {cards}
         <div ref={end} />
       </div>
       {!!session.background?.length && <BackgroundTasks sessionId={session.id} tasks={session.background} />}
-      <Composer
+      {!readOnly && <Composer
         busy={busy}
         queue={liveSession(session)}
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
@@ -256,7 +239,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip }: { ses
         onSend={(text, att) => mag.send(session.id, text, att)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
-      />
+      />}
     </div>
   )
 }
@@ -291,11 +274,11 @@ type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
 const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }
 
-/** An ask-mode integration call: Allow / Deny while pending, then its outcome. */
-function ApprovalCard({ sessionId, item }: { sessionId: string; item: ApprovalItem }) {
+/** An ask-mode integration call: Allow / Deny while pending, then its outcome. `who`: the agent, when not this chat's. */
+export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item: ApprovalItem; who?: string }) {
   return (
     <div className="approval">
-      <div>Agent wants <b>{item.server}</b> · {item.tool}</div>
+      <div>{who ? `The ${who}` : 'Agent'} wants <b>{item.server}</b> · {item.tool}</div>
       <div className="input muted">{inputPreview(item.input, 400)}</div>
       {item.status === 'pending' ? (
         <div className="actions">
@@ -536,39 +519,6 @@ function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, setOpen: 
   }, [open, ref, setOpen])
 }
 
-/** Topic title as a button; opens the list of topics with "New topic" at the bottom. */
-function ThreadPicker({ chats, current, onPick, onNew }: { chats: AgentSession[]; current: AgentSession | null; onPick: (id: string) => void; onNew: () => void }) {
-  const [open, setOpen] = useState(false)
-  const box = useRef<HTMLDivElement>(null)
-  useDismiss(open, box, setOpen)
-  const live = (c: AgentSession) => c.status === 'running'
-  return (
-    <div ref={box} className="threadpicker">
-      <button className="threadbtn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="listbox" title={current?.title}>
-        {current && live(current) && <span className="dot live" />}
-        <span className="title">{current?.title ?? 'New topic'}</span>
-        <span className="caret">▾</span>
-      </button>
-      {open && (
-        <div className="threadlist" role="listbox" aria-label="Topics">
-          {chats.map((c) => (
-            <button key={c.id} role="option" aria-selected={c === current} className={c === current ? 'on' : ''} onClick={() => { onPick(c.id); setOpen(false) }}>
-              {live(c) && <span className="dot live" />}
-              <span className="title" title={c.title}>{c.title ?? 'Topic'}</span>
-              <span className="muted small">{threadTime(c.createdAt)}</span>
-            </button>
-          ))}
-          <button className="newthread" onClick={() => { onNew(); setOpen(false) }}>＋ New topic</button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** A project's chats (topics), newest first. */
-export const projectTopics = (sessions: AgentSession[], projectId: string) =>
-  sessions.filter((s) => s.projectId === projectId && s.role === 'chat' && !s.taskId).sort((a, b) => b.createdAt - a.createdAt)
-
 /** "Claude Code · Opus ▾": the project chat's agent and model, picked in a popover. */
 export function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
   const agents = useAgents()
@@ -588,73 +538,5 @@ export function ModelChip({ project, activeModel }: { project: AppState['project
         </div>
       )}
     </div>
-  )
-}
-
-/**
- * Project-level conversation: a closable aside next to every tab, or `embedded` in the task screen's chat panel. The open
- * topic (`chatId`) is App's; a missing or deleted one falls back to the newest.
- */
-export function ProjectChat({ projectId, state, chatId, onPick, onOpenTask, onClose, embedded }: {
-  projectId: string
-  state: AppState
-  chatId: string | null
-  onPick: (id: string) => void
-  onOpenTask: (key: string) => void
-  onClose?: () => void
-  embedded?: boolean
-}) {
-  const chats = projectTopics(state.sessions, projectId)
-  const chat = chats.find((c) => c.id === chatId) ?? chats[0] ?? null
-  const project = state.projects.find((p) => p.id === projectId)
-  const canvases = state.canvases.filter((c) => c.projectId === projectId && c.taskId === null).sort((a, b) => b.updatedAt - a.updatedAt)
-
-  const startNew = async (text?: string, att?: Attachment[]) => {
-    const id = await mag.newChat(projectId)
-    onPick(id)
-    if (text !== undefined) await mag.send(id, text, att)
-  }
-
-  // A branch forks the topic's Claude Code session: only one that has a session, while chats run on Claude Code.
-  const canBranch = !!chat?.nativeSessionId && chat.agent === 'claude-code' && !!project && resolveChoice(project, 'chat').agent === 'claude-code'
-  const branch = () => chat && mag.branchChat(chat.id).then(onPick, (e: Error) => alert(e.message))
-  const parent = chat?.branchOf ? state.sessions.find((s) => s.id === chat.branchOf) : undefined
-
-  const chip = project && <ModelChip project={project} activeModel={chat?.activeModel} />
-  const Box = embedded ? 'div' : 'aside'
-  return (
-    <Box className={embedded ? 'projectchat embedded' : 'projectchat'}>
-      <div className="pchead">
-        <ThreadPicker chats={chats} current={chat} onPick={onPick} onNew={() => void startNew()} />
-        <button className="iconbtn" onClick={() => startNew()} aria-label="New topic" title="New topic">✎</button>
-        <button className="iconbtn" disabled={!canBranch} onClick={() => void branch()} aria-label="Branch" title={canBranch ? 'Branch: a new topic that starts with everything said here' : 'Branch: needs a topic with a Claude Code session (send a message first)'}>⑂</button>
-        <CanvasMenu canvases={canvases} />
-        {onClose && <button className="iconbtn" onClick={onClose} aria-label="Close chat" title="Close">✕</button>}
-      </div>
-      {chat?.branchOf && (
-        <div className="branchedfrom muted small">
-          Branched from {parent ? <button type="button" className="link" onClick={() => onPick(parent.id)}>{parent.title ?? 'Topic'}</button> : 'a deleted topic'}
-        </div>
-      )}
-      {chat && chat.items.length > 0 ? (
-        <Chat session={chat} sessions={state.sessions} onOpenTask={onOpenTask} placeholder="Message…" chip={chip} />
-      ) : (
-        <div className="chatbox">
-          <div className="items">
-            <p className="muted small">
-              Talk about the project: ideas, design, architecture, priorities. The agent reads the code, draws mockups,
-              and turns decisions into tasks and notes. It never edits code itself.
-            </p>
-          </div>
-          <Composer
-            busy={false}
-            placeholder="Message…"
-            commands={chatCommands(chat ?? { projectId, agent: project ? resolveChoice(project, 'chat').agent : 'claude-code' }, state.sessions)}
-            onSend={(t, a) => (chat ? mag.send(chat.id, t, a) : startNew(t, a))}
-            chip={chip}
-          />
-        </div>
-      )}
-    </Box>
   )
 }

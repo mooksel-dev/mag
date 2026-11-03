@@ -78,7 +78,7 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    linked set, as step 7 says. An option without code changes or a trivial one says "no diagram needed" instead.
 5. Checkpoint, always: put the problem confirmation and the option choice under "Open questions" together with
    everything else only the user can decide, each with your recommendation and why, call set_needs_input with a
-   one-line summary, then stop and wait. Ask everything at once, at the task level; steps never get questions of their
+   one-line summary and the same questions with their recommendations, then stop and wait. Ask everything at once, at the task level; steps never get questions of their
    own.
 6. When the user answers in chat, weigh the answer first: agree, or say plainly why not and what you would do instead.
    Then update the doc (remove answered questions, fold answers in) and write what was decided under §Decisions. A
