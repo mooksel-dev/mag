@@ -440,7 +440,7 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'also',
     description:
-      "The fact of the PRs under review (a step's reviewer; the topic that owns a review of a teammate's PR): their change inventory, a flat list of what changed at the level a reviewer designs at, written from the hunks get_pr_changes lists. mag checks it against the hunks (blockers: a block of changed code in no unit and not in noise, an id that is no block, a unit whose name its hunks do not bear out, a unit on a module that owns none of its blocks; warnings: code called noise, declarations no unit of their module names), generates the fact's Component and Data diagrams from it (the root of the fact set, replacing those drawn before) and answers with the check and plan ↔ fact. Call it again with the whole inventory to fix it.",
+      "The fact of the PRs under review (a step's reviewer; the topic that owns a review of a teammate's PR): their change inventory, a flat list of what changed at the level a reviewer designs at, written from the hunks get_pr_changes lists. mag checks it against the hunks (blockers: a block of changed code in no unit and not in noise, an id that is no block, a unit whose name its hunks do not bear out, a unit on a module that owns none of its blocks, a call to a target that is no module and not external, a unit with several names, a changed method without before, after and note; warnings: code called noise, declarations no unit of their module names), generates the fact's Component and Data diagrams from it (the root of the fact set, replacing those drawn before; a method is a line 'signature - note', a call a marked line on the use of its caller to its target) and answers with the check and plan ↔ fact. Call it again with the whole inventory to fix it.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -451,25 +451,26 @@ export const TOOL_DEFS = [
             summary: { type: 'array', items: { type: 'string' }, description: '3–6 short bullets: what the change does, by meaning.' },
             units: {
               type: 'array',
-              description: 'One per change. method: every function or method added, removed or changed, public and private. model / field: types of data and their fields; stored only for persisted data. index: DB indexes and unique keys. dependency: a module starts or stops using another module or system. config / template: prompts, templates, config entries whose change alters behaviour, one per constant. Mocks and test helpers are never units; a rename is one unit.',
+              description: 'One per change. method: every function or method added, removed or changed, public and private. model / field: types of data and their fields; stored only for persisted data. index: DB indexes and unique keys. dependency: a module starts or stops using another module or system. call: a call between modules added, removed or with changed arguments, one per target method. config / template: prompts, templates, config entries whose change alters behaviour, one per constant. Mocks and test helpers are never units; a rename is one unit; one name per unit, never "a, b" or "a / b".',
               items: {
                 type: 'object',
                 required: ['kind', 'module', 'name', 'change', 'hunks'],
                 properties: {
                   id: { type: 'string', description: 'u1, u2…; filled in when left out.' },
-                  kind: { type: 'string', enum: ['method', 'model', 'field', 'index', 'dependency', 'config', 'template'] },
-                  module: { type: 'string', description: 'The module of its hunks, as the listing names it.' },
+                  kind: { type: 'string', enum: ['method', 'model', 'field', 'index', 'dependency', 'call', 'config', 'template'] },
+                  module: { type: 'string', description: 'The module of its hunks, as the listing names it; call: the module that calls.' },
                   owner: { type: 'string', description: 'method: the type, class or file it belongs to; field / index: its model.' },
-                  name: { type: 'string', description: 'Copied from the diff. method / model: its name; field: "<model>.<field>"; index: its name; dependency: the module id or package used; config: the constant, e.g. DEFAULT_PLAYBOOK.fact.' },
-                  change: { type: 'string', enum: ['add', 'mod', 'del', 'rename'] },
+                  name: { type: 'string', description: 'Copied from the diff. method / model: its name; field: "<model>.<field>"; index: its name; dependency: the module id or package used; call: "<target module id>#<method>" ("<package>#<func>" outside the project, with external); config: the constant, e.g. DEFAULT_PLAYBOOK.fact.' },
+                  change: { type: 'string', enum: ['add', 'mod', 'del', 'rename'], description: 'call: add, del, or mod when its arguments change.' },
                   visibility: { type: 'string', enum: ['public', 'private'] },
-                  before: { type: 'string', description: 'The old signature (field type, definition), one line; none for add.' },
-                  after: { type: 'string', description: 'The new one; none for del.' },
+                  before: { type: 'string', description: 'The old signature (field type, definition; a call as the code made it), one line; none for add. Required for a changed method.' },
+                  after: { type: 'string', description: 'The new one; none for del. Required for a changed method.' },
                   from: { type: 'string', description: 'rename: the old name.' },
                   logic: { type: 'string', enum: ['none', 'trivial', 'nontrivial'], description: 'method: nontrivial when branches, loops, error handling, external calls or data access change; trivial for wiring, renames, one-liners; none when only the signature changes.' },
                   stored: { type: 'boolean', description: 'model / field: true only for persisted data (a table, collection, document, cache entry); never arguments, options or DTOs.' },
+                  external: { type: 'boolean', description: 'call: its target is outside the project (a package, an outside system), no module of the architecture.' },
                   hunks: { type: 'array', items: { type: 'string' }, description: 'The blocks that change it, e.g. ["H3.1", "H4.2"]; not the other blocks of their hunks. "H3" stands for every block of H3.' },
-                  note: { type: 'string', description: 'One line: what changes in meaning.' },
+                  note: { type: 'string', description: 'One line: what changes in meaning; shown after the signature. Required for a changed method.' },
                 },
               },
             },

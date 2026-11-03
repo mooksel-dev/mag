@@ -7,6 +7,6 @@ export { LEVELS, SIGNIFICANT, isSignificant, parseSignificance, significance, wi
 export { carryIds, sharedPaths, unowned } from './ownership.ts'
 export { diagramChanges, formatPlanWarnings, lineName, planWarnings } from './plan.ts'
 export { formatFiles, formatHunks } from './format.ts'
-export { checkInventory, formatInventoryCheck, hunkBlocks, inventoryBlockers, numberHunks } from './inventory.ts'
+export { checkInventory, formatInventoryCheck, hunkBlocks, inventoryBlockers, numberHunks, type InventoryCheckOptions } from './inventory.ts'
 export { folderVocabulary, moduleResolver, planVocabulary, vocabularyOf } from './vocabulary.ts'
 export type * from './types.ts'

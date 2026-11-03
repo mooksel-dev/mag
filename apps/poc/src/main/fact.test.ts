@@ -70,7 +70,7 @@ function setup() {
 const INVENTORY: ChangeInventory = {
   summary: ['load takes fresh', 'save and extra came instead of remove'],
   units: [
-    { id: 'u1', kind: 'method', module: 'store', name: 'load', change: 'mod', before: 'load(id: string)', after: 'load(id: string, fresh = false)', logic: 'nontrivial', hunks: ['H3.1'] },
+    { id: 'u1', kind: 'method', module: 'store', name: 'load', change: 'mod', before: 'load(id: string)', after: 'load(id: string, fresh = false)', note: 'can skip the cache', logic: 'nontrivial', hunks: ['H3.1'] },
     { id: 'u2', kind: 'method', module: 'store', name: 'save', change: 'add', after: 'save(id: string)', logic: 'trivial', hunks: ['H3.1'] },
     { id: 'u3', kind: 'method', module: 'app', name: 'extra', change: 'add', after: 'extra()', logic: 'trivial', hunks: ['H2.1'] },
   ],
@@ -107,7 +107,7 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
   const store_ = (root.diagram as ComponentDiagram).modules.find((m) => m.id === 'store')!
   assert.deepEqual(store_.interface, [
     { text: 'load(id: string)', diff: 'del', files: ['src/store.ts'], logic: true },
-    { text: 'load(id: string, fresh = false)', diff: 'add', files: ['src/store.ts'], logic: true },
+    { text: 'load(id: string, fresh = false) - can skip the cache', diff: 'add', files: ['src/store.ts'], logic: true },
     { text: 'save(id: string)', diff: 'add', files: ['src/store.ts'] },
   ])
   assert.deepEqual(fact.counts, { match: 0, differs: 1, missing: 1, unplanned: 4, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: differs, not blocking')

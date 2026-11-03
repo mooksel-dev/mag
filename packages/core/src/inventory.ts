@@ -2,11 +2,11 @@
 // by the reviewer from the diff, each unit citing the blocks of changed lines it rests on. mag checks it against the
 // hunks (@mag/diff checkInventory) and generates the fact's Component and Data diagrams from it; the reviewer draws only
 // scenarios and method logic.
-import { findNode, type ArchLayer, type ArchNode } from './arch.ts'
-import type { ComponentDiagram, DataDiagram, DEntity, DField, DLine, DNode, DiagramLink, SequenceDiagram } from './diagram.ts'
+import { findNode, type ArchLayer, type ArchNode, type Line } from './arch.ts'
+import { looksGrouped, type ComponentDiagram, type DataDiagram, type DEntity, type DField, type DLine, type DNode, type DUse, type DiagramLink, type SequenceDiagram } from './diagram.ts'
 
-export type UnitKind = 'method' | 'model' | 'field' | 'index' | 'dependency' | 'config' | 'template'
-export const UNIT_KINDS: UnitKind[] = ['method', 'model', 'field', 'index', 'dependency', 'config', 'template']
+export type UnitKind = 'method' | 'model' | 'field' | 'index' | 'dependency' | 'call' | 'config' | 'template'
+export const UNIT_KINDS: UnitKind[] = ['method', 'model', 'field', 'index', 'dependency', 'call', 'config', 'template']
 export type UnitChange = 'add' | 'mod' | 'del' | 'rename'
 export const UNIT_CHANGES: UnitChange[] = ['add', 'mod', 'del', 'rename']
 /** nontrivial: branches, loops, error handling, external calls or data access changed; trivial: wiring, one-liners; none: only the signature. */
@@ -21,11 +21,14 @@ export interface InventoryUnit {
   module: string
   /** method: the type, class or file it belongs to; field / index: the model it is on. */
   owner?: string
-  /** method / model: its name; field: `<model>.<field>`; dependency: the module or package used; config: the constant. */
+  /**
+   * method / model: its name; field: `<model>.<field>`; dependency: the module or package used; call: `<target
+   * module>#<method>` (`<package>#<func>` outside the project); config: the constant.
+   */
   name: string
   change: UnitChange
   visibility?: 'public' | 'private'
-  /** The old signature (field type, definition), one line; none for add. */
+  /** The old signature (field type, definition; a call as the code makes it), one line; none for add. */
   before?: string
   /** The new one; none for del. */
   after?: string
@@ -35,6 +38,8 @@ export interface InventoryUnit {
   logic?: UnitLogic
   /** model / field: persisted data (a table, collection, document, cache entry), not an argument or DTO. */
   stored?: boolean
+  /** call: its target is outside the project (a package, an outside system), no module of the architecture. */
+  external?: boolean
   /** The ids of the blocks of changed lines it rests on (`H3.1`; `H3` for every block of the hunk). */
   hunks: string[]
   note?: string
@@ -97,6 +102,13 @@ export function normalizeInventory(raw: unknown): { inventory: ChangeInventory; 
     else if (logic) out.logic = logic
     else if (kind === 'method') errors.push(`${what} (${out.name}): a method needs logic: ${UNIT_LOGIC.join(', ')}`)
     if (u?.stored !== undefined) out.stored = u.stored === true
+    if (u?.external !== undefined) out.external = u.external === true
+    if (out.name && groupedName(out)) errors.push(`${what} (${out.name}): one name per unit; give each its own unit`)
+    if (kind === 'call') {
+      const call = parseCall(out.name)
+      if (out.name && !call) errors.push(`${what} (${out.name}): a call is named "<target module>#<method>" ("<package>#<func>" outside the project)`)
+      if (change === 'rename') errors.push(`${what} (${out.name}): a call changes by add, del or mod (its arguments)`)
+    }
     if (change === 'rename' && !out.from) errors.push(`${what} (${out.name}): rename needs from, the old name`)
     if (change !== 'rename' && out.from) errors.push(`${what} (${out.name}): from is only for rename`)
     return out
@@ -113,6 +125,41 @@ export function normalizeInventory(raw: unknown): { inventory: ChangeInventory; 
 
 /** The last segment of a dotted, slashed or `#` name: `save` of `dar_jobs.Repository.save`. */
 export const unitLeaf = (name: string) => name.split(/[.#/:]/).filter(Boolean).at(-1) ?? name
+
+/** The target module and method of a call unit's name (`dar_jobs#Ensure`); null when it is not one. */
+export function parseCall(name: string): { target: string; method: string } | null {
+  const at = name.lastIndexOf('#')
+  const target = name.slice(0, at).trim()
+  const method = name.slice(at + 1).trim()
+  return at > 0 && target && method ? { target, method } : null
+}
+
+/** Kinds whose name may be a path (a package, a module folder, a template file): a "/" there joins no names. */
+const PATH_NAMES: UnitKind[] = ['dependency', 'config', 'template']
+
+/**
+ * A unit's name that holds several (`ErrA, ErrB`, `get / set`, `Get/Set`; looksGrouped). The target of a call and a
+ * name that may be a path are no group by their "/".
+ */
+export function groupedName(u: Pick<InventoryUnit, 'kind' | 'name'>): boolean {
+  if (u.kind === 'call') return looksGrouped(parseCall(u.name)?.method ?? u.name)
+  if (PATH_NAMES.includes(u.kind)) return /,|\s[+/]\s/.test(u.name)
+  return looksGrouped(u.name)
+}
+
+/**
+ * What a unit lacks that the inventory's rules ask of it (diff-iak-inventar-zmin-ai.2): a changed method says what it
+ * was and is (before and after) and what changed in it (note); one name per unit.
+ */
+export function unitRuleProblems(u: InventoryUnit): string[] {
+  const out: string[] = []
+  if (groupedName(u)) out.push('one name per unit: give each its own unit')
+  if (u.kind === 'method' && u.change === 'mod') {
+    const lacks = [!u.before && 'before', !u.after && 'after', !u.note && 'note'].filter(Boolean)
+    if (lacks.length) out.push(`a changed method needs ${lacks.join(', ')}: its old and new signature and what changes in it`)
+  }
+  return out
+}
 
 /** Units that land on the Data diagram: stored models and fields, and indexes. */
 export const isDataUnit = (u: Pick<InventoryUnit, 'kind' | 'stored'>) => u.kind === 'index' || ((u.kind === 'model' || u.kind === 'field') && u.stored === true)
@@ -156,16 +203,37 @@ function unitLines(u: InventoryUnit, files: string[]): DLine[] {
     ...(u.kind === 'method' && u.logic === 'nontrivial' && { logic: true }),
     ...(u.visibility === 'private' && { private: true }),
   }
-  if (u.change === 'rename') return [{ text: lineText(u, u.after ?? u.before), diff: 'move', from: `${u.module}#${unitLeaf(u.from!)}`, ...extra }]
-  if (u.change === 'add') return [{ text: lineText(u, u.after), diff: 'add', ...extra }]
-  if (u.change === 'del') return [{ text: lineText(u, u.before), diff: 'del', ...extra }]
-  const same = (x: string, y: string) => lineText(u, x).replace(/\s+/g, '') === lineText(u, y).replace(/\s+/g, '')
-  if (u.before && u.after && !same(u.before, u.after))
+  // The line says what the unit does as the renderer reads it: "name(args): Result - what it does".
+  const noted = (sig: string | undefined) => (u.note ? `${lineText(u, sig)} - ${norm(u.note)}` : lineText(u, sig))
+  if (u.change === 'rename') return [{ text: noted(u.after ?? u.before), diff: 'move', from: `${u.module}#${unitLeaf(u.from!)}`, ...extra }]
+  if (u.change === 'add') return [{ text: noted(u.after), diff: 'add', ...extra }]
+  if (u.change === 'del') return [{ text: noted(u.before), diff: 'del', ...extra }]
+  if (u.before && u.after && !sameSignature(u, u.before, u.after))
     return [
       { text: lineText(u, u.before), diff: 'del', ...extra },
-      { text: lineText(u, u.after), diff: 'add', ...extra },
+      { text: noted(u.after), diff: 'add', ...extra },
     ]
-  return [{ text: lineText(u, u.after ?? u.before), diff: 'mod', ...extra }]
+  return [{ text: noted(u.after ?? u.before), diff: 'mod', ...extra }]
+}
+
+/** Two signatures of a unit that read the same from its name on, whitespace aside. */
+const sameSignature = (u: InventoryUnit, x: string, y: string, name?: string) => lineText(u, x, name).replace(/\s+/g, '') === lineText(u, y, name).replace(/\s+/g, '')
+
+/**
+ * A call unit's lines on its use: the call from the method's name on (`s.jobs.Ensure(ctx, key)` → `Ensure(ctx, key)`),
+ * a call whose arguments change a del and an add line.
+ */
+function callLines(u: InventoryUnit, method: string, files: string[]): Line[] {
+  const at = (sig: string | undefined) => lineText(u, sig, method)
+  const extra = files.length ? { files } : {}
+  if (u.change === 'add') return [{ text: at(u.after), diff: 'add', ...extra }]
+  if (u.change === 'del') return [{ text: at(u.before), diff: 'del', ...extra }]
+  if (u.before && u.after && !sameSignature(u, u.before, u.after, method))
+    return [
+      { text: at(u.before), diff: 'del', ...extra },
+      { text: at(u.after), diff: 'add', ...extra },
+    ]
+  return [{ text: at(u.after ?? u.before), diff: 'mod', ...extra }]
 }
 
 /** Folder names that say a module's layer, for modules no architecture describes (a teammate's PR outside the project). */
@@ -234,7 +302,7 @@ export function inventoryDiagrams(inventory: ChangeInventory, architecture: Arch
     return e
   }
   for (const u of inventory.units) {
-    if (u.kind === 'dependency') continue
+    if (u.kind === 'dependency' || u.kind === 'call') continue
     const files = filesOf(u.hunks)
     if (!isDataUnit(u)) {
       const n = node(u.module)
@@ -266,13 +334,30 @@ export function inventoryDiagrams(inventory: ChangeInventory, architecture: Arch
   }
   // The PR's own modules: a dependency on one of them is inside the change, never outside it.
   const own = new Set(inventory.units.map((u) => u.module))
+  const target = (id: string, external = false) => {
+    const to = node(id, false)
+    if (external || (!own.has(id) && !findNode(architecture, id))) to.kind = to.kind ?? 'external'
+    return to
+  }
   for (const u of inventory.units) {
     if (u.kind !== 'dependency') continue
     const from = node(u.module)
-    const to = node(u.name, false)
-    if (!own.has(u.name) && !findNode(architecture, u.name)) to.kind = to.kind ?? 'external'
+    const to = target(u.name)
     const files = filesOf(u.hunks)
     from.uses.push({ to: to.id, calls: [], diff: u.change === 'rename' ? 'mod' : u.change, ...(files.length && { files }) })
+  }
+  // Calls go on the use of their caller's module to their target; a call no dependency unit has a use for makes it, a
+  // use that changes only by its calls.
+  for (const u of inventory.units) {
+    const call = u.kind === 'call' ? parseCall(u.name) : null
+    if (!call) continue
+    const from = node(u.module)
+    const to = target(call.target, u.external)
+    const files = filesOf(u.hunks)
+    let use: DUse | undefined = from.uses.find((x) => x.to === to.id)
+    if (!use) from.uses.push((use = { to: to.id, calls: [], diff: 'mod' }))
+    use.calls.push(...callLines(u, call.method, files))
+    if (files.length) use.files = [...new Set([...(use.files ?? []), ...files])]
   }
   for (const n of modules.values()) {
     if (!n.diff && n.interface?.length) n.diff = 'mod'

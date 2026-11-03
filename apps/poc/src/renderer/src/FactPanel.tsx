@@ -99,7 +99,7 @@ export function InventoryView({ view, hunks }: { view: FactView; hunks: Hunks })
       {!!view.inventory?.summary.length && <ul className="small">{view.inventory.summary.map((b, i) => <li key={i}>{b}</li>)}</ul>}
       <div className="chips">
         {check && <span className={`diffchip${check.unaccounted.length ? ' s-missing' : ''}`} title="Blocks of changed code in no unit and not in noise">in no unit {check.unaccounted.length}</span>}
-        {check && <span className={`diffchip${ungrounded.length ? ' s-missing' : ''}`} title="Units their hunks do not bear out: the name is not there, the module owns none, the id is no hunk">ungrounded {ungrounded.length}</span>}
+        {check && <span className={`diffchip${ungrounded.length ? ' s-missing' : ''}`} title="Units their hunks do not bear out (the name is not there, the module owns none, the id is no hunk, a call to no module) or that break a rule (several names, a changed method without before, after and note)">ungrounded {ungrounded.length}</span>}
         {!!check?.noiseClaims.length && <span className="diffchip" title="Code blocks called noise that change real lines: a warning">code called noise {check.noiseClaims.length}</span>}
         {!!check?.undeclared.length && <span className="diffchip" title="Declarations in changed lines no unit of their module names: a hint">unnamed declarations {check.undeclared.length}</span>}
         {view.warnings.length > 0 && <span className="diffchip s-missing" title={view.warnings.join('\n')}>set warnings {view.warnings.length}</span>}
