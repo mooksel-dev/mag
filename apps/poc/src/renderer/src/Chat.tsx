@@ -598,6 +598,11 @@ export function ProjectChat({ projectId, state, chatId, onPick, onOpenTask, onCl
     if (text !== undefined) await mag.send(id, text, att)
   }
 
+  // A branch forks the topic's Claude Code session: only one that has a session, while chats run on Claude Code.
+  const canBranch = !!chat?.nativeSessionId && chat.agent === 'claude-code' && !!project && resolveChoice(project, 'chat').agent === 'claude-code'
+  const branch = () => chat && mag.branchChat(chat.id).then(onPick, (e: Error) => alert(e.message))
+  const parent = chat?.branchOf ? state.sessions.find((s) => s.id === chat.branchOf) : undefined
+
   const chip = project && <ModelChip project={project} activeModel={chat?.activeModel} />
   const Box = embedded ? 'div' : 'aside'
   return (
@@ -605,9 +610,15 @@ export function ProjectChat({ projectId, state, chatId, onPick, onOpenTask, onCl
       <div className="pchead">
         <ThreadPicker chats={chats} current={chat} onPick={onPick} onNew={() => void startNew()} />
         <button className="iconbtn" onClick={() => startNew()} aria-label="New topic" title="New topic">✎</button>
+        <button className="iconbtn" disabled={!canBranch} onClick={() => void branch()} aria-label="Branch" title={canBranch ? 'Branch: a new topic that starts with everything said here' : 'Branch: needs a topic with a Claude Code session (send a message first)'}>⑂</button>
         <CanvasMenu canvases={canvases} />
         {onClose && <button className="iconbtn" onClick={onClose} aria-label="Close chat" title="Close">✕</button>}
       </div>
+      {chat?.branchOf && (
+        <div className="branchedfrom muted small">
+          Branched from {parent ? <button type="button" className="link" onClick={() => onPick(parent.id)}>{parent.title ?? 'Topic'}</button> : 'a deleted topic'}
+        </div>
+      )}
       {chat && chat.items.length > 0 ? (
         <Chat session={chat} sessions={state.sessions} onOpenTask={onOpenTask} placeholder="Message…" chip={chip} />
       ) : (

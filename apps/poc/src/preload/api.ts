@@ -175,6 +175,8 @@ export interface MagApi {
   send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
   /** New project chat; returns its session id. */
   newChat(projectId: string): Promise<string>
+  /** Branch: a new topic forking the topic's agent session (all its context); returns the new topic's id. */
+  branchChat(sessionId: string): Promise<string>
   /** The user's title for a project chat (topic); the generated title no longer replaces it. */
   renameChat(sessionId: string, title: string): Promise<void>
   /** Deletes a project chat (topic) with its history; its agent stops first. */

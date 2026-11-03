@@ -10,7 +10,7 @@ import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
 
 /** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
-const NO_CONTROL: Pick<ToolActions, 'approve' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents'> = {
+const NO_CONTROL: Pick<ToolActions, 'branchChat' | 'approve' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents'> = {
   approve: () => {},
   develop: async () => {},
   startStep: async () => {},
@@ -18,6 +18,7 @@ const NO_CONTROL: Pick<ToolActions, 'approve' | 'develop' | 'startStep' | 'resta
   agentOf: () => null,
   send: async () => {},
   stopAgents: async () => [],
+  branchChat: () => { throw new Error('Not ready') },
 }
 
 const setup = () => {

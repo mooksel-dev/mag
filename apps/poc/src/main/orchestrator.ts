@@ -157,6 +157,8 @@ works on yet, without status or priority; what has a state is a work.
 - The user asks you to review a teammate's PR (a GitHub PR link, "поревюй <url>"): review_pr(url), then do the job it
   answers with, right here. You own that review: when the user asks for more, revise it and record it again with
   set_pr_review. Nothing you run writes to the PR.
+- The user asks to branch this topic (go on with a separate question in a new topic, "відгалузь", "branch"):
+  branch_topic, with text when they said what the new topic is about. The new topic starts with all of this one.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
 - Record outcomes so they outlive this chat: what was decided about a work, once you have weighed it, goes under §Decisions in its doc
@@ -387,6 +389,31 @@ export class Orchestrator {
   newChat(projectId: string) {
     this.store.project(projectId)
     return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
+  }
+
+  /**
+   * A new topic branched from a project topic: its agent session forks the parent's, so it starts with all of that
+   * context, and the parent stays as it is. `text`, if given, is its first message. Returns the new topic's id.
+   */
+  branchChat(sessionId: string, text?: string) {
+    const parent = this.projectChat(sessionId)
+    // Only Claude Code forks a session; Codex's resume would write into the parent's own.
+    if (parent.agent !== 'claude-code' || !parent.nativeSessionId) throw new Error('This topic has no agent session to branch yet: send it a message first (Claude Code only)')
+    if (this.choice(parent.projectId, 'chat').agent !== 'claude-code') throw new Error('Branching needs Claude Code as the agent of project chats')
+    const topic = this.store.createSession({
+      projectId: parent.projectId,
+      taskId: null,
+      role: 'chat',
+      agent: 'claude-code',
+      status: 'idle',
+      title: `Branch of ${parent.title ?? 'a topic'}`.slice(0, 60),
+      titleGenerated: true,
+      forkOf: parent.nativeSessionId,
+      branchOf: parent.id,
+    })
+    log.info('agent', 'topic branched', { session: topic.id, from: parent.id })
+    if (text?.trim()) void this.send(topic.id, text.trim()).catch((e) => log.warn('agent', 'the first message of a branched topic failed', e))
+    return topic.id
   }
 
   /** The topic that discusses an idea: its own, created the first time and titled after it. */
@@ -1394,7 +1421,7 @@ export class Orchestrator {
     const onEvent = this.onEvent(session)
 
     const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
-    // A reviewer's first run forks the owner session; later runs resume the fork.
+    // A forking session's first run (a reviewer's, a branched topic's) forks; later runs resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
     const handle = adapters[session.agent].start(
@@ -1486,10 +1513,13 @@ export class Orchestrator {
     const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
     const who = { session: session.id, role: session.role, agent: session.agent, model: c.model }
     const openedAt = Date.now()
-    log.info('agent', `${session.role} live process opened`, { ...who, resume: !!session.nativeSessionId })
+    // A branched topic's first process forks its parent's session; later ones resume the fork.
+    const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
+    const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
+    log.info('agent', `${session.role} live process opened`, { ...who, resume: !!session.nativeSessionId, fork })
 
     const onEvent = this.onEvent(session)
-    const handle = adapter.open({ ...spec, model: c.model ?? undefined, resumeId: session.nativeSessionId ?? undefined, mcpConfigPath }, (e) => {
+    const handle = adapter.open({ ...spec, model: c.model ?? undefined, resumeId, forkSession: fork, mcpConfigPath }, (e) => {
       if (e.type === 'stopped' && session.status !== 'running') return // an idle close says nothing in the chat
       onEvent(e)
       if (e.type === 'turn.started') this.turnStarted(session)
