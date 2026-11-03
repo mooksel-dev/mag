@@ -218,6 +218,10 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .toolgroup { display: flex; flex-direction: column; gap: 2px; }
 .toolsrow { align-self: flex-start; border: none; background: none; padding: 2px 4px; font-size: 12px; color: var(--muted); text-align: left; }
 .toolsrow:hover { color: var(--text); }
+.jobcard { align-self: flex-end; max-width: 92%; border: 1px solid var(--line); border-radius: 10px; background: var(--subtle); }
+.jobhead { display: flex; flex-direction: column; gap: 2px; width: 100%; border: none; background: none; padding: 6px 12px; text-align: left; }
+.jobhead .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobtext { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; max-height: 420px; overflow: auto; }
 .reply { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .turnmeta { font-size: 11px; color: var(--muted); padding: 0 4px; visibility: hidden; }
 .reply:hover .turnmeta { visibility: visible; }

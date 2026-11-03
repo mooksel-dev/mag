@@ -123,6 +123,67 @@ export function reviewRunning(task: Pick<Task, 'ownerSessionId'>, sessions: Agen
   return sessions.some((s) => s.id === task.ownerSessionId && s.status === 'running')
 }
 
+/**
+ * Where a review stands, the same in every view (reviews-normalnyi-ux-stan-reviu.1): closed (not in progress);
+ * reviewing (its owner topic is in a turn); question (it asks the user); ready (a verdict on the PR's head); failed (its
+ * owner topic ended in an error); outdated (a verdict on an older head); waiting (no verdict yet).
+ */
+export type ReviewState = 'reviewing' | 'question' | 'ready' | 'failed' | 'outdated' | 'waiting' | 'closed'
+
+/** A review's state. A verdict on the current head outranks an errored topic: a borrowed topic that fails later keeps it ready. */
+export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): ReviewState {
+  if (task.status !== 'in_progress') return 'closed'
+  const owner = sessions.find((s) => s.id === task.ownerSessionId)
+  if (owner?.status === 'running') return 'reviewing'
+  if (task.needsInput) return 'question'
+  if (reviewReady(task)) return 'ready'
+  if (owner?.status === 'error') return 'failed'
+  if (task.prReview?.verdict) return 'outdated'
+  return 'waiting'
+}
+
+/** A review's line in a list: its state with its detail, "Request changes · 2 blockers", "the agent is reviewing…". */
+export function reviewLine(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): string {
+  const r = task.prReview
+  const verdict = r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
+  switch (reviewState(task, sessions)) {
+    case 'closed':
+      return 'closed'
+    case 'reviewing':
+      return 'the agent is reviewing…'
+    case 'question':
+      return `asks: ${task.needsInput}`
+    case 'ready':
+      return verdict
+    case 'failed':
+      return 'the agent failed: review again'
+    case 'outdated':
+      return `${verdict} · new commits since`
+    case 'waiting':
+      return 'waits for the agent'
+  }
+}
+
+/** The job mag gave a review's topic before `reviewOf` was recorded: it opens with this. */
+const legacyJob = (url: string) => `Review the PR ${url} `
+
+/**
+ * The topic mag created for a review (`reviewOf`). Legacy: its owner topic whose first item is the job as a user item.
+ * A topic of the user that asked for the review (review_pr) is never it.
+ */
+export function reviewTopic(task: Pick<Task, 'id' | 'ownerSessionId' | 'prReview'>, sessions: AgentSession[]): AgentSession | undefined {
+  const own = sessions.find((s) => s.reviewOf === task.id)
+  if (own) return own
+  const owner = sessions.find((s) => s.id === task.ownerSessionId && s.role === 'chat' && !s.taskId)
+  const first = owner?.items[0]
+  return task.prReview && first?.kind === 'user' && first.text.startsWith(legacyJob(task.prReview.pr.url)) ? owner : undefined
+}
+
+/** The open review a topic owns, if any. */
+export function reviewOfTopic(tasks: Task[], sessionId: string): Task | undefined {
+  return tasks.find((t) => isReview(t) && t.status === 'in_progress' && t.ownerSessionId === sessionId)
+}
+
 /** The name a PR's repository goes by: the project's name for it, else (outside the project) its repo part. */
 export function prRepoName(project: Pick<Project, 'repos'>, pr: PrRef): string {
   return pr.outside ? (pr.repo.split('/')[1] ?? pr.repo) : (repoNames(project)[project.repos.indexOf(pr.repo)] ?? pr.repo)

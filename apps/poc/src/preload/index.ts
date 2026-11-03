@@ -90,6 +90,7 @@ const api: MagApi = {
   startReview: (projectId, url) => ipcRenderer.invoke('review:start', projectId, url),
   reviewAgain: (taskId) => ipcRenderer.invoke('review:again', taskId),
   closeReview: (taskId) => ipcRenderer.invoke('review:close', taskId),
+  deleteReview: (taskId) => ipcRenderer.invoke('review:delete', taskId),
   prChecks: (taskId) => ipcRenderer.invoke('review:checks', taskId),
   publishReview: (taskId, verdict, picks) => ipcRenderer.invoke('review:publish', taskId, verdict, picks),
   connectReviewRepo: (taskId) => ipcRenderer.invoke('review:connect', taskId),

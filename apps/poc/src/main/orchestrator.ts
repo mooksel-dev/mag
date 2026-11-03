@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -437,7 +437,7 @@ export class Orchestrator {
     if (topic && this.isRunning(topic.id)) throw new Error('The idea\'s topic is still working; start the work when it is done')
     const sid = topic?.id ?? this.newChat(idea.projectId)
     if (!topic) this.store.deleteIdea(ideaId)
-    void this.send(sid, ideaPrompt(idea, !!topic)).catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
+    void this.send(sid, ideaPrompt(idea, !!topic), [], 'Start a work from an idea').catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
     return sid
   }
 
@@ -504,7 +504,7 @@ export class Orchestrator {
       return `${task.key} is back in planning; its owner is busy.`
     }
     if (owner) {
-      void this.send(owner.id, ask).catch((e) => this.store.updateTask(taskId, { needsInput: `Could not tell its owner: ${(e as Error).message}` }))
+      void this.send(owner.id, ask, [], `More needed: ${task.key}`).catch((e) => this.store.updateTask(taskId, { needsInput: `Could not tell its owner: ${(e as Error).message}` }))
       return `${task.key} is back in planning; its owner plans the rest.`
     }
     this.groom(taskId, ask)
@@ -571,7 +571,7 @@ export class Orchestrator {
       `You own ${task.key}: answer it yourself when the decisions, the doc or what you discussed with the user cover it: answer_developer(step: "${step.key}"${work}, text), with the answer and why. ` +
       `Only when the user has to decide: set_needs_input(${work ? `work: "${task.key}", ` : ''}reason) with the question and your recommendation, and once the user has decided, pass it on with answer_developer.` +
       blocks(decisions)
-    void this.send(owner.id, ask).catch((e) => {
+    void this.send(owner.id, ask, [], `${step.key} asks`).catch((e) => {
       this.store.updateTask(stepId, { ownerQuestion: null })
       this.store.updateTask(task.id, { needsInput: `${question} (could not ask its owner: ${(e as Error).message})` })
     })
@@ -583,7 +583,7 @@ export class Orchestrator {
     const step = this.store.task(stepId)
     const session = this.lastStepSession(stepId)
     if (!step.ownerQuestion || !session) throw new Error(`No question of ${step.key}'s developer is waiting`)
-    await this.send(session.id, `The owner of the work answers your question: ${text}`)
+    await this.send(session.id, `The owner of the work answers your question: ${text}`, [], "Owner's answer")
   }
 
   /**
@@ -643,9 +643,10 @@ export class Orchestrator {
     if (!(await this.prepareWorktrees(session))) return
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
     const talk = ready.discuss.length ? [intro, discussText(ready.discuss, project.baseBranch)].join('\n\n') : undefined
-    const text = [talk, message].filter(Boolean).join('\n\n')
-    if (text) session.items.push({ kind: 'user', text, at: Date.now() })
-    return this.run(session, text || intro)
+    // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
+    if (talk) session.items.push({ kind: 'job', title: `Implement ${step.key}`, text: talk, at: Date.now() })
+    if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
+    return this.run(session, [talk, message].filter(Boolean).join('\n\n') || intro)
   }
 
   /** Every task but the step: who else may hold a local repository. */
@@ -910,16 +911,19 @@ export class Orchestrator {
       `New feedback on your PR${many ? 's' : ''}:\n` +
       items.map((f) => `- ${many ? `[${f.repo}] ` : ''}@${f.author}${f.where ? ` on ${f.where}` : ''}: ${f.body}`).join('\n') +
       `\nAddress it: change the code, run tests, push. Reply on GitHub (starting with ${AGENT_MARK}) only where a comment needs an answer. If something is unclear, set_needs_input.`
-    return this.resumeDeveloper(owner, text)
+    return this.resumeDeveloper(owner, text, 'PR feedback')
   }
 
-  /** Resumes the developer session of a step (or a legacy task) with `text`; false while it is in a turn or has none. */
-  private resumeDeveloper(owner: Task, text: string) {
+  /**
+   * Resumes the developer session of a step (or a legacy task) with `text`, a job titled `job`; false while it is in a
+   * turn or has none.
+   */
+  private resumeDeveloper(owner: Task, text: string, job: string) {
     const taskId = owner.parentId ?? owner.id
     const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
     // During a turn the comments wait for the next poll; a live process between turns gets them as a message.
     if (!session || this.isRunning(session.id)) return false
-    session.items.push({ kind: 'user', text, at: Date.now() })
+    session.items.push({ kind: 'job', title: job, text, at: Date.now() })
     this.store.updateTask(taskId, { status: 'in_progress' })
     void this.run(session, text)
     return true
@@ -981,7 +985,7 @@ export class Orchestrator {
       return
     }
     const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact)
-    session.items.push({ kind: 'user', text, at: Date.now() })
+    session.items.push({ kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
     return this.run(session, text)
   }
 
@@ -1061,7 +1065,7 @@ export class Orchestrator {
     if (reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) !== 'developer') return
     const many = (step.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     // A developer in a turn (the user talks to it) keeps it; the user sees the verdict instead.
-    if (!this.resumeDeveloper(step, reviewFeedback(review, many))) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
+    if (!this.resumeDeveloper(step, reviewFeedback(review, many), `Review findings · round ${review.round}`)) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
   }
 
   /**
@@ -1083,21 +1087,23 @@ export class Orchestrator {
     const owner = by ?? (prev && this.ownerSession(prev)?.id) ?? undefined
     if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is still working; ask it there`)
     const sessionId = owner ?? this.newChat(projectId)
-    if (!owner) {
-      const topic = this.store.session(sessionId)
-      topic.title = `Review ${name}#${info.number}`
-      topic.titleGenerated = true
-    }
     const fresh: PrReview = { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null }
     const title = `${name}#${info.number}: ${info.title}`
     const work = prev
       ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview: { ...(prev.prReview ?? fresh), pr } }), this.store.task(prev.id))
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
     if (!prev) this.store.updateTask(work.id, { prReview: fresh })
+    // mag's own topic for the review: Delete review takes it along; Topics on Home leaves it out.
+    if (!owner) {
+      const topic = this.store.session(sessionId)
+      topic.title = `Review ${name}#${info.number}`
+      topic.titleGenerated = true
+      topic.reviewOf = work.id
+    }
     log.info('agent', `${work.key}: review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
     const { files, since } = await this.prFiles(project, this.store.task(work.id))
     const job = prReviewPrompt(project, this.store.task(work.id), files, since)
-    if (!by) await this.send(sessionId, job)
+    if (!by) await this.send(sessionId, job, [], `Review ${name}#${info.number}`)
     return { taskId: work.id, sessionId, job }
   }
 
@@ -1113,6 +1119,23 @@ export class Orchestrator {
     const work = this.store.task(workId)
     if (!isReview(work)) throw new Error(`${work.key} is not a review of a PR`)
     this.store.updateTask(workId, { status: 'done', needsInput: null })
+  }
+
+  /**
+   * The user deletes a review for good (reviews-normalnyi-ux-stan-reviu.1): the review, its doc and diagrams, and the
+   * topic mag created for it (its run ends first). A topic that asked for the review (review_pr) stays; while it is in a
+   * turn the review is not deleted. Nothing changes on GitHub.
+   */
+  async deleteReview(workId: string) {
+    const work = this.store.task(workId)
+    if (!isReview(work)) throw new Error(`${work.key} is not a review of a PR`)
+    const sessions = this.store.data.sessions
+    const own = [...new Set([reviewTopic(work, sessions), ...sessions.filter((s) => s.reviewOf === workId)].filter((s): s is AgentSession => !!s))]
+    const owner = work.ownerSessionId
+    if (owner && !own.some((s) => s.id === owner) && this.isRunning(owner)) throw new Error(`The topic of ${work.key} is still working; stop it or wait, then delete the review`)
+    for (const s of own) await this.deleteChat(s.id)
+    this.store.deleteTask(workId)
+    log.info('agent', `${work.key}: review deleted`, { topics: own.length })
   }
 
   /** The project repository whose GitHub remote is `slug` (owner/repo). */
@@ -1217,14 +1240,17 @@ export class Orchestrator {
     return this.rereview(workId)
   }
 
-  /** A live session takes a message during a turn too: the agent gets it in that turn. */
-  async send(sessionId: string, text: string, attachments: Attachment[] = []) {
+  /**
+   * A live session takes a message during a turn too: the agent gets it in that turn. `job`: the message is mag's, not
+   * the user's (a review's job, the owner's ask…): the chat shows it as a card with this title.
+   */
+  async send(sessionId: string, text: string, attachments: Attachment[] = [], job?: string) {
     const session = this.store.session(sessionId)
     if (this.runs.has(sessionId)) throw new Error('Agent is still working')
-    session.items.push({ kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
+    session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
     // A topic the user renamed keeps its title.
-    if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => i.kind === 'user' && n < session.items.length - 1))
-      session.title = (text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
+    if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
+      session.title = (job || text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
     // A Claude Code slash command goes to the CLI as is; the composer doesn't attach files to one.
     const command = session.agent === 'claude-code' && text.startsWith('/')
     const prompt = attachments.length && !command
@@ -1605,9 +1631,10 @@ export class Orchestrator {
   /** After a chat's first turn: a short generated title in place of the first message. Once; a failure keeps the old title. */
   private nameChat(session: AgentSession) {
     if (session.role !== 'chat' || session.titleGenerated || session.status === 'error') return
-    const first = session.items.find((i) => i.kind === 'user')
+    // A topic mag started with a job (a work from an idea) is named from the job.
+    const first = session.items.find((i) => i.kind === 'user' || i.kind === 'job')
     const reply = session.items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : [])).join('\n\n')
-    if (first?.kind !== 'user' || !reply) return
+    if ((first?.kind !== 'user' && first?.kind !== 'job') || !reply) return
     session.titleGenerated = true
     const adapter = adapters[session.agent]
     let text = ''
@@ -1615,7 +1642,7 @@ export class Orchestrator {
     const handle = adapter.start(
       {
         cwd: this.paths.runsDir, // neutral: no repo instructions to load
-        prompt: titlePrompt(first.text || first.attachments?.[0]?.name || '', reply),
+        prompt: titlePrompt(first.text || (first.kind === 'user' ? first.attachments?.[0]?.name : '') || '', reply),
         model: adapter.cheapModel,
         noTools: true,
       },

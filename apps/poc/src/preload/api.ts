@@ -220,6 +220,8 @@ export interface MagApi {
   reviewAgain(taskId: string): Promise<string>
   /** Close a review: done; reviewAgain brings it back. */
   closeReview(taskId: string): Promise<void>
+  /** Delete a review for good: it, its doc and diagrams, and the topic mag created for it. Nothing changes on GitHub. */
+  deleteReview(taskId: string): Promise<void>
   /** The CI checks of a review's PR, from GitHub. */
   prChecks(taskId: string): Promise<PrCheck[]>
   /**
