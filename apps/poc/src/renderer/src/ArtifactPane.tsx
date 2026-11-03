@@ -8,6 +8,7 @@ import {
   subtasksOf,
   taskDiagrams,
   taskPrs,
+  workCanvases,
   type AgentSession,
   type Task,
   type TaskWork,
@@ -63,10 +64,8 @@ function WorkPane({ work, state, onOpenKey }: { work: Task; state: AppState; onO
   const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === work.projectId), [state.canvases, work.projectId])
   // Its own diagrams, then those of other tasks the doc links (T-55.3).
   const diagrams = useMemo(() => diagramsOf(taskDiagrams(work, doc, projectCanvases)), [projectCanvases, work, doc])
-  const canvases = useMemo(
-    () => projectCanvases.filter((c) => c.taskId === work.id && c.kind !== 'diagram').sort((a, b) => b.updatedAt - a.updatedAt),
-    [projectCanvases, work.id],
-  )
+  // Its own canvases and those its owner topic drew before the work existed.
+  const canvases = useMemo(() => workCanvases(work, projectCanvases), [projectCanvases, work])
   const progress = subtaskProgress(work.id, tasks)
   const sessions = state.sessions.filter((s) => s.taskId === work.id)
   // A work being planned shows its doc first; one in progress what it changed.

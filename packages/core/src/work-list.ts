@@ -50,11 +50,19 @@ export function workList(projectId: string, tasks: Task[], sessions: AgentSessio
   const mine = sessions.filter((s) => s.projectId === projectId)
   const works = tasks.filter((t) => !t.parentId && t.projectId === projectId && t.status !== 'canceled')
   const out: WorkListItem[] = []
+  // A topic that owns several open works opens as the latest updated one (as App does): its approvals count for that one.
+  const latestOwned = new Map<string, Task>()
+  for (const t of works) {
+    if (t.status === 'done' || !t.ownerSessionId) continue
+    const prev = latestOwned.get(t.ownerSessionId)
+    if (!prev || t.updatedAt > prev.updatedAt) latestOwned.set(t.ownerSessionId, t)
+  }
   for (const task of works) {
     const own = mine.filter((s) => s.taskId === task.id || s.id === task.ownerSessionId)
     const at = Math.max(task.updatedAt, ...own.map(sessionActivity))
     // A pending approval in the owner topic counts for the work too.
-    const item = items.find((i) => i.task?.id === task.id || (!i.task && !!i.session && own.includes(i.session)))
+    const ownsTopic = !!task.ownerSessionId && latestOwned.get(task.ownerSessionId) === task
+    const item = items.find((i) => i.task?.id === task.id || (!i.task && ownsTopic && i.session?.id === task.ownerSessionId))
     const finished = task.status === 'done'
     if (item && !finished) {
       out.push({ kind: 'work', group: 'waiting', task, badge: item.kind, text: item.text, at })

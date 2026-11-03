@@ -42,6 +42,16 @@ export function taskDiagrams<C extends DiagramLike>(task: Pick<Task, 'id' | 'pro
   return [...own, ...linked]
 }
 
+/**
+ * The canvases a work's pane lists beside its doc (ux-odna-rozmova-na-robotu.2), newest first: its own HTML ones (its
+ * diagrams are in Diff), and every canvas its owner topic drew before the work existed (no task, that session).
+ */
+export function workCanvases<C extends Pick<Canvas, 'projectId' | 'taskId' | 'sessionId' | 'kind' | 'updatedAt'>>(work: Pick<Task, 'id' | 'projectId' | 'ownerSessionId'>, canvases: C[]): C[] {
+  return canvases
+    .filter((c) => c.projectId === work.projectId && ((c.taskId === work.id && c.kind !== 'diagram') || (c.taskId === null && !!work.ownerSessionId && c.sessionId === work.ownerSessionId)))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
 /** The diagrams of one step: its plan and its fact. */
 export function stepDiagrams<C extends DiagramLike>(diagrams: C[], stepId: string): C[] {
   return diagrams.filter((d) => (d.role === 'plan' || d.role === 'fact') && d.stepId === stepId)

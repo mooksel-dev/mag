@@ -52,6 +52,9 @@ test('workList: a pending approval waits on the user, in a work owned by the top
   const tasks = [task('w', { ownerSessionId: 'owner' })]
   const sessions = [session('owner', { items: [approval] }), session('alone', { items: [{ ...approval, id: 'a2' }] })]
   assert.deepEqual(workList('p', tasks, sessions, NOW).map(line).sort(), ['waiting:alone(approval)', 'waiting:w(approval)'])
+  // A topic owning several open works: only the latest updated one, the one it opens as, waits.
+  const two = [task('old', { ownerSessionId: 'owner', updatedAt: NOW - 3 * DAY }), task('new', { ownerSessionId: 'owner', updatedAt: NOW - DAY })]
+  assert.deepEqual(workList('p', two, sessions.slice(0, 1), NOW).map(line), ['waiting:new(approval)', 'open:old'])
 })
 
 test('workList: newest activity first within a group, a session item counting as activity', () => {
