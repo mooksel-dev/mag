@@ -62,6 +62,8 @@ export interface Project {
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   /** Hex color from PROJECT_COLORS; missing or null = picked from the id (see projectColor). */
   color?: string | null
+  /** The repositories the last Start worked on locally (the Start popup's last choice): its default next time. */
+  lastLocalRepos?: string[]
   createdAt: number
 }
 
@@ -144,6 +146,57 @@ export interface RepoWork {
   local?: boolean
   /** Local mode: the user's uncommitted files the step works on top of (their Ignore); never the agent's to commit. */
   foreignFiles?: string[]
+  /** CI of the open PR at the last check (see ciState); missing until checked. */
+  ci?: CiState
+  /** Whether the open PR merges into base at the last check; missing until checked. */
+  mergeable?: Mergeable
+}
+
+/** CI of a PR: a check failed, one is still running, all passed, or it has none. */
+export type CiState = 'pass' | 'fail' | 'pending' | 'none'
+export type Mergeable = 'clean' | 'conflict' | 'unknown'
+
+/** A PR's CI from its checks (gh pr checks buckets: pass, fail, pending, skipping, cancel). */
+export function ciState(checks: { bucket: string }[]): CiState {
+  if (checks.some((c) => c.bucket === 'fail')) return 'fail'
+  if (checks.some((c) => c.bucket === 'pending')) return 'pending'
+  return checks.length ? 'pass' : 'none'
+}
+
+/** A PR problem mag hands back to the step's developer on its own (ux-odna-rozmova-na-robotu.1). */
+export type PrProblem = 'ci' | 'conflict'
+
+/** Tries mag made on a step on its own: per PR problem, and continues of a developer that stopped. */
+export interface AutoFix {
+  ci: number
+  conflict: number
+  continue: number
+}
+
+/** Tries per PR problem before the owner decides (Decision: 2 per problem per step). */
+export const AUTO_FIX_TRIES = 2
+/** Continues of a developer that stopped without a PR or a question, before the user is asked. */
+export const AUTO_CONTINUES = 1
+
+/** A step's tries so far; none before its first. */
+export function autoFixOf(step: Pick<Task, 'autoFix'>): AutoFix {
+  return step.autoFix ?? { ci: 0, conflict: 0, continue: 0 }
+}
+
+/**
+ * What mag does about a step's open PRs: the problem to hand to the developer (a failed check first, then a conflict)
+ * and the problems that cleared (their tries start over). A pending CI, one without checks or an unknown mergeability
+ * neither.
+ */
+export function prProblems(work: TaskWork): { problem: PrProblem | null; cleared: PrProblem[] } {
+  const open = work.repos.filter((r) => r.prUrl && r.prState === 'open')
+  const fail = open.some((r) => r.ci === 'fail')
+  const conflict = open.some((r) => r.mergeable === 'conflict')
+  const cleared: PrProblem[] = []
+  // Right after a push a PR may show no checks yet: only a pass proves the CI fixed.
+  if (open.every((r) => r.ci === 'pass' || r.ci === 'none') && open.some((r) => r.ci === 'pass')) cleared.push('ci')
+  if (open.every((r) => r.mergeable === 'clean')) cleared.push('conflict')
+  return { problem: fail ? 'ci' : conflict ? 'conflict' : null, cleared }
 }
 
 /** Execution state of a task once a developer agent picks it up. */
@@ -561,6 +614,12 @@ export interface Task {
    * (ahent-vede-robotu-vlasna-pozytsiia.2). Cleared when the developer is told anything.
    */
   ownerQuestion?: string | null
+  /** Steps: the owner was in a turn when the question came; it gets it once that turn ends (ux-odna-rozmova-na-robotu.1). */
+  ownerQuestionQueued?: boolean
+  /** Steps: who raised ownerQuestion: its developer (asks, the default) or mag, with what it could not fix on its own. */
+  ownerQuestionFrom?: 'asks' | 'mag'
+  /** Steps: tries mag made on its own (CI, conflict, continue); a PR problem's count starts over once it clears. */
+  autoFix?: AutoFix
   /** Steps: the latest verdict of the agent review of its PRs (T-55.1). */
   review?: AgentReview | null
   /** Steps: plan ↔ fact of its PRs, computed by mag when they are reviewed (T-57.4). A review: the fact of the PR, without a plan. */

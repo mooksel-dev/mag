@@ -68,6 +68,10 @@ const fake: AgentAdapter = {
 adapters['claude-code'] = fake
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
+/** Waits until `f` holds (or fails after `ms`). */
+async function until(f: () => boolean, ms = 3000) {
+  for (const end = Date.now() + ms; !f(); await new Promise((r) => setTimeout(r, 10))) if (Date.now() > end) throw new Error('timed out')
+}
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'mag-orch-'))
@@ -92,7 +96,8 @@ async function developing() {
   const step = s.store.createTask({ projectId: s.project.id, title: 's', type: 'dev', description: '', parentId: s.task.id, status: 'in_progress' })
   const workDir = join(s.dir, 'worktrees', step.key)
   mkdirSync(workDir, { recursive: true })
-  s.store.updateTask(step.id, { work: { dir: workDir, repos: [], feedbackSeenAt: 0 } })
+  // Its one continue is used: a turn that ends without a PR stops as before (the continue has tests of its own).
+  s.store.updateTask(step.id, { work: { dir: workDir, repos: [], feedbackSeenAt: 0 }, autoFix: { ci: 0, conflict: 0, continue: 1 } })
   const session = s.store.createSession({ projectId: s.project.id, taskId: s.task.id, stepId: step.id, role: 'developer', agent: 'claude-code', status: 'idle' })
   await s.orch.send(session.id, 'go on')
   const live = opened.at(-1)!
@@ -186,7 +191,6 @@ test("askOwner: a developer's question goes to the work's owner; the step waits,
   assert.notEqual(owner, live)
   assert.match(owner.sent[0], /^The developer of login\.1 \("s"\) asks: Which schema\?\nYou own login: .*answer_developer\(step: "login\.1", text\).*set_needs_input\(reason\)/s)
   assert.match(owner.sent[0], /Schema v2 everywhere/, 'with the decisions of the work')
-  assert.equal(orch.askOwner(step.id, 'Again?'), false, 'the owner is busy: the user is asked')
 
   // The developer stops to wait: no "stopped without a PR" for the user.
   live.emit({ type: 'turn.done', ok: true })
@@ -530,7 +534,9 @@ test('develop: a local repository works in the main checkout on the step branch 
   assert.ok(spec.addDirs?.includes(app), 'the agent may change the main checkout')
   assert.match(spec.appendSystemPrompt!, /- app: .*app \(local: the user's main checkout, not a worktree; branch mag\/login-1\)/)
 
-  // The step is done: the checkout stays on its branch, the worktree goes.
+  // The step is done: the checkout stays on its branch, the worktree goes. (The first stop is continued once.)
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
   opened.at(-1)!.emit({ type: 'turn.done', ok: true })
   await tick()
   await orch.completeStep(step.id)
@@ -1069,6 +1075,7 @@ function chatControls(s: ReturnType<typeof setup>) {
   const actions = {
     approve: (id: string) => s.orch.approve(id),
     develop: (id: string, local?: string[]) => s.orch.develop(id, undefined, local),
+    approveAndStart: (id: string, local?: string[]) => s.orch.approveAndStart(id, local),
     startStep: (id: string) => s.orch.startStep(id),
     restartReview: (id: string) => s.orch.reviewTask(id),
     agentOf: (id: string, role?: MessagedRole) => s.orch.agentOf(id, role),
@@ -1108,7 +1115,6 @@ test('start_work and start_step: as Start; errors as the button gives them (chat
   const { call, logged } = chatControls(s)
   const one = store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
   const two = store.createTask({ projectId: project.id, title: 'two', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [], startManually: true })
-  await assert.rejects(call('start_work', { key: 'login' }), /login is planning; only ready or in progress works are developed/)
   store.updateTask(task.id, { status: 'ready' })
   await assert.rejects(call('start_work', { key: 'login.1' }), /login\.1 is a step: start its work login/)
   await assert.rejects(call('start_work', { key: 'login', local_repos: ['web'] }), /Not a repository of the project: web/)
@@ -1229,4 +1235,176 @@ test('branch_topic: a project topic branches itself into a new one; other sessio
   assert.match(String(await call({})), /^Branched into a new topic "Branch of Auth" \(\w+\)\. Tell the user/)
   const branch = s.store.data.sessions.at(-1)!
   assert.deepEqual([branch.branchOf, branch.forkOf, branch.items.length], [topic.id, 'auth-native', 0])
+})
+
+/** Notice lines in a session's chat. */
+const notices = (store: Store, sessionId: string) => store.session(sessionId).items.flatMap((i) => (i.kind === 'notice' ? [i.text] : []))
+
+test('askOwner: an owner in a turn gets the question once the turn ends; unanswered after that, the user (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = await developing()
+  const { store, orch, task, step, live } = s
+  const groomer = store.createSession({ projectId: s.project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  store.updateTask(task.id, { ownerSessionId: groomer.id })
+  await orch.send(groomer.id, 'plan more')
+  const owner = opened.at(-1)!
+  assert.equal(orch.isRunning(groomer.id), true)
+
+  assert.equal(orch.askOwner(step.id, 'Which schema?'), true, 'queued, not the user')
+  assert.deepEqual([store.task(step.id).ownerQuestion, store.task(step.id).ownerQuestionQueued], ['Which schema?', true])
+  assert.deepEqual(notices(store, groomer.id), ['login.1 asks: Which schema? (queued until this turn ends)'])
+  assert.deepEqual(owner.sent, ['plan more'])
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, null, 'the step waits for its owner')
+
+  // The owner's turn ends: the question goes to it, and nobody asks the user yet.
+  owner.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.match(owner.sent.at(-1)!, /^The developer of login\.1 \("s"\) asks: Which schema\?/)
+  assert.equal(store.task(step.id).ownerQuestionQueued, false)
+  assert.equal(store.task(task.id).needsInput, null)
+  assert.equal(orch.isRunning(groomer.id), true)
+
+  owner.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, 'login.1 asks: Which schema? (its owner did not answer)')
+})
+
+test('afterRun: a developer that stops without a PR or a question is told to continue once, then the user is asked (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = await developing()
+  const { store, orch, task, step, session, live } = s
+  const groomer = store.createSession({ projectId: s.project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  store.updateTask(task.id, { ownerSessionId: groomer.id })
+  store.updateTask(step.id, { autoFix: { ci: 0, conflict: 0, continue: 0 } })
+
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, null)
+  assert.match(live.sent.at(-1)!, /^You stopped without opening a PR or completing the step\. Continue: finish the step and open the PR \(set_pr\)/)
+  assert.ok(session.items.some((i) => i.kind === 'job' && i.title === 'Continue'))
+  assert.equal(session.status, 'running')
+  assert.equal(store.task(step.id).autoFix!.continue, 1)
+
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, 'Developer stopped without opening a PR or completing the step')
+  assert.deepEqual(notices(store, groomer.id), [
+    'login.1: the developer stopped (Developer stopped without opening a PR or completing the step); mag told it to continue',
+    'login.1: Developer stopped without opening a PR or completing the step; the user is asked',
+  ])
+
+  // The user's Restart: it may continue on its own again.
+  store.updateTask(step.id, { repos: [] })
+  await orch.develop(task.id)
+  assert.equal(store.task(step.id).autoFix!.continue, 0)
+  assert.equal(notices(store, groomer.id).at(-1), 'login.1 restarted: "s"')
+})
+
+test('afterRun: a failed developer is not continued: the user is asked (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = await developing()
+  const { store, task, step, live } = s
+  store.updateTask(step.id, { autoFix: { ci: 0, conflict: 0, continue: 0 } })
+  live.emit({ type: 'error', message: 'boom' })
+  live.emit({ type: 'turn.done', ok: false })
+  await tick()
+  assert.equal(store.task(task.id).needsInput, 'Developer agent failed; check the chat')
+  assert.equal(store.task(step.id).autoFix!.continue, 0)
+})
+
+/** A step whose developer is between turns, with an open PR, and a groomer that owns the work. gh fails: no review starts. */
+async function withPr() {
+  const s = await developing()
+  const gh = fakeGh(s.dir)
+  s.live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  s.store.updateTask(s.task.id, { needsInput: null })
+  const pr = { repo: s.dir, branch: 'mag/login-1', worktree: s.workDir, prUrl: 'https://github.com/a/b/pull/1', prState: 'open' as const, checkError: null }
+  s.store.updateTask(s.step.id, { work: { ...s.store.task(s.step.id).work!, repos: [pr] } })
+  const groomer = s.store.createSession({ projectId: s.project.id, taskId: s.task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  s.store.updateTask(s.task.id, { ownerSessionId: groomer.id })
+  /** The developer's turn ends (its auto-fix done); its end looks for PR heads to review, which fails here. */
+  const turnEnds = async () => {
+    s.live.emit({ type: 'turn.done', ok: true })
+    await tick()
+  }
+  return { ...s, gh, groomer, turnEnds }
+}
+
+test('fixPr: a failed CI goes back to the developer twice, then to the owner; cleared, it starts over (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = await withPr()
+  const { store, orch, task, step, live, groomer, turnEnds } = s
+  try {
+    assert.equal(orch.fixPr(step.id, 'ci', '- b: test (https://ci/1)'), true)
+    assert.match(live.sent.at(-1)!, /^CI fails on your PR:\n- b: test \(https:\/\/ci\/1\)\nRead the failing logs/)
+    assert.ok(store.session(s.session.id).items.some((i) => i.kind === 'job' && i.title === 'CI failed · try 1/2'))
+    assert.equal(orch.fixPr(step.id, 'ci', '- b: test'), false, 'the developer is in a turn')
+    await turnEnds()
+    await until(() => orch.fixPr(step.id, 'ci', '- b: test'))
+    await turnEnds()
+    await until(() => !store.data.sessions.some((x) => x.stepId === step.id && orch.isRunning(x.id)))
+    assert.deepEqual(store.task(step.id).autoFix, { ci: 2, conflict: 0, continue: 1 })
+
+    // Third time: the owner decides, the developer is not resumed.
+    const sent = live.sent.length
+    await until(() => orch.fixPr(step.id, 'ci', '- b: test'))
+    await tick()
+    assert.equal(live.sent.length, sent)
+    const owner = opened.at(-1)!
+    assert.match(owner.sent.at(-1)!, /^mag could not settle this on its own for login\.1 \("s"\): its PR CI fails after 2 automatic fixes by its developer:\n- b: test\n[\s\S]*answer_developer\(step: "login\.1", text\)/)
+    assert.equal(store.task(step.id).ownerQuestionFrom, 'mag')
+    assert.equal(orch.fixPr(step.id, 'ci', '- b: test'), false, 'the owner has it')
+    assert.deepEqual(notices(store, groomer.id), [
+      'login.1: CI fails, the developer fixes it (try 1/2)',
+      'login.1: CI fails, the developer fixes it (try 2/2)',
+      'login.1: CI fails, not fixed after 2 tries',
+    ])
+
+    // The owner's answer: the developer goes on with it, and mag may try again after.
+    owner.emit({ type: 'turn.done', ok: true })
+    await tick()
+    await orch.answerDeveloper(step.id, 'skip the flaky test')
+    assert.match(live.sent.at(-1)!, /^The owner of the work decides on what mag could not fix on its own \(its PR CI fails after 2 automatic fixes by its developer:\): skip the flaky test$/)
+    assert.equal(store.task(step.id).autoFix!.ci, 0)
+    assert.equal(store.task(task.id).needsInput, null)
+
+    store.updateTask(step.id, { autoFix: { ci: 2, conflict: 1, continue: 1 } })
+    orch.clearedPr(step.id, ['ci'])
+    assert.deepEqual(store.task(step.id).autoFix, { ci: 0, conflict: 1, continue: 1 })
+  } finally {
+    s.gh.restore()
+  }
+})
+
+test('fixPr: a conflict asks for a rebase on fresh base; without an owner the user decides after the tries (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = await withPr()
+  const { store, orch, task, step, live, turnEnds } = s
+  try {
+    store.updateTask(task.id, { ownerSessionId: null })
+    assert.equal(orch.fixPr(step.id, 'conflict', '- b: https://github.com/a/b/pull/1'), true)
+    assert.match(live.sent.at(-1)!, /^Your PR has conflicts with main:\n- b: https:\/\/github\.com\/a\/b\/pull\/1\nRebase the branch on fresh origin\/main \(git fetch origin main, git rebase origin\/main\).*--force-with-lease/s)
+    await turnEnds()
+    store.updateTask(step.id, { autoFix: { ...store.task(step.id).autoFix!, conflict: 2 } })
+    await until(() => orch.fixPr(step.id, 'conflict', '- b'))
+    assert.equal(store.task(task.id).needsInput, 'login.1: PR conflicts with the base, not fixed after 2 tries')
+    assert.equal(orch.fixPr(step.id, 'conflict', '- b'), false, 'the user has it')
+  } finally {
+    s.gh.restore()
+  }
+})
+
+test('approveAndStart: approves and starts; the Start choice is remembered; start_work approves a work in planning (ux-odna-rozmova-na-robotu.1)', async () => {
+  const s = localSetup()
+  const { store, orch, project, task, step, app } = s
+  store.updateTask(task.id, { status: 'planning' })
+  await orch.approveAndStart(task.id, [app])
+  assert.deepEqual([store.task(task.id).status, store.task(step.id).status], ['in_progress', 'in_progress'])
+  assert.deepEqual(store.project(project.id).lastLocalRepos, [app])
+  await assert.rejects(orch.approveAndStart(task.id), /login is in_progress; only a plan in planning is approved/)
+
+  const t = setup()
+  const { call, logged } = chatControls(t)
+  t.store.createTask({ projectId: t.project.id, title: 'one', type: 'dev', description: '', parentId: t.task.id, status: 'todo', repos: [] })
+  assert.equal(await call('start_work', { key: 'login' }), 'Approved and started login on login.1.')
+  assert.equal(t.store.task(t.task.id).status, 'in_progress')
+  assert.deepEqual(logged(), ["login: chat: approved and started login at the user's request"])
 })

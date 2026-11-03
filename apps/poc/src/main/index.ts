@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -126,6 +126,7 @@ app.whenReady().then(async () => {
   actions.setPrReview = (id, review) => orch.setPrReview(id, review)
   actions.approve = (id) => orch.approve(id)
   actions.develop = (id, localRepos) => orch.develop(id, undefined, localRepos)
+  actions.approveAndStart = (id, localRepos) => orch.approveAndStart(id, localRepos)
   actions.startStep = (id) => orch.startStep(id)
   actions.restartReview = (id) => orch.reviewTask(id)
   actions.agentOf = (id, role) => orch.agentOf(id, role)
@@ -169,6 +170,7 @@ app.whenReady().then(async () => {
     store.updateTask(id, patch)
   })
   handle('task:approve', (_, id: string) => orch.approve(id))
+  handle('task:approveAndStart', (_, id: string, localRepos?: string[]) => orch.approveAndStart(id, localRepos))
   // A link that is not one is an answer for the field, not a failure to log.
   const answer = (f: () => unknown) => {
     try {

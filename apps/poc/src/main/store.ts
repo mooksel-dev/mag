@@ -558,6 +558,12 @@ export class Store {
     this.changed()
   }
 
+  /** Appends an item to a session's chat and saves. */
+  pushItem(sid: string, item: ChatItem) {
+    this.session(sid).items.push(item)
+    this.changed()
+  }
+
   /** Appends to the project's activity log, keeping the last EVENTS_PER_PROJECT. */
   logEvent(e: NewEvent) {
     this.data.events.push({ ...e, id: id(), at: Date.now() })
