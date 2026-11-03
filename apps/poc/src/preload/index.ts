@@ -43,6 +43,7 @@ const api: MagApi = {
   addTicket: (taskId, url) => ipcRenderer.invoke('task:addTicket', taskId, url),
   removeTicket: (taskId, url) => ipcRenderer.invoke('task:removeTicket', taskId, url),
   approve: (taskId) => ipcRenderer.invoke('task:approve', taskId),
+  approveAndStart: (taskId, localRepos) => ipcRenderer.invoke('task:approveAndStart', taskId, localRepos),
   reopen: (taskId, what) => ipcRenderer.invoke('task:reopen', taskId, what),
   addIdea: (projectId, text) => ipcRenderer.invoke('idea:add', projectId, text),
   updateIdea: (ideaId, text) => ipcRenderer.invoke('idea:update', ideaId, text),

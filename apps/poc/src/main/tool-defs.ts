@@ -692,7 +692,7 @@ export const TOOL_DEFS = [
   {
     name: 'start_work',
     scope: 'project',
-    description: `Start a ready work (or restart one in progress), as the user's Start: its current step gets a developer. ${ASKED}`,
+    description: `Start a ready work (or restart one in progress), as the user's Start: its current step gets a developer. A work in planning is approved first, as the user's Approve & Start (approve_plan's checks). ${ASKED}`,
     inputSchema: {
       type: 'object',
       properties: {

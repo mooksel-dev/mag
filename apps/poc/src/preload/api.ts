@@ -151,6 +151,8 @@ export interface MagApi {
   removeTicket(taskId: string, url: string): Promise<void>
   /** Approve the plan of a work in planning: it is ready for the user's Start; it needs a step not done yet. */
   approve(taskId: string): Promise<void>
+  /** Approve & Start: approve the plan, then Start it as develop does (`localRepos` as there). */
+  approveAndStart(taskId: string, localRepos?: string[]): Promise<void>
   /** Continue a done work: back to planning; its owner (else a new groomer) gets `what` and plans the steps for it. */
   reopen(taskId: string, what: string): Promise<void>
   addIdea(projectId: string, text: string): Promise<void>

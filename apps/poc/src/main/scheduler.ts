@@ -1,9 +1,9 @@
 import { rmdir } from 'node:fs'
-import { currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
-import { changedRepos, prFeedback, prState, removeWorktree, type PrFeedback } from './git'
-import { log } from './log'
+import { changedRepos, prChecks, prFeedback, prMergeable, prState, removeWorktree, type PrFeedback } from './git.ts'
+import { log } from './log.ts'
 
 const PR_POLL_EVERY_MS = 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
@@ -36,6 +36,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     const work = owner.work!
     const repos: RepoWork[] = []
     const feedback: (PrFeedback & { repo: string })[] = []
+    /** Failing CI checks of the step's open PRs, one line each. */
+    const failed: string[] = []
     for (const r of work.repos) {
       if (!r.prUrl || !live(r)) {
         repos.push(r)
@@ -54,7 +56,24 @@ export function startScheduler(store: Store, orch: Orchestrator) {
             continue
           }
         }
-        repos.push({ ...r, prState: state, prDraft, prHead: pr.head, checkError: null })
+        // CI and mergeability of a step's open PR (ux-odna-rozmova-na-robotu.1): a failure keeps what was known.
+        const health: Partial<RepoWork> = {}
+        if (state === 'open' && owner !== task) {
+          try {
+            const checks = await prChecks(r.prUrl)
+            health.ci = ciState(checks)
+            const failing = checks.filter((c) => c.bucket === 'fail')
+            if (failing.length) failed.push(...failing.map((c) => `- ${repoWorkName(work, r)}: ${c.name}${c.link ? ` (${c.link})` : ''}`))
+          } catch (e) {
+            log.warn('scheduler', `${owner.key}: CI checks of ${r.prUrl} failed: ${(e as Error).message.split('\n')[0]}`)
+          }
+          try {
+            health.mergeable = await prMergeable(r.prUrl)
+          } catch (e) {
+            log.warn('scheduler', `${owner.key}: mergeability of ${r.prUrl} failed: ${(e as Error).message.split('\n')[0]}`)
+          }
+        }
+        repos.push({ ...r, prState: state, prDraft, prHead: pr.head, checkError: null, ...health })
       } catch (e) {
         repos.push({ ...r, checkError: checkError(owner.key, e) })
       }
@@ -97,9 +116,17 @@ export function startScheduler(store: Store, orch: Orchestrator) {
       if (orch.feedback(owner.id, feedback)) store.updateTask(owner.id, { work: { ...next, feedbackSeenAt: Math.max(...feedback.map((f) => f.at)) } })
       return
     }
+    if (owner === task) return
+    // A failed CI or a conflict goes back to the developer before any review (ux-odna-rozmova-na-robotu.1).
+    const { problem, cleared } = prProblems(next)
+    orch.clearedPr(owner.id, cleared)
+    if (problem) {
+      const detail = problem === 'ci' ? failed.join('\n') || '- (the failing checks could not be read: gh pr checks)' : next.repos.filter((r) => r.prState === 'open' && r.mergeable === 'conflict').map((r) => `- ${repoWorkName(next, r)}: ${r.prUrl}`).join('\n')
+      if (orch.fixPr(owner.id, problem, detail)) return
+    }
     // New commits on a step's PRs (pushed after the user's comments, or by hand) get the agent review again (T-55.1).
     const heads = prHeads(next)
-    if (owner === task || !reviewDue(owner, heads) || anyRunning((s) => s.stepId === owner.id)) return
+    if (!reviewDue(owner, heads) || anyRunning((s) => s.stepId === owner.id)) return
     if (prRollup(next, await changedRepos(next, store.project(owner.projectId).baseBranch)) === 'review') await orch.review(owner.id, heads)
   }
 
@@ -171,7 +198,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
 
   void pollPrs()
   advance()
-  setInterval(pollPrs, PR_POLL_EVERY_MS)
+  // Not what keeps mag (or a test) running.
+  setInterval(pollPrs, PR_POLL_EVERY_MS).unref()
   return { pollNow: pollPrs }
 }
 

@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
-import { parsePrUrl, type PostReview, type TaskWork } from '@mag/core'
+import { parsePrUrl, type Mergeable, type PostReview, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
 import type { PrCheck } from '../preload/api'
 
@@ -169,6 +169,12 @@ export async function prChecks(url: string): Promise<PrCheck[]> {
     throw e
   })
   return JSON.parse(stdout).map((c: any) => ({ name: c.name, bucket: c.bucket, link: c.link || null }))
+}
+
+/** Whether a PR merges into its base: GitHub computes it lazily, so it is unknown for a while after a push. */
+export async function prMergeable(url: string): Promise<Mergeable> {
+  const view = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'mergeable']))
+  return view.mergeable === 'MERGEABLE' ? 'clean' : view.mergeable === 'CONFLICTING' ? 'conflict' : 'unknown'
 }
 
 /**

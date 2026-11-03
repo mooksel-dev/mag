@@ -333,7 +333,7 @@ function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }
             <AgentDot state={agentState(task, sessions, tasks)} now={now} />
             <div className="grow" />
             {canGroom && <button onClick={() => mag.groom(task.id)}>{task.ownerSessionId ? 'Re-groom' : 'Groom'}</button>}
-            {task.status === 'planning' && <ApproveButton task={task} tasks={tasks} sessions={sessions} />}
+            {task.status === 'planning' && <ApproveButton task={task} tasks={tasks} sessions={sessions} project={project} />}
             {canDevelop && (task.status === 'ready' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
             {/* The owner plans what is left: a topic opens beside, a groomer in the task's chat. */}
             <ReopenButton task={task} onReopened={() => { if (state.sessions.some((s) => s.id === task.ownerSessionId && s.role === 'chat')) onPickTopic(task.ownerSessionId!) }} />

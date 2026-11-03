@@ -115,16 +115,15 @@ export function TicketLinks({ task }: { task: Task }) {
   )
 }
 
-/** Approves the plan of a work in planning (→ ready); disabled, with the reason, while it has no step to do. */
-export function ApproveButton({ task, tasks, sessions, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; small?: boolean }) {
+/**
+ * Approves the plan of a work in planning and starts it (ux-odna-rozmova-na-robotu.1), through the Start popup;
+ * disabled, with the reason, while it has no step to do or an agent of it runs.
+ */
+export function ApproveButton({ task, tasks, sessions, project, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project?: Project; small?: boolean }) {
   const can = canApprove(task, tasks)
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
-  const why = !can.ok ? can.reason : busy ? 'An agent is running on this work' : 'Approve the plan: the work is ready to start'
-  return (
-    <button className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onClick={(e) => { e.stopPropagation(); void mag.approve(task.id) }}>
-      Approve plan
-    </button>
-  )
+  const why = !can.ok ? can.reason : busy ? 'An agent is running on this work' : 'Approve the plan and start its first step'
+  return <StartButton task={task} tasks={tasks} project={project} label="Approve & Start" className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onStart={(local) => mag.approveAndStart(task.id, local)} />
 }
 
 /** Finished works shown before "Show all". */
@@ -160,7 +159,7 @@ export function TasksPage({ project, tasks, sessions, onOpen, fromTicket }: {
         <>
           <Section title="In progress" list={s.inProgress} empty="No work in progress." {...row} />
           <Section title="Ready" note="plan approved; you start it" list={s.ready} rowActions={(t) => <span className="rowactions"><ReadyStart task={t} tasks={tasks} sessions={sessions} project={project} /></span>} {...row} />
-          <Section title="Planning" list={s.planning} rowActions={(t) => <span className="rowactions"><ApproveButton task={t} tasks={tasks} sessions={sessions} small /></span>} {...row} />
+          <Section title="Planning" list={s.planning} rowActions={(t) => <span className="rowactions"><ApproveButton task={t} tasks={tasks} sessions={sessions} project={project} small /></span>} {...row} />
           <Section
             title="Finished"
             list={finished}

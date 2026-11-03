@@ -49,6 +49,8 @@ export interface ToolActions {
   approve(taskId: string): void
   /** The user's Start (or Restart) of a work; `localRepos`: repositories its steps work on in the main checkout. */
   develop(taskId: string, localRepos?: string[]): Promise<void>
+  /** The user's Approve & Start of a work in planning: approve's checks, then Start. */
+  approveAndStart(taskId: string, localRepos?: string[]): Promise<void>
   /** The user's Start of a work's next step that starts manually. */
   startStep(taskId: string): Promise<void>
   /** The user's Restart of the review of a work's current step. */
@@ -1068,11 +1070,13 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
     case 'start_work': {
       if (t.parentId) throw new Error(`${t.key} is a step: start its work ${work.key}, or start_step for a step that starts manually`)
       const local = args.local_repos == null ? undefined : reposArg(args.local_repos, project)
-      await actions.develop(t.id, local)
-      logged('started')
+      // A plan in planning is approved and started in one go (ux-odna-rozmova-na-robotu.1).
+      const approving = t.status === 'planning'
+      await (approving ? actions.approveAndStart(t.id, local) : actions.develop(t.id, local))
+      logged(approving ? 'approved and started' : 'started')
       const now = store.task(t.id)
       const step = currentStep(t.id, store.data.tasks)
-      return `Started ${t.key}${step ? ` on ${step.key}` : ''}${local?.length ? `, locally in ${local.map((r) => repoName(project, r)).join(', ')}` : ''}.${now.needsInput ? ` It needs the user: ${now.needsInput}` : ''}`
+      return `${approving ? 'Approved and started' : 'Started'} ${t.key}${step ? ` on ${step.key}` : ''}${local?.length ? `, locally in ${local.map((r) => repoName(project, r)).join(', ')}` : ''}.${now.needsInput ? ` It needs the user: ${now.needsInput}` : ''}`
     }
 
     case 'start_step': {

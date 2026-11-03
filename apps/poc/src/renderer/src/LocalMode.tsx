@@ -4,10 +4,11 @@ import { localCheckText, localOptions, openLocalChecks, repoNames, taskRepos, ty
 const mag = window.mag
 
 /**
- * Start of a ready work (T-50): a popup lists the repositories its steps change, each with a "worktree" checkbox (on by
- * default); an unticked one works right in its main checkout. A task without repositories starts at once.
+ * Start of a ready work (T-50): a popup lists the repositories its steps change, each with a "worktree" checkbox; an
+ * unticked one works right in its main checkout. The last Start's choice is the default (project.lastLocalRepos), Enter
+ * starts. A task without repositories starts at once. `onStart`: what Start does (default: develop; Approve & Start).
  */
-export function StartButton({ task, tasks, project, label = 'Start', className, disabled, title }: {
+export function StartButton({ task, tasks, project, label = 'Start', className, disabled, title, onStart = (local) => mag.develop(task.id, local) }: {
   task: Task
   tasks: Task[]
   project?: Project
@@ -15,6 +16,7 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
   className?: string
   disabled?: boolean
   title?: string
+  onStart?: (localRepos?: string[]) => Promise<void>
 }) {
   const repos = project ? taskRepos(task.id, tasks, project) : []
   const [open, setOpen] = useState(false)
@@ -23,22 +25,34 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+      else if (e.key === 'Enter') {
+        e.preventDefault()
+        start()
+      }
+    }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, local])
   const names = project ? repoNames(project) : []
   const start = () => {
     setOpen(false)
-    void mag.develop(task.id, local)
+    void onStart(local)
+  }
+  const toggle = () => {
+    if (!repos.length) return void onStart()
+    if (!open) setLocal((project?.lastLocalRepos ?? []).filter((r) => repos.includes(r)))
+    setOpen((o) => !o)
   }
   return (
-    <span ref={box} className="startpop">
-      <button className={className} disabled={disabled} title={title} aria-expanded={open} onClick={() => (repos.length ? setOpen((o) => !o) : void mag.develop(task.id))}>
+    // Inside a clickable row: a click in here is not the row's.
+    <span ref={box} className="startpop" onClick={(e) => e.stopPropagation()}>
+      <button className={className} disabled={disabled} title={title} aria-expanded={open} onClick={toggle}>
         {label}
       </button>
       {open && project && (
@@ -51,7 +65,7 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
               <span className="muted small">{local.includes(r) ? 'local' : 'worktree'}</span>
             </label>
           ))}
-          <button className="primary small" onClick={start}>Start</button>
+          <button className="primary small" onClick={start}>{label}</button>
         </div>
       )}
     </span>

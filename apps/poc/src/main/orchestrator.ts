@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -521,6 +521,12 @@ export class Orchestrator {
     this.store.updateTask(taskId, { status: 'ready', needsInput: null })
   }
 
+  /** The user's Approve & Start (the button, or start_work on a work in planning): approve, then Start. */
+  async approveAndStart(taskId: string, localRepos?: string[]) {
+    this.approve(taskId)
+    return this.develop(taskId, undefined, localRepos)
+  }
+
   /**
    * The agent a message to a work or a step goes to (a project chat's message_agent): its session of `role`, else the
    * one that worked last. A work's developer and reviewer are those of its current step (a legacy task's developer is
@@ -554,28 +560,77 @@ export class Orchestrator {
   /**
    * A step developer's question (its set_needs_input) goes to the work's owner first (ahent-vede-robotu-vlasna-pozytsiia.2):
    * the owner holds the decisions and the context, and answers it with answer_developer or asks the user with its
-   * recommendation. false when the owner is busy or gone: the user is asked, as before.
+   * recommendation. An owner in a turn gets it once that turn ends (see deliverQueued). false when the work has no
+   * owner: the user is asked.
    */
   askOwner(stepId: string, question: string): boolean {
+    return this.toOwner(stepId, question, 'asks')
+  }
+
+  /**
+   * A step's matter for the owner's decision: the developer's question, or what mag could not settle on its own
+   * (`from` mag). Queued while the owner is in a turn; false without an owner.
+   */
+  private toOwner(stepId: string, question: string, from: 'asks' | 'mag'): boolean {
     const step = this.store.task(stepId)
     if (!step.parentId) return false
-    const task = this.store.task(step.parentId)
-    const owner = this.ownerSession(task)
-    if (!owner || this.isRunning(owner.id)) return false
-    this.store.updateTask(stepId, { ownerQuestion: question })
-    log.info('agent', `${step.key}: the developer asks its owner`, { owner: owner.id })
+    const owner = this.ownerSession(this.store.task(step.parentId))
+    if (!owner) return false
+    this.store.updateTask(stepId, { ownerQuestion: question, ownerQuestionFrom: from, ownerQuestionQueued: false })
+    if (this.isRunning(owner.id)) {
+      this.store.updateTask(stepId, { ownerQuestionQueued: true })
+      this.ownerEvent(step.id, `${step.key} ${from === 'asks' ? 'asks' : 'needs your decision'}: ${question} (queued until this turn ends)`)
+      log.info('agent', `${step.key}: queued for its owner`, { owner: owner.id })
+      return true
+    }
+    this.sendAsk(stepId)
+    return true
+  }
+
+  /** Sends a step's waiting question to the work's owner, with the decisions of the step. */
+  private sendAsk(stepId: string) {
+    const step = this.store.task(stepId)
+    const task = this.store.task(step.parentId!)
+    const owner = this.ownerSession(task)!
+    const question = step.ownerQuestion!
+    log.info('agent', `${step.key}: asks its owner`, { owner: owner.id })
     const work = owner.role === 'chat' ? `, work: "${task.key}"` : ''
     const decisions = contextBlocks({ decisions: docDecisions(this.store.data.docs[task.id] ?? '', step.key) })
+    const head =
+      step.ownerQuestionFrom === 'mag'
+        ? `mag could not settle this on its own for ${step.key} ("${step.title}"): ${question}\n`
+        : `The developer of ${step.key} ("${step.title}") asks: ${question}\n`
     const ask =
-      `The developer of ${step.key} ("${step.title}") asks: ${question}\n` +
+      head +
       `You own ${task.key}: answer it yourself when the decisions, the doc or what you discussed with the user cover it: answer_developer(step: "${step.key}"${work}, text), with the answer and why. ` +
       `Only when the user has to decide: set_needs_input(${work ? `work: "${task.key}", ` : ''}reason) with the question and your recommendation, and once the user has decided, pass it on with answer_developer.` +
       blocks(decisions)
-    void this.send(owner.id, ask, [], `${step.key} asks`).catch((e) => {
+    void this.send(owner.id, ask, [], `${step.key} ${step.ownerQuestionFrom === 'mag' ? 'needs a decision' : 'asks'}`).catch((e) => {
       this.store.updateTask(stepId, { ownerQuestion: null })
       this.store.updateTask(task.id, { needsInput: `${question} (could not ask its owner: ${(e as Error).message})` })
     })
+  }
+
+  /**
+   * The owner's turn ended: the first question that waited for it goes to it now; the others follow at the ends of
+   * the next turns. true if one was sent.
+   */
+  private deliverQueued(owner: AgentSession): boolean {
+    const step = this.store.data.tasks.find((t) => t.parentId && t.ownerQuestionQueued && t.ownerQuestion && this.store.task(t.parentId).ownerSessionId === owner.id)
+    if (!step) return false
+    this.store.updateTask(step.id, { ownerQuestionQueued: false })
+    this.sendAsk(step.id)
     return true
+  }
+
+  /**
+   * A notice line about the work in its owner's conversation (ux-odna-rozmova-na-robotu.1): what happened, without a
+   * turn of the agent. `taskId`: the work or one of its steps. Nothing without an owner.
+   */
+  ownerEvent(taskId: string, text: string) {
+    const t = this.store.task(taskId)
+    const owner = this.ownerSession(t.parentId ? this.store.task(t.parentId) : t)
+    if (owner) this.store.pushItem(owner.id, { kind: 'notice', text, at: Date.now() })
   }
 
   /** The owner's answer to its step developer's question: the developer's session goes on with it. */
@@ -583,7 +638,13 @@ export class Orchestrator {
     const step = this.store.task(stepId)
     const session = this.lastStepSession(stepId)
     if (!step.ownerQuestion || !session) throw new Error(`No question of ${step.key}'s developer is waiting`)
-    await this.send(session.id, `The owner of the work answers your question: ${text}`, [], "Owner's answer")
+    // The owner decided on a PR problem mag gave up on: mag tries it again after that.
+    if (step.ownerQuestionFrom === 'mag') {
+      const tries = autoFixOf(step)
+      this.store.updateTask(stepId, { autoFix: { ...tries, ci: tries.ci > AUTO_FIX_TRIES ? 0 : tries.ci, conflict: tries.conflict > AUTO_FIX_TRIES ? 0 : tries.conflict } })
+    }
+    const lead = step.ownerQuestionFrom === 'mag' ? `The owner of the work decides on what mag could not fix on its own (${step.ownerQuestion.split('\n')[0]}): ` : 'The owner of the work answers your question: '
+    await this.send(session.id, lead + text, [], "Owner's answer")
   }
 
   /**
@@ -591,11 +652,13 @@ export class Orchestrator {
    * never waits silently.
    */
   private unanswered(owner: AgentSession) {
+    // Its next turn (a queued question) still may answer.
+    if (this.isRunning(owner.id)) return
     for (const step of this.store.data.tasks) {
-      if (!step.parentId || !step.ownerQuestion) continue
+      if (!step.parentId || !step.ownerQuestion || step.ownerQuestionQueued) continue
       const task = this.store.task(step.parentId)
       if (task.ownerSessionId !== owner.id || task.needsInput) continue
-      this.store.updateTask(task.id, { needsInput: `${step.key} asks: ${step.ownerQuestion} (its owner did not answer)` })
+      this.store.updateTask(task.id, { needsInput: `${step.key}${step.ownerQuestionFrom === 'mag' ? ':' : ' asks:'} ${step.ownerQuestion} (its owner did not answer)` })
     }
   }
 
@@ -631,16 +694,26 @@ export class Orchestrator {
     if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
     const local = localRepos ? project.repos.filter((r) => localRepos.includes(r)) : (task.localRepos ?? [])
     this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, ...(localRepos && { localRepos: local }) })
+    // The Start popup's choice is its default next time.
+    if (localRepos) this.store.updateProject(project.id, { lastLocalRepos: local })
     // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
     if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
-    // A restart is told what to do: a question it asked the owner no longer holds the step.
-    this.store.updateTask(step.id, { status: 'in_progress', waitingFor: null, ownerQuestion: null, work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local) })
+    // A restart is told what to do: a question it asked the owner no longer holds the step, and mag's tries start over.
+    this.store.updateTask(step.id, {
+      status: 'in_progress',
+      waitingFor: null,
+      ownerQuestion: null,
+      ownerQuestionQueued: false,
+      autoFix: { ci: 0, conflict: 0, continue: 0 },
+      work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local),
+    })
     // Once per step, before its first session: a restart leaves the main checkouts as they are.
     const ready = last ? { discuss: [] } : await this.prepareLocal(step.id)
     if (!ready) return
     const session = last ?? this.newSession(taskId, 'developer', step.id)
     if (!(await this.prepareWorktrees(session))) return
+    this.ownerEvent(step.id, `${step.key} ${last ? 'restarted' : 'started'}: "${step.title}"`)
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
     const talk = ready.discuss.length ? [intro, discussText(ready.discuss, project.baseBranch)].join('\n\n') : undefined
     // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
@@ -792,6 +865,7 @@ export class Orchestrator {
     if (!step.parentId) throw new Error(`${step.key} is not a step`)
     this.store.updateTask(stepId, { status: 'done' })
     log.info('agent', `${step.key} done`)
+    this.ownerEvent(stepId, `${step.key} done${step.work?.repos.some((r) => r.prState === 'merged') ? ': its PRs are merged' : ''}`)
     this.wakeWaiting([step.key])
     const sessions = this.store.data.sessions.filter((s) => s.stepId === stepId)
     if (!sessions.some((s) => this.isRunning(s.id))) {
@@ -915,6 +989,50 @@ export class Orchestrator {
   }
 
   /**
+   * A problem of a step's open PRs (ux-odna-rozmova-na-robotu.1): CI failed, or a conflict with base. The step's
+   * developer gets it back to fix, at most AUTO_FIX_TRIES times per problem (the count starts over once it clears, see
+   * the scheduler); then the owner decides (see toOwner), the user if there is none. `detail`: the failing checks or
+   * the conflicting repositories. false when nothing was done: an agent of the step is in a turn, the step waits for a
+   * decision, or the owner has it already.
+   */
+  fixPr(stepId: string, problem: PrProblem, detail: string): boolean {
+    const step = this.store.task(stepId)
+    if (!step.parentId || step.status !== 'in_progress' || step.ownerQuestion) return false
+    const task = this.store.task(step.parentId)
+    if (task.status !== 'in_progress' || task.needsInput) return false
+    if (this.reviewing.has(stepId) || this.store.data.sessions.some((s) => s.stepId === stepId && this.isRunning(s.id))) return false
+    const tries = autoFixOf(step)
+    const n = tries[problem]
+    // Past the tries: the owner (or the user) has it.
+    if (n > AUTO_FIX_TRIES) return false
+    const what = problem === 'ci' ? 'CI fails' : 'conflicts with the base'
+    if (n === AUTO_FIX_TRIES) {
+      this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
+      this.ownerEvent(stepId, `${step.key}: ${what}, not fixed after ${AUTO_FIX_TRIES} tries`)
+      const question = `its PR ${what} after ${AUTO_FIX_TRIES} automatic fixes by its developer:\n${detail}\nTell the developer how to go on, or ask the user with your recommendation.`
+      if (!this.toOwner(stepId, question, 'mag')) this.store.updateTask(task.id, { needsInput: `${step.key}: PR ${what}, not fixed after ${AUTO_FIX_TRIES} tries` })
+      return true
+    }
+    const base = this.store.project(step.projectId).baseBranch
+    const text =
+      problem === 'ci'
+        ? `CI fails on your PR:\n${detail}\nRead the failing logs (gh pr checks, gh run view --log-failed), fix the cause, run the tests, push. If it is not caused by your change, say why here and call set_needs_input.`
+        : `Your PR has conflicts with ${base}:\n${detail}\nRebase the branch on fresh origin/${base} (git fetch origin ${base}, git rebase origin/${base}), resolve the conflicts keeping both sides' intent, run the tests, push with --force-with-lease. If a conflict needs a decision, call set_needs_input.`
+    if (!this.resumeDeveloper(step, text, problem === 'ci' ? `CI failed · try ${n + 1}/${AUTO_FIX_TRIES}` : `Conflict · try ${n + 1}/${AUTO_FIX_TRIES}`)) return false
+    this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
+    this.ownerEvent(stepId, `${step.key}: ${what}, the developer fixes it (try ${n + 1}/${AUTO_FIX_TRIES})`)
+    log.info('agent', `${step.key}: ${problem} back to the developer, try ${n + 1}`)
+    return true
+  }
+
+  /** The step's PR problems that cleared: their tries start over. */
+  clearedPr(stepId: string, cleared: PrProblem[]) {
+    const tries = autoFixOf(this.store.task(stepId))
+    if (!cleared.some((p) => tries[p])) return
+    this.store.updateTask(stepId, { autoFix: { ...tries, ...Object.fromEntries(cleared.map((p) => [p, 0])) } })
+  }
+
+  /**
    * Resumes the developer session of a step (or a legacy task) with `text`, a job titled `job`; false while it is in a
    * turn or has none.
    */
@@ -970,6 +1088,7 @@ export class Orchestrator {
     this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now() })
     this.reviewTried.set(stepId, key)
     log.info('agent', `${step.key}: agent review round ${round}`, { withContext })
+    this.ownerEvent(stepId, `${step.key}: PR ready, agent review round ${round}`)
     const fact = await this.factOf(stepId, now).catch((e) => {
       log.warn('agent', `${step.key}: plan ↔ fact failed: ${(e as Error).message}`)
       // Nothing proves the PRs match their plan: merge waits for the user.
@@ -1058,11 +1177,18 @@ export class Orchestrator {
         session.status = 'error'
         session.items.push({ kind: 'error', text: 'Review ended without a verdict (set_review); check the chat', at: Date.now() })
         this.logSessionEvent(session, 'agent_failed', 'reviewer failed')
+        this.ownerEvent(stepId, `${step.key}: the agent review failed without a verdict`)
         this.store.changed()
       }
       return
     }
-    if (reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) !== 'developer') return
+    const toDeveloper = reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) === 'developer'
+    const n = review.findings.length
+    this.ownerEvent(
+      stepId,
+      `${step.key}: agent review round ${review.round}: ${review.verdict}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}${toDeveloper ? ', back to the developer' : review.verdict === 'merge' ? ', ready to merge' : ', the user looks'}`,
+    )
+    if (!toDeveloper) return
     const many = (step.work?.repos.filter((r) => r.prUrl).length ?? 0) > 1
     // A developer in a turn (the user talks to it) keeps it; the user sees the verdict instead.
     if (!this.resumeDeveloper(step, reviewFeedback(review, many), `Review findings · round ${review.round}`)) log.info('agent', `${step.key}: review findings not sent, the developer is busy`)
@@ -1262,7 +1388,7 @@ export class Orchestrator {
     }
     this.store.updateTask(session.taskId, { needsInput: null })
     // Told anything (the owner's answer, or the user's), the developer no longer waits for its owner.
-    if (session.role === 'developer' && session.stepId) this.store.updateTask(session.stepId, { ownerQuestion: null })
+    if (session.role === 'developer' && session.stepId) this.store.updateTask(session.stepId, { ownerQuestion: null, ownerQuestionQueued: false })
     // A worktree may have failed earlier or been removed: recreate it before resuming.
     if (session.role === 'developer' && this.ownerOf(session).work && !(await this.prepareWorktrees(session))) return
     return this.run(session, prompt)
@@ -1667,7 +1793,8 @@ export class Orchestrator {
 
   /** Make sure a finished run (or turn of a live session) never leaves a task silently stuck. */
   private async afterRun(session: AgentSession) {
-    if ((session.role === 'chat' || session.role === 'groomer') && !session.background?.length) this.unanswered(session)
+    // An owner's turn is over: a question queued for it goes first; one sent then may still be answered in that turn.
+    if ((session.role === 'chat' || session.role === 'groomer') && !session.background?.length && !this.deliverQueued(session)) this.unanswered(session)
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
     // A step closed or merged during the run: its worktrees could not go while the run was on. Its process goes first.
@@ -1694,7 +1821,19 @@ export class Orchestrator {
       if (outcome.kind === 'complete') return session.stepId ? this.completeStep(session.stepId) : undefined
       // Every changed repo has a PR: the agent review comes first, then the user merges.
       if (outcome.kind === 'review') return session.stepId ? this.review(session.stepId) : undefined
+      const step = session.stepId ? this.store.task(session.stepId) : null
+      // Stopped without a PR or a question: told to go on once, before the user is asked (ux-odna-rozmova-na-robotu.1).
+      if (step && !failed && autoFixOf(step).continue < AUTO_CONTINUES) {
+        const tries = autoFixOf(step)
+        const text = `You stopped without ${outcome.reason.replace(/^Developer stopped without /, '')}. Continue: finish the step and open the PR (set_pr), or complete_step if it has no code. If you cannot go on, call set_needs_input with what you need.`
+        if (this.resumeDeveloper(step, text, 'Continue')) {
+          this.store.updateTask(step.id, { autoFix: { ...tries, continue: tries.continue + 1 } })
+          this.ownerEvent(step.id, `${step.key}: the developer stopped (${outcome.reason}); mag told it to continue`)
+          return
+        }
+      }
       this.store.updateTask(task.id, { needsInput: outcome.reason })
+      if (step) this.ownerEvent(step.id, `${step.key}: ${outcome.reason}; the user is asked`)
     }
   }
 }
