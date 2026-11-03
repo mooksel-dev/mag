@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { diagramGroups, linkedCanvasIds, stepDiagrams, taskDiagrams, type Canvas, type Task } from './index.ts'
+import { diagramGroups, linkedCanvasIds, stepDiagrams, taskDiagrams, workCanvases, type Canvas, type Task } from './index.ts'
 
 const canvas = (id: string, patch: Partial<Canvas> = {}): Canvas => ({
   id,
@@ -74,4 +74,19 @@ test('diagramGroups: options by name, plan by step then repo, the rest unplaced'
   )
   assert.deepEqual(ids(g.other), ['loose', 'gone'])
   assert.deepEqual(ids(stepDiagrams(cs, 's2')), ['s2wide', 's2api', 's2web'])
+})
+
+test("workCanvases: the work's own HTML canvases and what its owner topic drew before the work, newest first", () => {
+  const work = { id: 'w', projectId: 'p', ownerSessionId: 'topic' }
+  const canvases = [
+    canvas('diagram'),
+    canvas('mockup', { kind: 'html', diagram: undefined, updatedAt: 1 }),
+    canvas('before', { taskId: null, sessionId: 'topic', kind: 'html', diagram: undefined, updatedAt: 3 }),
+    canvas('sketch', { taskId: null, sessionId: 'topic', updatedAt: 2 }),
+    canvas('other topic', { taskId: null, sessionId: 'x', kind: 'html', diagram: undefined }),
+    canvas('other work', { taskId: 'v', kind: 'html', diagram: undefined }),
+    canvas('other project', { projectId: 'q', taskId: null, sessionId: 'topic', kind: 'html', diagram: undefined }),
+  ]
+  assert.deepEqual(workCanvases(work, canvases).map((c) => c.id), ['before', 'sketch', 'mockup'])
+  assert.deepEqual(workCanvases({ ...work, ownerSessionId: null }, [canvas('loose', { taskId: null, kind: 'html', diagram: undefined })]), [])
 })

@@ -36,8 +36,9 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 ## What the PoC does
 
 1. Create a project, attach repositories (Settings).
-2. Start a work: discuss the problem in a project chat (**+ New work** on Home opens a topic; it creates the work and
-   plans it with you), start one from an idea (Home → Ideas) or from a ticket link (**From a ticket**).
+2. Start a work from the field at the top of the work list (the left column): words open a topic that discusses the
+   problem, creates the work and plans it with you; a ticket link starts a work from that ticket; a GitHub PR link
+   reviews a teammate's PR. A work also starts from an idea (Project ▾ → Ideas).
    Work states: `planning` → `ready` (you approved the plan) → `in_progress` → `done`, plus `canceled` before done; a
    done work can be continued (back to `planning`). mag has no backlog, priority or archive: what nobody works on yet
    is an idea, priority lives in your tracker. A work's key is its first ticket's key (`ABC-12`) or a slug of its
@@ -46,10 +47,13 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
    writes the task document and either asks for input or marks the task groomed. A task with several steps gets
    subtasks: a short checklist of the plan (title + optional note, todo / in progress / done), with no doc, agent or
    PR of their own.
-4. **Waiting on you** (Home) lists what needs you. Open a task, answer in the chat; the agent updates the doc.
-5. **Approve plan** moves a planned work to **ready**; **Start** starts it. The Tasks tab lists works by state (In
-   progress, Ready, Planning, Finished: the 10 newest, then Show all). Rows expand to show their steps live. A dot shows the agent state: green = an agent works
-   (`developer · 12m`), yellow = waiting on you (a question, an approval, or a PR to merge).
+4. The project window has three columns: the work list (waiting on you, agents working, planning · ready, topics
+   without a work, done in 7 days), the open work's conversation with its owner, and the artifact pane (Diff, Doc,
+   Steps, Agents; a review's page for a review). You talk to the owner only: what needs you comes as cards at the end
+   of the conversation (questions with the agent's recommendations and **Accept recommendations**, the plan with
+   **Approve & Start**, the merge, a failed agent or check). The chats of groomers, developers and reviewers are logs
+   under Agents, with Stop and Restart; the owner passes things on to them.
+5. **Approve & Start** approves a planned work and starts its first step.
 6. Todo runs top to bottom, **one task at a time**; the next one starts when no task is in progress.
    One developer session owns a task from start to merge. Its cwd is the task dir (`worktrees/<projectId>/<key>/`), with a
    git worktree per project repository (`<task dir>/<repo-name>/`, branch `mag/<key>-<title>` from the base branch).
@@ -113,7 +117,7 @@ the step and diagram tools (`create_subtask`, `place_diagram`, `get_diagrams`…
 it owns. A separate groomer runs only for a work nobody discussed (one started from a ticket link). A ticket is only a
 link (`Task.tickets`); agents read trackers through whatever the user's environment has (MCP, CLI).
 
-Ideas (Home) are a plain list without status: the user's notes and agents' `add_idea` findings. Start work opens a new
+Ideas (Project ▾ → Ideas) are a plain list without status: the user's notes and agents' `add_idea` findings. Start work opens a new
 topic with the idea, which leaves the list. A done work that needs more is continued, not duplicated: `reopen_work` in a
 chat, or Continue on the work, puts it back in planning (its done steps stay) and its owner adds steps.
 

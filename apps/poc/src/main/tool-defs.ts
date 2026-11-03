@@ -314,10 +314,17 @@ export const TOOL_DEFS = [
     name: 'set_needs_input',
     scope: 'task',
     description:
-      "Tell the user you need them. Pass a one-line reason, or null when nothing is pending anymore. Details belong in the doc. A step's developer asks the work's owner first: it answers in the developer's chat or asks the user.",
+      "Tell the user you need them. Pass a one-line reason, or null when nothing is pending anymore. Details belong in the doc. When the user has to decide something, pass each decision in questions with your recommendation: the user sees them on a card and can accept all recommendations with one click (your chat then gets them as the user's answer). A step's developer asks the work's owner first: it answers in the developer's chat or asks the user.",
     inputSchema: {
       type: 'object',
-      properties: { reason: { type: ['string', 'null'] } },
+      properties: {
+        reason: { type: ['string', 'null'] },
+        questions: {
+          type: 'array',
+          description: 'The decisions the user has to make, each a short question and your recommendation (one line: what and why).',
+          items: { type: 'object', properties: { text: { type: 'string' }, recommendation: { type: 'string' } }, required: ['text', 'recommendation'] },
+        },
+      },
       required: ['reason'],
     },
   },
@@ -504,7 +511,7 @@ export const TOOL_DEFS = [
     name: 'set_pr_review',
     scope: 'task',
     description:
-      "The topic that owns a review of a teammate's PR: record it, once you have the verdict and again when it changes. It shows on the review's page in the Reviews tab; nothing goes to GitHub (the user publishes the findings they pick).",
+      "The topic that owns a review of a teammate's PR: record it, once you have the verdict and again when it changes. It shows in the review's pane beside its conversation; nothing goes to GitHub (the user publishes the findings they pick).",
     inputSchema: {
       type: 'object',
       properties: {

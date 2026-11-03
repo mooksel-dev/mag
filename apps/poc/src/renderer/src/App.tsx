@@ -1,126 +1,84 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   DEFAULT_TEMPLATES,
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
-  SUBTASK_STATUSES,
-  STATUS_LABELS,
-  agentState,
-  canMoveSubtask,
-  currentStep,
-  inbox,
   integrationMode,
-  isLegacy,
-  isReview,
-  openLocalChecks,
-  openPrs,
-  openWorkCount,
   playbookOf,
   projectColor,
-  repoWorkName,
-  stepRepoNames,
   storedPlaybook,
   resolveChoice,
   runningAgents,
-  subtaskProgress,
-  subtasksOf,
-  taskDiagrams,
   taskByKey,
-  taskPrs,
+  workList,
   type AgentRole,
   type AgentSession,
   type Integration,
   type IntegrationMode,
   type PlaybookSection,
   type Project,
-  type SubtaskStatus,
-  type Task,
   type TaskType,
-  type TaskWork,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
-import { ModelPicker, agentName, useAgents } from './Agents'
+import { ModelPicker, useAgents } from './Agents'
 import { Architecture } from './Architecture'
-import { CanvasCard, Chat, Markdown, ProjectChat } from './Chat'
-import { DiffTab, diagramsOf } from './DiffTab'
-import { prLabel } from './format'
-import { PrPill, PrPills } from './LinkPill'
+import { ArtifactPane } from './ArtifactPane'
+import { TopicConversation, WorkConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
-import { LocalChecks, StartButton } from './LocalMode'
-import { Home } from './Home'
 import { IdeasPage } from './Ideas'
-import { ReviewsPage } from './Reviews'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
-import { AgentDot, ApproveButton, CancelButton, ReopenButton, StatusPill, SubtaskIcon, TasksPage, TicketLinks, useNow } from './Tasks'
 import { useTheme, type ThemeMode } from './useTheme'
-
-const loadFlag = (k: string, d: boolean) => {
-  try {
-    const v = localStorage.getItem(k)
-    return v === null ? d : v === '1'
-  } catch {
-    return d
-  }
-}
+import { WorkList, type Selection } from './WorkList'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-type Tab = 'home' | 'tasks' | 'ideas' | 'reviews' | 'architecture' | 'settings'
-const TAB_NAMES: Record<Tab, string> = { home: 'Home', tasks: 'Tasks', ideas: 'Ideas', reviews: 'Reviews', architecture: 'Architecture', settings: 'Settings' }
+/** Pages of the project menu; they take the place of the conversation and the pane. */
+type Page = 'ideas' | 'architecture' | 'settings'
+const PAGE_NAMES: Record<Page, string> = { ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
 
-/** One project's window; the project is fixed for the window's lifetime. */
+/**
+ * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
+ * the left, the open work's owner conversation in the centre, what it made on the right. Ideas, Architecture and
+ * Settings open from the project menu.
+ */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
-  const [tab, setTab] = useState<Tab>('home')
+  const [page, setPage] = useState<Page | null>(null)
   const [picker, setPicker] = useState<PickerMode | null>(null)
-  const [taskId, setTaskId] = useState<string | null>(null)
-  /** The idea open on the Ideas tab. */
-  const [ideaId, setIdeaId] = useState<string | null>(null)
-  /** The review open on the Reviews tab. */
-  const [reviewId, setReviewId] = useState<string | null>(null)
-  /** Tasks opens with the ticket link field (Home → From a ticket). */
-  const [fromTicket, setFromTicket] = useState(false)
-  const [chatOpen, setChatOpen] = useState(() => loadFlag('mag.chatOpen', true))
-  const [theme, setTheme] = useTheme()
-  const toggleChat = (v: boolean) => {
-    setChatOpen(v)
-    try { localStorage.setItem('mag.chatOpen', v ? '1' : '0') } catch { /* ignore */ }
-  }
-  // The open topic, per project; ProjectChat falls back to the newest when it is missing or deleted.
-  const topicKey = `mag.topic.${projectId}`
-  const [topicId, setTopicId] = useState<string | null>(() => {
-    try { return localStorage.getItem(topicKey) } catch { return null }
+  // The open work or topic, per project.
+  const selKey = `mag.selected.${projectId}`
+  const [selected, setSelected] = useState<Selection | null>(() => {
+    try { return JSON.parse(localStorage.getItem(selKey) ?? 'null') as Selection | null } catch { return null }
   })
-  const pickTopic = (id: string) => {
-    setTopicId(id)
-    try { localStorage.setItem(topicKey, id) } catch { /* ignore */ }
-  }
-  const openTopic = (id: string) => {
-    pickTopic(id)
-    toggleChat(true)
+  /** The idea open on the Ideas page. */
+  const [ideaId, setIdeaId] = useState<string | null>(null)
+  const [theme, setTheme] = useTheme()
+  const select = (s: Selection | null) => {
+    setSelected(s)
+    setPage(null)
+    try { localStorage.setItem(selKey, JSON.stringify(s)) } catch { /* ignore */ }
   }
 
   useEffect(() => {
     mag.getState().then((s) => {
       setState(s)
       // A new project has nothing to show until it has repositories.
-      if (s.projects.find((p) => p.id === projectId)?.repos.length === 0) setTab('settings')
+      if (s.projects.find((p) => p.id === projectId)?.repos.length === 0) setPage('settings')
     })
     return mag.onState(setState)
   }, [projectId])
 
-  // A pop-out or a notification asked to show a task; main sends it to this project's window only.
-  useEffect(() => mag.onOpenTask((_, tid) => setTaskId(tid)), [])
-  // A review of a teammate's PR has no task page: it opens on the Reviews tab.
+  // A pop-out or a notification asked to show a task (a step shows its work); main sends it to this project's window only.
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  useEffect(() => mag.onOpenTask((_, tid) => setOpenTaskId(tid)), [])
   useEffect(() => {
-    const t = state?.tasks.find((x) => x.id === taskId)
-    if (!t || !isReview(t)) return
-    setTab('reviews')
-    setReviewId(t.id)
-    setTaskId(null)
-  }, [taskId, state])
+    const t = state?.tasks.find((x) => x.id === openTaskId)
+    if (!t) return
+    select({ kind: 'work', id: t.parentId ?? t.id })
+    setOpenTaskId(null)
+  }, [openTaskId, state]) // eslint-disable-line react-hooks/exhaustive-deps
   // ⌘O, File → Open Project… / New Project…, the dock menu.
   useEffect(() => mag.onOpenPicker(setPicker), [])
 
@@ -133,21 +91,21 @@ export function App({ projectId }: { projectId: string }) {
   if (!project) return <div className="app"><main className="main empty">This project no longer exists.</main></div>
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
   const color = projectColor(project)
-  // Subtasks are steps of their task's plan, not pages: a subtask (e.g. a clicked T-12.3) shows its task.
-  const picked = tasks.find((t) => t.id === taskId)
-  // A review shows on its tab (see the effect above), never as a task page.
-  const task = picked && isReview(picked) ? null : ((picked?.parentId ? tasks.find((t) => t.id === picked.parentId) : picked) ?? null)
-  const inboxCount = inbox(project.id, tasks, state.sessions).length
-  const openCount = openWorkCount(tasks)
-  /** Leaving a tab closes the ticket link field. */
-  const go = (t: Tab) => { setTab(t); setTaskId(null); setIdeaId(null); setFromTicket(false) }
-  const openKey = (key: string) => setTaskId(taskByKey(tasks, key)?.id ?? null)
-  const reviewCount = tasks.filter((t) => isReview(t) && t.status === 'in_progress').length
-  const ideaCount = state.ideas.filter((i) => i.projectId === project.id).length
-  // An open idea has its discussion beside it instead of the chat aside.
-  const ideaOpen = tab === 'ideas' && state.ideas.some((i) => i.id === ideaId && i.projectId === project.id)
-  const screen = task ? `Task ${task.key}` : ideaOpen ? 'Idea' : tab === 'reviews' && reviewId ? 'Review' : TAB_NAMES[tab]
-  const chatBusy = state.sessions.some((s) => s.projectId === project.id && s.role === 'chat' && s.status === 'running')
+  const openKey = (key: string) => {
+    const t = taskByKey(tasks, key)
+    if (t) select({ kind: 'work', id: t.parentId ?? t.id })
+  }
+  // The selection, while it still exists; else the first of the list. A topic that has come to own an open work since
+  // shows as that work: the conversation goes on there.
+  const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && s.role === 'chat') ?? null : null
+  const owned = picked && tasks.filter((t) => !t.parentId && t.ownerSessionId === picked.id && t.status !== 'done' && t.status !== 'canceled').sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
+  const topic = owned ? null : picked
+  const first = !work && !topic ? workList(project.id, tasks, state.sessions, Date.now())[0] : undefined
+  const shownWork = work ?? (first?.kind === 'work' ? first.task : null)
+  const shownTopic = topic ?? (first?.kind === 'topic' ? first.session : null)
+  const current: Selection | null = shownWork ? { kind: 'work', id: shownWork.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
+  const screen = page ? PAGE_NAMES[page] : shownWork ? `Work ${shownWork.key}` : shownTopic ? 'Topic' : 'Empty'
 
   return (
     <div className="app" style={{ '--pc': color } as React.CSSProperties}>
@@ -160,50 +118,70 @@ export function App({ projectId }: { projectId: string }) {
           </button>
           {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => setPicker(null)} />}
         </div>
+        <ProjectMenu page={page} ideas={state.ideas.filter((i) => i.projectId === project.id).length} onOpen={setPage} />
         <span className="brand"><Logo size={16} />mag <span>PoC</span></span>
         <div className="grow" />
         <AgentCounter state={state} />
         {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠ Claude CLI not found</span>}
+        <ThemeSwitch mode={theme} onChange={setTheme} />
       </div>
-        <div className="workspace">
-        <main className="main">
-          <header className="tabs">
-            <button className={tab === 'home' && !task ? 'on' : ''} onClick={() => go('home')}>
-              Home {inboxCount > 0 && <span className="badge">{inboxCount}</span>}
-            </button>
-            <button className={tab === 'tasks' && !task ? 'on' : ''} onClick={() => go('tasks')}>Tasks <span className="cnt">{openCount}</span></button>
-            <button className={tab === 'ideas' && !task ? 'on' : ''} onClick={() => go('ideas')}>Ideas <span className="cnt">{ideaCount}</span></button>
-            <button className={tab === 'reviews' && !task ? 'on' : ''} onClick={() => go('reviews')}>Reviews <span className="cnt">{reviewCount}</span></button>
-            <button className={tab === 'architecture' && !task ? 'on' : ''} onClick={() => go('architecture')}>Architecture</button>
-            <button className={tab === 'settings' && !task ? 'on' : ''} onClick={() => go('settings')}>Settings</button>
-            <div className="grow" />
-            <ThemeSwitch mode={theme} onChange={setTheme} />
-            {!chatOpen && !task && !ideaOpen && <button onClick={() => toggleChat(true)}>Chat {chatBusy && <span className="dot inline" />}</button>}
-          </header>
-          <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => go('home')}>
-            {task ? (
-              <TaskView key={task.id} task={task} tasks={tasks} state={state} topicId={topicId} onPickTopic={pickTopic} onNav={() => go('tasks')} onOpenKey={openKey} />
-            ) : tab === 'home' ? (
-              <Home project={project} tasks={tasks} state={state} topicId={topicId} onOpenTopic={openTopic} onOpen={setTaskId} onOpenKey={openKey} onStage={() => go('tasks')} onFromTicket={() => { go('tasks'); setFromTicket(true) }} />
-            ) : tab === 'tasks' ? (
-              <TasksPage key={String(fromTicket)} project={project} tasks={tasks} sessions={state.sessions} onOpen={setTaskId} fromTicket={fromTicket} />
-            ) : tab === 'ideas' ? (
-              <IdeasPage project={project} state={state} ideaId={ideaId} onOpenIdea={setIdeaId} onOpenKey={openKey} onOpenTopic={openTopic} />
-            ) : tab === 'reviews' ? (
-              <ReviewsPage project={project} state={state} reviewId={reviewId} onOpenReview={setReviewId} onOpenTopic={openTopic} onOpenKey={openKey} />
-            ) : tab === 'architecture' ? (
-              <Architecture key={project.id} project={project} />
-            ) : (
-              <Settings project={project} integrations={state.integrations} />
-            )}
-          </ErrorBoundary>
-        </main>
-        {chatOpen && !task && !ideaOpen && (
-          <ErrorBoundary key={project.id} screen="Project chat" appVersion={state.appVersion}>
-            <ProjectChat projectId={project.id} state={state} chatId={topicId} onPick={pickTopic} onOpenTask={openKey} onClose={() => toggleChat(false)} />
-          </ErrorBoundary>
-        )}
-        </div>
+      <div className="layout">
+        <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
+          <WorkList project={project} state={state} selected={page ? null : current} onSelect={select} />
+        </ErrorBoundary>
+        <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
+          {page ? (
+            <main className="pagewrap">
+              <div className="pagehead">
+                <span>{PAGE_NAMES[page]}</span>
+                <div className="grow" />
+                <button className="small" onClick={() => setPage(null)}>✕ Close</button>
+              </div>
+              {page === 'ideas' ? (
+                <IdeasPage project={project} state={state} ideaId={ideaId} onOpenIdea={setIdeaId} onOpenKey={openKey} onOpenTopic={(id) => select({ kind: 'topic', id })} />
+              ) : page === 'architecture' ? (
+                <Architecture key={project.id} project={project} />
+              ) : (
+                <Settings project={project} integrations={state.integrations} />
+              )}
+            </main>
+          ) : (
+            <>
+              {shownWork ? (
+                <WorkConversation key={shownWork.id} work={shownWork} state={state} onOpenKey={openKey} />
+              ) : shownTopic ? (
+                <TopicConversation key={shownTopic.id} topic={shownTopic} state={state} onOpenKey={openKey} onSelectTopic={(id) => select({ kind: 'topic', id })} onDeleted={() => select(null)} />
+              ) : (
+                <section className="convo"><p className="muted pad">No works yet. Describe a problem on the left: a topic opens, and its agent plans the work with you.</p></section>
+              )}
+              <ArtifactPane work={shownWork} topic={shownTopic} state={state} onOpenKey={openKey} onDeleted={() => select(null)} />
+            </>
+          )}
+        </ErrorBoundary>
+      </div>
+    </div>
+  )
+}
+
+/** Ideas, Architecture and Settings: pages of the project, not tabs beside the works. */
+function ProjectMenu({ page, ideas, onOpen }: { page: Page | null; ideas: number; onOpen: (p: Page) => void }) {
+  const [open, setOpen] = useState(false)
+  const pick = (p: Page) => { onOpen(p); setOpen(false) }
+  return (
+    <div className="menu">
+      <button className={page ? 'on' : ''} aria-haspopup="menu" aria-expanded={open} title="Ideas, Architecture, Settings" onClick={() => setOpen((o) => !o)}>
+        {page ? PAGE_NAMES[page] : 'Project'} ▾
+      </button>
+      {open && (
+        <>
+          <div className="menuscrim" onClick={() => setOpen(false)} />
+          <div className="menulist small left" role="menu">
+            <button role="menuitem" onClick={() => pick('ideas')}><span className="title">Ideas</span><span className="muted small">{ideas}</span></button>
+            <button role="menuitem" onClick={() => pick('architecture')}><span className="title">Architecture</span></button>
+            <button role="menuitem" onClick={() => pick('settings')}><span className="title">Settings</span></button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -233,382 +211,6 @@ function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeM
         <button key={m} className={m === mode ? 'on' : ''} aria-pressed={m === mode} title={title} onClick={() => onChange(m)}>{label}</button>
       ))}
     </div>
-  )
-}
-
-type TaskTab = 'document' | 'subtasks' | 'diff' | 'canvases' | 'work'
-type ChatMode = 'task' | 'project'
-
-const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
-
-/** A group of a task's sessions: grooming, one step's developer, or a legacy task's developer. */
-interface SessionGroup {
-  label: string
-  step?: Task
-  sessions: AgentSession[]
-}
-
-/** Sessions by what they worked on: grooming first, then each step in order; legacy developer sessions last. */
-function sessionGroups(steps: Task[], sessions: AgentSession[]): SessionGroup[] {
-  const groups: SessionGroup[] = [
-    { label: 'Grooming', sessions: sessions.filter((s) => s.role === 'groomer') },
-    ...steps.map((step) => ({ label: `${step.key} · developer`, step, sessions: sessions.filter((s) => s.stepId === step.id) })),
-    { label: 'Developer', sessions: sessions.filter((s) => s.role !== 'groomer' && !steps.some((st) => st.id === s.stepId)) },
-  ]
-  return groups.filter((g) => g.sessions.length || g.step)
-}
-
-function TaskView({ task, tasks, state, topicId, onPickTopic, onNav, onOpenKey }: {
-  task: Task
-  tasks: Task[]
-  state: AppState
-  topicId: string | null
-  onPickTopic: (id: string) => void
-  onNav: () => void
-  onOpenKey: (key: string) => void
-}) {
-  const sessions = state.sessions.filter((s) => s.taskId === task.id)
-  const project = state.projects.find((p) => p.id === task.projectId)
-  const children = subtasksOf(task.id, tasks)
-  const legacy = isLegacy(task)
-  // Steps (T-28): each with its own developer session and PRs. A legacy task's subtasks are a checklist.
-  const stepMode = !legacy && children.length > 0
-  const singleStep = stepMode && children.length === 1
-  const step = legacy ? null : currentStep(task.id, tasks)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  // The current step's session by default, else the latest one.
-  const session = sessions.find((s) => s.id === sessionId) ?? (step && sessions.filter((s) => s.stepId === step.id).at(-1)) ?? sessions.at(-1) ?? null
-  const doc = state.docs[task.id]
-  // The doc may link any canvas of the project (e.g. one drawn in the project chat); the tabs list the task's own:
-  // Diff its diagrams, Canvases the HTML ones.
-  const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === task.projectId), [state.canvases, task.projectId])
-  // Its own diagrams, then those of other tasks the doc links (T-55.3).
-  const diagrams = useMemo(() => diagramsOf(taskDiagrams(task, doc, projectCanvases)), [projectCanvases, task, doc])
-  const canvases = useMemo(
-    () => projectCanvases.filter((c) => c.taskId === task.id && c.kind !== 'diagram').sort((a, b) => b.updatedAt - a.updatedAt),
-    [projectCanvases, task.id],
-  )
-  const progress = subtaskProgress(task.id, tasks)
-  const anyRunning = sessions.some((s) => s.status === 'running')
-  const canGroom = !anyRunning && !task.work && (task.status === 'planning' || task.status === 'ready')
-  // A step that starts manually is started from the banner.
-  const manualNext = task.status === 'in_progress' && step?.status === 'todo' && !!step.startManually
-  const canDevelop = !anyRunning && (task.status === 'ready' || (task.status === 'in_progress' && (legacy || (!!step && !manualNext))))
-  const developLabel = task.status === 'ready' ? 'Start' : step?.status === 'todo' ? `Start ${step.key}` : 'Restart developer'
-  const now = useNow(15_000)
-  const prs = openPrs(task, tasks)
-  const stepPrs = step?.status === 'in_progress' ? openPrs(step) : []
-  const [tab, setTab] = useState<TaskTab>(() => (stepMode && !singleStep ? 'subtasks' : 'document'))
-  const shownTab = tab === 'subtasks' && (!children.length || singleStep) ? 'document' : tab
-  const [fullBrief, setFullBrief] = useState(false)
-  const [chatMode, setChatModeState] = useState<ChatMode>(() => (loadFlag('mag.taskChatProject', false) ? 'project' : 'task'))
-  const setChatMode = (m: ChatMode) => {
-    setChatModeState(m)
-    try { localStorage.setItem('mag.taskChatProject', m === 'project' ? '1' : '0') } catch { /* ignore */ }
-  }
-  const subtasksTab: [TaskTab, string] = ['subtasks', `Subtasks · ${progress.done}/${progress.total}`]
-  const tabs: [TaskTab, string][] = [
-    // Steps come first; a single step shows in the header instead.
-    ...(stepMode && !singleStep ? [subtasksTab] : []),
-    ['document', 'Document'],
-    ...(legacy && children.length ? [subtasksTab] : []),
-    ['diff', `Diff · ${diagrams.length}`],
-    ['canvases', `Canvases · ${canvases.length}`],
-    ['work', 'Work'],
-  ]
-  const groups = stepMode ? sessionGroups(children, sessions) : null
-
-  return (
-    <section className="taskview">
-      <div className="taskmain">
-        <div className="taskhead">
-          <div className="taskrow">
-            <button className="crumb" onClick={onNav}>Tasks ›</button>
-            <span className="key">{task.key}</span>
-            <TicketLinks task={task} />
-            <span className="type">{task.type}</span>
-            <StatusPill status={task.status} />
-            {progress.total > 1 && <span className="muted small" title="Steps done">{progress.done}/{progress.total}</span>}
-            {task.status === 'in_progress' && <PrPills prs={prs} />}
-            <AgentDot state={agentState(task, sessions, tasks)} now={now} />
-            <div className="grow" />
-            {canGroom && <button onClick={() => mag.groom(task.id)}>{task.ownerSessionId ? 'Re-groom' : 'Groom'}</button>}
-            {task.status === 'planning' && <ApproveButton task={task} tasks={tasks} sessions={sessions} project={project} />}
-            {canDevelop && (task.status === 'ready' ? <StartButton task={task} tasks={tasks} project={project} /> : <button onClick={() => mag.develop(task.id)}>{developLabel}</button>)}
-            {/* The owner plans what is left: a topic opens beside, a groomer in the task's chat. */}
-            <ReopenButton task={task} onReopened={() => { if (state.sessions.some((s) => s.id === task.ownerSessionId && s.role === 'chat')) onPickTopic(task.ownerSessionId!) }} />
-            <CancelButton task={task} />
-          </div>
-          <h1>{task.title}</h1>
-          {task.description && (
-            <div className={`brief ${fullBrief ? 'full' : ''}`}>
-              <span className="brieftext">{task.description}</span>
-              <button className="link" onClick={() => setFullBrief((f) => !f)}>{fullBrief ? 'Less' : 'Full brief'}</button>
-            </div>
-          )}
-          {singleStep && (
-            <div className="sublist stepline">
-              <SubtaskRow sub={children[0]} steps project={project} canMove={() => false} onMove={() => {}} />
-            </div>
-          )}
-          {/* Local checks of the step (T-50) ask on their own cards. */}
-          {task.needsInput && !(step && openLocalChecks(step).length) && <div className="banner">Agent needs you: {task.needsInput}</div>}
-          {step && <LocalChecks step={step} project={project} />}
-          {!task.needsInput && !anyRunning && manualNext && step && (
-            <div className="banner">
-              {step.key} waits for Start
-              <button className="primary small" onClick={() => mag.startStep(task.id)}>Start</button>
-            </div>
-          )}
-          {!task.needsInput && !anyRunning && step && stepPrs.length > 0 && (
-            <div className="banner info">Step {step.key}: {stepPrs.length > 1 ? `${stepPrs.length} PRs wait` : 'PR waits'} for merge</div>
-          )}
-          {task.status === 'canceled' && (
-            <div className="muted small">
-              Canceled{task.cancelReason ? `: ${task.cancelReason}` : '.'}
-              {prs.length > 0 && <> Its PRs are still open; close them on GitHub: {prs.map((r) => <button key={r.prUrl} className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl!)}</button>)}</>}
-            </div>
-          )}
-        </div>
-
-        <div className="tasktabs" role="tablist">
-          {tabs.map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={shownTab === id} className={shownTab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}</button>
-          ))}
-          {shownTab === 'document' && doc && (
-            <button className="link popbtn" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'doc', taskId: task.id })}>
-              ⧉ Open in window
-            </button>
-          )}
-        </div>
-
-        <div className="taskbody">
-          {shownTab === 'document' &&
-            (doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet. Groom the task and the agent will write it.</p>)}
-          {shownTab === 'subtasks' && <SubtaskList parent={task} subs={children} tasks={tasks} steps={stepMode} project={project} />}
-          {shownTab === 'diff' && <DiffTab task={task} tasks={tasks} project={project} diagrams={diagrams} />}
-          {shownTab === 'canvases' &&
-            (canvases.length ? (
-              <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
-            ) : (
-              <p className="muted">No canvases yet. Agents draw mockups and diagrams here.</p>
-            ))}
-          {shownTab === 'work' && (
-            <WorkTab task={task} groups={groups} sessions={sessions} onShow={(id) => { setSessionId(id); setChatMode('task') }} />
-          )}
-        </div>
-      </div>
-
-      <div className="chatpanel">
-        <div className="chathead">
-          <div className="seg" role="group" aria-label="Chat">
-            <button className={chatMode === 'task' ? 'on' : ''} aria-pressed={chatMode === 'task'} onClick={() => setChatMode('task')}>Task agent</button>
-            <button className={chatMode === 'project' ? 'on' : ''} aria-pressed={chatMode === 'project'} onClick={() => setChatMode('project')}>Project</button>
-          </div>
-          {chatMode === 'task' && sessions.length > 1 && (
-            <select value={session?.id} onChange={(e) => setSessionId(e.target.value)} aria-label="Session">
-              {groups
-                ? groups.filter((g) => g.sessions.length).map((g) => (
-                    <optgroup key={g.label} label={g.label}>
-                      {g.sessions.map((s, i) => <option key={s.id} value={s.id}>{g.label}{g.sessions.length > 1 ? ` #${i + 1}` : ''}</option>)}
-                    </optgroup>
-                  ))
-                : sessions.map((s, i) => <option key={s.id} value={s.id}>#{i + 1} {s.role}</option>)}
-            </select>
-          )}
-          {chatMode === 'task' && session && <span className="chatmodel">{session.role} · {session.activeModel ?? 'default'}</span>}
-        </div>
-        {chatMode === 'project' ? (
-          <ProjectChat key={task.projectId} projectId={task.projectId} state={state} chatId={topicId} onPick={onPickTopic} onOpenTask={onOpenKey} embedded />
-        ) : session ? (
-          <Chat session={session} sessions={state.sessions} onOpenTask={onOpenKey} />
-        ) : (
-          <p className="muted pad">No agent has worked on this task yet.</p>
-        )}
-      </div>
-    </section>
-  )
-}
-
-/**
- * The task's steps in order. Steps: status follows the lifecycle (read-only icon); todo steps can be edited and swap
- * places. A legacy checklist: the user can tick, edit and reorder any step.
- */
-function SubtaskList({ parent, subs, tasks, steps, project }: { parent: Task; subs: Task[]; tasks: Task[]; steps: boolean; project?: Project }) {
-  const move = (i: number, dir: 'up' | 'down') => {
-    const ids = subs.map((t) => t.id)
-    const j = dir === 'up' ? i - 1 : i + 1
-    ;[ids[i], ids[j]] = [ids[j], ids[i]]
-    void mag.reorderSubtasks(parent.id, ids)
-  }
-  const { done, total } = subtaskProgress(parent.id, tasks)
-  return (
-    <>
-      <div className="sublist">
-        {subs.map((t, i) => (
-          <SubtaskRow key={t.id} sub={t} steps={steps} project={project} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
-        ))}
-      </div>
-      <p className="muted small">
-        {done}/{total} done.{' '}
-        {steps
-          ? 'Steps run one after another, each in a new developer session with its own branch and PRs. A step is done when its PRs are merged; the next one starts on its own unless it starts manually.'
-          : 'A plan: one developer works through it in one session and marks each step ◐ in progress, then ● done. Click an icon to change it.'}
-      </p>
-    </>
-  )
-}
-
-/** Clicking a checklist subtask's status icon steps todo → in progress → done → todo. */
-const nextStatus = (s: Task['status']): SubtaskStatus => SUBTASK_STATUSES[(SUBTASK_STATUSES.indexOf(s as SubtaskStatus) + 1) % SUBTASK_STATUSES.length]
-
-function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task; steps: boolean; project?: Project; canMove: (dir: 'up' | 'down') => boolean; onMove: (dir: 'up' | 'down') => void }) {
-  // The repositories the groomer planned for the step (T-50); an older step works in all of them and shows none.
-  const repos = steps && project ? stepRepoNames(sub, project) : undefined
-  const [editing, setEditing] = useState(false)
-  const [title, setTitle] = useState(sub.title)
-  const [note, setNote] = useState(sub.description)
-  const [manual, setManual] = useState(!!sub.startManually)
-  const done = sub.status === 'done'
-  // A step that started keeps its plan; a checklist step can always be edited.
-  const editable = !steps || sub.status === 'todo'
-  const edit = () => {
-    if (!editable) return
-    setTitle(sub.title)
-    setNote(sub.description)
-    setManual(!!sub.startManually)
-    setEditing(true)
-  }
-  const save = () => {
-    if (title.trim()) void mag.updateTask(sub.id, { title: title.trim(), description: note.replace(/\s+/g, ' ').trim(), ...(steps && { startManually: manual }) })
-    setEditing(false)
-  }
-  return (
-    <div className={`subrow ${done ? 'done' : ''}`}>
-      <span className="ord">
-        {(['up', 'down'] as const).map((dir) => (
-          <button key={dir} className="icon" disabled={!canMove(dir)} aria-label={`Move ${sub.key} ${dir}`} onClick={() => onMove(dir)}>
-            {dir === 'up' ? '▲' : '▼'}
-          </button>
-        ))}
-      </span>
-      {steps ? (
-        <span className="substatus"><SubtaskIcon status={sub.status} /></span>
-      ) : (
-        <button
-          className="icon substatus"
-          title={`${STATUS_LABELS[sub.status]}: click for ${STATUS_LABELS[nextStatus(sub.status)].toLowerCase()}`}
-          aria-label={`${sub.key}: ${STATUS_LABELS[sub.status]}`}
-          onClick={() => mag.setSubtaskStatus(sub.id, nextStatus(sub.status))}
-        >
-          <SubtaskIcon status={sub.status} />
-        </button>
-      )}
-      <span className="key">{sub.key}</span>
-      {editing ? (
-        <form className="subedit" onSubmit={(e) => { e.preventDefault(); save() }} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Subtask title" />
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional, one line)" aria-label="Subtask note" />
-          {steps && <label className="check small"><input type="checkbox" checked={manual} onChange={(e) => setManual(e.target.checked)} />start manually</label>}
-          <button type="submit" className="primary">Save</button>
-          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
-        </form>
-      ) : (
-        <>
-          <div className="subtitle" onDoubleClick={edit}>
-            <div className="subname">{sub.title}</div>
-            {sub.description && <div className="muted small">{sub.description}</div>}
-          </div>
-          <span className="subextra">
-            {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
-            {repos && <span className="muted small" title="Repositories the step changes; only they get a worktree">{repos.length ? repos.join(', ') : 'no code'}</span>}
-            {steps && <PrPills prs={taskPrs(sub)} />}
-            {editable && <button className="link small" onClick={edit}>Edit</button>}
-          </span>
-        </>
-      )}
-    </div>
-  )
-}
-
-/** Per repo: its branch, worktree and PR. */
-function RepoList({ work }: { work: TaskWork }) {
-  return (
-    <div className="repolist">
-      {work.repos.map((r) => (
-        <div key={r.repo} className="reporow">
-          <span className="reponame">{repoWorkName(work, r)}</span>
-          <code className="grow">{r.branch}</code>
-          {r.local ? (
-            <button className="link" title={`Works right in the main checkout ${r.repo}`} onClick={() => mag.open(r.repo)}>local</button>
-          ) : (
-            <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
-          )}
-          {r.prUrl ? <PrPill pr={r} /> : <span className="muted">no PR</span>}
-          {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function SessionList({ sessions, all, onShow }: { sessions: AgentSession[]; all: AgentSession[]; onShow: (sessionId: string) => void }) {
-  const agents = useAgents()
-  return (
-    <div className="sessionlist">
-      {sessions.map((s) => (
-        <button key={s.id} className="sessionrow" onClick={() => onShow(s.id)} title="Show in the chat panel">
-          <span className="no">#{all.indexOf(s) + 1}</span>
-          <span>{s.role}</span>
-          <span className="muted grow">{agentName(agents, s.agent)} · {s.activeModel ?? 'default'}</span>
-          <span className={`status ${s.status === 'running' ? 's-in_progress' : ''}`}>{s.status}</span>
-          <span className="muted small">${sessionCost(s).toFixed(2)}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/**
- * Steps: per step its worktrees, branches, PRs and sessions, after the grooming sessions. A legacy task: its task
- * dir, repos and every session.
- */
-function WorkTab({ task, groups, sessions, onShow }: { task: Task; groups: SessionGroup[] | null; sessions: AgentSession[]; onShow: (sessionId: string) => void }) {
-  const work = task.work
-  const anyPr = taskPrs(task, groups?.flatMap((g) => (g.step ? [g.step] : [])) ?? []).length > 0
-  if (groups) {
-    return (
-      <>
-        {anyPr && <div className="meta"><button className="link" onClick={() => mag.checkPrs()}>check PRs now</button></div>}
-        {groups.map((g) => (
-          <div key={g.label} className="workgroup">
-            <h2>
-              {g.step ? <><SubtaskIcon status={g.step.status} /> {g.step.key} · {g.step.title}</> : g.label}
-              {g.step?.work && <button className="link small" onClick={() => mag.open(g.step!.work!.dir)}>open step folder</button>}
-            </h2>
-            {g.step && (g.step.work ? <RepoList work={g.step.work} /> : <p className="muted small">Not started yet.</p>)}
-            {g.sessions.length > 0 && <SessionList sessions={g.sessions} all={sessions} onShow={onShow} />}
-          </div>
-        ))}
-      </>
-    )
-  }
-  return (
-    <>
-      {work ? (
-        <>
-          <div className="meta">
-            <button className="link" onClick={() => mag.open(work.dir)}>open task folder</button>
-            {anyPr && <button className="link" onClick={() => mag.checkPrs()}>check PRs now</button>}
-          </div>
-          <RepoList work={work} />
-        </>
-      ) : (
-        <p className="muted">No developer has started on this task yet.</p>
-      )}
-      <h2>Sessions</h2>
-      {sessions.length ? <SessionList sessions={sessions} all={sessions} onShow={onShow} /> : <p className="muted">No agent sessions yet.</p>}
-    </>
   )
 }
 
@@ -684,7 +286,7 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
       ) : (
         <span className="muted small">Run any Claude Code agent to detect integrations.</span>
       )}
-      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in Home or the chat, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
+      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in the work's conversation, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
     </div>
   )
 }
@@ -694,7 +296,7 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
-  prReview: 'How the agent reviews a teammate\'s PR (Reviews tab): PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
+  prReview: 'How the agent reviews a teammate\'s PR (a PR link in the work list): PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
   fact: 'How a reviewer draws the fact of a diff (a revision of a step\'s plan; a teammate\'s PR has none); every review that reads a diff follows it.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
   significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',

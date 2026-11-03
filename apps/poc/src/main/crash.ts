@@ -50,7 +50,7 @@ export class Crashes {
     return best
   }
 
-  /** Hides every crash so far from the Home inbox. */
+  /** Hides every crash so far from the work list. */
   dismiss(now = Date.now()) {
     writeFileSync(this.dismissedFile, String(now))
   }

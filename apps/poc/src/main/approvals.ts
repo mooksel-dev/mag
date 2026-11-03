@@ -30,7 +30,7 @@ const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 
 /**
  * Ask-mode integration calls: the permission prompt tool parks each call as an approval chat item until the user
- * allows or denies it in Home or the chat. Requests long-poll; the MCP server repeats them while pending.
+ * allows or denies it on its card in the work's conversation or the chat. Requests long-poll; the MCP server repeats them while pending.
  */
 export class Approvals {
   /** Wake-ups of the polls waiting per approval id. */

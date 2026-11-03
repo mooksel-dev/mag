@@ -21,7 +21,7 @@ export function IdeasPage({ project, state, ideaId, onOpenIdea, onOpenKey, onOpe
   ideaId: string | null
   onOpenIdea: (id: string | null) => void
   onOpenKey: (key: string) => void
-  /** Show the topic in the chat aside. */
+  /** Open the topic in the work list. */
   onOpenTopic: (id: string) => void
 }) {
   const now = useNow(15_000)
@@ -122,7 +122,7 @@ function IdeaView({ idea, project, state, now, onBack, onOpenKey, onOpenTopic }:
   const remove = () => {
     if (confirm('Delete this idea?')) void mag.deleteIdea(idea.id).then(onBack)
   }
-  // Its topic owns the work from now on: the chat aside shows it once the idea has left the list.
+  // Its topic owns the work from now on: it opens from the work list once the idea has left this one.
   const start = () => {
     setError(null)
     mag.startIdea(idea.id).then(onOpenTopic, (e: Error) => setError(e.message))

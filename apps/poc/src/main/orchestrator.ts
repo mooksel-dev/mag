@@ -1197,8 +1197,8 @@ export class Orchestrator {
   /**
    * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): the PR of a project repository, by its link. Its
    * work (type review, in progress at once, no steps) is the PR's open one if it has one, else a new one. `by`: the
-   * project topic that asks (review_pr); it owns the review and gets the job back to do in its turn. Without it (the
-   * Reviews tab) the review's topic does it, a new one titled after the PR when it has none.
+   * project topic that asks (review_pr); it owns the review and gets the job back to do in its turn. Without it (a PR
+   * link in the work list) the review's topic does it, a new one titled after the PR when it has none.
    */
   async reviewPr(projectId: string, url: string, by?: string): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
@@ -1219,7 +1219,7 @@ export class Orchestrator {
       ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview: { ...(prev.prReview ?? fresh), pr } }), this.store.task(prev.id))
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
     if (!prev) this.store.updateTask(work.id, { prReview: fresh })
-    // mag's own topic for the review: Delete review takes it along; Topics on Home leaves it out.
+    // mag's own topic for the review: Delete review takes it along; the work list shows it as the review.
     if (!owner) {
       const topic = this.store.session(sessionId)
       topic.title = `Review ${name}#${info.number}`
@@ -1319,7 +1319,7 @@ export class Orchestrator {
     this.store.updateTask(workId, { prReview: { ...prev, ...r, head: prev.pr.head, at: Date.now() }, needsInput: null })
     const n = r.findings.length
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
-    return 'Recorded: the user sees it in the Reviews tab. Nothing goes to GitHub until they publish the findings they pick.'
+    return 'Recorded: the user sees it on the review\'s pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.'
   }
 
   /**

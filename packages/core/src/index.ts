@@ -16,8 +16,9 @@ export * from './inventory.ts'
 export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
+export * from './work-list.ts'
 
-/** review: a review of a teammate's PR (see PrReview); no steps, only in the Reviews tab. */
+/** review: a review of a teammate's PR (see PrReview); no steps, a work of the work list of its own. */
 export type TaskType = 'dev' | 'design' | 'spike' | 'research' | 'review'
 
 /**
@@ -564,6 +565,29 @@ export function reviewText(review: AgentReview): string {
   return `${who} review asks for changes${finding}`
 }
 
+/** A question an agent needs the user to decide, with its recommendation. */
+export interface NeedsQuestion {
+  text: string
+  recommendation: string
+}
+
+/** Questions as an agent passed them: each needs a text; a missing recommendation is empty. */
+export function needsQuestions(raw: unknown): NeedsQuestion[] | null {
+  if (raw == null) return null
+  if (!Array.isArray(raw)) throw new Error('questions must be an array of { text, recommendation }')
+  const qs = raw.map((q) => {
+    const text = String((q as NeedsQuestion)?.text ?? '').trim()
+    if (!text) throw new Error('each question needs a text')
+    return { text, recommendation: String((q as NeedsQuestion)?.recommendation ?? '').trim() }
+  })
+  return qs.length ? qs : null
+}
+
+/** The user's message to the owner when they accept the recommendations of `questions`. */
+export function acceptRecommendations(questions: NeedsQuestion[]): string {
+  return `I accept your recommendations:\n${questions.map((q, i) => `${i + 1}. ${q.text} → ${q.recommendation || 'as you recommend'}`).join('\n')}`
+}
+
 export interface Task {
   id: string
   projectId: string
@@ -583,6 +607,11 @@ export interface Task {
   rank: number
   /** Set by an agent when it needs the user; one line shown in "Needs you". */
   needsInput: string | null
+  /**
+   * The questions behind needsInput, each with the agent's recommendation (set_needs_input questions): the card in the
+   * owner conversation lists them with "Accept recommendations". Cleared with needsInput.
+   */
+  needsQuestions?: NeedsQuestion[] | null
   /** Steps: their worktrees, branch and PRs. Top-level tasks: legacy only (started before T-28); new ones keep null. */
   work: TaskWork | null
   /** Steps: the step waits for the user's Start instead of starting when the previous one is done (releases in parts). */
@@ -1000,7 +1029,7 @@ export function canCancel(task: Task): boolean {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** The Tasks tab: works by state, each in display order. Reviews are not in it: they have the Reviews tab. */
+/** Works by state, each in display order (list_tasks). Reviews are not in it. */
 export interface WorkSections {
   /** Oldest first. */
   inProgress: Task[]
@@ -1021,11 +1050,6 @@ export function workSections(tasks: Task[]): WorkSections {
     planning: by('planning'),
     finished: works.filter((t) => FINISHED_STATES.includes(t.status as WorkState)).sort((a, b) => b.updatedAt - a.updatedAt),
   }
-}
-
-/** Works not finished yet: the Tasks tab count. Reviews count in their own tab. */
-export function openWorkCount(tasks: Task[]): number {
-  return tasks.filter((t) => !t.parentId && !isReview(t) && !FINISHED_STATES.includes(t.status as WorkState)).length
 }
 
 export const STATUS_LABELS: Record<WorkState | SubtaskStatus, string> = {
@@ -1200,21 +1224,6 @@ export function projectState(projectId: string, tasks: Task[], sessions: AgentSe
 /** Inbox items across all projects: the dock badge. */
 export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], sessions: AgentSession[]): number {
   return projects.reduce((n, p) => n + inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).length, 0)
-}
-
-export type PipelineStage = 'planning' | 'ready' | 'in_progress' | 'done7d'
-
-const WEEK_MS = 7 * DAY_MS
-
-/** Work counts per state; done only counts works finished in the last 7 days; canceled and reviews are not counted. */
-export function pipelineCounts(tasks: Task[], now: number): Record<PipelineStage, number> {
-  const counts: Record<PipelineStage, number> = { planning: 0, ready: 0, in_progress: 0, done7d: 0 }
-  for (const t of tasks) {
-    if (t.parentId || isReview(t) || t.status === 'canceled') continue
-    if (t.status !== 'done') counts[t.status as Exclude<WorkState, 'done' | 'canceled'>]++
-    else if (t.updatedAt >= now - WEEK_MS) counts.done7d++
-  }
-  return counts
 }
 
 /** Agent sessions running now, any role, any project: no limit on how many. */

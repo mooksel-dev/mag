@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react'
 import {
   STATUS_LABELS,
-  agentState,
+  SUBTASK_STATUSES,
   canApprove,
   canCancel,
+  canMoveSubtask,
   canReopen,
-  openPrs,
+  stepRepoNames,
   subtaskProgress,
-  subtasksOf,
   taskPrs,
-  workSections,
   type AgentSession,
   type AgentState,
   type Project,
@@ -17,7 +16,7 @@ import {
   type Task,
 } from '@mag/core'
 import { ago } from './format'
-import { PrPills, TicketPill, TicketPills } from './LinkPill'
+import { PrPills, TicketPill } from './LinkPill'
 import { StartButton } from './LocalMode'
 
 const mag = window.mag
@@ -126,185 +125,6 @@ export function ApproveButton({ task, tasks, sessions, project, small }: { task:
   return <StartButton task={task} tasks={tasks} project={project} label="Approve & Start" className={small ? 'small' : ''} disabled={!can.ok || busy} title={why} onStart={(local) => mag.approveAndStart(task.id, local)} />
 }
 
-/** Finished works shown before "Show all". */
-const FINISHED_SHOWN = 10
-
-/** The Tasks tab: works by state. No backlog (ideas have their own tab), priority or archive (T-55.7). */
-export function TasksPage({ project, tasks, sessions, onOpen, fromTicket }: {
-  project: Project
-  tasks: Task[]
-  sessions: AgentSession[]
-  onOpen: (id: string) => void
-  /** Open the ticket link field (from Home). */
-  fromTicket: boolean
-}) {
-  const now = useNow(15_000)
-  const [ticket, setTicket] = useState(fromTicket)
-  const [allFinished, setAllFinished] = useState(false)
-  const s = workSections(tasks)
-  const row = { tasks, sessions, now, onOpen }
-  const finished = allFinished ? s.finished : s.finished.slice(0, FINISHED_SHOWN)
-  const empty = !s.inProgress.length && !s.ready.length && !s.planning.length && !s.finished.length
-  return (
-    <section className="page">
-      <div className="tasksbar">
-        <h1>Tasks</h1>
-        <span className="grow" />
-        {!ticket && <button title="Start a work from a ticket link; a groomer reads the ticket and plans it" onClick={() => setTicket(true)}>From a ticket</button>}
-      </div>
-      {ticket && <WorkFromTicket projectId={project.id} onOpen={onOpen} onClose={() => setTicket(false)} />}
-      {empty ? (
-        <p className="muted">No works yet. Discuss a problem in a project chat (it plans the work with you), start one from an idea or from a ticket link.</p>
-      ) : (
-        <>
-          <Section title="In progress" list={s.inProgress} empty="No work in progress." {...row} />
-          <Section title="Ready" note="plan approved; you start it" list={s.ready} rowActions={(t) => <span className="rowactions"><ReadyStart task={t} tasks={tasks} sessions={sessions} project={project} /></span>} {...row} />
-          <Section title="Planning" list={s.planning} rowActions={(t) => <span className="rowactions"><ApproveButton task={t} tasks={tasks} sessions={sessions} project={project} small /></span>} {...row} />
-          <Section
-            title="Finished"
-            list={finished}
-            count={s.finished.length}
-            action={s.finished.length > FINISHED_SHOWN && <button className="small" onClick={() => setAllFinished((a) => !a)}>{allFinished ? 'Show recent' : `Show all ${s.finished.length}`}</button>}
-            extra={(t) => t.status === 'canceled' && t.cancelReason ? <span className="muted small reason" title={t.cancelReason}>{t.cancelReason}</span> : undefined}
-            {...row}
-          />
-        </>
-      )}
-    </section>
-  )
-}
-
-interface RowProps {
-  tasks: Task[]
-  sessions: AgentSession[]
-  now: number
-  onOpen: (id: string) => void
-}
-
-function Section({ title, note, list, count, empty, action, rowActions, extra, ...row }: {
-  title: string
-  note?: string
-  list: Task[]
-  /** When the list shows only some: how many there are. */
-  count?: number
-  empty?: string
-  action?: React.ReactNode
-  rowActions?: (t: Task) => React.ReactNode
-  extra?: (t: Task) => React.ReactNode
-} & RowProps) {
-  if (!list.length && !empty) return null
-  return (
-    <div className="tasksec">
-      <h2>
-        {title} <span className="muted cnt">{count ?? list.length}</span>
-        {note && <span className="muted small"> · {note}</span>}
-        <span className="grow" />
-        {action}
-      </h2>
-      {list.length ? (
-        <div className="tree">
-          {list.map((t) => <TaskRow key={t.id} task={t} {...row} actions={rowActions?.(t)} extra={extra?.(t)} />)}
-        </div>
-      ) : (
-        <p className="muted small">{empty}</p>
-      )}
-    </div>
-  )
-}
-
-/** Starts development of a ready work (the Start popup). Not while it waits on the user or an agent of it is running. */
-function ReadyStart({ task, tasks, sessions, project }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project: Project }) {
-  const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
-  const why = task.needsInput ? `Needs input: ${task.needsInput}` : busy ? 'An agent is running on this work' : `Start a developer on ${task.key}`
-  return <StartButton task={task} tasks={tasks} project={project} className="small" disabled={!!task.needsInput || busy} title={why} />
-}
-
-/** A work row: chevron, key, title, agent indicator, badges, progress and state; expands to its steps with their PRs. */
-export function TaskRow({ task, tasks, sessions, now, onOpen, actions, extra }: RowProps & {
-  task: Task
-  actions?: React.ReactNode
-  /** Shown before the status, e.g. a PR link or the cancel reason. */
-  extra?: React.ReactNode
-}) {
-  const [open, setOpen] = useState(false)
-  const subs = subtasksOf(task.id, tasks)
-  const progress = subtaskProgress(task.id, tasks)
-  const prs = task.status === 'in_progress' ? openPrs(task, tasks) : []
-  return (
-    <div className="taskrow-wrap">
-      <div className="rowwrap">
-        <button
-          className="icon chevron"
-          aria-expanded={open}
-          aria-label={`${open ? 'Hide' : 'Show'} subtasks of ${task.key}`}
-          disabled={!subs.length}
-          onClick={() => setOpen((o) => !o)}
-        >
-          {subs.length ? (open ? '▾' : '▸') : ''}
-        </button>
-        <button className="row" onClick={() => onOpen(task.id)}>
-          <span className="key">{task.key}</span>
-          <span className="title grow">{task.title}</span>
-          <TicketPills task={task} compact />
-          <AgentDot state={agentState(task, sessions, tasks)} now={now} />
-          <PrPills prs={prs} />
-          {extra}
-          {progress.total > 0 && <span className="muted small" title="Subtasks done">{progress.done}/{progress.total}</span>}
-          <span className="type">{task.type}</span>
-          <StatusPill status={task.status} />
-        </button>
-        {actions}
-      </div>
-      {open && subs.length > 0 && (
-        <div className="subpeek">
-          {subs.map((s) => (
-            <div key={s.id} className={`subpeekrow sub-${s.status}`}>
-              <SubtaskIcon status={s.status} />
-              <span className="key">{s.key}</span>
-              <span className="grow">{s.title}</span>
-              {s.startManually && <span className="muted small" title="Waits for your Start">start manually</span>}
-              <PrPills prs={taskPrs(s)} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** A ticket link → a new work, which opens; a groomer reads the ticket and plans it in the background. */
-function WorkFromTicket({ projectId, onOpen, onClose }: { projectId: string; onOpen: (id: string) => void; onClose: () => void }) {
-  const [url, setUrl] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!url.trim() || busy) return
-    setBusy(true)
-    const r = await mag.workFromTicket(projectId, url.trim()).finally(() => setBusy(false))
-    if ('error' in r) return setError(r.error)
-    onOpen(r.taskId)
-  }
-  return (
-    <form className="newtask importtask" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-      <input
-        autoFocus
-        value={url}
-        onChange={(e) => { setUrl(e.target.value); setError(null) }}
-        placeholder="Ticket link, e.g. https://acme.atlassian.net/browse/ABC-12"
-        aria-label="Ticket URL"
-        aria-invalid={!!error}
-      />
-      <span className="newtaskactions">
-        <button type="submit" className="primary" disabled={!url.trim() || busy}>Start</button>
-        <button type="button" onClick={onClose}>Close</button>
-      </span>
-      {error ? <span className="err small" role="alert">{error}</span>
-        : <span className="muted small">mag keeps only the link. A groomer reads the ticket any way your environment has (MCP, CLI) and plans the work; to plan it yourself, discuss it in a project chat instead.</span>}
-    </form>
-  )
-}
-
 /** Cancel with an optional reason; a running agent stops and the worktrees go. */
 export function CancelButton({ task, small }: { task: Task; small?: boolean }) {
   const [asking, setAsking] = useState(false)
@@ -347,5 +167,106 @@ export function ReopenButton({ task, onReopened }: { task: Task; onReopened?: ()
       <button type="submit" className="primary small" disabled={!what.trim()}>Continue {task.key}</button>
       <button type="button" className="small" onClick={() => setAsking(false)}>Keep done</button>
     </form>
+  )
+}
+
+/**
+ * The task's steps in order. Steps: status follows the lifecycle (read-only icon); todo steps can be edited and swap
+ * places. A legacy checklist: the user can tick, edit and reorder any step.
+ */
+export function SubtaskList({ parent, subs, tasks, steps, project }: { parent: Task; subs: Task[]; tasks: Task[]; steps: boolean; project?: Project }) {
+  const move = (i: number, dir: 'up' | 'down') => {
+    const ids = subs.map((t) => t.id)
+    const j = dir === 'up' ? i - 1 : i + 1
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    void mag.reorderSubtasks(parent.id, ids)
+  }
+  const { done, total } = subtaskProgress(parent.id, tasks)
+  return (
+    <>
+      <div className="sublist">
+        {subs.map((t, i) => (
+          <SubtaskRow key={t.id} sub={t} steps={steps} project={project} canMove={(dir) => canMoveSubtask(t, tasks, dir)} onMove={(dir) => move(i, dir)} />
+        ))}
+      </div>
+      <p className="muted small">
+        {done}/{total} done.{' '}
+        {steps
+          ? 'Steps run one after another, each in a new developer session with its own branch and PRs. A step is done when its PRs are merged; the next one starts on its own unless it starts manually.'
+          : 'A plan: one developer works through it in one session and marks each step ◐ in progress, then ● done. Click an icon to change it.'}
+      </p>
+    </>
+  )
+}
+
+/** Clicking a checklist subtask's status icon steps todo → in progress → done → todo. */
+const nextStatus = (s: Task['status']): SubtaskStatus => SUBTASK_STATUSES[(SUBTASK_STATUSES.indexOf(s as SubtaskStatus) + 1) % SUBTASK_STATUSES.length]
+
+export function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task; steps: boolean; project?: Project; canMove: (dir: 'up' | 'down') => boolean; onMove: (dir: 'up' | 'down') => void }) {
+  // The repositories the groomer planned for the step (T-50); an older step works in all of them and shows none.
+  const repos = steps && project ? stepRepoNames(sub, project) : undefined
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(sub.title)
+  const [note, setNote] = useState(sub.description)
+  const [manual, setManual] = useState(!!sub.startManually)
+  const done = sub.status === 'done'
+  // A step that started keeps its plan; a checklist step can always be edited.
+  const editable = !steps || sub.status === 'todo'
+  const edit = () => {
+    if (!editable) return
+    setTitle(sub.title)
+    setNote(sub.description)
+    setManual(!!sub.startManually)
+    setEditing(true)
+  }
+  const save = () => {
+    if (title.trim()) void mag.updateTask(sub.id, { title: title.trim(), description: note.replace(/\s+/g, ' ').trim(), ...(steps && { startManually: manual }) })
+    setEditing(false)
+  }
+  return (
+    <div className={`subrow ${done ? 'done' : ''}`}>
+      <span className="ord">
+        {(['up', 'down'] as const).map((dir) => (
+          <button key={dir} className="icon" disabled={!canMove(dir)} aria-label={`Move ${sub.key} ${dir}`} onClick={() => onMove(dir)}>
+            {dir === 'up' ? '▲' : '▼'}
+          </button>
+        ))}
+      </span>
+      {steps ? (
+        <span className="substatus"><SubtaskIcon status={sub.status} /></span>
+      ) : (
+        <button
+          className="icon substatus"
+          title={`${STATUS_LABELS[sub.status]}: click for ${STATUS_LABELS[nextStatus(sub.status)].toLowerCase()}`}
+          aria-label={`${sub.key}: ${STATUS_LABELS[sub.status]}`}
+          onClick={() => mag.setSubtaskStatus(sub.id, nextStatus(sub.status))}
+        >
+          <SubtaskIcon status={sub.status} />
+        </button>
+      )}
+      <span className="key">{sub.key}</span>
+      {editing ? (
+        <form className="subedit" onSubmit={(e) => { e.preventDefault(); save() }} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Subtask title" />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional, one line)" aria-label="Subtask note" />
+          {steps && <label className="check small"><input type="checkbox" checked={manual} onChange={(e) => setManual(e.target.checked)} />start manually</label>}
+          <button type="submit" className="primary">Save</button>
+          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+        </form>
+      ) : (
+        <>
+          <div className="subtitle" onDoubleClick={edit}>
+            <div className="subname">{sub.title}</div>
+            {sub.description && <div className="muted small">{sub.description}</div>}
+          </div>
+          <span className="subextra">
+            {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
+            {repos && <span className="muted small" title="Repositories the step changes; only they get a worktree">{repos.length ? repos.join(', ') : 'no code'}</span>}
+            {steps && <PrPills prs={taskPrs(sub)} />}
+            {editable && <button className="link small" onClick={edit}>Edit</button>}
+          </span>
+        </>
+      )}
+    </div>
   )
 }

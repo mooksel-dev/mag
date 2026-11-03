@@ -6,8 +6,6 @@ import {
   findingCounts,
   findingsByLevel,
   prRepoName,
-  projectReviews,
-  reviewLine,
   reviewRunning,
   setOf,
   type PrVerdict,
@@ -22,7 +20,7 @@ import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ago } from './format'
-import { TicketLinks, useNow } from './Tasks'
+import { TicketLinks } from './Tasks'
 
 const mag = window.mag
 
@@ -32,80 +30,6 @@ const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending:
 
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
 const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'].includes(f.level ?? 'should_fix')
-
-/**
- * The Reviews tab (reviews-ahent-reviuit-pr-timeitiv.2): on the left a field for a PR link and the user's reviews (no
- * list of PRs waiting for review: reviews-prybraty-spysok-pr-i.1); on the right the review open. A review is a work of
- * its own, owned by a project topic; nothing goes to GitHub without the user's button.
- */
-export function ReviewsPage({ project, state, reviewId, onOpenReview, onOpenTopic, onOpenKey }: {
-  project: Project
-  state: AppState
-  /** The review open on the right. */
-  reviewId: string | null
-  onOpenReview: (id: string | null) => void
-  /** Show the topic in the chat aside. */
-  onOpenTopic: (id: string) => void
-  onOpenKey: (key: string) => void
-}) {
-  const now = useNow(15_000)
-  const tasks = state.tasks.filter((t) => t.projectId === project.id)
-  const reviews = projectReviews(tasks)
-  const [error, setError] = useState<string | null>(null)
-  const [starting, setStarting] = useState<string | null>(null)
-  const start = (url: string) => {
-    setError(null)
-    setStarting(url)
-    mag.startReview(project.id, url).then(
-      (r) => {
-        setStarting(null)
-        if ('error' in r) return setError(r.error)
-        onOpenReview(r.taskId)
-        onOpenTopic(r.sessionId)
-      },
-      (e) => (setStarting(null), setError(String((e as Error).message ?? e))),
-    )
-  }
-  const open = reviews.find((r) => r.id === reviewId)
-  return (
-    <section className="page reviews">
-      <div className="reviewlist">
-        <div className="tasksbar">
-          <h1>Reviews</h1>
-        </div>
-        <PasteLink busy={!!starting} onReview={start} />
-        {error && <div className="banner">{error}</div>}
-        {reviews.length > 0 ? (
-          reviews.map((w) => (
-            <div key={w.id} className={`reviewrow${w.id === reviewId ? ' on' : ''}`} role="button" tabIndex={0} onClick={() => onOpenReview(w.id)} onKeyDown={(e) => e.key === 'Enter' && onOpenReview(w.id)}>
-              <div className="grow">
-                <div className="title">{w.title}</div>
-                <div className="muted small">{w.prReview && `@${w.prReview.pr.author} · `}{reviewLine(w, state.sessions)} · {ago(w.updatedAt, now)}</div>
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="muted small">No reviews yet.</p>
-        )}
-      </div>
-      {open ? (
-        <ReviewView key={open.id} work={open} project={project} state={state} now={now} onOpenTopic={onOpenTopic} onOpenKey={onOpenKey} onDeleted={() => onOpenReview(null)} />
-      ) : (
-        <p className="muted reviewempty">Paste a PR link, or ask in chat: an agent reads the PR and its ticket, draws the fact, and checks it against the problem and the project's agreements, with findings by level. Nothing goes to GitHub without your button.</p>
-      )}
-    </section>
-  )
-}
-
-function PasteLink({ busy, onReview }: { busy: boolean; onReview: (url: string) => void }) {
-  const [url, setUrl] = useState('')
-  return (
-    <form className="reviewpaste" onSubmit={(e) => (e.preventDefault(), url.trim() && onReview(url.trim()))}>
-      <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Paste a PR link…" aria-label="PR link" />
-      <button type="submit" className="primary small" disabled={busy || !url.trim()}>Review</button>
-    </form>
-  )
-}
 
 /** The CI checks of the PR, from GitHub when the page opens. */
 function Checks({ work }: { work: Task }) {
@@ -144,13 +68,15 @@ function NodeLink({ node }: { node: string }) {
   return <button className="link small" title="Open the diagram" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: id })}>{node.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ⧉</button>
 }
 
-/** A review's page: the PR, what the agent understood, its fact, CI and the findings by level. */
-function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey, onDeleted }: {
+/**
+ * A review's page in the artifact pane (ux-odna-rozmova-na-robotu.2): the PR, what the agent understood, its fact, CI
+ * and the findings by level. Its topic is the conversation beside it.
+ */
+export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: {
   work: Task
   project: Project
   state: AppState
   now: number
-  onOpenTopic: (id: string) => void
   onOpenKey: (key: string) => void
   /** The review is gone: the pane clears. */
   onDeleted: () => void
@@ -169,7 +95,6 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey, onDelet
   const fact = factRoot ? setOf(factRoot, diagrams) : []
   const rest = diagrams.filter((d) => !fact.includes(d))
   const diagramsKey = diagrams.map((d) => `${d.id}@${d.version}`).join(',')
-  const owner = state.sessions.find((s) => s.id === work.ownerSessionId)
   const act = (f: () => Promise<unknown>) => () => {
     setError(null)
     f().catch((e) => setError(String((e as Error).message ?? e)))
@@ -193,8 +118,7 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey, onDelet
       {error && <div className="banner">{error}</div>}
       {work.needsInput && <div className="banner">{work.needsInput}</div>}
       <div className="taskrow">
-        {owner && <button onClick={() => onOpenTopic(owner.id)}>Discuss in chat {running && <span className="dot inline" />}</button>}
-        <button disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={act(() => mag.reviewAgain(work.id).then(onOpenTopic))}>
+        <button disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={act(() => mag.reviewAgain(work.id))}>
           {work.status === 'in_progress' ? 'Review again' : 'Reopen review'}
         </button>
         {work.status === 'in_progress' && <button onClick={act(() => mag.closeReview(work.id))}>Close review</button>}
@@ -216,7 +140,6 @@ function ReviewView({ work, project, state, now, onOpenTopic, onOpenKey, onDelet
           {r.pr.repo} is not one of the project's repositories: mag reads the PR from GitHub, and its fact has modules by folder, without the project architecture.{' '}
           <button className="small" disabled={running} title="Pick a checkout of the repository: it joins the project, and the review looks again with its architecture" onClick={act(() => mag.connectReviewRepo(work.id).then((c) => {
             if (c && 'error' in c) throw new Error(c.error)
-            if (c) onOpenTopic(c.sessionId)
           }))}>Connect repo</button>
         </div>
       )}

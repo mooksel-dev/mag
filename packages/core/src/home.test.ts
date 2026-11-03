@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, openWorkCount, pipelineCounts, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -149,24 +149,6 @@ test('inbox: pending approvals from task sessions and chats come first, one per 
   )
 })
 
-test('pipelineCounts: top-level only, done in the last 7 days', () => {
-  const now = 100 * 24 * 3600 * 1000
-  const day = 24 * 3600 * 1000
-  const tasks = [
-    task('a', 'planning'),
-    task('b', 'planning'),
-    task('d', 'ready'),
-    task('e', 'ready'),
-    task('f', 'in_progress'),
-    sub('fs', 'f', 'todo', 0),
-    task('g', 'canceled'),
-    task('h', 'done', 0, { updatedAt: now - 2 * day }),
-    task('i', 'done', 0, { updatedAt: now - 8 * day }),
-    sub('hs', 'h', 'done', 0),
-  ]
-  assert.deepEqual(pipelineCounts(tasks, now), { planning: 2, ready: 2, in_progress: 1, done7d: 1 })
-})
-
 test('runningAgents: running sessions of any role and project', () => {
   const sessions = [session('t1', 'developer', 'running'), session('t2', 'groomer', 'running'), session('t3', 'developer', 'idle'), session('t4', 'developer', 'error'), { ...session('c', 'chat', 'running'), projectId: 'q', taskId: null }]
   assert.deepEqual(runningAgents(sessions).map((s) => s.id), ['t1-developer', 't2-groomer', 'c-chat'])
@@ -205,7 +187,6 @@ test('workSections: works by state, no backlog, priority or archive (T-55.7)', (
   const s = workSections(tasks)
   const k = (l: Task[]) => l.map((t) => t.id)
   assert.deepEqual([k(s.inProgress), k(s.ready), k(s.planning), k(s.finished)], [['run'], ['r1', 'r2'], ['p1', 'p2'], ['c1', 'd1', 'd2']])
-  assert.equal(openWorkCount(tasks), 5, 'not finished, steps left out')
 })
 
 test('taskChangeEvents: a done work back in planning is reopened (T-55.6)', () => {

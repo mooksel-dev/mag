@@ -7,7 +7,7 @@ interface Props {
   /** Shown in the card and the report: "Plan", "Task T-12", "Project chat". */
   screen: string
   appVersion?: string
-  /** Leave the broken screen; without it there is no Back to Home button. */
+  /** Leave the broken screen; without it there is no Back button. */
   onHome?: () => void
   children: ReactNode
 }
@@ -50,7 +50,7 @@ export class ErrorBoundary extends Component<Props, { crash: Crash | null; copie
           <div className="crashactions">
             <button className="primary" onClick={copy}>{copied ? 'Copied' : 'Copy report'}</button>
             <button onClick={() => location.reload()}>Reload</button>
-            {onHome && <button onClick={() => { this.setState({ crash: null }); onHome() }}>Back to Home</button>}
+            {onHome && <button onClick={() => { this.setState({ crash: null }); onHome() }}>Back</button>}
             <button className="link small" onClick={() => mag.openLogs()}>Open logs folder</button>
           </div>
         </div>
