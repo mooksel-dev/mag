@@ -7,6 +7,7 @@ import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReadyText, reviewState, type FindingLevel, type PrReview } from './pr-review.ts'
+import type { ReviewReport } from './review-report.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -16,6 +17,7 @@ export * from './inventory.ts'
 export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
+export * from './review-report.ts'
 export * from './work-list.ts'
 
 /** review: a review of a teammate's PR (see PrReview); no steps, a work of the work list of its own. */
@@ -497,7 +499,10 @@ export interface ReviewFinding {
 /** The first review of a step's PRs, by an agent (T-55.1): a fork of the work's owner session, else a fresh reviewer. */
 export interface AgentReview {
   verdict: ReviewVerdict
+  /** The findings to act on; with a report, derived from it (reportFindings). */
   findings: ReviewFinding[]
+  /** The answers to the review's questions (review-v2-questions-first-direction.1); missing on older reviews. */
+  report?: ReviewReport
   /** Reviews in a row that asked for changes, this one included; 1 after a merge or look. */
   round: number
   /** The PR heads it covered: repository path → head commit. */

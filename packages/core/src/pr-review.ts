@@ -5,6 +5,7 @@
 // Nothing goes to GitHub without the user's button.
 
 import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
+import { reportLine, type ChecksVerdict, type ReviewReport } from './review-report.ts'
 
 /** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit. */
 export type FindingLevel = 'blocker' | 'should_fix' | 'question' | 'nit'
@@ -50,7 +51,13 @@ export interface PrReview {
   approach: string
   /** null until the agent has reviewed. */
   verdict: PrVerdict | null
+  /** The findings the user picks to publish; with a report, derived from it (reportFindings). */
   findings: ReviewFinding[]
+  /**
+   * The answers to the review's questions (review-v2-questions-first-direction.1): direction (the user's call), problem,
+   * conventions, risks, questions, changes; verdict is its checks verdict. Missing on older reviews: they show as before.
+   */
+  report?: ReviewReport
   /** The commit it reviewed; a newer head of the PR needs another look. null until it has reviewed. */
   head: string | null
   /** Published to GitHub by the user's button. */
@@ -115,7 +122,13 @@ export function reviewReady(task: Pick<Task, 'prReview'>): boolean {
 
 /** The line in Needs you once a review is ready: "Review ready: Request changes · 2 blockers". */
 export function reviewReadyText(review: PrReview): string {
+  if (review.report) return `Review ready: ${reportLine(review.report)}`
   return `Review ready: ${review.verdict ? PR_VERDICT_LABELS[review.verdict] : '—'} · ${findingCounts(review.findings)}`
+}
+
+/** The verdict a PR review keeps for GitHub from a report's checks verdict: look is a comment. */
+export function prVerdictOf(checks: ChecksVerdict): PrVerdict {
+  return checks === 'look' ? 'comment' : checks
 }
 
 /** The owner topic of a review is in a turn. */
@@ -145,7 +158,7 @@ export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'need
 /** A review's line in a list: its state with its detail, "Request changes · 2 blockers", "the agent is reviewing…". */
 export function reviewLine(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): string {
   const r = task.prReview
-  const verdict = r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
+  const verdict = r?.report ? reportLine(r.report) : r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
   switch (reviewState(task, sessions)) {
     case 'closed':
       return 'closed'

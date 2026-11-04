@@ -269,6 +269,59 @@ const FINDING = {
   },
 }
 
+/** A claim of a review report: text, its source and what it cites. checked is mag's to give. */
+const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => ({
+  type: 'object',
+  required: ['text', 'cites', ...required],
+  properties: {
+    text: { type: 'string' },
+    source: { type: 'string', enum: ['agent', 'yours', 'question', 'rule'], description: "agent: your reading; yours: the user's own words; question; rule: a project rule fails. mag gives checked." },
+    cites: { type: 'array', items: { type: 'string' }, description: 'Inventory unit ids or file:line; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
+    view: { type: 'string', description: 'The diagram of the review\'s set that shows it: canvas:<id>#<node>.' },
+    ...extra,
+  },
+})
+
+/** The review report (review-v2-questions-first-direction.1): answers to fixed questions; mag checks it before it stores it. */
+const REPORT = {
+  type: 'object',
+  description: 'The answers to the review\'s questions, as the playbook\'s report says.',
+  required: ['direction', 'problem', 'conventions', 'risks', 'questions', 'changes', 'checks'],
+  properties: {
+    direction: {
+      type: 'object',
+      description: 'The design decision(s) the change makes and its options; never a verdict on it.',
+      required: ['decisions', 'options', 'facts', 'references'],
+      properties: {
+        decisions: { type: 'array', items: claim(), description: 'One sentence each.' },
+        options: {
+          type: 'array',
+          description: '2–4 (a step: the plan\'s, 1–4); exactly one with pr: true, the change\'s own.',
+          items: { type: 'object', required: ['name', 'tradeoffs'], properties: { name: { type: 'string' }, tradeoffs: { type: 'string' }, pr: { type: 'boolean' } } },
+        },
+        facts: { type: 'array', items: claim(), description: 'Mechanical facts about the change\'s option, citing units.' },
+        references: { type: 'array', items: claim(), description: 'Notes, ADRs, CLAUDE.md rules, earlier decisions of the user, PR threads.' },
+      },
+    },
+    problem: { type: 'array', items: claim({ criterion: { type: 'string' }, status: { type: 'string', enum: ['solved', 'partly', 'not'] } }, ['criterion', 'status']) },
+    conventions: { type: 'array', items: claim({ rule: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail'] } }, ['rule', 'status']) },
+    risks: {
+      type: 'array',
+      items: claim(
+        { level: { type: 'string', enum: ['high', 'medium', 'low'] }, kind: { type: 'string', enum: ['bug', 'data', 'ops', 'security', 'privacy'] }, mechanism: { type: 'string', description: 'How it goes wrong.' } },
+        ['level', 'kind', 'mechanism'],
+      ),
+    },
+    questions: { type: 'array', items: claim(), description: 'To the author.' },
+    changes: {
+      type: 'array',
+      description: 'The inventory in 2–6 changes by importance; every unit in exactly one; routine ones in one row, last.',
+      items: { type: 'object', required: ['title', 'why', 'units'], properties: { title: { type: 'string' }, why: { type: 'string' }, units: { type: 'array', items: { type: 'string' } }, routine: { type: 'boolean' } } },
+    },
+    checks: { type: 'string', enum: ['request_changes', 'look', 'approve'], description: 'From problem, conventions and risks only.' },
+  },
+}
+
 export const TOOL_DEFS = [
   {
     name: 'get_task',
@@ -497,30 +550,31 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'only',
     description:
-      'Reviewer only: your verdict on the PRs of the step under review, once per review. changes: the developer must fix the findings first (they go to the developer, not GitHub); merge: ready, nothing for the user to check; look: the user should decide or check what the findings say.',
+      'Reviewer only: your review of the PRs of the step under review, once per review: the report (mag checks it against the inventory and derives the findings and the verdict from its checks: request_changes → changes, look → look, approve → merge). changes: the findings go to the developer, not GitHub; merge: ready, nothing for the user to check; look: the user should decide or check something. Without a report (older form): verdict and findings.',
     inputSchema: {
       type: 'object',
       properties: {
-        verdict: { type: 'string', enum: ['changes', 'merge', 'look'] },
-        findings: { type: 'array', description: 'One finding per item, each with its level; none for a clean merge.', items: FINDING },
+        report: REPORT,
+        verdict: { type: 'string', enum: ['changes', 'merge', 'look'], description: 'Only without a report; with one it must match its checks.' },
+        findings: { type: 'array', description: 'Only without a report: one finding per item, each with its level; none for a clean merge.', items: FINDING },
       },
-      required: ['verdict', 'findings'],
     },
   },
   {
     name: 'set_pr_review',
     scope: 'task',
     description:
-      "The topic that owns a review of a teammate's PR: record it, once you have the verdict and again when it changes. It shows in the review's pane beside its conversation; nothing goes to GitHub (the user publishes the findings they pick).",
+      "The topic that owns a review of a teammate's PR: record it, once you have the report and again when it changes. mag checks the report against the inventory, takes its checks as the verdict and derives the findings the user may publish. It shows in the review's pane beside its conversation; nothing goes to GitHub. Without a report (older form): verdict and findings.",
     inputSchema: {
       type: 'object',
       properties: {
         problem: { type: 'string', description: 'What the PR fixes and why it is real, with evidence (ticket, code path, logs); short.' },
-        approach: { type: 'string', description: 'How the PR solves the problem and whether it does; an alternative only when it does not; short.' },
-        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'] },
-        findings: { type: 'array', description: 'One finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
+        approach: { type: 'string', description: 'How the PR solves the problem and whether it does; short.' },
+        report: REPORT,
+        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'], description: 'Only without a report.' },
+        findings: { type: 'array', description: 'Only without a report: one finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
       },
-      required: ['problem', 'approach', 'verdict', 'findings'],
+      required: ['problem', 'approach'],
     },
   },
   {

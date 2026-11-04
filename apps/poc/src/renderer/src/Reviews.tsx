@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   FINDING_LEVEL_LABELS,
   PR_VERDICTS,
@@ -8,6 +8,7 @@ import {
   prRepoName,
   reviewRunning,
   setOf,
+  type PrReview,
   type PrVerdict,
   type Project,
   type ReviewFinding,
@@ -19,6 +20,7 @@ import { DIAGRAM_NAMES } from './diagrams/DiagramView'
 import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
+import { ReportView } from './ReportView'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
 
@@ -82,6 +84,8 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
   onDeleted: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
+  // The diagram of the fact set a claim of the report opened (its evidence view).
+  const [evidence, setEvidence] = useState<string | null>(null)
   const r = work.prReview
   // What the user publishes; a new review starts from its own picks.
   const [picks, setPicks] = useState<Set<number>>(new Set())
@@ -101,13 +105,57 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
   }
   if (!r) return <p className="muted">This review has no PR.</p>
   const repo = prRepoName(project, r.pr)
+  const diffSection = (
+    <>
+      {fact.length > 0 && <DiffSetView key={fact[0].id} set={fact} step={work} findings={r.findings} />}
+      {rest.length > 0 && (
+        <div className="difflistrows">
+          {rest.map((d) => (
+            <div key={d.id} role="button" tabIndex={0} className="diffrow" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: d.id })} onKeyDown={(e) => e.key === 'Enter' && mag.openWindow({ kind: 'canvas', canvasId: d.id })}>
+              <span className="type">{DIAGRAM_NAMES[d.diagram.type]}</span>
+              <span className="title">{d.title}</span>
+              <span className="muted small">v{d.version}</span>
+              <span className="link">⧉</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <FactPanel step={work} diagramsKey={diagramsKey} />
+    </>
+  )
+  const findingsSection = (
+    <section>
+      <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}{r.report ? ' · from the report, to publish' : ''}</span>}</h2>
+      {r.findings.length ? (
+        findingsByLevel(r.findings).map(({ level, findings }) =>
+          findings.map((f, i) => (
+            <div key={`${level}${i}`} className="finding">
+              {r.verdict && (
+                <input type="checkbox" title="Publish this finding" aria-label="Publish this finding" checked={picks.has(r.findings.indexOf(f))} onChange={() => toggle(r.findings.indexOf(f))} />
+              )}
+              <span className={`pill ${LEVEL_PILLS[level]}`}>{FINDING_LEVEL_LABELS[level]}</span>
+              <div className="grow">
+                <div>{f.text}</div>
+                <div className="small">
+                  {f.where && <code>{f.where}</code>} {f.node && <NodeLink node={f.node} />}
+                </div>
+              </div>
+            </div>
+          )),
+        )
+      ) : (
+        <p className="muted small">{r.verdict ? 'No findings.' : 'None yet.'}</p>
+      )}
+      {r.verdict && <Publish work={work} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
+    </section>
+  )
   return (
     <div className="reviewview">
       <div className="taskrow">
         <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(r.pr.url)}>{repo}#{r.pr.number} ↗</button>
         <span className="muted small">@{r.pr.author} · into {r.pr.base} · {r.head ? `reviewed at ${r.head.slice(0, 7)}` : 'not reviewed yet'}{r.at ? ` · ${ago(r.at, now)}` : ''}</span>
         <div className="grow" />
-        {r.verdict && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
+        {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
       </div>
       <h1>{work.title.replace(/^[^:]*#\d+: /, '')}</h1>
       <div className="taskrow">
@@ -143,7 +191,40 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
           }))}>Connect repo</button>
         </div>
       )}
-      {running && !r.verdict && <p className="muted">The agent is reviewing: PR and ticket, problem, fact, findings.</p>}
+      {running && !r.verdict && <p className="muted">The agent is reviewing: fact, direction and its options, problem, conventions, risks.</p>}
+      {r.report ? (
+        <ReportView report={r.report} fact={work.fact} kind="pr" onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}>
+          {evidence && fact.some((d) => d.id === evidence) && (
+            <section>
+              <div className="cardhead">
+                <h2>Evidence</h2>
+                <button className="link small" onClick={() => setEvidence(null)}>close</button>
+              </div>
+              <DiffSetView key={evidence} set={fact} current={evidence} step={work} findings={r.findings} />
+            </section>
+          )}
+          {findingsSection}
+          <details className="reportfold">
+            <summary>Problem and approach as the agent read them</summary>
+            {r.problem && <Markdown text={r.problem} onOpenTask={onOpenKey} />}
+            {r.approach && <Markdown text={r.approach} onOpenTask={onOpenKey} />}
+          </details>
+          <details className="reportfold">
+            <summary>Inventory and fact diagrams</summary>
+            {diffSection}
+          </details>
+        </ReportView>
+      ) : (
+        <LegacyReviewView review={r} onOpenKey={onOpenKey} diff={diffSection} findings={findingsSection} />
+      )}
+    </div>
+  )
+}
+
+/** A review recorded before the report (review-v2-questions-first-direction.1): kept readable, in the layout it had. */
+function LegacyReviewView({ review: r, onOpenKey, diff, findings }: { review: PrReview; onOpenKey: (key: string) => void; diff: ReactNode; findings: ReactNode }) {
+  return (
+    <>
       {r.problem && (
         <section>
           <h2>Problem</h2>
@@ -158,46 +239,10 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
       )}
       <section>
         <h2>Diff</h2>
-        {fact.length > 0 && <DiffSetView key={fact[0].id} set={fact} step={work} findings={r.findings} />}
-        {rest.length > 0 && (
-          <div className="difflistrows">
-            {rest.map((d) => (
-              <div key={d.id} role="button" tabIndex={0} className="diffrow" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: d.id })} onKeyDown={(e) => e.key === 'Enter' && mag.openWindow({ kind: 'canvas', canvasId: d.id })}>
-                <span className="type">{DIAGRAM_NAMES[d.diagram.type]}</span>
-                <span className="title">{d.title}</span>
-                <span className="muted small">v{d.version}</span>
-                <span className="link">⧉</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <FactPanel step={work} diagramsKey={diagramsKey} />
+        {diff}
       </section>
-      <section>
-        <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}</span>}</h2>
-        {r.findings.length ? (
-          findingsByLevel(r.findings).map(({ level, findings }) =>
-            findings.map((f, i) => (
-              <div key={`${level}${i}`} className="finding">
-                {r.verdict && (
-                  <input type="checkbox" title="Publish this finding" aria-label="Publish this finding" checked={picks.has(r.findings.indexOf(f))} onChange={() => toggle(r.findings.indexOf(f))} />
-                )}
-                <span className={`pill ${LEVEL_PILLS[level]}`}>{FINDING_LEVEL_LABELS[level]}</span>
-                <div className="grow">
-                  <div>{f.text}</div>
-                  <div className="small">
-                    {f.where && <code>{f.where}</code>} {f.node && <NodeLink node={f.node} />}
-                  </div>
-                </div>
-              </div>
-            )),
-          )
-        ) : (
-          <p className="muted small">{r.verdict ? 'No findings.' : 'None yet.'}</p>
-        )}
-        {r.verdict && <Publish work={work} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
-      </section>
-    </div>
+      {findings}
+    </>
   )
 }
 

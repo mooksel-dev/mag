@@ -51,6 +51,27 @@ const CODE_CHECKS = `Checks of the code, each a finding when it fails:
 - Read but unused: a value read and checked, then not used (a sign of a mixed-up argument, e.g. a document found by
   one id, its content read by another).`
 
+/**
+ * The report every review records (review-v2-questions-first-direction.1): fixed questions, claims with sources,
+ * changes, a checks verdict from Problem, Conventions and Risks only. Shared by the review of a step and of a PR.
+ */
+const REPORT = `The report answers fixed questions; every item is a claim: text, source and cites (inventory unit ids or
+file:line; a PR comment, decision:<id> or a note for the user's words), view (canvas:<id>#<node> of the review's set)
+when a diagram shows it.
+- source: agent (your reading, with code refs), yours (the user's own words: PR comments, notes, decisions), question,
+  rule (a project rule fails). mag gives checked itself to a claim whose cites are all units it verified; never give
+  it.
+- direction: decisions, options (name, tradeoffs, pr: true on the change's own), facts, references. No verdict.
+- problem: { criterion, status: solved | partly | not, text, source, cites }.
+- conventions: { rule, status: pass | fail, text, source, cites }.
+- risks: { level: high | medium | low, kind: bug | data | ops | security | privacy, text, mechanism, source, cites }.
+- questions: to the author, { text, cites }.
+- changes: the inventory grouped into 2–6 changes by importance, each { title, why it matters, units }; routine
+  ones (wiring, renames, imports) in one row with routine: true, last. Every unit in exactly one change.
+- checks: request_changes with a failed rule, a criterion not solved or a high risk; look with one partly solved or
+  a medium risk; approve when you would merge it yourself. Direction never counts.
+mag checks the report before it stores it and answers what to fix.`
+
 export const DEFAULT_PLAYBOOK: Playbook = {
   stance: `- Lead the work. You hold the problem, the options and the plan; the user reviews, helps decide and approves. End
   every reply with your next move, and make it yourself unless it needs the user.
@@ -119,35 +140,42 @@ Something worth doing outside this step (a bug, a smell, a missed case) is not f
 what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
 2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
-3. Check them against the decisions and this step's plan: does it do what was agreed, and nothing outside the step?
-   Modules, layers and interfaces as in the diagrams? Bugs, missing tests, risky changes?
-4. Check the code, as the checks of the code below say.
-5. Something worth doing that is outside the step and need not block it: add_idea, not a finding.
+3. Answer the review's questions in a report (set_review), as the report below says. Direction is the approved plan:
+   its decision and the chosen option (pr: true; the rejected ones from §Options), cited as yours from §Decisions;
+   facts say where the PRs leave the plan. Problem: each item of the step's plan and the doc's acceptance → solved /
+   partly / not. Conventions: the decisions, the project's rules, modules, layers and interfaces as in the diagrams.
+   Risks: bugs, missing tests, risky changes, and the checks of the code below.
+4. Something worth doing that is outside the step and need not block it: add_idea, not a claim.
+${REPORT}
 ${CODE_CHECKS}`,
   prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
-have done it: no diagram of your own design and no list of differences from it.
-1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
-   comments with gh api, reading only) and its diff (gh pr diff, or git in the repository).
-2. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it with
-   add_ticket. Without access to the tracker, say what is missing and work from the description.
-3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
-   framing or a problem that is not real.
-4. Fact: get_pr_changes lists the PR's hunks with their ids; write its change inventory (set_inventory), as the fact
-   section says.
-5. Check the fact and the code:
-   - Does the change solve the problem, all of it, and nothing it was not asked to do?
-   - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
-     (CLAUDE.md, AGENTS.md, README, the code around it), the architecture rules (layers, modules, interfaces)?
-   - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests, and the checks
-     of the code below.
-   Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
-6. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
-7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
-   question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
-   diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and
-   whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
-   otherwise.
+have done it. Whether its direction is right is the user's call: prepare it, never decide it.
+1. Fact first: get_pr_changes lists the PR's hunks with their ids; read its diff (gh pr diff, or git in the
+   repository) and write its change inventory (set_inventory), as the fact section says.
+2. Direction, before you read the author's description or the PR's comments: from the inventory and the code alone,
+   name the design decision(s) the change makes, one sentence each, and work out 2–4 options for it on your own, the
+   PR's design one of them (pr: true), each with one line of trade-offs. Then the mechanical facts of the PR's option:
+   how many modules learn the new concept, how many changes hit existing flows, new rule violations, each citing
+   units. No verdict on the direction, no "acceptable", no recommendation: the user decides.
+3. Only now read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view
+   --comments; review comments with gh api, reading only). Add references: the project's notes and decisions, ADRs,
+   CLAUDE.md / AGENTS.md rules, earlier decisions of the user, PR threads; the user's own words are yours.
+4. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it
+   with add_ticket. Without access to the tracker, say what is missing and work from the description.
+5. Problem: what the PR fixes and why it is real, with evidence (problem argument). In the report, each acceptance
+   criterion of the ticket → solved / partly / not, with evidence. Call out a wrong framing or a problem that is not
+   real.
+6. Conventions: each relevant rule of the project (decisions and notes, the playbook, the repository's conventions in
+   CLAUDE.md, AGENTS.md, README and the code around it, the architecture's layers, modules and interfaces) → pass /
+   fail, a failed one citing the offending edges or lines.
+7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code below;
+   each with level, kind, mechanism and where.
+8. CI: gh pr checks. Tests are CI's, never run them. A failing check is a high risk (kind ops) citing its link;
+   pending ones are said.
+9. Record it with set_pr_review: problem, approach (how the PR solves the problem and whether it does, in a few lines)
+   and the report, as the report below says.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
+${REPORT}
 ${CODE_CHECKS}`,
   fact: `The fact is the change inventory of the PR: write it with set_inventory from the hunk listing (get_pr_changes,
 or the review's message) and the diff. mag checks it against the hunks and generates the fact's Component and Data

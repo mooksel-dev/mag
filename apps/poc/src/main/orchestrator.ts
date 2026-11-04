@@ -1,7 +1,7 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -210,9 +210,9 @@ Then review following the project's playbook:
 ${playbookOf(project).review}
 The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
 ${playbookOf(project).fact}
-mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a finding that says why it is right or what is wrong, or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
+mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
 ${fact}
-Call set_review once. verdict: changes = the developer must fix something before the user looks (the findings go to the developer, not to GitHub); merge = ready, nothing the user has to check; look = the user should decide or check something. findings: one per item, with where (file:line, module or PR) when it applies; none for a clean merge.
+Call set_review once with the report. mag checks it against your inventory and takes the verdict from its checks: request_changes = changes, the developer must fix something before the user looks (the findings mag derives from the report go to the developer, not to GitHub); approve = merge, ready, nothing the user has to check; look = the user should decide or check something.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
 
 ${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
@@ -234,7 +234,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
   const newer = r.head && r.head !== pr.head
   const sinceDiff = pr.outside ? `gh api -H "Accept: application/vnd.github.diff" repos/${pr.repo}/compare/${r.head}...${pr.head}` : `git diff ${r.head} ${pr.head}`
   const before = r.verdict
-    ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
+    ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
         newer
           ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact set and revise it where the new commits change it.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
           : 'Look again: whether each finding still holds; keep the fact set and revise it.'
@@ -245,14 +245,14 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     : `Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.`
   return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own its review ${work.key}. ${where}${before}
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
-Review it following the project's playbook:
+Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it.
 ${playbook.prReview}
 The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:
 ${playbook.fact}
 mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
 Changed files (mag):
 ${files}
-Call set_pr_review once you have the verdict (again whenever the user asks for more and it changes), then reply in a few lines: the verdict and the blockers.`
+Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide.`
 }
 
 /** What the developer is told when the agent review asks for changes. */
@@ -1147,15 +1147,17 @@ export class Orchestrator {
   }
 
   /** The reviewer's set_review: records the verdict of the review going on. Where it goes is decided when the run ends. */
-  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string {
+  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[], report?: ReviewReport): string {
     const pending = this.reviewing.get(stepId)
     const step = this.store.task(stepId)
     if (!pending) throw new Error(`No agent review of ${step.key} is going on`)
     // The threshold for "no need to look at the code" (T-58 Decision 5) is mag's, not the reviewer's; each revision of the fact set records it anew.
     const fact = step.fact
     if (verdict === 'merge' && fact?.blockers.length && JSON.stringify(fact.heads) === JSON.stringify(pending.heads))
-      throw new Error(`Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nGive look (with these as findings) or changes.`)
-    const review: AgentReview = { verdict, findings, round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
+      throw new Error(
+        `Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\n${report ? 'Give checks look (with these as risks) or request_changes.' : 'Give look (with these as findings) or changes.'}`,
+      )
+    const review: AgentReview = { verdict, findings, ...(report ? { report } : {}), round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })
     return reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) === 'developer'
@@ -1312,13 +1314,14 @@ export class Orchestrator {
   }
 
   /** The topic's set_pr_review: the review of the PR at the head mag gave it. Nothing goes to GitHub. */
-  setPrReview(workId: string, r: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string {
+  setPrReview(workId: string, r: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string {
     const work = this.store.task(workId)
     const prev = work.prReview
     if (!isReview(work) || !prev) throw new Error(`${work.key} is not a review of a PR`)
-    this.store.updateTask(workId, { prReview: { ...prev, ...r, head: prev.pr.head, at: Date.now() }, needsInput: null })
+    // A review recorded without a report drops the one before: it is the older form.
+    this.store.updateTask(workId, { prReview: { ...prev, ...r, report: r.report, head: prev.pr.head, at: Date.now() }, needsInput: null })
     const n = r.findings.length
-    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
+    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
     return 'Recorded: the user sees it on the review\'s pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.'
   }
 
