@@ -218,7 +218,7 @@ export function checksVerdict(report: Pick<ReviewReport, 'problem' | 'convention
  * What is wrong with a report against the review's inventory (empty: it may be stored): every claim cited; direction
  * with 2–4 options (a step's 1–4), exactly one the change's; 2–6 changes (fewer only with fewer units), every unit of
  * the inventory in exactly one change and no unknown unit; checks no milder than a failed rule, an unsolved criterion or
- * a high risk allow.
+ * a high risk allow, and no stricter than approve without a finding behind it.
  */
 export function checkReport(report: ReviewReport, inventory: ChangeInventory | null, kind: ReportKind = 'pr'): string[] {
   const errors: string[] = []
@@ -253,24 +253,20 @@ export function checkReport(report: ReviewReport, inventory: ChangeInventory | n
   if (derived === 'request_changes' && report.checks !== 'request_changes')
     errors.push(`checks: ${report.checks} with a failed rule, a not-solved criterion or a high risk; it is request_changes`)
   if (derived === 'look' && report.checks === 'approve') errors.push('checks: approve with a partly solved criterion or a medium risk; it is look at most')
+  if (report.checks !== 'approve' && !reportFindings(report).length)
+    errors.push(`checks: ${report.checks} with nothing behind it; give the risk, rule or question behind it, or approve`)
   return errors
 }
 
 /**
- * The report with mag's checked badge: an agent claim whose cites are all units of the inventory mag verified (the
- * units its hunks bear out). The agent cannot give it.
+ * The report with mag's checked badge: a mechanical fact of the direction (direction.facts) whose cites are all units
+ * of the inventory mag verified (the units its hunks bear out). mag checks that the units are there, not that a
+ * judgement is true, so every other claim keeps its source. The agent cannot give it.
  */
 export function markChecked(report: ReviewReport, verified: Iterable<string>): ReviewReport {
   const ok = new Set(verified)
-  const mark = <C extends Claim>(c: C): C => (c.source === 'agent' && c.cites.length && c.cites.every((x) => ok.has(x)) ? { ...c, source: 'checked' } : c)
-  const d = report.direction
-  return {
-    ...report,
-    direction: { ...d, decisions: d.decisions.map(mark), facts: d.facts.map(mark), references: d.references.map(mark) },
-    problem: report.problem.map(mark),
-    conventions: report.conventions.map(mark),
-    risks: report.risks.map(mark),
-  }
+  const mark = (c: Claim): Claim => (c.source === 'agent' && c.cites.length && c.cites.every((x) => ok.has(x)) ? { ...c, source: 'checked' } : c)
+  return { ...report, direction: { ...report.direction, facts: report.direction.facts.map(mark) } }
 }
 
 /** The step reviewer's routing verdict from the checks verdict: request_changes → changes, look → look, approve → merge. */

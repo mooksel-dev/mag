@@ -59,8 +59,8 @@ const REPORT = `The report answers fixed questions; every item is a claim: text,
 file:line; a PR comment, decision:<id> or a note for the user's words), view (canvas:<id>#<node> of the review's set)
 when a diagram shows it.
 - source: agent (your reading, with code refs), yours (the user's own words: PR comments, notes, decisions), question,
-  rule (a project rule fails). mag gives checked itself to a claim whose cites are all units it verified; never give
-  it.
+  rule (a project rule fails). mag gives checked itself to a mechanical fact of the direction whose cites are all
+  units it verified; never give it.
 - direction: decisions, options (name, tradeoffs, pr: true on the change's own), facts, references. No verdict.
 - problem: { criterion, status: solved | partly | not, text, source, cites }.
 - conventions: { rule, status: pass | fail, text, source, cites }.
@@ -70,6 +70,7 @@ when a diagram shows it.
   ones (wiring, renames, imports) in one row with routine: true, last. Every unit in exactly one change.
 - checks: request_changes with a failed rule, a criterion not solved or a high risk; look with one partly solved or
   a medium risk; approve when you would merge it yourself. Direction never counts.
+  request_changes or look always has a risk, rule, criterion or question behind it.
 mag checks the report before it stores it and answers what to fix.`
 
 export const DEFAULT_PLAYBOOK: Playbook = {

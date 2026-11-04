@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import {
   CHECKS_LABELS,
   reportCards,
@@ -60,6 +60,10 @@ export function ReportView({ report, fact, kind, onView, children }: {
   children?: ReactNode
 }) {
   const [routineOpen, setRoutineOpen] = useState(false)
+  // Ids of the cards, unique on the page (a Diff tab shows the reports of several steps): a strip chip scrolls to its card.
+  const at = useId()
+  const cardId = (key: string) => `${at}-${key}`
+  const toCard = (key: string) => document.getElementById(cardId(key))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   const d = report.direction
   const { rows, routine } = reportChanges(report)
   return (
@@ -67,13 +71,13 @@ export function ReportView({ report, fact, kind, onView, children }: {
       <div className="reportstrip">
         <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="From problem, conventions and risks only">Checks: {CHECKS_LABELS[report.checks]}</span>
         {reportStrip(report, fact, kind).map((c) => (
-          <span key={c.key} className={`stripchip tone-${c.tone}`}>
+          <button key={c.key} className={`stripchip tone-${c.tone}`} title={`Go to ${c.label}`} onClick={() => toCard(c.key === 'coverage' ? 'changes' : c.key)}>
             <span className="muted small">{c.label}</span> {c.value}
-          </span>
+          </button>
         ))}
       </div>
 
-      <section className="reportcard direction">
+      <section id={cardId('direction')} className="reportcard direction">
         <div className="cardhead">
           <h2>Direction</h2>
           <span className="pill violet">{kind === 'pr' ? 'Direction: your call' : 'The approved plan'}</span>
@@ -96,7 +100,7 @@ export function ReportView({ report, fact, kind, onView, children }: {
       </section>
 
       {reportCards(report).map((card) => (
-        <section key={card.key} className="reportcard">
+        <section key={card.key} id={cardId(card.key)} className="reportcard">
           <div className="cardhead">
             <h2>{card.title}</h2>
             <span className="muted small">{card.question}</span>
@@ -117,7 +121,7 @@ export function ReportView({ report, fact, kind, onView, children }: {
         </section>
       ))}
 
-      <section className="reportcard">
+      <section id={cardId('changes')} className="reportcard">
         <div className="cardhead">
           <h2>Changes</h2>
           <span className="muted small">by importance</span>

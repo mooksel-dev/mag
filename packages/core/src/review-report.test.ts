@@ -125,15 +125,24 @@ test('checksVerdict comes from problem, conventions and risks only', () => {
   assert.deepEqual([prVerdictOf('request_changes'), prVerdictOf('look'), prVerdictOf('approve')], ['request_changes', 'comment', 'approve'])
 })
 
-test('markChecked: an agent claim citing only verified units gets mag\'s badge; others keep theirs', () => {
+test('markChecked: only a mechanical fact citing only verified units gets mag\'s badge; judgements keep theirs', () => {
   const r = markChecked(synthetic(), ['u1', 'u2', 'u3'])
   assert.equal(r.direction.facts[0].source, 'checked')
-  assert.equal(r.direction.decisions[0].source, 'checked')
-  assert.equal(r.problem[0].source, 'checked')
-  assert.equal(r.problem[1].source, 'agent')
+  assert.equal(r.direction.decisions[0].source, 'agent')
+  assert.equal(r.problem[0].source, 'agent')
+  assert.equal(r.conventions[1].source, 'agent')
   assert.equal(r.conventions[0].source, 'rule')
   assert.equal(r.direction.references[0].source, 'yours')
   assert.equal(markChecked(synthetic(), ['u1']).direction.facts[0].source, 'agent')
+})
+
+test('checkReport: request_changes or look needs a finding behind it', () => {
+  const r = synthetic()
+  const clean = { ...r, problem: [r.problem[0]], conventions: [r.conventions[1]], risks: [], questions: [] }
+  assert.deepEqual(checkReport({ ...clean, checks: 'approve' }, inventory), [])
+  for (const checks of ['request_changes', 'look'] as const)
+    assert.ok(checkReport({ ...clean, checks }, inventory).some((e) => /nothing behind it; give the risk, rule or question behind it/.test(e)))
+  assert.deepEqual(checkReport({ ...clean, questions: r.questions, checks: 'look' }, inventory), [])
 })
 
 test('reportFindings: unsolved criteria, failed rules, risks and questions, most severe first, with where and node', () => {
