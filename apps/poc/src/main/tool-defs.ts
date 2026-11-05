@@ -212,7 +212,7 @@ const DIAGRAM = {
           module: { type: 'string', description: 'The module that owns it (an id of get_architecture), or the id of the outside system whose data it is (e.g. phalcon); entities are drawn by module.' },
           indexes: {
             type: 'array',
-            description: 'Its indexes and unique keys, changed ones marked; an upsert or "create if missing" rests on a unique one on its key.',
+            description: 'Its indexes and unique keys, changed ones marked, the unique key an upsert relies on included.',
             items: { type: 'object', required: ['fields'], properties: { fields: { type: 'array', items: { type: 'string' }, description: 'Fields of this entity, in order.' }, unique: { type: 'boolean' }, diff: DIFF } },
           },
           links: LINKS,
@@ -275,7 +275,7 @@ const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => 
   required: ['text', 'cites', ...required],
   properties: {
     text: { type: 'string' },
-    source: { type: 'string', enum: ['agent', 'yours', 'question', 'rule'], description: "agent: your reading; yours: the user's own words; question; rule: a project rule fails. mag gives checked to a mechanical fact of the direction whose cites are all verified units." },
+    source: { type: 'string', enum: ['agent', 'yours', 'question', 'rule'], description: "agent: your reading, with code refs; yours: the user's own words (PR comments, notes, decisions); question; rule: a project rule fails. mag itself gives checked to a mechanical fact of the direction whose cites are all units it verified; never give it." },
     cites: { type: 'array', items: { type: 'string' }, description: 'Inventory unit ids or file:line; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
     view: { type: 'string', description: 'The diagram of the review\'s set that shows it: canvas:<id>#<node>.' },
     ...extra,
@@ -285,7 +285,7 @@ const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => 
 /** The review report (review-v2-questions-first-direction.1): answers to fixed questions; mag checks it before it stores it. */
 const REPORT = {
   type: 'object',
-  description: 'The answers to the review\'s questions, as the playbook\'s report says.',
+  description: 'The answers to the review\'s fixed questions; every item is a claim with its source and cites.',
   required: ['direction', 'problem', 'conventions', 'risks', 'questions', 'changes', 'checks'],
   properties: {
     direction: {
@@ -296,7 +296,7 @@ const REPORT = {
         decisions: { type: 'array', items: claim(), description: 'One sentence each.' },
         options: {
           type: 'array',
-          description: 'Every sensible way to make the decision, as many as there really are (a step: the plan\'s); exactly one with pr: true, the change\'s own.',
+          description: 'Every sensible way to make the decision, as many as there really are (a step: the plan\'s, the rejected ones from §Options); exactly one with pr: true, the change\'s own.',
           items: { type: 'object', required: ['name', 'tradeoffs'], properties: { name: { type: 'string' }, tradeoffs: { type: 'string' }, pr: { type: 'boolean' } } },
         },
         only: { type: 'string', description: 'With a single option: why it is the only sensible one ("only one, because…").' },
@@ -318,6 +318,7 @@ const REPORT = {
     conventions: { type: 'array', items: claim({ rule: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail'] } }, ['rule', 'status']) },
     risks: {
       type: 'array',
+      description: 'Bugs, missing tests, risky changes and failed checks of the code. The level informs the user; it does not decide the verdict.',
       items: claim(
         { level: { type: 'string', enum: ['high', 'medium', 'low'] }, kind: { type: 'string', enum: ['bug', 'data', 'ops', 'security', 'privacy'] }, mechanism: { type: 'string', description: 'How it goes wrong.' } },
         ['level', 'kind', 'mechanism'],
@@ -326,13 +327,13 @@ const REPORT = {
     questions: { type: 'array', items: claim(), description: 'To the author.' },
     changes: {
       type: 'array',
-      description: 'The inventory grouped into changes by importance, as many as the change really has (a few is easiest to read); every unit in exactly one; routine ones in one row, last.',
+      description: 'The inventory grouped into changes by importance, as many as the change really has (a few is easiest to read), each with why it matters; every unit in exactly one; routine ones (wiring, renames, imports) in one row with routine: true, last.',
       items: { type: 'object', required: ['title', 'why', 'units'], properties: { title: { type: 'string' }, why: { type: 'string' }, units: { type: 'array', items: { type: 'string' } }, routine: { type: 'boolean' } } },
     },
     checks: {
       type: 'object',
       description:
-        'Your verdict on problem, conventions and risks, with one line of why; the direction never counts. request_changes needs something to fix (a criterion, rule, risk or question). mag keeps its own floor: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself.',
+        'Your verdict on problem, conventions and risks, with one line of why; the direction never counts. approve: you would merge it yourself; look: the user should decide or check something; request_changes: something must be fixed first, and it needs the criterion, rule, risk or question behind it. mag keeps its own floor where it has the facts: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so they need no risk of yours.',
       required: ['verdict', 'why'],
       properties: { verdict: { type: 'string', enum: ['request_changes', 'look', 'approve'] }, why: { type: 'string' } },
     },
@@ -528,7 +529,7 @@ export const TOOL_DEFS = [
             summary: { type: 'array', items: { type: 'string' }, description: '3–6 short bullets: what the change does, by meaning.' },
             units: {
               type: 'array',
-              description: 'One per change. method: every function or method added, removed or changed, public and private. model / field: types of data and their fields; stored only for persisted data. index: DB indexes and unique keys. dependency: a module starts or stops using another module or system. call: a call between modules added, removed or with changed arguments, one per target method. config / template: prompts, templates, config entries whose change alters behaviour, one per constant. Mocks and test helpers are never units; a rename is one unit; one name per unit, never "a, b" or "a / b".',
+              description: 'One per change. method: every function or method added, removed or changed, public and private. model / field: types of data and their fields; stored only for persisted data. index: DB indexes and unique keys. dependency: a module starts or stops using another module or system, not imports inside a module. call: a call between modules added, removed or with changed arguments, one per target method. config / template: prompts, templates, config entries whose change alters behaviour, one per constant. Mocks, fakes and test helpers are never units; a rename is one unit, change rename with from, never a del and an add; one name per unit, never "a, b" or "a / b".',
               items: {
                 type: 'object',
                 required: ['kind', 'module', 'name', 'change', 'hunks'],
@@ -540,20 +541,20 @@ export const TOOL_DEFS = [
                   name: { type: 'string', description: 'Copied from the diff. method / model: its name; field: "<model>.<field>"; index: its name; dependency: the module id or package used; call: "<target module id>#<method>" ("<package>#<func>" outside the project, with external); config: the constant, e.g. DEFAULT_PLAYBOOK.fact.' },
                   change: { type: 'string', enum: ['add', 'mod', 'del', 'rename'], description: 'call: add, del, or mod when its arguments change.' },
                   visibility: { type: 'string', enum: ['public', 'private'] },
-                  before: { type: 'string', description: 'The old signature (field type, definition; a call as the code made it), one line; none for add. Required for a changed method.' },
+                  before: { type: 'string', description: 'The old signature (field type, definition; a call as the code made it), one line; none for add. Required for a changed method, also when only its body changes.' },
                   after: { type: 'string', description: 'The new one; none for del. Required for a changed method.' },
                   from: { type: 'string', description: 'rename: the old name.' },
                   logic: { type: 'string', enum: ['none', 'trivial', 'nontrivial'], description: 'method: nontrivial when branches, loops, error handling, external calls or data access change; trivial for wiring, renames, one-liners; none when only the signature changes.' },
                   stored: { type: 'boolean', description: 'model / field: true only for persisted data (a table, collection, document, cache entry); never arguments, options or DTOs.' },
                   external: { type: 'boolean', description: 'call: its target is outside the project (a package, an outside system), no module of the architecture.' },
                   hunks: { type: 'array', items: { type: 'string' }, description: 'The blocks that change it, e.g. ["H3.1", "H4.2"]; not the other blocks of their hunks. "H3" stands for every block of H3.' },
-                  note: { type: 'string', description: 'One line: what changes in meaning; shown after the signature. Required for a changed method.' },
+                  note: { type: 'string', description: 'One line: what it does now or what changes in its meaning; shown after the signature. Required for a changed method.' },
                 },
               },
             },
             noise: {
               type: 'array',
-              description: 'Blocks of code that are no change of the design, with why: formatting, comments, generated code. Tests, docs and lock files need not be cited.',
+              description: 'Blocks of code that are no change of the design, with why: formatting, comments, generated code. Every block of changed code is in a unit or here. Tests, docs, styles and lock files need not be cited.',
               items: { type: 'object', required: ['hunks', 'reason'], properties: { hunks: { type: 'array', items: { type: 'string' } }, reason: { type: 'string' } } },
             },
           },
@@ -588,7 +589,7 @@ export const TOOL_DEFS = [
         problem: { type: 'string', description: 'What the PR fixes and why it is real, with evidence (ticket, code path, logs); short.' },
         approach: { type: 'string', description: 'How the PR solves the problem and whether it does; short.' },
         report: REPORT,
-        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'], description: 'v1 only.' },
+        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'], description: 'v1 only: request_changes with any blocker, approve when you would merge it yourself, comment otherwise.' },
         findings: { type: 'array', description: 'v1 only: one finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
       },
       required: ['problem', 'approach'],
@@ -882,7 +883,7 @@ export const TOOL_DEFS = [
     // The reviewer draws the fact set of its step only (T-57.4, T-58, povnyi-diff-nabir-pov-iazanykh.1).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (collections, tables, fields, indexes and unique keys; each entity with module, its owner, and a relation for each reference field; never arguments of calls, interfaces or clients). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Methods, calls and fields go one per line, never grouped with "/", "," or "+"; a changed one is a del line and an add line. Mocks, fakes and test-only types are never on a diagram. An interface is methods with signatures, not prose. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. data gives every field on its own line; a field moved to another entity is move with from "<entity>.<field>". For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind); a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A fact set (the reviewer\'s of its step, a review\'s of a teammate\'s PR) takes only sequence and flowchart diagrams: mag generates its Component and Data diagrams from the change inventory (set_inventory). Draw a scenario (participants with module ids: mag links it from those modules) or the logic of a method the inventory lists with logic nontrivial (flowchart with of "<module>#<method>", the last segment of its name), without role: it joins the fact set. The answer is mag\'s check of the fact: the inventory against the hunks, links, plan ↔ fact.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (its entities and relations say what belongs there). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Mocks, fakes and test-only types are never on a diagram. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind), so every changed module reaches the data, scenarios and method logic it takes part in; a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A fact set (the reviewer\'s of its step, a review\'s of a teammate\'s PR) takes only sequence and flowchart diagrams: mag generates its Component and Data diagrams from the change inventory (set_inventory). Draw a scenario (participants with module ids: mag links it from those modules) or the logic of a method the inventory lists with logic nontrivial (flowchart with of "<module>#<method>", the last segment of its name), without role: it joins the fact set. The answer is mag\'s check of the fact: the inventory against the hunks, links, plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {
