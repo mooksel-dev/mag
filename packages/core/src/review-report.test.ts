@@ -2,7 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkReport,
-  checksVerdict,
+  finalVerdict,
+  verdictFloor,
+  withFloor,
   decisionNote,
   decisionsBlock,
   directionCardText,
@@ -58,7 +60,7 @@ const raw = {
     { title: 'Handler reads the tenant', why: 'breaks the layer rule', units: ['u3'] },
     { title: 'Wiring', why: 'imports and names', units: ['u4'], routine: true },
   ],
-  checks: 'request_changes',
+  checks: { verdict: 'request_changes', why: 'custom domains break and a crafted host reaches another tenant' },
 }
 
 const synthetic = (): ReviewReport => {
@@ -75,15 +77,32 @@ test('normalizeReport reads every block; checked from the agent is read as agent
   assert.equal(r.conventions[1].source, 'agent')
   assert.equal(r.questions[0].source, 'question')
   assert.equal(r.direction.decisions[0].view, 'canvas:fact1#api')
+  assert.equal(r.checks, 'request_changes')
+  assert.equal(r.why, 'custom domains break and a crafted host reaches another tenant')
   assert.deepEqual(normalizeReport(JSON.stringify(raw)).errors, [])
 })
 
+test('normalizeReport accepts the reviewer\'s view on the direction; it must lean to an option', () => {
+  const view = { leaning: 'Tenant id in the token', why: 'auth already knows the tenant', confidence: 'medium' }
+  const { report, errors } = normalizeReport({ ...raw, direction: { ...raw.direction, view } })
+  assert.deepEqual(errors, [])
+  assert.deepEqual(report.direction.view, view)
+  assert.deepEqual(checkReport(report, inventory), [])
+  const bad = normalizeReport({ ...raw, direction: { ...raw.direction, view: { leaning: 'Something else', confidence: 'sure' } } }).errors
+  assert.ok(bad.some((e) => /leaning "Something else" is no option's name/.test(e)))
+  assert.ok(bad.some((e) => /direction.view: why is required/.test(e)))
+  assert.ok(bad.some((e) => /direction.view: confidence must be one of high, medium, low/.test(e)))
+})
+
 test('normalizeReport refuses a verdict on the direction and wrong shapes', () => {
-  const { errors } = normalizeReport({ ...raw, direction: { ...raw.direction, verdict: 'ok' }, risks: [{ level: 'huge', kind: 'bug', text: 'x', source: 'agent', cites: ['u1'] }], checks: 'merge' })
-  assert.ok(errors.some((e) => /direction has no verdict: the direction is the user's call/.test(e)))
+  const { errors } = normalizeReport({ ...raw, direction: { ...raw.direction, verdict: 'ok' }, risks: [{ level: 'huge', kind: 'bug', text: 'x', source: 'agent', cites: ['u1'] }], checks: { verdict: 'merge' } })
+  assert.ok(errors.some((e) => /direction has no verdict: the direction is the user's call; give your leaning in direction.view/.test(e)))
   assert.ok(errors.some((e) => /risks\[0\]: level must be one of/.test(e)))
   assert.ok(errors.some((e) => /risks\[0\]: mechanism is required/.test(e)))
-  assert.ok(errors.some((e) => /checks must be one of/.test(e)))
+  assert.ok(errors.some((e) => /checks.verdict must be one of/.test(e)))
+  assert.ok(errors.some((e) => /checks.why is required/.test(e)))
+  // The old form, a bare verdict, says what is missing.
+  assert.ok(normalizeReport({ ...raw, checks: 'approve' }).errors.some((e) => /checks.verdict must be one of/.test(e)))
   assert.ok(normalizeReport('nope').errors.some((e) => /report must be an object/.test(e)))
   assert.ok(normalizeReport({ ...raw, problem: [{ criterion: 'c', status: 'solved', text: 't', source: 'mine', cites: ['u1'] }] }).errors.some((e) => /source must be one of agent, yours, question, rule/.test(e)))
 })
@@ -92,7 +111,7 @@ test('checkReport: the synthetic review passes against its inventory', () => {
   assert.deepEqual(checkReport(synthetic(), inventory), [])
 })
 
-test('checkReport: claims cited, options with one of the PR, every unit in exactly one change, checks consistent', () => {
+test('checkReport: claims cited, options with one of the PR, every unit in exactly one change', () => {
   const r = synthetic()
   const bad: ReviewReport = {
     ...r,
@@ -105,29 +124,74 @@ test('checkReport: claims cited, options with one of the PR, every unit in exact
   }
   const errors = checkReport(bad, inventory)
   assert.ok(errors.some((e) => /direction.decisions: .* cites nothing/.test(e)))
-  assert.ok(errors.some((e) => /direction.options: 2–4 options, found 1; work them out before reading the author's description/.test(e)))
+  assert.ok(errors.some((e) => /direction.only: with a single option, say why it is the only sensible one/.test(e)))
   assert.ok(errors.some((e) => /exactly one option is the change's \(pr: true\), found 0/.test(e)))
   assert.ok(errors.some((e) => /u9 is no unit of the inventory/.test(e)))
   assert.ok(errors.some((e) => /units in no change: u3, u4/.test(e)))
   assert.ok(errors.some((e) => /u2 is in 2 changes/.test(e)))
-  assert.ok(errors.some((e) => /checks: approve with a failed rule, a not-solved criterion or a high risk/.test(e)))
+  // The agent's approve over a failed rule and a high risk is its judgment: no label decides the verdict.
+  assert.ok(!errors.some((e) => /^checks/.test(e)))
   assert.ok(checkReport(r, null).some((e) => /no inventory yet/.test(e)))
-  // A step's direction is the approved plan: one option is enough.
-  const step = { ...r, direction: { ...r.direction, options: [r.direction.options[0]] } }
-  assert.deepEqual(checkReport(step, inventory, 'step'), [])
-  // Seven changes are too many; a one-unit inventory takes one.
-  assert.ok(checkReport({ ...r, changes: Array.from({ length: 7 }, (_, i) => ({ title: `c${i}`, why: 'w', units: i < 4 ? [`u${i + 1}`] : [] })) }, inventory).some((e) => /2–6 changes/.test(e)))
-  assert.deepEqual(checkReport({ ...r, changes: [{ title: 'one', why: 'w', units: ['u1'] }] }, { ...inventory, units: inventory.units.slice(0, 1) }), [])
+  // One option with why it is the only one: accepted, for a step and a PR alike.
+  const one = { ...r, direction: { ...r.direction, options: [r.direction.options[0]], only: 'the host is all the router has' } }
+  assert.deepEqual(checkReport(one, inventory, 'step'), [])
+  assert.deepEqual(checkReport(one, inventory), [])
+  // Without the reason it is refused.
+  assert.ok(checkReport({ ...one, direction: { ...one.direction, only: undefined } }, inventory, 'step').some((e) => /direction.only/.test(e)))
+  // Any number of options and changes: seven changes, one per unit and three empty ones refused only for being empty.
+  const seven = checkReport({ ...r, changes: Array.from({ length: 7 }, (_, i) => ({ title: `c${i}`, why: 'w', units: i < 4 ? [`u${i + 1}`] : [] })) }, inventory)
+  assert.deepEqual(seven, ['changes (c4): no units', 'changes (c5): no units', 'changes (c6): no units'])
+  assert.deepEqual(checkReport({ ...r, changes: [{ title: 'all', why: 'w', units: ['u1', 'u2', 'u3', 'u4'] }] }, inventory), [])
+  assert.ok(checkReport({ ...r, changes: [] }, inventory).some((e) => /group the inventory into changes/.test(e)))
 })
 
-test('checksVerdict comes from problem, conventions and risks only', () => {
+test('the verdict is the agent\'s unless mag\'s floor is stricter; then mag attaches its blockers', () => {
   const r = synthetic()
-  assert.equal(checksVerdict(r), 'request_changes')
-  const clean = { ...r, problem: [r.problem[0]], conventions: [r.conventions[1]], risks: [] }
-  assert.equal(checksVerdict(clean), 'approve')
-  assert.equal(checksVerdict({ ...clean, risks: [{ ...r.risks[0], level: 'medium' }] }), 'look')
-  // Direction never counts: a report with no PR option still approves on its checks.
-  assert.equal(checksVerdict({ ...clean, direction: { decisions: [], options: [], facts: [], references: [] } } as ReviewReport), 'approve')
+  const none = verdictFloor({ deviations: [], ci: [], rules: [] })
+  assert.deepEqual(none, { verdict: 'approve', blockers: [] })
+  // The agent's verdict stands without a floor, even approve over a high risk, and look over nothing mag knows.
+  for (const verdict of ['approve', 'look', 'request_changes'] as const) assert.equal(finalVerdict({ verdict }, none), verdict)
+  const kept = withFloor({ ...r, checks: 'approve' }, none)
+  assert.equal(kept.checks, 'approve')
+  assert.equal(kept.floor, undefined)
+  assert.equal(kept.raisedFrom, undefined)
+  // A plan deviation is look: it raises approve, never lowers request_changes.
+  const deviation = verdictFloor({ deviations: ['orchestrator setReview is off the plan'], ci: [], rules: [] })
+  assert.equal(deviation.verdict, 'look')
+  assert.equal(finalVerdict({ verdict: 'approve' }, deviation), 'look')
+  assert.equal(finalVerdict({ verdict: 'request_changes' }, deviation), 'request_changes')
+  // Failed CI or a failed architecture rule is request_changes.
+  const ci = verdictFloor({ deviations: ['x is off the plan'], ci: ['typecheck'], rules: [] })
+  assert.equal(ci.verdict, 'request_changes')
+  assert.deepEqual(ci.blockers, ['CI failed: typecheck', 'x is off the plan'])
+  assert.equal(verdictFloor({ deviations: [], ci: [], rules: ['services never use services: a -> b (a.ts:3)'] }).verdict, 'request_changes')
+  const raised = withFloor({ ...r, checks: 'approve' }, ci)
+  assert.equal(raised.checks, 'request_changes')
+  assert.equal(raised.raisedFrom, 'approve')
+  assert.deepEqual(raised.floor, ci)
+  // mag's blockers come first among the findings; the agent does not restate them.
+  assert.deepEqual(reportFindings(raised).slice(0, 2).map((f) => [f.text, f.level]), [['mag: CI failed: typecheck', 'blocker'], ['mag: x is off the plan', 'blocker']])
+  // A floor no stricter than the agent keeps its blockers attached but raises nothing.
+  const same = withFloor({ ...r, checks: 'request_changes' }, deviation)
+  assert.equal(same.checks, 'request_changes')
+  assert.equal(same.raisedFrom, undefined)
+  assert.deepEqual(same.floor, deviation)
+  // Applied again, the reviewer's own verdict is the start, not mag's earlier raise.
+  const again = withFloor(withFloor({ ...r, checks: 'approve' }, deviation), none)
+  assert.equal(again.checks, 'approve')
+  assert.equal(again.raisedFrom, undefined)
+  assert.equal(again.floor, undefined)
+})
+
+test('the direction view never affects the verdict', () => {
+  const r = synthetic()
+  const view = { leaning: 'Tenant id in the token', why: 'one source of truth', confidence: 'high' as const }
+  const floor = verdictFloor({ deviations: [], ci: [], rules: [] })
+  assert.equal(withFloor({ ...r, checks: 'approve', direction: { ...r.direction, view } }, floor).checks, 'approve')
+  assert.deepEqual(reportFindings({ ...r, direction: { ...r.direction, view } }), reportFindings(r))
+})
+
+test('stepVerdict and prVerdictOf route the checks verdict', () => {
   assert.deepEqual([stepVerdict('request_changes'), stepVerdict('look'), stepVerdict('approve')], ['changes', 'look', 'merge'])
   assert.deepEqual([prVerdictOf('request_changes'), prVerdictOf('look'), prVerdictOf('approve')], ['request_changes', 'comment', 'approve'])
 })
@@ -143,13 +207,13 @@ test('markChecked: only a mechanical fact citing only verified units gets mag\'s
   assert.equal(markChecked(synthetic(), ['u1']).direction.facts[0].source, 'agent')
 })
 
-test('checkReport: request_changes or look needs a finding behind it', () => {
+test('checkReport: request_changes needs something to fix; look may rest on its why', () => {
   const r = synthetic()
   const clean = { ...r, problem: [r.problem[0]], conventions: [r.conventions[1]], risks: [], questions: [] }
   assert.deepEqual(checkReport({ ...clean, checks: 'approve' }, inventory), [])
-  for (const checks of ['request_changes', 'look'] as const)
-    assert.ok(checkReport({ ...clean, checks }, inventory).some((e) => /nothing behind it; give the risk, rule or question behind it/.test(e)))
-  assert.deepEqual(checkReport({ ...clean, questions: r.questions, checks: 'look' }, inventory), [])
+  assert.deepEqual(checkReport({ ...clean, checks: 'look' }, inventory), [])
+  assert.ok(checkReport({ ...clean, checks: 'request_changes' }, inventory).some((e) => /request_changes with nothing to fix/.test(e)))
+  assert.deepEqual(checkReport({ ...clean, questions: r.questions, checks: 'request_changes' }, inventory), [])
 })
 
 test('reportFindings: unsolved criteria, failed rules, risks and questions, most severe first, with where and node', () => {

@@ -290,17 +290,28 @@ const REPORT = {
   properties: {
     direction: {
       type: 'object',
-      description: 'The design decision(s) the change makes and its options; never a verdict on it.',
+      description: 'The design decision(s) the change makes and its options. The call is the user\'s: your own leaning goes in view, never a verdict here.',
       required: ['decisions', 'options', 'facts', 'references'],
       properties: {
         decisions: { type: 'array', items: claim(), description: 'One sentence each.' },
         options: {
           type: 'array',
-          description: '2–4 (a step: the plan\'s, 1–4); exactly one with pr: true, the change\'s own.',
+          description: 'Every sensible way to make the decision, as many as there really are (a step: the plan\'s); exactly one with pr: true, the change\'s own.',
           items: { type: 'object', required: ['name', 'tradeoffs'], properties: { name: { type: 'string' }, tradeoffs: { type: 'string' }, pr: { type: 'boolean' } } },
         },
+        only: { type: 'string', description: 'With a single option: why it is the only sensible one ("only one, because…").' },
         facts: { type: 'array', items: claim(), description: 'Mechanical facts about the change\'s option, citing units.' },
         references: { type: 'array', items: claim(), description: 'Notes, ADRs, CLAUDE.md rules, earlier decisions of the user, PR threads.' },
+        view: {
+          type: 'object',
+          description: 'Optional: your own leaning on the direction. It never affects checks; the user sees it folded after the options, once they could form their own view.',
+          required: ['leaning', 'why', 'confidence'],
+          properties: {
+            leaning: { type: 'string', description: 'The name of the option you lean to.' },
+            why: { type: 'string' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          },
+        },
       },
     },
     problem: { type: 'array', items: claim({ criterion: { type: 'string' }, status: { type: 'string', enum: ['solved', 'partly', 'not'] } }, ['criterion', 'status']) },
@@ -315,10 +326,16 @@ const REPORT = {
     questions: { type: 'array', items: claim(), description: 'To the author.' },
     changes: {
       type: 'array',
-      description: 'The inventory in 2–6 changes by importance; every unit in exactly one; routine ones in one row, last.',
+      description: 'The inventory grouped into changes by importance, as many as the change really has (a few is easiest to read); every unit in exactly one; routine ones in one row, last.',
       items: { type: 'object', required: ['title', 'why', 'units'], properties: { title: { type: 'string' }, why: { type: 'string' }, units: { type: 'array', items: { type: 'string' } }, routine: { type: 'boolean' } } },
     },
-    checks: { type: 'string', enum: ['request_changes', 'look', 'approve'], description: 'From problem, conventions and risks only.' },
+    checks: {
+      type: 'object',
+      description:
+        'Your verdict on problem, conventions and risks, with one line of why; the direction never counts. request_changes needs something to fix (a criterion, rule, risk or question). mag keeps its own floor: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself.',
+      required: ['verdict', 'why'],
+      properties: { verdict: { type: 'string', enum: ['request_changes', 'look', 'approve'] }, why: { type: 'string' } },
+    },
   },
 }
 
@@ -550,7 +567,7 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'only',
     description:
-      'Reviewer only: your review of the PRs of the step under review, once per review: the report (mag checks it against the inventory and derives the findings and the verdict from its checks: request_changes → changes, look → look, approve → merge). changes: the findings go to the developer, not GitHub; merge: ready, nothing for the user to check; look: the user should decide or check something. Without a report (older form): verdict and findings.',
+      'Reviewer only: your review of the PRs of the step under review, once per review: the report (mag checks it against the inventory and derives the findings; your checks verdict, raised to mag\'s floor where that is stricter, routes it: request_changes → changes, look → look, approve → merge). changes: the findings go to the developer, not GitHub; merge: ready, nothing for the user to check; look: the user should decide or check something. Without a report (older form): verdict and findings.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -564,7 +581,7 @@ export const TOOL_DEFS = [
     name: 'set_pr_review',
     scope: 'task',
     description:
-      "A topic that runs a review of a teammate's PR: record it into the result of its format, once you have it and again when it changes; the other format's result stays. v2 (your job says which): the report; mag checks it against the inventory, takes its checks as the verdict and derives the findings the user may publish. v1: verdict and findings, no report. It shows in the review's pane beside its conversation; nothing goes to GitHub.",
+      "A topic that runs a review of a teammate's PR: record it into the result of its format, once you have it and again when it changes; the other format's result stays. v2 (your job says which): the report; mag checks it against the inventory, takes your checks verdict (raised to request_changes when CI fails, with that blocker attached) and derives the findings the user may publish. v1: verdict and findings, no report. It shows in the review's pane beside its conversation; nothing goes to GitHub.",
     inputSchema: {
       type: 'object',
       properties: {

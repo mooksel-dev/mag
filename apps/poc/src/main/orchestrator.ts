@@ -211,9 +211,9 @@ Then review following the project's playbook:
 ${playbookOf(project).review}
 The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
 ${playbookOf(project).fact}
-mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge. set_review refuses merge while the threshold says so: then look at most.
+mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
 ${fact}
-Call set_review once with the report. mag checks it against your inventory and takes the verdict from its checks: request_changes = changes, the developer must fix something before the user looks (the findings mag derives from the report go to the developer, not to GitHub); approve = merge, ready, nothing the user has to check; look = the user should decide or check something.
+Call set_review once with the report. mag checks it against your inventory. The checks verdict is yours, with a one-line why: request_changes = changes, the developer must fix something before the user looks (the findings from the report go to the developer, not to GitHub); approve = merge, ready, nothing the user has to check; look = the user should decide or check something. mag keeps its own floor: a plan deviation or an incomplete fact (the threshold above) makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so you need not restate them as risks.
 Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
 
 ${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
@@ -253,7 +253,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     : "The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:"
   const order = v1
     ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
-    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it."
+    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it; your own leaning, if you have one, goes in direction.view."
   const close = v1
     ? 'Call set_pr_review with the verdict and the findings once you have them (again whenever the user asks for more and they change), then reply in a few lines: the verdict and the blockers.'
     : `Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
@@ -1227,11 +1227,10 @@ export class Orchestrator {
     const step = this.store.task(stepId)
     if (!pending) throw new Error(`No agent review of ${step.key} is going on`)
     // The threshold for "no need to look at the code" (T-58 Decision 5) is mag's, not the reviewer's; each revision of the fact set records it anew.
+    // A report has it applied already (its floor, with mag's blockers attached); the older form without one is refused.
     const fact = step.fact
     if (verdict === 'merge' && fact?.blockers.length && JSON.stringify(fact.heads) === JSON.stringify(pending.heads))
-      throw new Error(
-        `Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\n${report ? 'Give checks look (with these as risks) or request_changes.' : 'Give look (with these as findings) or changes.'}`,
-      )
+      throw new Error(`Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nGive look (with these as findings) or changes.`)
     const review: AgentReview = { verdict, findings, ...(report ? { report } : {}), round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })

@@ -859,7 +859,7 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report\. mag checks it against your inventory and takes the verdict from its checks/)
+  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report\. mag checks it against your inventory\. The checks verdict is yours, with a one-line why[\s\S]*mag keeps its own floor[\s\S]*need not restate them as risks/)
   assert.match(run.spec.prompt, /Direction is the approved plan/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
@@ -1081,11 +1081,19 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
     risks: [],
     questions: [{ text: 'why 1?', cites: ['src/charge.ts:1'] }],
     changes: [{ title: 'charge', why: 'the whole PR', units: ['u1'] }],
-    checks: 'approve',
+    checks: { verdict: 'request_changes', why: 'a magic number' },
   }
-  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg }), /Not recorded\. Fix the report[\s\S]*checks: approve with a failed rule/)
-  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [], checks: 'request_changes' } }), /units in no change: u1/)
-  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'approve' } }), /Not recorded\. Fix the report[\s\S]*checks\.verdict must be one of[\s\S]*checks\.why is required/)
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [] } }), /units in no change: u1/)
+  // The verdict is the agent's (prompts-use-the-models-to.1): approve over a failed rule is its judgment, mag has no floor here.
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: { verdict: 'approve', why: 'the rule does not fit a constant of 1' } } })
+  assert.deepEqual([store.task(work.id).prReview!.results.v2!.verdict, store.task(work.id).prReview!.results.v2!.report?.why], ['approve', 'the rule does not fit a constant of 1'])
+  // Failed CI is mag's floor: it raises the agent's approve and attaches the blocker itself.
+  const withCi = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv), failedChecks: async () => ['build (https://ci/1)'] } as Partial<ToolActions> as ToolActions)
+  await withCi(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: { verdict: 'approve', why: 'fine' } } })
+  const raised = store.task(work.id).prReview!.results.v2!
+  assert.deepEqual([raised.verdict, raised.report?.raisedFrom, raised.findings[0]], ['request_changes', 'approve', { text: 'mag: CI failed: build (https://ci/1)', level: 'blocker' }])
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const v2 = store.task(work.id).prReview!.results.v2!
   assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
@@ -1126,7 +1134,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   await until(() => !orch.isRunning(topic.id))
 
   // The next review cites the call as decision:<id>: the card shows it as yours; a decision that is not there is refused.
-  const cites = (id: string) => ({ ...reportArg, direction: { ...reportArg.direction, references: [{ text: 'you asked the author about constants before', source: 'agent', cites: [`decision:${id}`] }] }, checks: 'request_changes' })
+  const cites = (id: string) => ({ ...reportArg, direction: { ...reportArg.direction, references: [{ text: 'you asked the author about constants before', source: 'agent', cites: [`decision:${id}`] }] } })
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites('nope') }), /no direction decision decision:nope/)
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites(ask.id) })
   const next = store.task(work.id).prReview!.results.v2!.report!
@@ -1135,7 +1143,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Ask the author'])
   orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
-  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const kept = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual([kept.decided?.choice, kept.decided?.option, kept.draft], ['prefer', 'config', "I'd rather go with config than constant: per tenant."])
   assert.equal(findingsFolded(kept), true)

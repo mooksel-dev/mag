@@ -1,7 +1,8 @@
 // The review report (review-v2-questions-first-direction.1): a review answers fixed questions instead of listing
-// findings. Direction is the user's call (the design decisions the change makes, options, facts, references; no
-// verdict); Problem, Conventions and Risks are checked, and only they give the checks verdict; the inventory is grouped
-// into a few changes by importance. Every item is a claim with a source badge and what it cites. Shared by the review of
+// findings. Direction is the user's call (the design decisions the change makes, options, facts, references, and the
+// agent's own leaning on it, which never counts); Problem, Conventions and Risks are checked; the checks verdict is the
+// agent's, raised by mag only to its own floors (prompts-use-the-models-to.1); the inventory is grouped into changes by
+// importance. Every item is a claim with a source badge and what it cites. Shared by the review of
 // a step and of a teammate's PR; a stored review without a report is an old one and renders as before.
 
 import { isDataUnit, unitEntity, unitLeaf, type ChangeInventory } from './inventory.ts'
@@ -39,16 +40,34 @@ export interface DirectionOption {
   pr?: boolean
 }
 
-/** The design decision(s) the change makes and what the user needs to decide on it. Never a verdict: that is the user's. */
+export type Confidence = 'high' | 'medium' | 'low'
+export const CONFIDENCES: Confidence[] = ['high', 'medium', 'low']
+
+/**
+ * The reviewer's own leaning on the direction (prompts-use-the-models-to.1): an opinion with its own field, so an honest
+ * view never has to bend the rest of the report. It never affects the checks verdict, and the user sees it folded after
+ * the options, once they could form their own view.
+ */
+export interface DirectionView {
+  /** The name of the option it leans to. */
+  leaning: string
+  why: string
+  confidence: Confidence
+}
+
+/** The design decision(s) the change makes and what the user needs to decide on it. The call is the user's. */
 export interface Direction {
   /** One sentence each. */
   decisions: Claim[]
-  /** 2–4 (a step: 1–4, the plan's), exactly one of them the change's. */
+  /** 1–N, exactly one of them the change's; a single option says why there is no other (only). */
   options: DirectionOption[]
+  /** With a single option: why it is the only sensible one ("only one, because…"). */
+  only?: string
   /** Mechanical facts about the change's option: modules that learn the new concept, existing flows hit, new violations. */
   facts: Claim[]
   /** Project notes, ADRs, CLAUDE.md rules, earlier decisions of the user, PR threads. */
   references: Claim[]
+  view?: DirectionView
 }
 
 export type CriterionStatus = 'solved' | 'partly' | 'not'
@@ -91,7 +110,7 @@ export interface ReportChange {
   routine?: boolean
 }
 
-/** The checks verdict, from Problem, Conventions and Risks only. */
+/** The checks verdict: the reviewer's, never below mag's floor. */
 export type ChecksVerdict = 'request_changes' | 'look' | 'approve'
 export const CHECKS_VERDICTS: ChecksVerdict[] = ['request_changes', 'look', 'approve']
 export const CHECKS_LABELS: Record<ChecksVerdict, string> = { request_changes: 'Request changes', look: 'Look', approve: 'Approve' }
@@ -105,7 +124,14 @@ export interface ReviewReport {
   questions: Claim[]
   /** In order of importance; the routine row last. */
   changes: ReportChange[]
+  /** The verdict that stands: the reviewer's, or mag's floor when that is stricter (finalVerdict). */
   checks: ChecksVerdict
+  /** The reviewer's one line on why; missing on a report from before prompts-use-the-models-to.1. */
+  why?: string
+  /** mag's floor when it has blockers: they are attached to the review, the reviewer does not restate them. */
+  floor?: VerdictFloor
+  /** The reviewer's own verdict when mag's floor raised it. */
+  raisedFrom?: ChecksVerdict
   /** The user's call on the direction of this review (review-v2-questions-first-direction.2); a PR's review only. */
   decided?: DirectionDecision
   /** The comment to the author drafted with the call: the preferred option (prefer) or questions (discuss). */
@@ -137,6 +163,53 @@ export interface DirectionDecision {
   at: number
 }
 
+/** The reviewer's checks verdict with its one line of why. */
+export interface AgentChecks {
+  verdict: ChecksVerdict
+  why: string
+}
+
+/**
+ * What only mag knows and owns about the change under review: plan deviations and an incomplete fact (plan ↔ fact's
+ * blockers), failed CI checks, failed architecture rules. Each a line of what is wrong.
+ */
+export interface MagFloors {
+  deviations: string[]
+  ci: string[]
+  rules: string[]
+}
+
+/** The mildest verdict mag allows and why: its blockers, in words; approve with none. */
+export interface VerdictFloor {
+  verdict: ChecksVerdict
+  blockers: string[]
+}
+
+/**
+ * mag's floor from what it owns: a failed CI check or architecture rule is request_changes (the developer must fix it
+ * before anyone looks); a plan deviation or an incomplete fact is look (the user decides whether the plan or the code
+ * is right); otherwise approve.
+ */
+export function verdictFloor(floors: MagFloors): VerdictFloor {
+  const blockers = [...floors.ci.map((c) => `CI failed: ${c}`), ...floors.rules.map((r) => `Architecture rule failed: ${r}`), ...floors.deviations]
+  const verdict: ChecksVerdict = floors.ci.length || floors.rules.length ? 'request_changes' : floors.deviations.length ? 'look' : 'approve'
+  return { verdict, blockers }
+}
+
+/** The verdict that stands: the reviewer's, unless mag's floor is stricter. */
+export function finalVerdict(checks: Pick<AgentChecks, 'verdict'>, floor: VerdictFloor): ChecksVerdict {
+  return CHECKS_VERDICTS.indexOf(floor.verdict) < CHECKS_VERDICTS.indexOf(checks.verdict) ? floor.verdict : checks.verdict
+}
+
+/** The report with mag's floor applied: its verdict (finalVerdict), its blockers attached and the reviewer's verdict kept when raised. */
+export function withFloor(report: ReviewReport, floor: VerdictFloor): ReviewReport {
+  const { floor: _, raisedFrom: __, ...rest } = report
+  // A report mag raised before keeps the reviewer's own verdict in raisedFrom.
+  const agent = report.raisedFrom ?? report.checks
+  const checks = finalVerdict({ verdict: agent }, floor)
+  return { ...rest, checks, ...(floor.blockers.length ? { floor } : {}), ...(checks !== agent ? { raisedFrom: agent } : {}) }
+}
+
 /** Which review a report is of: a step's (direction is the approved plan) or a teammate's PR (direction is the user's call). */
 export type ReportKind = 'step' | 'pr'
 
@@ -147,7 +220,8 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) 
 
 /**
  * A report from what an agent passed (an object or its JSON), with what is wrong in its shape. A source of checked is
- * read as agent: only mag sets checked (markChecked). A verdict on the direction is refused.
+ * read as agent: only mag sets checked (markChecked). A verdict on the direction is refused: the reviewer's leaning goes
+ * in direction.view, which never counts.
  */
 export function normalizeReport(raw: unknown): { report: ReviewReport; errors: string[] } {
   const errors: string[] = []
@@ -173,7 +247,7 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
   const d = (r.direction && typeof r.direction === 'object' ? r.direction : {}) as Raw
   if (!r.direction) errors.push('direction is required: decisions, options, facts, references')
   for (const k of ['verdict', 'ok', 'recommendation', 'choice'])
-    if (d[k] !== undefined) errors.push(`direction has no ${k}: the direction is the user's call; give options, facts and references`)
+    if (d[k] !== undefined) errors.push(`direction has no ${k}: the direction is the user's call; give your leaning in direction.view { leaning, why, confidence }`)
   const direction: Direction = {
     decisions: list(d.decisions).map((c, i) => claim(typeof c === 'string' ? { text: c, source: 'agent' } : c, `direction.decisions[${i}]`)),
     options: list(d.options).map((op, i) => {
@@ -185,6 +259,16 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
     }),
     facts: list(d.facts).map((c, i) => claim(c, `direction.facts[${i}]`)),
     references: list(d.references).map((c, i) => claim(c, `direction.references[${i}]`)),
+  }
+  if (text(d.only)) direction.only = text(d.only)
+  if (d.view != null) {
+    const v = (typeof d.view === 'object' && !Array.isArray(d.view) ? d.view : {}) as Raw
+    const view: DirectionView = { leaning: text(v.leaning), why: text(v.why), confidence: text(v.confidence) as Confidence }
+    if (!view.leaning) errors.push('direction.view: leaning is required, the name of the option you lean to')
+    else if (!direction.options.some((o) => o.name === view.leaning)) errors.push(`direction.view: leaning "${view.leaning}" is no option's name`)
+    if (!view.why) errors.push('direction.view: why is required')
+    if (!CONFIDENCES.includes(view.confidence)) errors.push(`direction.view: confidence must be one of ${CONFIDENCES.join(', ')}`)
+    direction.view = view
   }
   const problem = list(r.problem).map((c, i): CriterionClaim => {
     const what = `problem[${i}]`
@@ -218,9 +302,12 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
     if (!out.why) errors.push(`changes[${i}] (${out.title}): why is required, why it matters`)
     return out
   })
-  const checks = text(r.checks) as ChecksVerdict
-  if (!CHECKS_VERDICTS.includes(checks)) errors.push(`checks must be one of ${CHECKS_VERDICTS.join(', ')}`)
-  return { report: { direction, problem, conventions, risks, questions, changes, checks }, errors }
+  const c = (r.checks && typeof r.checks === 'object' && !Array.isArray(r.checks) ? r.checks : {}) as Raw
+  const checks = text(c.verdict) as ChecksVerdict
+  const why = text(c.why)
+  if (!CHECKS_VERDICTS.includes(checks)) errors.push(`checks.verdict must be one of ${CHECKS_VERDICTS.join(', ')}`)
+  if (!why) errors.push('checks.why is required: one line on why this verdict')
+  return { report: { direction, problem, conventions, risks, questions, changes, checks, why }, errors }
 }
 
 /** Every claim of a report with where it is, in page order. */
@@ -237,26 +324,20 @@ export function reportClaims(report: ReviewReport): { block: string; claim: Clai
   ]
 }
 
-/** The checks verdict the claims give: Problem, Conventions and Risks only, never Direction. */
-export function checksVerdict(report: Pick<ReviewReport, 'problem' | 'conventions' | 'risks'>): ChecksVerdict {
-  if (report.conventions.some((c) => c.status === 'fail') || report.problem.some((c) => c.status === 'not') || report.risks.some((r) => r.level === 'high')) return 'request_changes'
-  if (report.problem.some((c) => c.status === 'partly') || report.risks.some((r) => r.level === 'medium')) return 'look'
-  return 'approve'
-}
-
 /**
  * What is wrong with a report against the review's inventory (empty: it may be stored): every claim cited; direction
- * with 2–4 options (a step's 1–4), exactly one the change's; 2–6 changes (fewer only with fewer units), every unit of
- * the inventory in exactly one change and no unknown unit; checks no milder than a failed rule, an unsolved criterion or
- * a high risk allow, and no stricter than approve without a finding behind it.
+ * with at least one option, exactly one the change's, a single one with why it is the only one; at least one change,
+ * every unit of the inventory in exactly one change and no unknown unit; request_changes with a finding behind it, so
+ * the developer has something to fix. Counts beyond that are the reviewer's judgment, and the verdict is theirs: no
+ * label decides it.
  */
 export function checkReport(report: ReviewReport, inventory: ChangeInventory | null, kind: ReportKind = 'pr'): string[] {
   const errors: string[] = []
   for (const { block, claim } of reportClaims(report)) if (!claim.cites.length) errors.push(`${block}: "${claim.text}" cites nothing; cite inventory unit ids or file:line`)
   const d = report.direction
   if (!d.decisions.length) errors.push('direction.decisions: name the design decision(s) the change makes, one sentence each')
-  const min = kind === 'step' ? 1 : 2
-  if (d.options.length < min || d.options.length > 4) errors.push(`direction.options: ${min}–4 options, found ${d.options.length}${kind === 'pr' ? '; work them out before reading the author\'s description, the PR\'s own design is one of them' : ''}`)
+  if (!d.options.length) errors.push(`direction.options: at least the change's own option${kind === 'pr' ? '; work them out before reading the author\'s description' : ''}`)
+  if (d.options.length === 1 && !d.only) errors.push('direction.only: with a single option, say why it is the only sensible one ("only one, because…")')
   const own = d.options.filter((o) => o.pr).length
   if (own !== 1) errors.push(`direction.options: exactly one option is the change's (pr: true), found ${own}`)
   if (!inventory) {
@@ -264,9 +345,7 @@ export function checkReport(report: ReviewReport, inventory: ChangeInventory | n
   } else {
     const units = new Set(inventory.units.map((u) => u.id))
     const groups = report.changes
-    const max = 6
-    const least = Math.min(2, units.size)
-    if (groups.length < least || groups.length > max) errors.push(`changes: ${least}–${max} changes by importance, found ${groups.length}`)
+    if (units.size && !groups.length) errors.push('changes: group the inventory into changes by importance')
     if (groups.filter((c) => c.routine).length > 1) errors.push('changes: routine changes go in one row')
     const where = new Map<string, string[]>()
     for (const c of groups)
@@ -279,12 +358,8 @@ export function checkReport(report: ReviewReport, inventory: ChangeInventory | n
     if (missing.length) errors.push(`changes: units in no change: ${missing.join(', ')}`)
     for (const [u, in_] of where) if (in_.length > 1) errors.push(`changes: ${u} is in ${in_.length} changes (${in_.join('; ')}); one each`)
   }
-  const derived = checksVerdict(report)
-  if (derived === 'request_changes' && report.checks !== 'request_changes')
-    errors.push(`checks: ${report.checks} with a failed rule, a not-solved criterion or a high risk; it is request_changes`)
-  if (derived === 'look' && report.checks === 'approve') errors.push('checks: approve with a partly solved criterion or a medium risk; it is look at most')
-  if (report.checks !== 'approve' && !reportFindings(report).length)
-    errors.push(`checks: ${report.checks} with nothing behind it; give the risk, rule or question behind it, or approve`)
+  if (report.checks === 'request_changes' && !reportFindings(report).length)
+    errors.push('checks: request_changes with nothing to fix; give the criterion, rule or risk behind it')
   return errors
 }
 
@@ -308,15 +383,17 @@ const LINE = /^[^\s:]+:\d+(?:-\d+)?$/
 const RISK_FINDING: Record<RiskLevel, FindingLevel> = { high: 'blocker', medium: 'should_fix', low: 'nit' }
 
 /**
- * The findings a report gives, for Publish and the developer's feedback: unsolved criteria, failed rules, risks and
- * questions, most severe first. where: the first file:line cite, else the first cite; node: the claim's view.
+ * The findings a report gives, for Publish and the developer's feedback: mag's blockers (its floor), unsolved criteria,
+ * failed rules, risks and questions, most severe first. where: the first file:line cite, else the first cite; node:
+ * the claim's view.
  */
 export function reportFindings(report: ReviewReport): ReviewFinding[] {
   const finding = (c: Claim, level: FindingLevel, label: string): ReviewFinding => {
     const where = c.cites.find((x) => LINE.test(x)) ?? c.cites[0]
     return { text: `${label}${c.text}`, level, ...(where ? { where } : {}), ...(c.view ? { node: c.view } : {}) }
   }
-  const out = [
+  const out: ReviewFinding[] = [
+    ...(report.floor?.blockers ?? []).map((b): ReviewFinding => ({ text: `mag: ${b}`, level: 'blocker' })),
     ...report.problem.filter((c) => c.status === 'not').map((c) => finding(c, 'blocker', `Problem: ${c.criterion}: not solved. `)),
     ...report.conventions.filter((c) => c.status === 'fail').map((c) => finding(c, 'blocker', `Convention: ${c.rule}: `)),
     ...report.risks.map((c) => finding({ ...c, text: `${c.text} (${c.mechanism})` }, RISK_FINDING[c.level], `Risk (${c.kind}): `)),

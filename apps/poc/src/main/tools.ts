@@ -1,4 +1,4 @@
-import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -65,6 +65,8 @@ export interface ToolActions {
   send(sessionId: string, text: string): Promise<void>
   /** Stops the agents of a work or a step in a turn; returns those stopped. */
   stopAgents(taskId: string): Promise<AgentSession[]>
+  /** The failed CI checks of a PR, by name (with link), for mag's review floor; without it, CI sets no floor. */
+  failedChecks?(url: string): Promise<string[]>
 }
 
 /**
@@ -138,6 +140,34 @@ function reportArg(raw: unknown, kind: ReportKind, fact: Pick<Fact, 'inventory' 
   if (all.length) throw new Error(`Not recorded. Fix the report and call again:\n- ${all.join('\n- ')}`)
   const bad = new Set([...(fact?.inventoryCheck?.ungrounded ?? []), ...(fact?.inventoryCheck?.otherModule ?? [])].map((u) => u.unit))
   return markChecked(report, (fact?.inventory?.units ?? []).map((u) => u.id).filter((id) => !bad.has(id)))
+}
+
+/** A PR's failed CI checks; none when GitHub cannot be asked (the floor then rests on the reviewer). */
+async function failedChecks(actions: ToolActions, url: string): Promise<string[]> {
+  return (
+    (await actions.failedChecks?.(url).catch((e) => {
+      log.warn('agent', `CI of ${url} not read for the review floor: ${(e as Error).message.split('\n')[0]}`)
+      return []
+    })) ?? []
+  )
+}
+
+/**
+ * What mag owns about a step's PRs under review (prompts-use-the-models-to.1): plan ↔ fact's blockers (deviations, an
+ * incomplete fact), their failed CI checks and, in a project that enforces its architecture, the rules the step's
+ * worktrees break at the heads under review (a worktree elsewhere is not what is reviewed).
+ */
+async function stepFloors(actions: ToolActions, project: Project, step: Task): Promise<MagFloors> {
+  const repos = step.work?.repos.filter((r) => r.prUrl && r.prState === 'open') ?? []
+  const ci = (await Promise.all(repos.map(async (r) => (await failedChecks(actions, r.prUrl!)).map((c) => (repos.length > 1 ? `${repoWorkName(step.work!, r)}: ${c}` : c))))).flat()
+  const rules: string[] = []
+  if (project.enforceArchitecture)
+    for (const r of repos) {
+      const head = step.fact?.heads[r.repo]
+      if (!head || !existsSync(r.worktree) || (await revParse(r.worktree, 'HEAD').catch(() => null)) !== head) continue
+      for (const v of analyze(r.worktree).violations.filter((x) => x.severity === 'error')) rules.push(`${v.rule}: ${v.from} -> ${v.to} (${v.file}:${v.line})`)
+    }
+  return { deviations: step.fact?.blockers ?? [], ci, rules }
 }
 
 /** Tickets from a tool argument: [{ url, key? }] (a plain string is a URL); some agent CLIs pass the array as a JSON string. */
@@ -456,10 +486,10 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
         if (args.report != null) {
           const step = store.task(stepId)
-          const report = reportArg(args.report, 'step', step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null)
-          const verdict = stepVerdict(report.checks)
-          if (args.verdict != null && args.verdict !== verdict) throw new Error(`Not recorded: verdict ${String(args.verdict)} and checks ${report.checks} disagree; checks ${report.checks} is ${verdict}. Leave verdict out.`)
-          return actions.setReview(stepId, verdict, reportFindings(report), report)
+          const agent = reportArg(args.report, 'step', step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null)
+          if (args.verdict != null && args.verdict !== stepVerdict(agent.checks)) throw new Error(`Not recorded: verdict ${String(args.verdict)} and checks ${agent.checks} disagree; checks ${agent.checks} is ${stepVerdict(agent.checks)}. Leave verdict out.`)
+          const report = withFloor(agent, verdictFloor(await stepFloors(actions, project, step)))
+          return actions.setReview(stepId, stepVerdict(report.checks), reportFindings(report), report)
         }
         const verdict = args.verdict as ReviewVerdict
         if (!REVIEW_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${REVIEW_VERDICTS.join(', ')}`)
@@ -479,9 +509,11 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           if (args.report == null) throw new Error('Not recorded: this is the v2 review of the PR: record it with report (problem and approach beside it), not verdict and findings')
           const pr = review.pr
           const head = task.fact?.heads[pr.repo]
-          const report = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
-          const unknown = unknownDecisions(report, project.directionDecisions)
+          const agent = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
+          const unknown = unknownDecisions(agent, project.directionDecisions)
           if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
+          // A teammate's PR has no plan of ours and no rules mag enforces: CI is the floor mag owns there.
+          const report = withFloor(agent, verdictFloor({ deviations: [], ci: await failedChecks(actions, pr.url), rules: [] }))
           return actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
         }
         if (args.report != null) throw new Error('Not recorded: this is the v1 review of the PR: record verdict and findings (problem and approach beside them), no report')
