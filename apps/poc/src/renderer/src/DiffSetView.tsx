@@ -91,7 +91,7 @@ const fileOf = (files: FileChange[], p: string) => files.find((f) => f.path === 
  * links, and on a fact set its files with their hunks and the review's findings. The same window in a step's Diff
  * tab (plan, fact), on a review's page, for options and in its own window.
  */
-export function DiffSetView({ set, current, step, findings = [], onClose }: {
+export function DiffSetView({ set, current, step, findings = [], onClose, inline, onNode }: {
   set: DiagramCanvas[]
   /** The diagram to open first; the root by default. */
   current?: string
@@ -100,6 +100,13 @@ export function DiffSetView({ set, current, step, findings = [], onClose }: {
   findings?: ReviewFinding[]
   /** Back to where the window opened from. */
   onClose?: () => void
+  /**
+   * Drawn inline on the review window's page (review-v2-part-2-v1-2.2): no diagram opens a separate window; links go on
+   * within the set.
+   */
+  inline?: boolean
+  /** Told the node selected on the diagram open (null: none), e.g. to expand its hunks in place. */
+  onNode?: (node: string | null, diagram: DiagramCanvas) => void
 }) {
   const start = current ?? setRoot(set)?.id ?? set[0]?.id
   const [trail, setTrailState] = useState<TrailStep[]>(() => (start ? setTrail(set, start) : []))
@@ -119,6 +126,12 @@ export function DiffSetView({ set, current, step, findings = [], onClose }: {
     setTrailState(t)
     setNode(at ?? null)
     setFocus(at)
+    const to = set.find((c) => c.id === t.at(-1)?.id)
+    if (to) onNode?.(at ?? null, to)
+  }
+  const select = (n: string | null) => {
+    setNode(n)
+    if (open) onNode?.(n, open)
   }
   /** Follows a link from the open diagram: the trail goes on from here, or back to the target when it is on it. */
   const follow = (to: string, at: string | undefined, via: string) => {
@@ -153,7 +166,7 @@ export function DiffSetView({ set, current, step, findings = [], onClose }: {
         <span className="muted small">{DIAGRAM_NAMES[open.diagram.type]}</span>
         <Changes count={diagramSummary(open.diagram)} />
         <span className="muted small">v{open.version}</span>
-        <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: open.id })}>⧉</button>
+        {!inline && <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: open.id })}>⧉</button>}
       </div>
       <div className="setbody">
         <nav className="setlevels">
@@ -171,7 +184,7 @@ export function DiffSetView({ set, current, step, findings = [], onClose }: {
           {set.length > levels.reduce((n, l) => n + l.diagrams.length, 0) && <p className="muted small">Diagrams without changes are not listed; their links still open them.</p>}
         </nav>
         <div className="setmain">
-          <DiagramView key={open.id + open.version} diagram={open.diagram} focus={focus} siblings={set} onSelect={setNode} onFlow={onFlow} />
+          <DiagramView key={open.id + open.version} diagram={open.diagram} focus={focus} siblings={set} onSelect={select} onFlow={onFlow} />
         </div>
         <NodePanel set={set} open={open} node={node} view={view} hunks={hunks} findings={findings} onFollow={follow} />
       </div>

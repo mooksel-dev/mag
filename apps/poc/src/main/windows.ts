@@ -7,6 +7,8 @@ import { onSomeDisplay, type Bounds } from './bounds'
 const PROJECT_SIZE = { width: 1400, height: 900 }
 const WELCOME_SIZE = { width: 720, height: 560 }
 const POPOUT_SIZE = { width: 1100, height: 800 }
+/** The review window is one long page with a chat drawer at its side. */
+const REVIEW_SIZE = { width: 1400, height: 950 }
 /** Offset of each new project window from the focused one, so they don't stack exactly. */
 const CASCADE = 28
 
@@ -28,7 +30,7 @@ const sendWhenLoaded = (win: BrowserWindow, channel: string, ...args: unknown[])
 
 /**
  * Every window of the app: one window per open project (the project lives in the URL hash), the Welcome window
- * shown when no project is open, and pop-outs that show one artifact each (architecture, canvas, task doc).
+ * shown when no project is open, and pop-outs that show one artifact each (architecture, canvas, task doc, review).
  */
 export function createWindows(store: Store) {
   const projects = new Map<string, BrowserWindow>()
@@ -167,7 +169,7 @@ export function createWindows(store: Store) {
       focusWin(open)
       return
     }
-    const bounds = usable(store.windowBounds(target.kind)) ?? POPOUT_SIZE
+    const bounds = usable(store.windowBounds(target.kind)) ?? (target.kind === 'review' ? REVIEW_SIZE : POPOUT_SIZE)
     const win = new BrowserWindow({ ...bounds, title: 'mag', icon: ICON, webPreferences: base.webPreferences })
     popouts.set(key, win)
     load(win, `popout?${new URLSearchParams({ kind: target.kind, id })}`)

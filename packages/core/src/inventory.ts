@@ -279,6 +279,9 @@ export function withScenarioLinks(d: ComponentDiagram, scenarios: { id: string; 
 
 const entityOf = (u: InventoryUnit) => (u.kind === 'model' ? u.name : (u.owner ?? (u.name.includes('.') ? u.name.slice(0, u.name.lastIndexOf('.')) : u.name)))
 
+/** The id of the Data diagram's entity a data unit lands on (isDataUnit): its model's last segment. */
+export const unitEntity = (u: InventoryUnit) => unitLeaf(entityOf(u))
+
 /**
  * The fact's Component and Data diagrams, generated from an inventory (never drawn): Component has the modules of the
  * units, each with its changed lines (signature and mark, a logic badge for nontrivial logic, private) and its
@@ -295,8 +298,7 @@ export function inventoryDiagrams(inventory: ChangeInventory, architecture: Arch
   }
   const entities = new Map<string, DEntity>()
   const entity = (u: InventoryUnit) => {
-    const name = entityOf(u)
-    const id = unitLeaf(name)
+    const id = unitEntity(u)
     let e = entities.get(id)
     if (!e) entities.set(id, (e = { id, name: id, kind: 'table', module: u.module, fields: [] }))
     return e

@@ -83,6 +83,7 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
           <AgentDot state={agentState(work, mine, tasks)} now={now} />
           <div className="grow" />
           {canGroom && !owner && <button className="small" onClick={() => mag.groom(work.id)}>Groom</button>}
+          {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>}
           {!review && <ReopenButton task={work} />}
           {!review && <CancelButton task={work} small />}
         </div>

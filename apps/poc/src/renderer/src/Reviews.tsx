@@ -179,6 +179,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         <span className="muted small">@{review.pr.author} · into {review.pr.base} · {r.head ? `reviewed at ${r.head.slice(0, 7)}` : 'not reviewed yet'}{r.at ? ` · ${ago(r.at, now)}` : ''}</span>
         <div className="grow" />
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
+        <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
       </div>
       <h1>{work.title.replace(/^[^:]*#\d+: /, '')}</h1>
       <div className="taskrow">

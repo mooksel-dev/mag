@@ -5,6 +5,7 @@ import { Architecture } from './Architecture'
 import { CanvasFrame, Markdown } from './Chat'
 import { diagramsOf } from './DiffTab'
 import { DiffSetView, setContext } from './DiffSetView'
+import { ReviewWindow } from './ReviewWindow'
 import { useTheme } from './useTheme'
 
 const mag = window.mag
@@ -20,6 +21,7 @@ export function popoutTarget(hash: string): WindowTarget | null {
     case 'architecture': return { kind: 'architecture', projectId: id }
     case 'canvas': return { kind: 'canvas', canvasId: id }
     case 'doc': return { kind: 'doc', taskId: id }
+    case 'review': return { kind: 'review', taskId: id }
     default: return null
   }
 }
@@ -40,6 +42,7 @@ export function Popout({ target }: { target: WindowTarget }) {
       {target.kind === 'architecture' && <ArchitectureWindow state={state} projectId={target.projectId} />}
       {target.kind === 'canvas' && <CanvasWindow state={state} canvasId={target.canvasId} />}
       {target.kind === 'doc' && <DocWindow state={state} taskId={target.taskId} />}
+      {target.kind === 'review' && <ReviewWindow state={state} taskId={target.taskId} />}
     </div>
   )
 }

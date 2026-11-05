@@ -4,7 +4,8 @@
 // into a few changes by importance. Every item is a claim with a source badge and what it cites. Shared by the review of
 // a step and of a teammate's PR; a stored review without a report is an old one and renders as before.
 
-import type { ChangeInventory } from './inventory.ts'
+import { isDataUnit, unitEntity, unitLeaf, type ChangeInventory } from './inventory.ts'
+import { parseFlowRef, type Diagram } from './diagram.ts'
 import type { FindingLevel } from './pr-review.ts'
 import type { ReviewFinding, ReviewVerdict, StepFact } from './index.ts'
 
@@ -498,4 +499,166 @@ export function reportCards(report: ReviewReport): ReportCard[] {
     { key: 'risks', title: 'Risks', question: 'What can go wrong?', rows: byRisk.map((c) => ({ claim: c, about: `${c.kind}: ${c.mechanism}`, status: c.level, tone: RISK_TONES[c.level] })) },
     { key: 'questions', title: 'Open questions', question: 'What the author should answer', rows: report.questions.map((c) => ({ claim: c, tone: 'neutral' })) },
   ]
+}
+
+// The review window (review-v2-part-2-v1-2.2): every claim, diagram node and change row expands the code it rests on in
+// place, and the full diff at the bottom is grouped by the report's changes.
+
+/** A hunk of a changed file as the window has it (FileChange's, without its lines): H3, where it is. */
+export interface PrHunk {
+  id?: string
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+}
+
+/** A changed file of the PR: its repository's name, path and numbered hunks. */
+export interface PrFile {
+  repo: string
+  path: string
+  oldPath?: string
+  hunks: PrHunk[]
+}
+
+/** What expands its hunks: a claim (its cites), a node of a diagram, a change row (its units). */
+export type HunkTarget =
+  | { kind: 'claim'; cites: string[] }
+  | { kind: 'node'; diagram: Diagram; node: string }
+  | { kind: 'change'; units: string[] }
+
+/** A hunk to show, with the blocks of it that are cited (`H3.2` → 2); null: all of it. */
+export interface HunkPick<F extends PrFile = PrFile> {
+  file: F
+  hunk: PrHunk
+  blocks: number[] | null
+}
+
+const HUNK_ID = /^(H\d+)(?:\.(\d+))?$/
+/** `path:12`, `path:12-30`, `repo:path:12`. */
+const FILE_LINE = /^(?:([^\s:]+):)?([^\s:]+):(\d+)(?:-(\d+))?$/
+
+/**
+ * The units of the inventory a diagram node stands for: a module (Component) or a participant (Sequence), its units; an
+ * entity (Data), the stored models, fields and indexes on it; any node of a method's flowchart, that method. A state
+ * diagram's node stands for none.
+ */
+export function nodeUnits(diagram: Diagram, node: string, inventory: ChangeInventory): string[] {
+  const units = inventory.units
+  switch (diagram.type) {
+    case 'component':
+    case 'sequence':
+      return units.filter((u) => u.module === node).map((u) => u.id)
+    case 'data': {
+      const name = diagram.entities.find((e) => e.id === node)?.name ?? node
+      return units.filter((u) => isDataUnit(u) && (unitEntity(u) === node || unitEntity(u) === name)).map((u) => u.id)
+    }
+    case 'flowchart': {
+      const of = diagram.of ? parseFlowRef(diagram.of) : null
+      return of ? units.filter((u) => u.kind === 'method' && u.module === of.module && unitLeaf(u.name) === of.method).map((u) => u.id) : []
+    }
+    case 'state':
+      return []
+  }
+}
+
+/**
+ * The hunks a claim, a diagram node or a change row rests on, in diff order. Its refs: a claim's cites, a node's units
+ * (nodeUnits), a change's units. A unit id gives its cited blocks (`H3.1`; `H3`, the whole hunk); a hunk or block id
+ * itself; `file:line`, the hunk of that file containing the line, else every hunk of the file. Other cites (a PR
+ * comment, decision:<id>, a note) have no code. Empty: nothing behind it in the diff.
+ */
+export function hunksOf<F extends PrFile>(target: HunkTarget, inventory: ChangeInventory | null | undefined, files: F[]): HunkPick<F>[] {
+  const refs = target.kind === 'claim' ? target.cites : target.kind === 'change' ? target.units : inventory ? nodeUnits(target.diagram, target.node, inventory) : []
+  const byUnit = new Map((inventory?.units ?? []).map((u) => [u.id, u.hunks]))
+  const order: { file: F; hunk: PrHunk }[] = files.flatMap((file) => file.hunks.map((hunk) => ({ file, hunk })))
+  const picked = new Map<number, number[] | null>()
+  const pick = (i: number, block: number | null) => {
+    if (i < 0) return
+    const was = picked.get(i)
+    if (was === null) return
+    picked.set(i, block === null ? null : [...new Set([...(was ?? []), block])].sort((a, b) => a - b))
+  }
+  const byId = (id: string) => {
+    const m = HUNK_ID.exec(id)
+    if (m) pick(order.findIndex((h) => h.hunk.id === m[1]), m[2] ? Number(m[2]) : null)
+  }
+  for (const ref of refs) {
+    const unit = byUnit.get(ref)
+    if (unit) {
+      unit.forEach(byId)
+      continue
+    }
+    if (HUNK_ID.test(ref)) {
+      byId(ref)
+      continue
+    }
+    const m = FILE_LINE.exec(ref)
+    if (!m) continue
+    const [, repo, path, from, to] = m
+    const lo = Number(from)
+    const hi = to ? Number(to) : lo
+    const ofFile = order.flatMap((h, i) => ((h.file.path === path || h.file.oldPath === path || h.file.path.endsWith(`/${path}`)) && (!repo || h.file.repo === repo) ? [i] : []))
+    const hit = ofFile.filter((i) => {
+      const h = order[i].hunk
+      return lo <= h.newStart + Math.max(h.newLines, 1) - 1 && hi >= h.newStart
+    })
+    for (const i of hit.length ? hit : ofFile) pick(i, null)
+  }
+  return [...picked].sort(([a], [b]) => a - b).map(([i, blocks]) => ({ ...order[i], blocks }))
+}
+
+/** A group of the full diff: a change of the report with the hunks of its units; routine, noise and the rest last. */
+export interface ChangeGroup<F extends PrFile = PrFile> {
+  title: string
+  why: string
+  kind: 'change' | 'routine' | 'noise' | 'rest'
+  /** Files in diff order, each with its hunks in this group. */
+  files: { file: F; hunks: HunkPick<F>[] }[]
+}
+
+const byFile = <F extends PrFile>(picks: HunkPick<F>[]): ChangeGroup<F>['files'] => {
+  const out: ChangeGroup<F>['files'] = []
+  for (const p of picks) {
+    const at = out.find((x) => x.file === p.file)
+    if (at) at.hunks.push(p)
+    else out.push({ file: p.file, hunks: [p] })
+  }
+  return out
+}
+
+/**
+ * The full diff of the window by the report's changes: each change with the hunks its units cite (a hunk two changes
+ * cite shows in both), the routine row after the important ones, then the noise of the inventory, then every hunk
+ * neither cites. A change without code keeps its row; empty noise and rest are left out. Without a report or an
+ * inventory (a v1 result, an old review), one group of every file.
+ */
+export function diffByChange<F extends PrFile>(report: Pick<ReviewReport, 'changes'> | null | undefined, inventory: ChangeInventory | null | undefined, files: F[]): ChangeGroup<F>[] {
+  const all = files.flatMap((file) => file.hunks.map((hunk): HunkPick<F> => ({ file, hunk, blocks: null })))
+  if (!report?.changes.length || !inventory) return all.length ? [{ title: 'Files', why: 'every file the PR changes', kind: 'rest', files: byFile(all) }] : []
+  const { rows, routine } = reportChanges(report)
+  const groups: ChangeGroup<F>[] = [...rows, ...(routine ? [routine] : [])].map((c) => ({
+    title: c.title,
+    why: c.why,
+    kind: c.routine ? 'routine' : 'change',
+    files: byFile(hunksOf({ kind: 'change', units: c.units }, inventory, files)),
+  }))
+  const noise = hunksOf({ kind: 'claim', cites: inventory.noise.flatMap((n) => n.hunks) }, inventory, files)
+  if (noise.length) groups.push({ title: 'Noise', why: inventory.noise.map((n) => n.reason).join('; '), kind: 'noise', files: byFile(noise) })
+  const seen = new Set(groups.flatMap((g) => g.files.flatMap((f) => f.hunks.map((h) => h.hunk))))
+  const rest = all.filter((p) => !seen.has(p.hunk))
+  if (rest.length) groups.push({ title: 'Not in the inventory', why: 'hunks no unit and no noise cites: tests, docs and the like', kind: 'rest', files: byFile(rest) })
+  return groups
+}
+
+/** The lines of a hunk (` `, `+`, `-`), each with whether it is in one of the cited blocks (all changed lines when null). */
+export function markBlocks(lines: string[], blocks: number[] | null): { line: string; cited: boolean }[] {
+  let k = 0
+  let inBlock = false
+  return lines.map((line) => {
+    const changed = line[0] === '+' || line[0] === '-'
+    if (changed && !inBlock) k++
+    inBlock = changed
+    return { line, cited: changed && (blocks === null || blocks.includes(k)) }
+  })
 }

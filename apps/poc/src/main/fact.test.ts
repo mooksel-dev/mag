@@ -10,7 +10,7 @@ import type { ArchDiagram, ChangeInventory, ComponentDiagram, DataDiagram } from
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
 import { createTools, type ToolActions } from './tools.ts'
-import { factHeads, factView, stepFact, stepHunk } from './fact.ts'
+import { cachedDiffText, factHeads, factView, stepFact, stepHunk } from './fact.ts'
 import { hunkLines } from './git.ts'
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -227,4 +227,24 @@ test('hunkLines: one hunk of one file with its context, renames by their new pat
   assert.deepEqual(hunkLines(text, 'src/a.ts', { oldStart: 5, oldLines: 0, newStart: 7, newLines: 1 }), ['+later'])
   assert.deepEqual(hunkLines(text, 'src/c.ts', { oldStart: 3, oldLines: 3, newStart: 3, newLines: 3 }), [' a', '-x', '+y', ' b'])
   assert.deepEqual(hunkLines(text, 'src/b.ts', { oldStart: 3, oldLines: 3, newStart: 3, newLines: 3 }), [])
+})
+
+test('cachedDiffText: the hunks of one PR cost one diff; a failure is not kept; the oldest goes past max', async () => {
+  const calls: string[] = []
+  let fail = true
+  const text = cachedDiffText(async (at, base, head) => {
+    calls.push(`${at} ${base} ${head}`)
+    if (at === 'bad' && fail) throw new Error('gh down')
+    return `diff ${base}..${head}`
+  }, 2)
+  assert.deepEqual(await Promise.all([text('r', 'a', 'b'), text('r', 'a', 'b'), text('r', 'a', 'b')]), ['diff a..b', 'diff a..b', 'diff a..b'])
+  assert.equal(calls.length, 1, 'concurrent opens share one fetch')
+  await assert.rejects(text('bad', 'a', 'b'))
+  fail = false
+  assert.equal(await text('bad', 'a', 'b'), 'diff a..b', 'a failed fetch is tried again')
+  await text('r', 'c', 'd')
+  await text('r', 'e', 'f')
+  calls.length = 0
+  await text('r', 'a', 'b')
+  assert.equal(calls.length, 1, 'past max the oldest is fetched anew')
 })
