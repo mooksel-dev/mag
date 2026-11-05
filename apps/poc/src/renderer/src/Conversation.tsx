@@ -167,7 +167,8 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
   const stage = card ? card.stage : review ? null : workStage(work, tasks)
   // A legacy work's subtasks are a checklist, not steps.
   const steps = review || isLegacy(work) ? [] : stepsLine(work, tasks)
-  const [tab, setTab] = useState<WorkTab>('conversation')
+  // A review opens on its report; a work on its conversation.
+  const [tab, setTab] = useState<WorkTab>(review ? 'review' : 'conversation')
   const drawer = useDrawer()
   const [fullBrief, setFullBrief] = useState(false)
   const pr = work.prReview?.pr
