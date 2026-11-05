@@ -293,6 +293,34 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.match(spec.appendSystemPrompt ?? '', /create_work/)
 })
 
+test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {
+  const { store, orch, project } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }])
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'post it to Slack')
+  const spec = specs.at(-1)!
+  assert.match(spec.appendSystemPrompt ?? '', /claude\.ai Slack \(id claude_ai_Slack\) is turned off in mag for the chat role/)
+  assert.ok(spec.disallowedTools?.includes('mcp__claude_ai_Slack'))
+  const live = opened.at(-1)!
+  store.pushItem(chat.id, { kind: 'integration', id: 'i1', integrationId: 'claude_ai_Slack', server: 'claude.ai Slack', role: 'chat', why: 'post', status: 'off', at: 1 })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+
+  await orch.enableIntegration(chat.id, 'i1', 'auto')
+  assert.equal(store.project(project.id).integrations.chat?.claude_ai_Slack, 'auto')
+  assert.equal(store.session(chat.id).items.find((i) => i.kind === 'integration')?.status, 'auto')
+  assert.equal(live.closed, true, 'the old process had the old rules')
+  const next = opened.at(-1)!
+  assert.notEqual(next, live)
+  assert.deepEqual(next.sent, ['claude.ai Slack is now on (auto) for you in mag; repeat your last step.'])
+  assert.ok(specs.at(-1)!.allowedTools?.includes('mcp__claude_ai_Slack'))
+  assert.doesNotMatch(specs.at(-1)!.appendSystemPrompt ?? '', /turned off in mag/)
+
+  store.pushItem(chat.id, { kind: 'integration', id: 'i2', integrationId: 'claude_ai_Slack', server: 'claude.ai Slack', role: 'architect', why: '', status: 'off', at: 2 })
+  await assert.rejects(orch.enableIntegration(chat.id, 'i2', 'ask'), /Only Auto/)
+  await assert.rejects(orch.enableIntegration(chat.id, 'nope', 'auto'), /No such integration card/)
+})
+
 const DOC = `# Problem
 p
 
@@ -511,6 +539,41 @@ test('closeChat: the live process closes, the history stays; writing to it reope
   store.updateTask(task.id, { ownerSessionId: id })
   await assert.rejects(orch.closeChat(id), /owns .*close the work instead/)
   assert.equal(store.session(id).closedAt, null)
+})
+
+test('closeWork / closeReview / restore: a done work and a review close with all they have and come back; an open one is canceled instead, and a canceled one is not restored', async () => {
+  const { store, orch, project, task } = setup()
+  assert.throws(() => orch.closeWork(task.id), /only a done work/)
+  store.updateTask(task.id, { status: 'done' })
+  orch.closeWork(task.id)
+  assert.ok(store.task(task.id).closedAt)
+  assert.equal(store.task(task.id).status, 'done')
+  orch.restore('work', task.id)
+  assert.equal(store.task(task.id).closedAt, null)
+
+  const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
+  orch.closeWork(review.id)
+  assert.deepEqual([store.task(review.id).status, !!store.task(review.id).closedAt], ['done', true])
+  orch.restore('work', review.id)
+  assert.equal(store.task(review.id).closedAt, null)
+
+  const gone = store.createTask({ projectId: project.id, title: 'g', type: 'dev', description: '' })
+  await orch.cancel(gone.id, 'nope')
+  assert.throws(() => orch.restore('work', gone.id), /cannot be restored/)
+
+  const topic = orch.newChat(project.id)
+  store.closeSession(topic)
+  orch.restore('topic', topic)
+  assert.equal(store.session(topic).closedAt, null)
+})
+
+test('reopen of a closed done work clears its closed mark', () => {
+  const { store, orch, project, task } = setup()
+  store.updateTask(task.id, { status: 'done' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'done' })
+  store.closeTask(task.id)
+  orch.reopen(task.id, 'more', orch.newChat(project.id))
+  assert.equal(store.task(task.id).closedAt, null)
 })
 
 test('turnIntoWork: the topic\'s agent gets the fixed request; not while it works', async () => {

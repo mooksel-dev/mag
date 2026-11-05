@@ -9,6 +9,7 @@ import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
+import type { SidebarNode } from './sidebar.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -17,6 +18,7 @@ export * from './diagram.ts'
 export * from './diagram-rules.ts'
 export * from './inventory.ts'
 export * from './sets.ts'
+export * from './sidebar.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
 export * from './review-report.ts'
@@ -77,6 +79,8 @@ export interface Project {
   directionDecisions?: DirectionDecision[]
   /** The format a new review of a PR starts with (review-v2-part-2-v1-2.1); missing = v2. */
   reviewFormat?: ReviewFormat
+  /** The sidebar in the user's order, with the user's groups (see sidebarRows); missing or empty = one flat list. */
+  sidebar?: SidebarNode[]
   createdAt: number
 }
 
@@ -666,6 +670,11 @@ export interface Task {
   nextSubNo: number
   /** Why the user canceled the task, if they said. */
   cancelReason?: string | null
+  /**
+   * Top-level tasks: the user closed it (a done work, a review): it stays done and goes to Closed; Restore, reopen or a
+   * new review run clears it. A canceled work is closed without it.
+   */
+  closedAt?: number | null
   /** Top-level tasks: the tickets the work is about, as links (T-55.5); [] or missing = none. */
   tickets?: TicketRef[]
   /**
@@ -780,6 +789,24 @@ export function integrationRules(
   return rules
 }
 
+/**
+ * The prompt lines on the integrations a run of `role` does not get (decision 8 of redesign-start-screen-big-composer):
+ * each one off for the role, and with `canAsk` false (no chat to ask in) each one on ask too. Without it the agent
+ * only sees the tools missing and says "tools are not available". Empty when none is off.
+ */
+export function offIntegrationsBlock(project: Pick<Project, 'integrations'>, role: AgentRole, known: Integration[], canAsk = true): string {
+  const off = known.filter((i) => {
+    if (i.id === MAG_MCP_ID) return false
+    const mode = integrationMode(project, role, i.id)
+    return mode === 'off' || (mode === 'ask' && !canAsk)
+  })
+  if (!off.length) return ''
+  const how = canAsk
+    ? 'If you need it, say exactly that (never "tools are not available") and call request_integration with its id and why; then end your turn.'
+    : 'If you need it, say exactly that (never "tools are not available"): the user turns it on in Project → Integrations.'
+  return `Integrations turned off in mag for the ${role} role:\n${off.map((i) => `- ${i.name} (id ${i.id}) is turned off in mag for the ${role} role.`).join('\n')}\n${how}`
+}
+
 /** The integration a tool name (mcp__<id>__<tool>) belongs to, with the bare tool name. */
 export function integrationOf(toolName: string, known: Integration[]): { integration: Integration; tool: string } | null {
   // Longest id first, so "a_b" wins over "a" for mcp__a_b__x.
@@ -818,6 +845,11 @@ export type ChatItem =
   | { kind: 'notice'; text: string; at: number }
   /** An integration call in ask mode waiting for (or answered by) the user. id = the CLI's tool_use_id. */
   | { kind: 'approval'; id: string; tool: string; server: string; input: unknown; status: ApprovalStatus; at: number }
+  /**
+   * An agent's request_integration: `integrationId` (Integration.id) is off for `role`; the card's Enable: Ask / Auto
+   * sets the project's mode and repeats the turn. `server`: its name as the CLI reported it. status off until enabled.
+   */
+  | { kind: 'integration'; id: string; integrationId: string; server: string; role: AgentRole; why: string; status: IntegrationMode; at: number }
 
 /** expired = the run ended before the user answered. */
 export type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'expired'

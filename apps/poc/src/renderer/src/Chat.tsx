@@ -8,6 +8,8 @@ import { inputPreview, jobPreview } from './format'
 import { useAppliedTheme } from './useTheme'
 import { mdSegments } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
+import { foldEvents, type EventItem } from './conversationCards'
+import { IntegrationCard } from './Cards'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -154,11 +156,16 @@ export function CanvasOverlay({ canvas, focus, onClose }: { canvas: CanvasRef; f
   )
 }
 
+/** The small name over an agent's replies, by its role. */
+const AGENT_NAMES: Record<string, string> = { chat: 'agent', groomer: 'owner', developer: 'developer', reviewer: 'reviewer', architect: 'architect' }
+
 /**
- * A session's chat. `readOnly`: an agent's log, without a composer (ux-odna-rozmova-na-robotu.2): the user talks to the
- * work's owner only. `cards`: what the work needs from the user, after the last item.
+ * A session's chat (redesign-start-screen-big-composer.4): the user's messages as bubbles, the agent's replies as text
+ * under a small name, runs of events (tools, mag's notices and jobs) folded into one thin line, cards for the rest.
+ * `readOnly`: an agent's log, without a composer (ux-odna-rozmova-na-robotu.2): the user talks to the work's owner only.
+ * `cards`: what the work needs from the user, after the last item. `name`: over the agent's replies (default by role).
  */
-export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards }: {
+export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards, name }: {
   session: AgentSession
   sessions: AgentSession[]
   onOpenTask?: (key: string) => void
@@ -166,6 +173,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
   chip?: ReactNode
   readOnly?: boolean
   cards?: ReactNode
+  name?: string
 }) {
   const busy = session.status === 'running'
   const end = useRef<HTMLDivElement>(null)
@@ -188,20 +196,19 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
   // Replies followed by another one in the same turn are interim: muted and clamped, so the turn reads as one answer.
   const interim = interimReplies(session.items)
 
-  // Runs of consecutive tool calls render as one collapsible row. n = index of the (first) item, used as key.
-  const rows: { n: number; item?: ChatItem; tools?: ToolItem[] }[] = []
-  session.items.forEach((item, n) => {
-    const last = rows[rows.length - 1]
-    if (item.kind !== 'tool') rows.push({ n, item })
-    else if (last?.tools) last.tools.push(item)
-    else rows.push({ n, tools: [item] })
-  })
+  // Runs of events render as one collapsible line; n = index of the (first) item, used as key.
+  const lines = foldEvents(session.items)
+  const who = name ?? AGENT_NAMES[session.role] ?? session.role
 
   return (
     <div className="chatbox">
       <div className="items">
-        {rows.map(({ n, item: i, tools }) => {
-          if (!i) return <ToolGroup key={n} tools={tools!} />
+        {lines.map((line, k) => {
+          if (line.kind === 'events') return <EventLine key={line.n} label={line.label} mark={line.mark} items={line.items.map((x) => x.item)} />
+          const { n, item: i } = line
+          // The name goes over the first reply of a run of replies.
+          const prev = lines[k - 1]
+          const first = !(prev?.kind === 'item' && prev.item.kind === 'assistant')
           switch (i.kind) {
             case 'user':
               return (
@@ -210,29 +217,32 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
                   {i.attachments && <Attachments items={i.attachments} />}
                 </div>
               )
-            case 'job':
-              return <JobCard key={n} item={i} />
             case 'assistant': {
-              if (interim.has(n)) return <InterimReply key={n} text={i.text} onOpenTask={onOpenTask} />
               const meta = metaAt.get(n)
-              if (!meta) return <Markdown key={n} className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
               return (
-                <div key={n} className="reply">
-                  <Markdown className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
-                  <div className="turnmeta">{meta}</div>
-                </div>
+                <AgentReply key={n} name={who} first={first}>
+                  {interim.has(n) ? (
+                    <InterimReply text={i.text} onOpenTask={onOpenTask} />
+                  ) : (
+                    <div className="reply">
+                      <Markdown className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
+                      {meta && <div className="turnmeta">{meta}</div>}
+                    </div>
+                  )}
+                </AgentReply>
               )
             }
             case 'canvas':
               return <CanvasCard key={n} canvas={i.canvas} latest={lastCanvasAt.get(i.canvas.id) === n} />
             case 'result':
-              return i.ok ? null : <div key={n} className="small err">Turn failed</div>
+              // An ok end is an event (foldEvents); only a failed turn shows.
+              return <div key={n} className="small err">Turn failed</div>
             case 'error':
               return <div key={n} className="msg error">{i.text}</div>
-            case 'notice':
-              return <div key={n} className="notice muted small">{i.text}</div>
             case 'approval':
               return <ApprovalCard key={n} sessionId={session.id} item={i} />
+            case 'integration':
+              return <IntegrationCard key={n} sessionId={session.id} item={i} />
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}
@@ -253,6 +263,19 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
   )
 }
 
+/** An agent's reply: a small avatar and name over the first of a run of replies, the next ones aligned under it. */
+function AgentReply({ name, first, children }: { name: string; first: boolean; children: ReactNode }) {
+  return (
+    <div className={`agentmsg${first ? '' : ' cont'}`}>
+      <span className="av" aria-hidden>{first ? name[0]?.toUpperCase() : ''}</span>
+      <div className="agb">
+        {first && <div className="agn">{name}</div>}
+        {children}
+      </div>
+    </div>
+  )
+}
+
 /** An interim reply: two muted lines; a click (not on a link) expands or collapses it. */
 function InterimReply({ text, onOpenTask }: { text: string; onOpenTask?: (key: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -263,7 +286,6 @@ function InterimReply({ text, onOpenTask }: { text: string; onOpenTask?: (key: s
   )
 }
 
-type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 type JobItem = Extract<ChatItem, { kind: 'job' }>
 
 /** mag's job for the agent, not the user's message: "⚙ <title>" and its first line; a click shows the whole job. */
@@ -303,22 +325,27 @@ export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item
 
 const toolMark = (ok: boolean | undefined) => (ok === false ? '✗' : ok ? '✓' : '…')
 
-/** "▸ 8 tools · update_doc, create_subtask ×3"; expands to one line per call. */
-function ToolGroup({ tools }: { tools: ToolItem[] }) {
+/**
+ * A run of events as one thin line ("▸ x.3 started · PR ready · update_doc ×2"); it expands to a line per event, a job
+ * to its card. A failed or running tool shows through when folded.
+ */
+function EventLine({ label, mark, items }: { label: string; mark: string; items: EventItem[] }) {
   const [open, setOpen] = useState(false)
-  const counts = new Map<string, number>()
-  for (const t of tools) counts.set(t.name, (counts.get(t.name) ?? 0) + 1)
-  const names = [...counts].map(([name, k]) => (k > 1 ? `${name} ×${k}` : name)).join(', ')
-  // Surface what still matters when collapsed: a failure, or a call that is still running.
-  const mark = tools.some((t) => t.ok === false) ? '✗ ' : tools.some((t) => t.ok === undefined) ? '… ' : ''
   return (
-    <div className="toolgroup">
-      <button className="toolsrow" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {open ? '▾' : '▸'} {mark}{tools.length} {tools.length === 1 ? 'tool' : 'tools'} · {names}
+    <div className="eventline">
+      <button className="eventrow" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={label}>
+        <span className="eventlabel">{open ? '▾' : '▸'} {mark && <span className={mark === '✗' ? 'err' : ''}>{mark} </span>}{label}</span>
       </button>
-      {open && tools.map((t, i) => (
-        <div key={i} className="tool">{toolMark(t.ok)} {t.name} <span className="muted">{t.summary}</span></div>
-      ))}
+      {open && (
+        <div className="eventitems">
+          {items.map((t, i) =>
+            t.kind === 'tool' ? <div key={i} className="tool">{toolMark(t.ok)} {t.name} <span className="muted">{t.summary}</span></div>
+            : t.kind === 'job' ? <JobCard key={i} item={t} />
+            : t.kind === 'notice' ? <div key={i} className="notice muted small">{t.text}</div>
+            : null,
+          )}
+        </div>
+      )}
     </div>
   )
 }

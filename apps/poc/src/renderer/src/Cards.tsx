@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import {
   acceptRecommendations,
   currentStep,
@@ -10,14 +10,16 @@ import {
   subtasksOf,
   taskPrs,
   type AgentSession,
+  type CanvasRef,
   type InboxItem,
   type MoveAction,
   type Project,
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ApprovalCard } from './Chat'
-import { prLabel, prName } from './format'
+import { ApprovalCard, CanvasOpener } from './Chat'
+import { canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
+import { prName } from './format'
 import { LocalChecks, StartButton } from './LocalMode'
 import { ApproveButton } from './Tasks'
 
@@ -42,16 +44,18 @@ export function WorkCards({ work, owner, state, onAnswer }: {
   const step = isLegacy(work) ? null : currentStep(work.id, tasks)
   const ownerBusy = owner?.status === 'running'
   // The owner's own approvals are in its chat; those of the work's other agents only here.
-  const approvals = state.sessions
-    .filter((s) => s.taskId === work.id && s.id !== owner?.id)
-    .flatMap((s) => s.items.flatMap((i) => (i.kind === 'approval' && i.status === 'pending' ? [{ s, i }] : [])))
+  const others = state.sessions.filter((s) => s.taskId === work.id && s.id !== owner?.id)
+  const approvals = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'approval' && i.status === 'pending' ? [{ s, i }] : [])))
+  // An agent of the work asked for an integration that is off for its role (decision 8): its card waits here too.
+  const integrations = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'integration' && i.status === 'off' ? [{ s, i }] : [])))
   return (
     <>
       {approvals.map(({ s, i }) => <ApprovalCard key={i.id} sessionId={s.id} item={i} who={s.role} />)}
+      {integrations.map(({ s, i }) => <IntegrationCard key={i.id} sessionId={s.id} item={i} />)}
       {step && openLocalChecks(step).length > 0 && <div className="workcard"><LocalChecks step={step} project={project} /></div>}
       {work.needsInput && !(step && openLocalChecks(step).length) && <QuestionsCard key={work.needsInput} work={work} owner={owner} busy={ownerBusy} onAnswer={onAnswer} />}
       {!ownerBusy && (work.status === 'planning' || work.status === 'ready') && <PlanCard work={work} tasks={tasks} project={project} state={state} />}
-      {item && <ItemCard item={item} work={work} tasks={tasks} />}
+      {item && <ItemCard item={item} work={work} tasks={tasks} canvases={state.canvases} />}
     </>
   )
 }
@@ -121,11 +125,13 @@ export function PlanCard({ work, tasks, project, state }: { work: Task; tasks: T
 }
 
 /** The work's inbox item as a card: merge, look, a failed agent or check, a step waiting for Start, a review ready. */
-function ItemCard({ item, work, tasks }: { item: InboxItem; work: Task; tasks: Task[] }) {
+function ItemCard({ item, work, tasks, canvases }: { item: InboxItem; work: Task; tasks: Task[]; canvases: CanvasRef[] }) {
   const { kind, text, review } = item
   const prs = taskPrs(work, tasks)
-  const open = prs.filter((r) => r.prState !== 'merged' && r.prUrl).map((r) => r.prUrl!)
-  if (kind === 'ready_to_merge' || kind === 'review_look') return <MergeCard text={text} review={review} open={open} look={kind === 'review_look'} />
+  if (kind === 'ready_to_merge' || kind === 'review_look') {
+    const step = isLegacy(work) ? null : currentStep(work.id, tasks)
+    return <MergeCard card={mergeCard({ step, review, fact: step?.fact, look: kind === 'review_look', prs: step?.work?.repos ?? prs })} canvases={canvases} />
+  }
   if (kind === 'check_failed') {
     const pr = prs.find((r) => r.checkError)?.prUrl
     return (
@@ -209,21 +215,77 @@ export function MoveButton({ action, work, state, onAnswer }: { action: MoveActi
   }
 }
 
-/** The step's PRs wait for the user's merge: the owner's verdict, where to look, and the PRs to open. */
-export function MergeCard({ text, review, open, look }: { text: string; review?: InboxItem['review']; open: string[]; look: boolean }) {
+/** The step's PRs wait for the user's merge: the owner's verdict, the PRs' health, plan ↔ fact, what to check by hand. */
+export function MergeCard({ card, canvases }: { card: CardModel; canvases: CanvasRef[] }) {
+  const openCanvas = useContext(CanvasOpener)
+  const onFact = (id: string) => {
+    const c = canvases.find((x) => x.id === id)
+    if (openCanvas && c) openCanvas(c)
+    else void mag.openWindow({ kind: 'canvas', canvasId: id })
+  }
+  return <StructuredCard card={card} onFact={onFact} />
+}
+
+/** An integration off for an agent's role (decision 8): Enable: Ask / Auto turns it on and the agent repeats its step. */
+export function IntegrationCard({ sessionId, item }: { sessionId: string; item: IntegrationItem }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const enable = (mode: 'ask' | 'auto') => {
+    setBusy(true)
+    setError(null)
+    mag.enableIntegration(sessionId, item.id, mode).catch((e) => setError(String((e as Error).message ?? e))).finally(() => setBusy(false))
+  }
+  return <StructuredCard card={integrationCard(item, canAskFor(item.role))} onEnable={enable} busy={busy} error={error} />
+}
+
+const VERDICT_CLASS = { good: 'ok', warn: 'look', bad: 'bad', neutral: '' } as const
+
+/**
+ * A card of the conversation from its model (conversationCards): a title with a verdict chip, short facts, 2–5 tagged
+ * rows, folded details and the buttons in a footer.
+ */
+export function StructuredCard({ card, onEnable, onFact, busy, error }: {
+  card: CardModel
+  onEnable?: (mode: 'ask' | 'auto') => void
+  /** Plan ↔ fact: opens the fact's canvas. */
+  onFact?: (canvasId: string) => void
+  busy?: boolean
+  error?: string | null
+}) {
+  const press = (b: CardButton) => {
+    if (b.kind === 'open_pr') return mag.open(b.url)
+    if (b.kind === 'review_window') return mag.openWindow({ kind: 'review', taskId: b.taskId })
+    if (b.kind === 'enable') return onEnable?.(b.mode)
+    return onFact?.(b.canvasId)
+  }
   return (
-    <div className={`workcard ${look ? 'ask' : 'good'}`}>
-      <div className="cardtitle">{look ? 'Look before merging' : 'Ready to merge'}</div>
-      <div className="muted small">{text}</div>
-      {review && review.findings.length > 1 && (
-        <ul className="findings small">
-          {review.findings.slice(1).map((f, i) => <li key={i}>{f.where && <code>{f.where}</code>} {f.text}</li>)}
-        </ul>
-      )}
-      <div className="actions">
-        {open.map((url) => <button key={url} className="primary" onClick={() => mag.open(url)}>{open.length > 1 ? prLabel(url) : 'Open PR ↗'}</button>)}
-        <span className="muted small">Merge it yourself on GitHub; mag sees the merge and goes on. Comments on the PR go back to the developer.</span>
+    <div className={`scard ${card.tone}`}>
+      <div className="scardhead">
+        <b>{card.title}</b>
+        {card.verdict && <span className={`verdict ${VERDICT_CLASS[card.verdict.tone]}`}>{card.verdict.label}</span>}
       </div>
+      <div className="scardbody">
+        {card.stats.length > 0 && <div className="scardstats">{card.stats.map((x) => <span key={x}>{x}</span>)}</div>}
+        {card.rows.map((r, i) => (
+          <div key={i} className="scardrow">
+            {r.tag && <span className={`tag t-${r.tag.replace(/ /g, '-')}`}>{r.tag}</span>}
+            <span>{r.lead && <b>{r.lead} </b>}{r.text}</span>
+          </div>
+        ))}
+        {card.details.map((d) => (
+          <details key={d.summary} className="scardfold">
+            <summary>{d.summary}</summary>
+            <ul>{d.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
+          </details>
+        ))}
+        {error && <div className="small err">{error}</div>}
+      </div>
+      {(card.buttons.length > 0 || card.note) && (
+        <div className="scardfoot">
+          {card.buttons.map((b) => <button key={`${b.kind}-${b.label}`} className={'primary' in b && b.primary ? 'primary' : ''} disabled={busy} onClick={() => void press(b)}>{b.label}</button>)}
+          {card.note && <span className="muted small">{card.note}</span>}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,5 @@
-import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -1044,6 +1045,22 @@ function sharedTool(
       if (work && repos.length) return repos.map((r) => `## ${repoWorkName(work, r)}\n${formatReport(analyze(r.worktree))}`).join('\n\n')
       if (!project.repos[0]) throw new Error('Project has no repository')
       return formatReport(analyze(project.repos[0]))
+    }
+
+    case 'request_integration': {
+      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (!session) throw new Error('This run has no chat to ask in: say the integration is off in mag; the user turns it on in Project → Integrations')
+      const id = String(args.id ?? '').trim()
+      const integration = store.data.integrations.find((i) => i.id === id && i.id !== MAG_MCP_ID)
+      if (!integration) throw new Error(`No integration ${id || '(none)'}; the ids are in your prompt`)
+      const mode = integrationMode(project, session.role, id)
+      if (mode !== 'off') return `${integration.name} is already on (${mode}) for the ${session.role} role in mag; it applies from your next turn.`
+      // One card per integration while it is still off.
+      if (!session.items.some((i) => i.kind === 'integration' && i.integrationId === id && i.status === 'off')) {
+        const why = String(args.why ?? '').replace(/\s+/g, ' ').trim()
+        store.pushItem(session.id, { kind: 'integration', id: randomUUID(), integrationId: id, server: integration.name, role: session.role, why, status: 'off', at: Date.now() })
+      }
+      return `The user is asked to turn on ${integration.name}. End your turn now, saying ${integration.name} is turned off in mag for the ${session.role} role; once it is on, mag tells you to repeat your last step.`
     }
 
     case 'show_canvas': {

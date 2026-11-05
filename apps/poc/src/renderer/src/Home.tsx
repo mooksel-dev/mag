@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   REVIEW_FORMATS,
+  byActivity,
   chatCommands,
   composerRoute,
   projectReviewFormat,
@@ -15,21 +16,28 @@ import type { AppState } from '../../preload/api'
 import { MoveButton } from './Cards'
 import { Composer, ModelChip } from './Chat'
 import { useNow } from './Tasks'
-import { cardSelection, type Selection } from './WorkList'
+import { cardSelection, type HomeGroup, type Selection } from './WorkList'
 
 const mag = window.mag
 
 /**
  * Home (redesign-start-screen-big-composer.1), shown by ＋ New, ⌘N and when nothing is selected: one big composer whose
  * chip says what send will do (core composerRoute), then the cards waiting on the user with their action and the works
- * an agent runs.
+ * an agent runs. Opened by a group's + (`group`), what it creates goes first in that group (`onCreated`, its ref).
  */
-export function HomeScreen({ project, state, onSelect }: { project: Project; state: AppState; onSelect: (s: Selection) => void }) {
+export function HomeScreen({ project, state, group, onSelect, onCreated }: {
+  project: Project
+  state: AppState
+  group?: HomeGroup | null
+  onSelect: (s: Selection) => void
+  /** Called with the sidebar ref (work:<id> | topic:<id>) of what send or import created. */
+  onCreated?: (ref: string) => void
+}) {
   const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
   const cards = workCards(project.id, tasks, state.sessions, now)
-  const waiting = cards.filter((c) => c.group === 'waiting')
-  const working = cards.filter((c) => c.group === 'working')
+  const waiting = byActivity(cards.filter((c) => c.group === 'waiting'))
+  const working = byActivity(cards.filter((c) => c.group === 'working'))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.
@@ -51,7 +59,9 @@ export function HomeScreen({ project, state, onSelect }: { project: Project; sta
   }
   const opened = (r: { taskId: string } | { error: string } | null) => {
     if (r && 'error' in r) throw new Error(r.error)
-    if (r) onSelect({ kind: 'work', id: r.taskId })
+    if (!r) return
+    onCreated?.(`work:${r.taskId}`)
+    onSelect({ kind: 'work', id: r.taskId })
   }
   // Import review (review-v2-part-2-v1-2.3): a review's .zip dropped on the composer, or picked; it opens read only.
   const importReview = (zipPath?: string) => run(async () => opened(await mag.importReview(project.id, zipPath))).catch(() => {})
@@ -70,6 +80,7 @@ export function HomeScreen({ project, state, onSelect }: { project: Project; sta
         return opened(await mag.workFromTicket(project.id, route.url))
       case 'ask': {
         const id = await mag.newChat(project.id)
+        onCreated?.(`topic:${id}`)
         onSelect({ kind: 'topic', id })
         return mag.send(id, route.text, attachments)
       }
@@ -96,6 +107,7 @@ export function HomeScreen({ project, state, onSelect }: { project: Project; sta
   return (
     <main className="home">
       <div className="homein">
+        {group && <p className="homegroup small">New in <b>{group.name}</b></p>}
         <h2 className="hello">What are we doing in {project.name}?</h2>
         <div>
           <Composer

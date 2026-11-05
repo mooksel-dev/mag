@@ -641,3 +641,17 @@ test("a project chat gets the buttons' tools, each only on the user's word (chat
   for (const t of chat) assert.match(t.description, /Only when the user has asked for exactly this in this conversation/)
   assert.ok(!toolsFor('task', 'developer').some((t) => names.includes(t.name)))
 })
+
+test('request_integration: one card per integration while it is off; an integration that is on or unknown says so (redesign-start-screen-big-composer.4)', async () => {
+  const { store, project, call, groomer } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }, { id: 'claude_ai_Gmail', name: 'claude.ai Gmail' }])
+  store.updateProject(project.id, { integrations: { groomer: { claude_ai_Gmail: 'ask' } } })
+  assert.match(await call('request_integration', { id: 'claude_ai_Slack', why: 'read the  thread' }), /End your turn now, saying claude\.ai Slack is turned off in mag for the groomer role/)
+  await call('request_integration', { id: 'claude_ai_Slack', why: 'again' })
+  const cards = store.session(groomer.id).items.filter((i) => i.kind === 'integration')
+  assert.deepEqual(cards.map((c) => c.kind === 'integration' && [c.integrationId, c.server, c.role, c.why, c.status]), [['claude_ai_Slack', 'claude.ai Slack', 'groomer', 'read the thread', 'off']])
+  assert.match(await call('request_integration', { id: 'claude_ai_Gmail', why: 'x' }), /already on \(ask\)/)
+  await assert.rejects(call('request_integration', { id: 'mag', why: 'x' }), /No integration mag/)
+  assert.ok(toolsFor('task', 'reviewer').some((t) => t.name === 'request_integration'))
+  assert.ok(toolsFor('project', 'chat').some((t) => t.name === 'request_integration'))
+})
