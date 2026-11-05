@@ -310,6 +310,30 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbadge.d-del { border-color: var(--diff-del); }
 .archarrows path.d-move { stroke: var(--diff-move); stroke-width: 2; stroke-dasharray: 6 4; }
 .archarrows marker path.d-move { stroke: none; fill: var(--diff-move); }
+/* A plan painted with its comparison to the fact (plan-fact-porivniannia-na-rivni.1): its own colors over the diff's. */
+.archbox.ov-match { border: 2px solid var(--diff-add); }
+.archbox.ov-differs { border: 2px solid var(--diff-mod); }
+.archbox.ov-missing { border: 2px solid var(--muted); opacity: .6; }
+.archbox.ov-missing .name { text-decoration: line-through; }
+.archbox.ov-unplanned { border: 2px dashed var(--diff-mod); }
+.archbox.ov-none { border-color: var(--line); }
+.archarrows path.ov-match { stroke: var(--diff-add); stroke-width: 2.2; }
+.archarrows path.ov-differs { stroke: var(--diff-mod); stroke-width: 2.2; }
+.archarrows path.ov-missing { stroke: var(--muted); stroke-width: 2; opacity: .6; }
+.archarrows path.ov-unplanned { stroke: var(--diff-mod); stroke-width: 2.2; stroke-dasharray: 5 4; }
+.archarrows path.ov-none { opacity: .6; }
+.archarrows marker path.ov-match { stroke: none; fill: var(--diff-add); }
+.archarrows marker path.ov-differs, .archarrows marker path.ov-unplanned { stroke: none; fill: var(--diff-mod); }
+.archarrows marker path.ov-missing { stroke: none; fill: var(--muted); }
+.ovlegend { display: contents; }
+.archlegend .sw.ov-match { border-top: 2px solid var(--diff-add); }
+.archlegend .sw.ov-differs { border-top: 2px solid var(--diff-mod); }
+.archlegend .sw.ov-missing { border-top: 2px solid var(--muted); }
+.archlegend .sw.ov-unplanned { border-top: 2px dashed var(--diff-mod); }
+.factdeviations { margin: 6px 0; padding-left: 0; list-style: none; }
+.factdeviations li { margin: 4px 0; }
+.factfolded { margin: 4px 0; }
+.factfolded summary { cursor: pointer; }
 .archbadge.d-move { border-color: var(--diff-move); }
 /* a diff arrow carries only the count of its changed calls: "+2 ~1 −1" */
 .archbadge.pill { white-space: nowrap; padding: 0 7px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 500; }
@@ -476,10 +500,6 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .factstatus { width: 16px; font-weight: 700; }
 .s-match { color: var(--diff-add); } .s-differs { color: var(--diff-mod); } .s-missing { color: var(--diff-del); }
 .s-unplanned { color: var(--diff-move); }
-.factlevel { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line); white-space: nowrap; }
-.factlevel.lv-critical { border-color: var(--diff-del); color: var(--diff-del); }
-.factlevel.lv-high { border-color: var(--diff-mod); color: var(--diff-mod); }
-.factlevel.lv-low, .factlevel.lv-noise { color: var(--muted); }
 .factline + .factline { margin-top: 3px; }
 .facthunk { margin: 4px 0; padding: 6px 8px; background: var(--code); border-radius: 4px; font: 11px ui-monospace, Menlo, monospace; overflow-x: auto; white-space: pre; }
 .factcoverage { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }

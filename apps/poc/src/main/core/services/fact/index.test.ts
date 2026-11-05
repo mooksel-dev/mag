@@ -73,15 +73,16 @@ test('check: no inventory blocks; the inventory is checked against the hunks and
   const fact = check(project, changed, [root], plan)
   assert.deepEqual(fact.blockers, [])
   assert.equal(fact.canvas, root)
-  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]), [['differs', 'api#list'], ['unplanned', 'api'], ['match', 'api -> jobs'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared with the call units')
-  assert.equal(fact.comparison.items[0].level, 'medium', 'another argument list differs without blocking')
+  assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]).sort(), [['match', 'api -> jobs'], ['match', 'api#list'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared with the call units; list(limit) is list(limit: number)')
+  assert.deepEqual(fact.overlay?.modules, { api: 'match', jobs: 'match' })
   assert.match(factReport(fact), /### Inventory against the hunks\nInventory: 3 unit\(s\) over 2 block\(s\) of changed code \(3 in all\)\.\nEvery block/)
   assert.match(factReport(fact), /Threshold: merge is allowed/)
 
   // A unit left out: its block is in no unit; a planned line not on the fact is missing.
   const less = { ...INVENTORY, units: INVENTORY.units.filter((u) => u.id !== 'u2') }
   const short = check(project, changed, [canvas('root', factDiagrams(less, changed, project, []).component, { root: true, inventory: less })], plan)
-  assert.deepEqual(short.blockers, ['H2.1 (app:src/jobs/sync.ts, jobs) is changed code in no unit and not in noise', 'high: module jobs is planned, not on the fact', 'high: jobs sync(): void is planned, not on the fact'])
+  assert.deepEqual(short.blockers, ['H2.1 (app:src/jobs/sync.ts, jobs) is changed code in no unit and not in noise', 'module jobs is planned, not done', 'jobs: sync is planned, not done'])
+  assert.deepEqual(short.overlay?.modules, { api: 'match', jobs: 'missing' })
 })
 
 test("check without a plan (a teammate's PR): only the inventory against the hunks, no plan ↔ fact (reviews-prybraty-spysok-pr-i.1)", async () => {

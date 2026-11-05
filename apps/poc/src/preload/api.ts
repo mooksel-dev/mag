@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck } from '@mag/diff/types'
+import type { AgentInfo, AgentSession, Attachment, Canvas, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -98,9 +98,16 @@ export interface FactView {
   heads: Record<string, string>
   repos: { repo: string; name: string; baseSha: string; headSha: string }[]
   files: FileChange[]
-  items: CompareItem[]
+  /** Plan ↔ fact at plan level, each item with its deviation in words (phrase). */
+  items: (CompareItem & { phrase: string })[]
+  /** Changes inside the planned modules and entities, each module's in a line ('+12 helpers in core-pr-review'). */
+  additions: (Addition & { line: string })[]
+  /** Changes inside existing modules the plan does not touch, and their line ('Also changed outside the plan: …'). */
+  outsidePlan: { modules: Addition[]; line: string }
   blockers: string[]
   plans: FactCanvas[]
+  /** The plan's Component diagram (its root, else the first) and the comparison over it; null without one. */
+  planDiagram: (FactCanvas & { diagram: ComponentDiagram; overlay: PlanOverlay }) | null
   /** The root of the fact set; null before the review starts one. */
   fact: FactCanvas | null
   /** Every diagram of the fact set, the root among them (povnyi-diff-nabir-pov-iazanykh.1). */

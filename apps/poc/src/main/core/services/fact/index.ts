@@ -8,8 +8,8 @@ import {
   type ArchNode, type Canvas, type ChangeInventory, type ComponentDiagram, type DataDiagram, type Diagram, type Project, type SequenceDiagram,
 } from '@mag/core'
 import {
-  checkInventory, compare, createDiff, diagramChanges, folderVocabulary, formatComparison, formatFiles, formatHunks, formatInventoryCheck, inventoryBlockers, mergeBlockers, numberHunks, parseSignificance, planVocabulary, withLevels,
-  type Comparison, type FileChange, type FileDiff, type HunkRef, type InventoryCheck, type Vocabulary,
+  checkInventory, compare, createDiff, diagramChanges, folderVocabulary, formatComparison, formatFiles, formatHunks, formatInventoryCheck, inventoryBlockers, mergeBlockers, numberHunks, parseSignificance, planOverlay, planVocabulary, withLevels,
+  type Comparison, type FileChange, type FileDiff, type HunkRef, type InventoryCheck, type PlanOverlay, type Vocabulary,
 } from '@mag/diff'
 
 /** Where the changes are read from: a local git checkout, later a PR's diff on GitHub. `at` is where it reads a repository. */
@@ -62,8 +62,10 @@ export interface Fact extends Changes {
   inventory: ChangeInventory | null
   /** The inventory against the hunks; null without an inventory. */
   inventoryCheck: InventoryCheck | null
-  /** Plan ↔ fact; empty without a plan. */
+  /** Plan ↔ fact at plan level; empty without a plan. */
   comparison: Comparison
+  /** The comparison over the plan's Component diagram; null without a plan. */
+  overlay: PlanOverlay | null
   /**
    * Where the fact set does not hang together (root, links, orphans: validateLinks), where a drawn diagram breaks a
    * rule of the diff (diagramWarnings), and flowcharts of no method with nontrivial logic.
@@ -134,8 +136,8 @@ export function flowchartRefusal(inventory: ChangeInventory | null, diagram: Dia
 }
 
 /**
- * The fact set against the changed hunks (the inventory's check) and the plan set (compare), levelled by the
- * playbook's rules, and what keeps the review from merge. `plan` null: nothing to compare with (a teammate's PR), so
+ * The fact set against the changed hunks (the inventory's check) and the plan set (compare, at plan level), levelled
+ * by the playbook's rules, and what keeps the review from merge: the inventory's gaps and every deviation from the plan. `plan` null: nothing to compare with (a teammate's PR), so
  * only the code counts; [] is a step without a plan, where everything on the fact is unplanned. A set drawn before the
  * inventory has none: it blocks until the review is restarted.
  */
@@ -146,10 +148,11 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
   const canvas = factRoot(set)
   const inventory = canvas?.inventory ?? null
   const rules = parseSignificance(playbookOf(project).significance)
-  // Planned calls are not compared with the inventory's call units yet: only modules, lines and uses compare.
-  const planned = withLevels((plan ?? []).flatMap((c) => diagramChanges(c.diagram!)).filter((c) => !inventory || c.kind !== 'call'), rules)
-  const fact = withLevels((inventory ? [canvas!] : set).flatMap((c) => diagramChanges(c.diagram!)), rules)
-  const comparison = plan ? compare(planned, fact, architecture) : { items: [] }
+  const planned = withLevels((plan ?? []).flatMap((c) => diagramChanges(c.diagram!)), rules)
+  // With an inventory the fact is its generated diagrams: the Component root and the Data diagram.
+  const fact = withLevels((inventory ? [canvas!, ...set.filter((c) => c.diagram!.type === 'data')] : set).flatMap((c) => diagramChanges(c.diagram!)), rules)
+  // Planned calls are not compared with the inventory's call units yet: they only widen the plan's scope.
+  const comparison = plan ? compare(planned, fact, architecture, { calls: !inventory }) : { items: [], additions: [], outside: [] }
   const inventoryCheck = inventory ? checkInventory(inventory, files, { modules: changed.outside ? undefined : knownModules(architecture, plan ?? []) }) : null
   // Without code to show, no inventory is needed.
   const code = files.some((f) => f.kind === 'code')
@@ -163,7 +166,7 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
   const drawn = set.filter((c) => !inventory || !generated(c))
   const flows = inventory ? drawn.flatMap((c) => (flowchartRefusal(inventory, c.diagram!) ? [`"${c.title}" (${c.id}): its of ${(c.diagram as { of?: string }).of ?? '(none)'} is no method of the inventory with logic nontrivial.`] : [])) : []
   return {
-    repos, files, outside: changed.outside, plan, set, canvas, inventory, inventoryCheck, comparison,
+    repos, files, outside: changed.outside, plan, set, canvas, inventory, inventoryCheck, comparison, overlay: plan ? planOverlay(comparison, architecture) : null,
     warnings: set.length ? [...validateLinks(set), ...drawn.flatMap((c) => diagramWarnings(c.diagram!).map((w) => `"${c.title}" (${c.id}): ${w}`)), ...flows] : [],
     blockers: mergeBlockers(comparison, own),
   }
@@ -202,7 +205,7 @@ export function factReport(fact: Fact): string {
   const out = [...head, diagram, ...outside, '', '### Changed files', ...fact.repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, fact.files.filter((f) => f.repo === r.name)))]
   if (fact.inventoryCheck) out.push('', '### Inventory against the hunks', formatInventoryCheck(fact.inventoryCheck))
   if (fact.warnings.length) out.push('', `### Where the fact set does not hang together or breaks a rule of the diff (${fact.warnings.length})`, ...fact.warnings.map((w) => `- ${w}`))
-  if (plan) out.push('', '### Plan ↔ fact', ...(fact.inventory ? ['(Planned calls are not compared with the call units of the inventory.)'] : []), formatComparison(fact.comparison, fact.blockers))
+  if (plan) out.push('', '### Plan ↔ fact', ...(fact.inventory ? ["(Planned calls are not compared with the call units of the inventory; they only widen the plan's scope.)"] : []), formatComparison(fact.comparison, fact.blockers))
   else out.push('', fact.blockers.length ? `### The fact is not complete yet\n${fact.blockers.map((b) => `  - ${b}`).join('\n')}` : '### The fact is complete: the inventory accounts for every block of changed code and rests on its hunks.')
   return out.join('\n')
 }

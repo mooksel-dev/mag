@@ -5,11 +5,11 @@
 // (reviews-prybraty-spysok-pr-i.1); read from GitHub when the project has no checkout of its repository
 // (reviews-ahent-reviuit-pr-timeitiv.3).
 import { existsSync } from 'node:fs'
-import { prHeads, prRepoName, repoWorkName, stepDiagrams, type Canvas, type Project, type Task, type TaskWork } from '@mag/core'
-import type { HunkRef } from '@mag/diff'
+import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type Task, type TaskWork } from '@mag/core'
+import { additionCount, additionLine, outsideLine, phrase, type HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type Fact } from './core/services/fact/index.ts'
-import { diffHunks, diffText, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse } from './git.ts'
+import { diffHunks, diffText, forkPoint, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse } from './git.ts'
 
 type DiffText = (at: string, base: string, head: string) => Promise<string>
 
@@ -65,10 +65,10 @@ export const stepSet = (canvases: Canvas[], stepId: string, role: 'plan' | 'fact
 /** Where git runs for a repository of a step: a worktree is removed once merged; the main checkout shares its objects. */
 const repoDir = (r: TaskWork['repos'][number]) => (!r.local && existsSync(r.worktree) ? r.worktree : r.repo)
 
-/** A repository's changes from where `head` left the project's base branch. */
+/** A repository's changes from where `head` left the project's base branch, also once merged into it (a merged step's). */
 export async function branchTarget(project: Project, repo: string, name: string, at: string, head: string): Promise<ChangeTarget> {
   const from = await revParse(at, `origin/${project.baseBranch}`).catch(() => revParse(at, project.baseBranch))
-  return { repo, name, at, base: await mergeBase(at, from, head), head }
+  return { repo, name, at, base: await forkPoint(at, from, head), head }
 }
 
 /** The changes of a step's PRs at `heads` (repository path → head commit), in the step's order of repositories. */
@@ -94,14 +94,18 @@ export async function stepFact(project: Project, step: Task, heads: Record<strin
 /** The counts of a fact, as a step records them. */
 export function factCounts(fact: Fact): NonNullable<Task['fact']>['counts'] {
   const check = fact.inventoryCheck
-  const counts = { match: 0, differs: 0, missing: 0, unplanned: 0, unaccounted: check?.unaccounted.length ?? 0, ungrounded: (check?.ungrounded.length ?? 0) + (check?.otherModule.length ?? 0) + (check?.unknown.length ?? 0) }
+  const counts = {
+    match: 0, differs: 0, missing: 0, unplanned: 0,
+    additions: additionCount(fact.comparison.additions).changes, outside: additionCount(fact.comparison.outside).changes,
+    unaccounted: check?.unaccounted.length ?? 0, ungrounded: (check?.ungrounded.length ?? 0) + (check?.otherModule.length ?? 0) + (check?.unknown.length ?? 0),
+  }
   for (const i of fact.comparison.items) counts[i.status]++
   return counts
 }
 
-/** A step's (or a review's) fact as it records it. */
+/** A step's (or a review's) fact as it records it, by this version of plan ↔ fact. */
 export function factRecord(fact: Fact, heads: Record<string, string>): NonNullable<Task['fact']> {
-  return { heads, counts: factCounts(fact), blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, at: Date.now() }
+  return { heads, counts: factCounts(fact), compareVersion: COMPARE_VERSION, blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, at: Date.now() }
 }
 
 /** The heads a step's fact is of: its open PRs, else the heads its fact was recorded at (a merged step). */
@@ -114,12 +118,31 @@ const canvasRef = (c: Canvas): FactCanvas => ({ id: c.id, title: c.title, versio
 
 /**
  * Plan ↔ fact of a step as Diff shows it (T-57.5): its fact at factHeads, compared with its plan diagrams, and its
- * inventory against the hunks. null when the step has no heads.
+ * inventory against the hunks. null when the step has no heads. `record`: told the fact when the step's recorded one
+ * is of an older compare at the same heads (a merged step's, plan-fact-porivniannia-na-rivni.1), to record it again.
  */
-export async function factView(project: Project, step: Task, canvases: Canvas[]): Promise<FactView | null> {
+export async function factView(project: Project, step: Task, canvases: Canvas[], record?: (fact: NonNullable<Task['fact']>) => void): Promise<FactView | null> {
   const heads = factHeads(step)
   if (!Object.keys(heads).length || !step.work) return null
-  return view(heads, await stepFact(project, step, heads, canvases))
+  const fact = await stepFact(project, step, heads, canvases)
+  if (record && staleAt(step, heads)) record(factRecord(fact, heads))
+  return view(heads, fact)
+}
+
+/** The step's recorded fact is of these heads and of an older compare. */
+function staleAt(step: Task, heads: Record<string, string>): boolean {
+  const f = step.fact
+  if (!f || !staleFact(f)) return false
+  const keys = Object.keys(heads)
+  return keys.length === Object.keys(f.heads).length && keys.every((k) => f.heads[k] === heads[k])
+}
+
+/** The plan's Component diagram the comparison paints: the set's root if it is one, else its first. */
+function planDiagram(fact: Fact): FactView['planDiagram'] {
+  const plans = (fact.plan ?? []).filter((c) => c.diagram?.type === 'component')
+  const root = setRoot(fact.plan ?? [])
+  const c = (root && plans.includes(root) ? root : plans[0]) ?? null
+  return c && fact.overlay ? { ...canvasRef(c), diagram: c.diagram as ComponentDiagram, overlay: fact.overlay } : null
 }
 
 /** A fact as Diff and the Reviews page show it. */
@@ -128,9 +151,12 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
     heads,
     repos: fact.repos,
     files: withoutLines(fact.files),
-    items: fact.comparison.items,
+    items: fact.comparison.items.map((i) => ({ ...i, phrase: phrase(i) })),
+    additions: fact.comparison.additions.map((a) => ({ ...a, line: additionLine(a) })),
+    outsidePlan: { modules: fact.comparison.outside, line: outsideLine(fact.comparison.outside) },
     blockers: fact.blockers,
     plans: (fact.plan ?? []).map(canvasRef),
+    planDiagram: planDiagram(fact),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,
     set: fact.set.map(canvasRef),
     inventory: fact.inventory ? { units: fact.inventory.units.length, summary: fact.inventory.summary } : null,

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
 import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
 import { callGroups, edgePill, flowLines, flowOf, methodCallers, moveEdges, relatedFlows, unchangedAt, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
+import type { PlanOverlay } from '@mag/diff/types'
+import { paintPlan, type Painted } from '../planOverlay'
 import { DiffLegend } from './DiffLegend'
 import { FlowchartView } from './Graph'
 
@@ -61,19 +63,24 @@ export type OpenFlow = (module: string, method: string) => void
  * One level of a module tree: click a module with inner modules to go inside, breadcrumbs lead back. Arrows carry
  * the number of calls; modules outside the level that it calls or is called by show as ports. `diff`: a task diagram,
  * colored by its diff marks instead of layering. `focus`: a module to show on its level and select (a #node link).
- * `flows`: the task's flows of methods; a method with one gets "flow ›", which opens the flow in place.
+ * `flows`: the task's flows of methods; a method with one gets "flow ›", which opens the flow in place. `overlay`: a
+ * plan diagram painted with its comparison to the fact: as planned green, otherwise yellow, missing grey struck
+ * through, the fact's unplanned modules and dependencies added in and dashed (plan-fact-porivniannia-na-rivni.1).
  */
-export function ComponentView({ modules, diff = false, summary, focus, flows = NO_FLOWS, onSelect, onFlow }: {
+export function ComponentView({ modules: drawn, diff = false, summary, focus, flows = NO_FLOWS, overlay, onSelect, onFlow }: {
   modules: DNode[]
   diff?: boolean
   summary?: string
   focus?: string
   flows?: FlowItem[]
+  overlay?: PlanOverlay
   /** Told the module selected, null when none. */
   onSelect?: (id: string | null) => void
   /** Opens a method's flow somewhere else (the diff window's next diagram) instead of in place. */
   onFlow?: OpenFlow
 }) {
+  const paint = useMemo(() => (overlay ? paintPlan(drawn, overlay) : null), [drawn, overlay])
+  const modules = paint?.modules ?? drawn
   const at = (id: string | undefined) => (id ? pathTo(modules, id) : [])
   const [level, setLevel] = useState<string | null>(() => at(focus).at(-2)?.id ?? null)
   const [selected, setSelected] = useState<string | null>(() => (at(focus).length ? focus! : null))
@@ -160,7 +167,14 @@ export function ComponentView({ modules, diff = false, summary, focus, flows = N
             ? 'Click a module with ▸ to go inside. Hover or click a box to see its calls; Esc clears.'
             : 'Click a module with ▸ to go inside. Hover or select a box to see its links; hover an arrow label for the calls.'}
         </span>
-        {diff ? (
+        {paint ? (
+          <span className="ovlegend">
+            <span><i className="sw ov-match" /> as planned</span>
+            <span><i className="sw ov-differs" /> otherwise</span>
+            <span><i className="sw ov-missing" /> missing</span>
+            <span><i className="sw ov-unplanned" /> not on the plan</span>
+          </span>
+        ) : diff ? (
           <DiffLegend move />
         ) : (
           <>
@@ -170,7 +184,7 @@ export function ComponentView({ modules, diff = false, summary, focus, flows = N
         )}
       </div>
       <div className="archbody">
-        <Level key={parentId ?? ''} all={modules} diff={diff} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
+        <Level key={parentId ?? ''} all={modules} diff={diff} paint={paint} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
         {diff ? (
           // A diff keeps the panel in place, so hovering a box does not reflow the diagram under the pointer.
           <aside className="archside">
@@ -196,9 +210,11 @@ export function ComponentView({ modules, diff = false, summary, focus, flows = N
   )
 }
 
-function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal, onFlow }: {
+function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal, onFlow }: {
   all: DNode[]
   diff: boolean
+  /** A plan painted with its comparison: boxes and arrows take its colors. */
+  paint: Painted | null
   flows: FlowItem[]
   parentId: string | null
   selected: string | null
@@ -275,15 +291,15 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
       .filter((e) => !focus || e.from === focus || e.to === focus)
       .map((e) => {
         const from = findNode(all, e.from)
-        // In a diff diagram arrows are colored by their change, not by layering.
-        const sev = diff ? `d-${e.diff ?? 'none'}` : from?.layer ? (ruleOf(all, from, e.to)?.severity ?? 'ok') : 'ok'
+        // A painted plan's arrows are colored by how they came out; a diff diagram's by their change, not by layering.
+        const sev = paint ? `ov-${paint.edge(e.from, e.to) ?? 'none'}` : diff ? `d-${e.diff ?? 'none'}` : from?.layer ? (ruleOf(all, from, e.to)?.severity ?? 'ok') : 'ok'
         return { ...e, sev } as ArchEdge & { sev: string; moved?: string[] }
       })
     const shownMoves = moved
       .filter((m) => !focus || m.from === focus || m.to === focus)
       .map((m): ArchEdge & { sev: string; moved?: string[] } => ({ from: m.from, to: m.to, calls: [], sev: 'd-move', moved: m.names }))
     return routeEdges([...shown, ...shownMoves], boxes)
-  }, [all, diff, edges, moved, focus, boxes])
+  }, [all, diff, paint, edges, moved, focus, boxes])
 
   const marker = (sev: string) => `${uid}-${sev}`
   const ref = (id: string) => (el: HTMLElement | null) => {
@@ -306,7 +322,7 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
           <div className="archboxes">
             {lane.nodes.length === 0 && <span className="muted small">none</span>}
             {lane.nodes.map((n) => {
-              const cls = `archbox ${n.layer ? `layer-${n.layer}` : 'nolayer'}${diffCls(diff, nodeDiff(n))}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`
+              const cls = `archbox ${n.layer ? `layer-${n.layer}` : 'nolayer'}${diffCls(diff, nodeDiff(n))}${paint ? ` ov-${paint.module(n.id) ?? 'none'}` : ''}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`
               if (lane.ports) {
                 const where = pathTo(all, n.id).slice(0, -1).map((a) => a.name).join(' › ')
                 return (
@@ -392,7 +408,7 @@ function Level({ all, diff, flows, parentId, selected, hover, onHover: setHover,
       )}
       <svg className="archarrows" aria-hidden="true">
         <defs>
-          {(diff ? ['d-add', 'd-mod', 'd-del', 'd-none', 'd-move'] : ['ok', 'warning', 'error']).map((sev) => (
+          {(paint ? ['ov-match', 'ov-differs', 'ov-missing', 'ov-unplanned', 'ov-none', 'd-move'] : diff ? ['d-add', 'd-mod', 'd-del', 'd-none', 'd-move'] : ['ok', 'warning', 'error']).map((sev) => (
             <marker key={sev} id={marker(sev)} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0 1 L9 5 L0 9 Z" className={sev} />
             </marker>

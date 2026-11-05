@@ -358,3 +358,14 @@ export const revParse = (repo: string, ref: string) => run('git', ['rev-parse', 
 
 /** Where `head` branched off `base`. */
 export const mergeBase = (repo: string, base: string, head: string) => run('git', ['merge-base', base, head], repo)
+
+/**
+ * Where `head` left `base`, also once it is merged into it: then their merge base is `head` itself, so it is the merge
+ * base of `head` and `base` before the merge commit that took it in. A fast-forward has no such commit: `head`.
+ */
+export async function forkPoint(repo: string, base: string, head: string): Promise<string> {
+  const at = await mergeBase(repo, base, head)
+  if (at !== (await revParse(repo, head))) return at
+  const merge = (await run('git', ['rev-list', '--merges', '--ancestry-path', '--reverse', `${head}..${base}`], repo)).split('\n')[0]
+  return merge ? mergeBase(repo, `${merge}^1`, head) : at
+}

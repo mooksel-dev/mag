@@ -1,6 +1,6 @@
 // The changes a Component diagram draws (a plan's or a fact's, T-58), and where a plan disagrees with the vocabulary:
 // ids the architecture does not have, new modules without the code they will own (Decision 8).
-import { findNode, methodName, useDiff, walkArch, type ArchNode, type DNode, type Diagram } from '@mag/core'
+import { findNode, methodName, useDiff, walkArch, type ArchNode, type DataDiagram, type DNode, type Diagram } from '@mag/core'
 import type { Change, PlanWarning } from './types.ts'
 
 /** Words a line may start with before the name it is about: `interface Fact`, `async review(…)`, `resource "x"`. */
@@ -14,12 +14,40 @@ export function lineName(text: string): string {
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
 
+/** The module a Data diagram's entity without one is in. */
+export const NO_MODULE = '(no module)'
+
 /**
- * The changes a Component diagram draws, over its module ids: marked modules, interface lines (those of an added or
- * removed module take its mark; a del and an add line of one name are one signature change), dependencies and calls.
- * Each keeps the `files` its line gives. Other diagram types draw no changes here.
+ * The changes a Data diagram draws (plan-fact-porivniannia-na-rivni.1): marked entities and fields (those of an added
+ * or removed entity take its mark), each in the module that owns its entity. Indexes and relations are not compared.
+ */
+function dataChanges(diagram: DataDiagram): Change[] {
+  const out: Change[] = []
+  for (const e of diagram.entities) {
+    const module = e.module || NO_MODULE
+    const whole = e.diff === 'add' || e.diff === 'del' ? e.diff : undefined
+    if (e.diff) out.push({ key: `${module}/${e.id}`, kind: 'entity', diff: e.diff, module, name: e.name, ...(e.diff === 'move' && e.from && { from: e.from }) })
+    for (const f of e.fields) {
+      const diff = f.diff ?? whole
+      if (!diff) continue
+      const line = `${f.name}: ${f.type}`
+      out.push({
+        key: `${module}/${e.id}.${f.name}`, kind: 'field', diff, module, name: f.name, entity: e.id, entityName: e.name,
+        ...(diff === 'del' ? { before: line } : { after: line }), ...(diff === 'move' && f.from && { from: f.from }),
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * The changes a Component or Data diagram draws. Component, over its module ids: marked modules, interface lines (those
+ * of an added or removed module take its mark; a del and an add line of one name are one signature change),
+ * dependencies and calls, each with the `files` its line gives. Data: entities and fields (dataChanges). Other diagram
+ * types draw no changes here.
  */
 export function diagramChanges(diagram: Diagram): Change[] {
+  if (diagram.type === 'data') return dataChanges(diagram)
   const out: Change[] = []
   if (diagram.type !== 'component') return out
   walkArch(diagram.modules, (n: DNode, ancestors: DNode[]) => {

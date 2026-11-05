@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ArchNode, ComponentDiagram, DNode } from '@mag/core'
-import { callSignature, compare, formatComparison, mergeBlockers } from './compare.ts'
+import type { ArchNode, ComponentDiagram, DataDiagram, Diagram, DNode } from '@mag/core'
+import { additionLine, callSignature, compare, entityWord, formatComparison, mergeBlockers, outsideLine, planOverlay, sameCall } from './compare.ts'
 import { createDiff, fileKind } from './files.ts'
 import { formatFiles } from './format.ts'
 import { diagramChanges, lineName, planWarnings } from './plan.ts'
@@ -119,7 +119,14 @@ const PLAN = diagram([
   dnode('git'),
 ])
 
-test('compare: match by key, mark and call (other text is a note), differs by mark or call, missing, unplanned; inner modules stand for an outer one', () => {
+test('callSignature: name and arguments, without the result and the description', () => {
+  assert.equal(callSignature('check(project, set: Canvas[]): Fact - checks it'), 'check(project,set:Canvas[])')
+  assert.equal(callSignature('run(fn: (x: number) => void) error'), 'run(fn:(x:number)=>void)')
+  assert.equal(callSignature('DEFAULT_PLAYBOOK.fact: string - the fact'), 'DEFAULT_PLAYBOOK.fact')
+  assert.equal(callSignature(undefined), '')
+})
+
+test('compare: match by key, mark and call (other text is a note), differs by mark or call, missing; a line of a planned module is an addition; inner modules stand for an outer one', () => {
   // The fact: the plan as it was done.
   const fact = diagram([
     dnode('orchestrator', {
@@ -136,59 +143,125 @@ test('compare: match by key, mark and call (other text is a note), differs by ma
     }),
     dnode('git'),
   ])
-  const { items } = compare(withLevels(diagramChanges(PLAN), []), withLevels(diagramChanges(fact), []), architecture)
-  const rows = items.map((i) => [i.status, (i.plan ?? i.fact)!.key, i.level])
+  const cmp = compare(withLevels(diagramChanges(PLAN), []), withLevels(diagramChanges(fact), []), architecture)
+  const rows = cmp.items.map((i) => [i.status, (i.plan ?? i.fact)!.key, i.how])
   assert.deepEqual(rows, [
-    ['differs', 'orchestrator#groom', 'high'],
-    ['differs', 'orchestrator#review', 'medium'],
-    ['missing', 'orchestrator#cancel', 'high'],
-    ['unplanned', 'orchestrator#develop', 'high'],
-    ['match', 'orchestrator#factOf', 'high'],
-    ['match', 'orchestrator -> git', 'high'],
-    ['match', 'orchestrator', 'medium'],
+    ['differs', 'orchestrator#review', 'signature'],
+    ['differs', 'orchestrator#groom', 'mark'],
+    ['missing', 'orchestrator#cancel', undefined],
+    ['match', 'orchestrator#factOf', undefined],
+    ['match', 'orchestrator -> git', undefined],
+    ['match', 'orchestrator', undefined],
   ])
-  assert.equal(items[0].note, 'planned mod (body), done del')
-  assert.equal(items[1].note, 'planned review(stepId, heads): void, done review(stepId, heads, round): void', 'another argument list: differs, not blocking')
-  assert.equal(items[4].note, 'planned factOf(stepId): Fact, done factOf( stepId ): Promise<Fact> - the fact of a step', 'another result or description: a match')
-  assert.deepEqual(mergeBlockers({ items: items.filter((i) => i.plan?.key === 'orchestrator#review') }, []), [])
+  assert.equal(cmp.items[0].note, 'planned review(stepId, heads): void, done review(stepId, heads, round): void')
+  assert.equal(cmp.items[3].note, 'planned factOf(stepId): Fact, done factOf( stepId ): Promise<Fact> - the fact of a step', 'another result or description: a match')
+  assert.deepEqual(cmp.additions.map((a) => [a.module, a.changes.map((c) => c.key)]), [['orchestrator', ['orchestrator#develop']]], 'a method in a planned module: an addition')
+  assert.deepEqual(mergeBlockers(cmp, []), [
+    'orchestrator: review has another signature than planned',
+    'orchestrator: groom is removed, planned changed inside',
+    'orchestrator: cancel is planned, not done',
+  ])
   // A plan drawn on the app is matched by the fact on its inner module.
   const outer = diagram([dnode('app', { interface: [{ text: 'factOf(stepId): Fact', diff: 'add' }] })])
   const inner = diagram([dnode('orchestrator', { interface: [{ text: 'factOf(stepId)  :  Fact', diff: 'add', files: [ORCH] }] })])
   assert.deepEqual(compare(diagramChanges(outer), diagramChanges(inner), architecture).items.map((i) => i.status), ['match'])
 })
 
-test('callSignature: name and arguments, without the result and the description', () => {
-  assert.equal(callSignature('check(project, set: Canvas[]): Fact - checks it'), 'check(project,set:Canvas[])')
-  assert.equal(callSignature('run(fn: (x: number) => void) error'), 'run(fn:(x:number)=>void)')
-  assert.equal(callSignature('DEFAULT_PLAYBOOK.fact: string - the fact'), 'DEFAULT_PLAYBOOK.fact')
-  assert.equal(callSignature(undefined), '')
+/** A plan of one changed method of the orchestrator, against a fact of it and `more`. */
+const planned = (more: DNode[] = [], line = 'review(stepId, heads): void') => {
+  const plan = diagram([dnode('orchestrator', { diff: 'mod', interface: [{ text: 'review(stepId): void', diff: 'del' }, { text: 'review(stepId, heads): void', diff: 'add' }] })])
+  const fact = diagram([dnode('orchestrator', { diff: 'mod', interface: [{ text: 'review(stepId): void', diff: 'del', files: [ORCH] }, { text: line, diff: 'add', files: [ORCH] }] }), ...more])
+  return compare(withLevels(diagramChanges(plan), []), withLevels(diagramChanges(fact), []), architecture)
+}
+
+test('compare: helpers of a planned module and an existing module changed outside the plan are no blockers; a new module or dependency is', () => {
+  const ok = planned([
+    dnode('orchestrator', { interface: [{ text: 'helper(x)', diff: 'add', files: [ORCH] }] }),
+    dnode('git', { diff: 'mod', interface: [{ text: 'diffHunks(repo, base, head)', diff: 'mod', files: [GIT] }] }),
+  ])
+  assert.deepEqual(mergeBlockers(ok, []), [])
+  assert.deepEqual(ok.additions.map(additionLine), ['+1 helper in orchestrator'])
+  assert.equal(outsideLine(ok.outside), 'Also changed outside the plan: git (1)')
+  assert.match(formatComparison(ok, []), /^Threshold: merge is allowed[\s\S]*\+1 helper in orchestrator: add helper[\s\S]*Also changed outside the plan: git \(1\)/)
+
+  const bad = planned([
+    dnode('cache', { diff: 'add', path: 'apps/app/src/cache.ts', interface: [{ text: 'get(key)', files: ['apps/app/src/cache.ts'] }] }),
+    dnode('tools', { uses: [{ to: 'git', diff: 'add', files: ['apps/app/src/tools.ts'], calls: [{ text: 'diffHunks(repo)', diff: 'add' }] }] }),
+  ])
+  assert.deepEqual(mergeBlockers(bad, ['H1.1 is changed code in no unit']), [
+    'H1.1 is changed code in no unit',
+    'new module cache, not on the plan (1 change in it)',
+    'new dependency tools → git, not on the plan (1 change in it)',
+  ])
+  assert.match(formatComparison(bad, mergeBlockers(bad, [])), /^Threshold: merge is NOT allowed/)
+  const overlay = planOverlay(bad, architecture)
+  assert.deepEqual(overlay.modules, { orchestrator: 'match' })
+  assert.deepEqual(overlay.unplanned, { modules: [{ id: 'cache', name: 'cache', within: [] }], edges: [{ from: 'tools', to: 'git' }] })
 })
 
-test('mergeBlockers: the fact\'s own blockers, then significant differences; none for a planned fact', () => {
-  const fact = diagram([
-    dnode('orchestrator', {
-      diff: 'mod',
-      interface: [
-        { text: 'review(stepId): void', diff: 'del', files: [ORCH] },
-        { text: 'review(stepId, heads): void', diff: 'add', files: [ORCH] },
-        { text: 'factOf(stepId): Fact', diff: 'add', files: [ORCH] },
-        { text: 'cancel(taskId): void', diff: 'del', files: [ORCH] },
-        { text: 'groom(taskId): void', diff: 'mod', files: [ORCH] },
-      ],
-      uses: [{ to: 'git', calls: [], diff: 'add', files: [ORCH] }],
-    }),
-    dnode('git', { interface: [{ text: 'diffHunks(repo, base, head)', diff: 'add', files: [GIT] }] }),
-  ])
-  const plan = withLevels(diagramChanges(PLAN), [])
-  const cmp = compare(plan, withLevels(diagramChanges(fact), []), architecture)
-  const blockers = mergeBlockers(cmp, ['H3.1 is changed code in no unit'])
-  assert.deepEqual(blockers, ['H3.1 is changed code in no unit', 'high: git diffHunks(repo, base, head) is on the fact, not on the plan'])
-  assert.match(formatComparison(cmp, blockers), /^Threshold: merge is NOT allowed/)
+test('compare: a project rule at critical lifts a change inside the plan to a deviation (an external contract)', () => {
+  const plan = diagram([dnode('tools', { diff: 'mod', interface: [{ text: 'run(args)', diff: 'mod' }] })])
+  const fact = diagram([dnode('tools', { diff: 'mod', interface: [{ text: 'run(args)', diff: 'mod', files: ['apps/app/src/tools.ts'] }, { text: 'review_pr(url)', diff: 'add', files: ['apps/app/src/tool-defs.ts'] }] })])
+  const rules = parseSignificance('critical: apps/app/src/tool-defs.ts')
+  const cmp = compare(withLevels(diagramChanges(plan), rules), withLevels(diagramChanges(fact), rules), architecture)
+  assert.deepEqual(mergeBlockers(cmp, []), ['tools: review_pr is added, not on the plan (critical: an external contract)'])
+  assert.deepEqual(cmp.additions, [])
+  assert.deepEqual(planOverlay(cmp, architecture).modules, { tools: 'differs' })
+})
 
-  const planned = { ...PLAN, modules: [PLAN.modules[0], fact.modules[1]] }
-  const ok = compare(withLevels(diagramChanges(planned), []), withLevels(diagramChanges(fact), []), architecture)
-  assert.deepEqual(mergeBlockers(ok, []), [])
-  assert.match(formatComparison(ok, []), /^Threshold: merge is allowed/)
+test('sameCall: name and the number of required arguments; names, types and optional arguments aside; … stands for the existing ones', () => {
+  assert.ok(sameCall('migratePrReview(raw): PrReview', 'migratePrReview(raw, sessionId?): PrReview - more'), 'an added optional argument')
+  assert.ok(sameCall('runReviewFormat(taskId, format)', 'runReviewFormat(workId: string, format: ReviewFormat)'), 'renamed and typed')
+  assert.ok(sameCall('FormatSwitch(review): JSX', 'FormatSwitch({work, review, running, onError}): JSX'), 'one argument, destructured')
+  assert.ok(sameCall('load(id, fresh = false)', 'load(id)'), 'a default is optional')
+  assert.ok(sameCall('review_pr(url, format?): text', 'review_pr - + format?'), 'a line without arguments names any call of its name')
+  assert.ok(!sameCall('setPrReview(taskId, result): void', 'setPrReview(workId, sessionId, r)'), 'a new required argument')
+  assert.ok(!sameCall('review(id)', 'groom(id)'))
+  assert.ok(sameCall('reviewPr(…, format?)', 'reviewPr(projectId, url, by?, format?)'), '… is the existing arguments: only format counts')
+  assert.ok(sameCall('reviewPr(..., format?)', 'reviewPr(projectId, url, format)'))
+  assert.ok(!sameCall('reviewPr(…, format?)', 'reviewPr(projectId, url)'), 'the listed argument is not there')
+  // In compare: an optional argument is as planned, a required one otherwise.
+  assert.deepEqual(planned([], 'review(stepId, heads, round?): void').items.map((i) => i.status), ['match', 'match'])
+  assert.deepEqual(planned([], 'review(stepId, heads, round): void').items.map((i) => [i.status, i.how]), [['differs', 'signature'], ['match', undefined]])
+})
+
+const DATA = (entities: DataDiagram['entities']): DataDiagram => ({ type: 'data', entities, relations: [] })
+
+test('diagramChanges of a Data diagram: entities and fields, those of a new entity take its mark', () => {
+  const changes = diagramChanges(DATA([
+    { id: 'projects', name: 'projects (db.json)', kind: 'collection', module: 'store', diff: 'mod', fields: [{ name: 'reviewFormat', type: 'string', diff: 'add' }, { name: 'name', type: 'string' }] },
+    { id: 'Result', name: 'Result', kind: 'table', module: 'store', diff: 'add', fields: [{ name: 'at', type: 'number' }] },
+  ]))
+  assert.deepEqual(changes.map((c) => [c.kind, c.key, c.diff, c.after]), [
+    ['entity', 'store/projects', 'mod', undefined],
+    ['field', 'store/projects.reviewFormat', 'add', 'reviewFormat: string'],
+    ['entity', 'store/Result', 'add', undefined],
+    ['field', 'store/Result.at', 'add', 'at: number'],
+  ])
+  assert.equal(entityWord('projects (db.json)'), entityWord('Project'))
+  assert.notEqual(entityWord('sessions'), entityWord('AgentSession'))
+})
+
+test('compare of entities: by name across owner modules, a move out of a field is its del, a new entity is a deviation, another name stays one', () => {
+  const plan = DATA([
+    { id: 'projects', name: 'projects (db.json)', kind: 'collection', module: 'store', diff: 'mod', fields: [{ name: 'reviewFormat', type: 'string', diff: 'add' }] },
+    { id: 'sessions', name: 'sessions', kind: 'collection', module: 'store', fields: [{ name: 'reviewFormat', type: 'string', diff: 'add' }] },
+    { id: 'PrReview', name: 'Task.prReview (embedded)', kind: 'struct', module: 'review', diff: 'mod', fields: [{ name: 'verdict', type: 'string', diff: 'del' }] },
+    { id: 'Result', name: 'Result', kind: 'struct', module: 'review', diff: 'add', fields: [{ name: 'verdict', type: 'string', diff: 'move', from: 'PrReview.verdict' }] },
+  ])
+  const fact = DATA([
+    { id: 'Project', name: 'Project', kind: 'table', module: 'model', fields: [{ name: 'reviewFormat', type: 'ReviewFormat', diff: 'add' }, { name: 'theme', type: 'string', diff: 'add' }] },
+    { id: 'AgentSession', name: 'AgentSession', kind: 'table', module: 'model', fields: [{ name: 'reviewFormat', type: 'string', diff: 'add' }] },
+    { id: 'Result', name: 'Result', kind: 'table', module: 'review', diff: 'add', fields: [{ name: 'verdict', type: 'string', diff: 'move', from: 'PrReview.verdict' }] },
+    { id: 'Legacy', name: 'Legacy', kind: 'table', module: 'review', diff: 'add', fields: [{ name: 'old', type: 'string' }] },
+  ])
+  const cmp = compare(diagramChanges(plan), diagramChanges(fact), [])
+  assert.deepEqual(mergeBlockers(cmp, []), ['store: sessions.reviewFormat is planned, not done', 'new entity Legacy (review), not on the plan (1 change in it)'])
+  const matches = cmp.items.filter((i) => i.status === 'match')
+  assert.deepEqual(matches.map((i) => i.plan!.key).sort(), ['review/PrReview', 'review/PrReview.verdict', 'review/Result', 'review/Result.verdict', 'store/projects', 'store/projects.reviewFormat'])
+  assert.equal(matches.find((i) => i.plan!.key === 'review/PrReview.verdict')!.note, 'planned del, done move to Result.verdict')
+  assert.deepEqual(cmp.additions.map(additionLine), ['+1 field in model/Project'], 'a field of a planned entity')
+  assert.equal(outsideLine(cmp.outside), 'Also changed outside the plan: model/AgentSession (1)', 'sessions is not AgentSession')
 })
 
 test('planWarnings: ids the architecture lacks, adds of what it has, new modules without a path', () => {
@@ -204,4 +277,24 @@ test('planWarnings: ids the architecture lacks, adds of what it has, new modules
 test('planVocabulary: a module the plan adds with a path joins the vocabulary', () => {
   const d = diagram([dnode('app', { children: [dnode('fact', { diff: 'add', path: 'apps/app/src/fact.ts' })] }), dnode('orchestrator')])
   assert.deepEqual(planVocabulary(architecture, [d]).modules.map((m) => m.id), [...vocabularyOf(architecture).modules.map((m) => m.id), 'fact'])
+})
+
+test('compare on review-v2-part-2-v1-2.1 (a fixture of its plan and fact): only plan-level deviations block; helpers fold per module', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { DEFAULT_PLAYBOOK } = await import('@mag/core')
+  const x = JSON.parse(readFileSync(new URL('./fixtures/plan-fact-21.json', import.meta.url), 'utf8')) as { plan: Diagram[]; fact: Diagram[] }
+  const rules = parseSignificance(DEFAULT_PLAYBOOK.significance)
+  const cmp = compare(withLevels(x.plan.flatMap(diagramChanges), rules), withLevels(x.fact.flatMap(diagramChanges), rules), [], { calls: false })
+  const blockers = mergeBlockers(cmp, [])
+  assert.deepEqual(blockers.filter((b) => !/^core-pr-review: (PrReview|ReviewResult)\./.test(b)), [
+    'orchestrator: prReviewPrompt has another signature than planned',
+    'orchestrator: setPrReview has another signature than planned',
+    'store: sessions.reviewFormat is planned, not done',
+    'new entity LegacyPrReview (core-pr-review), not on the plan',
+  ])
+  // The fact's moves into ReviewResult name ReviewResult itself as where they came from, so the planned dels of PrReview find none.
+  assert.equal(blockers.length, 15)
+  assert.equal(cmp.items.filter((i) => i.status === 'match').length, 33)
+  assert.deepEqual(cmp.additions.map(additionLine), ['+12 helpers in core-pr-review', '+4 helpers in core-playbook', '+3 helpers, +1 call in store', '+6 helpers, +2 calls in agent-tools', '+7 helpers, +4 calls in orchestrator', '+3 helpers, +2 calls in reviews-view'])
+  assert.equal(outsideLine(cmp.outside), 'Also changed outside the plan: main-entry (6), home-view (4), renderer-app (2), core-model/AgentSession (1), core-model (1), diff-set-view (1)')
 })

@@ -5,10 +5,6 @@ import type { Change, Level } from './types.ts'
 
 export const LEVELS: Level[] = ['critical', 'high', 'medium', 'low', 'noise']
 
-/** The levels a review must account for: unexplained ones keep the verdict at look (T-58 Decision 5). */
-export const SIGNIFICANT: Level[] = ['critical', 'high']
-export const isSignificant = (c: Pick<Change, 'level'>) => !!c.level && SIGNIFICANT.includes(c.level)
-
 /** A project's rule: changes in files matching `path` (any when null) whose name matches `name` (any when null). */
 export interface SignificanceRule {
   level: Level
