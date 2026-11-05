@@ -1,8 +1,8 @@
-import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -1239,7 +1239,8 @@ export class Orchestrator {
     const tasks = this.store.data.tasks.filter((t) => t.projectId === projectId)
     const pr: PrRef = { url: info.url, repo: repo ?? info.repo, ...(repo ? {} : { outside: true }), number: info.number, author: info.author, base: info.base, head: info.head }
     const name = prRepoName(project, pr)
-    const prev = reviewOf(tasks, info.url)
+    // An imported review is read only: a review of its PR here is a new one.
+    const prev = reviewOf(tasks.filter((t) => !t.imported), info.url)
     const f = format ?? projectReviewFormat(project)
     const before = prev?.prReview?.results[f]
     // The topic that ran this format before, while it is there; never the other format's.
@@ -1281,6 +1282,7 @@ export class Orchestrator {
   rereview(workId: string) {
     const work = this.store.task(workId)
     if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'be reviewed again')
     return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, work.prReview.shown)
   }
 
@@ -1291,6 +1293,7 @@ export class Orchestrator {
   runReviewFormat(workId: string, format: ReviewFormat) {
     const work = this.store.task(workId)
     if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'run a review')
     if (!REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
     return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, format)
   }
@@ -1326,6 +1329,7 @@ export class Orchestrator {
     const owner = work.ownerSessionId
     if (owner && !own.some((s) => s.id === owner) && this.isRunning(owner)) throw new Error(`The topic of ${work.key} is still working; stop it or wait, then delete the review`)
     for (const s of own) await this.deleteChat(s.id)
+    if (work.imported) rmSync(work.imported.diffPath, { force: true })
     this.store.deleteTask(workId)
     log.info('agent', `${work.key}: review deleted`, { topics: own.length })
   }
@@ -1370,6 +1374,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const pr = work.prReview?.pr
     if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'read its PR again')
     const project = this.store.project(work.projectId)
     const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work))
     const fact = check(project, changed, reviewFacts(Object.values(this.store.data.canvases), workId), null)
@@ -1385,6 +1390,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const review = work.prReview
     if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'record a review')
     const format = formatOfTopic(review, this.store.data.sessions.find((s) => s.id === sessionId)) ?? review.shown
     const prev = review.results[format]
     // A new report of the same PR keeps the user's call on its direction and its draft
@@ -1410,6 +1416,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const review = work.prReview
     if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'take a direction call')
     const r = review.results.v2
     const report = r?.report
     if (!r || !report) throw new Error(`${work.key} has no v2 report to decide on: run its v2 review`)
@@ -1454,6 +1461,7 @@ export class Orchestrator {
     const result = work.prReview?.results.v2
     const report = result?.report
     if (!isReview(work) || !report) throw new Error(`${work.key} has no v2 report to discuss`)
+    assertNotImported(work, 'discuss its direction')
     // The topic that ran the v2 review: decide_direction is its.
     const topic = this.store.data.sessions.find((s) => s.id === result.sessionId) ?? this.ownerSession(work)
     if (!topic) throw new Error(`${work.key} has no topic: review it again`)
@@ -1472,6 +1480,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const review = work.prReview
     if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'be published')
     // The result the user sees: its findings are the ones they picked.
     const r = shownResult(review)
     if (!r?.head) throw new Error(`${work.key} has no ${review.shown} review yet`)
@@ -1500,6 +1509,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const pr = work.prReview?.pr
     if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
+    assertNotImported(work, 'connect a repository')
     if (!pr.outside) throw new Error(`${work.key} already reads its PR from the project's checkout`)
     const origin = githubSlug((await repoInfo(dir).catch(() => null))?.origin)
     if (origin !== pr.repo) throw new Error(`${dir} is not a checkout of ${pr.repo}${origin ? ` (its origin is ${origin})` : ''}`)

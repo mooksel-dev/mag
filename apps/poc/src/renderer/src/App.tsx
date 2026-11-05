@@ -35,6 +35,7 @@ import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
 import { useTheme, type ThemeMode } from './useTheme'
 import { WorkList, type Selection } from './WorkList'
+import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
@@ -59,6 +60,8 @@ export function App({ projectId }: { projectId: string }) {
   /** The idea open on the Ideas page. */
   const [ideaId, setIdeaId] = useState<string | null>(null)
   const [theme, setTheme] = useTheme()
+  // This window renders a review's static page for its archive when main asks (review-v2-part-2-v1-2.3).
+  useRenderReviewExport(state)
   const select = (s: Selection | null) => {
     setSelected(s)
     setPage(null)

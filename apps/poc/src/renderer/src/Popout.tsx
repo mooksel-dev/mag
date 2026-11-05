@@ -5,6 +5,7 @@ import { Architecture } from './Architecture'
 import { CanvasFrame, Markdown } from './Chat'
 import { diagramsOf } from './DiffTab'
 import { DiffSetView, setContext } from './DiffSetView'
+import { useRenderReviewExport } from './ReviewExport'
 import { ReviewWindow } from './ReviewWindow'
 import { useTheme } from './useTheme'
 
@@ -30,6 +31,7 @@ export function popoutTarget(hash: string): WindowTarget | null {
 export function Popout({ target }: { target: WindowTarget }) {
   const [state, setState] = useState<AppState | null>(null)
   useTheme()
+  useRenderReviewExport(state)
 
   useEffect(() => {
     mag.getState().then(setState)

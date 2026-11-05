@@ -8,6 +8,7 @@ import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
+import type { ImportedReview } from './review-bundle.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -18,6 +19,7 @@ export * from './sets.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
 export * from './review-report.ts'
+export * from './review-bundle.ts'
 export * from './work-list.ts'
 
 /** review: a review of a teammate's PR (see PrReview); no steps, a work of the work list of its own. */
@@ -683,6 +685,8 @@ export interface Task {
   fact?: StepFact | null
   /** Works of type review: the teammate's PR and what its review found. */
   prReview?: PrReview | null
+  /** Works of type review: imported from an archive (review-v2-part-2-v1-2.3); read only, its hunks from the bundled diff. */
+  imported?: ImportedReview | null
   createdAt: number
   updatedAt: number
 }

@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { createContext, useContext, useId, useState, type ReactNode } from 'react'
 import {
   CHECKS_LABELS,
   choiceLine,
@@ -39,10 +39,22 @@ function Badge({ source }: { source: Claim['source'] }) {
 /** What the review window expands in place: the code hunks a claim or a change row rests on (review-v2-part-2-v1-2.2). */
 export type Expand = (target: HunkTarget) => ReactNode
 
+/**
+ * A static page (a review's archive, review-v2-part-2-v1-2.3): no buttons, no state; folds are <details>, links to the
+ * page's own cards and diagrams are anchors.
+ */
+const StaticContext = createContext(false)
+
+/** The id of a diagram on a static page: a claim's view links to it. */
+export const diagramAnchor = (canvasId: string) => `diagram-${canvasId}`
+
 /** A toggle that expands the code behind a claim or a change row: its button, and the code once open. */
 function useCode(target: HunkTarget, expand: Expand | undefined): { button: ReactNode; code: ReactNode } {
   const [open, setOpen] = useState(false)
+  const still = useContext(StaticContext)
   if (!expand) return { button: null, code: null }
+  // Static: the code is on the page, folded.
+  if (still) return { button: null, code: <details className="inline"><summary className="link small">code</summary><div className="inlinehunks">{expand(target)}</div></details> }
   return {
     button: <button className="link small" title="Show the code it rests on, here" onClick={() => setOpen(!open)}>code {open ? '▾' : '▸'}</button>,
     code: open && <div className="inlinehunks">{expand(target)}</div>,
@@ -73,6 +85,8 @@ function ChangeRow({ change, expand, title, open = true }: { change: ReportChang
 function ClaimLine({ claim, onView, expand, children }: { claim: Claim; onView: (canvasId: string) => void; expand?: Expand; children?: ReactNode }) {
   const canvas = viewCanvas(claim.view)
   const { button, code } = useCode({ kind: 'claim', cites: claim.cites }, expand)
+  const still = useContext(StaticContext)
+  const label = `${claim.view?.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ↓`
   return (
     <div className="claim">
       <Badge source={claim.source} />
@@ -81,7 +95,9 @@ function ClaimLine({ claim, onView, expand, children }: { claim: Claim; onView: 
         <div>{claim.text}</div>
         <div className="small muted">
           {claim.cites.map((c) => <code key={c}>{c}</code>)}
-          {canvas && <button className="link small" title="Show the diagram it cites" onClick={() => onView(canvas)}>{claim.view!.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ↓</button>}
+          {canvas && (still
+            ? <a className="link small" href={`#${diagramAnchor(canvas)}`}>{label}</a>
+            : <button className="link small" title="Show the diagram it cites" onClick={() => onView(canvas)}>{label}</button>)}
           {button}
         </div>
         {code}
@@ -122,6 +138,7 @@ function DirectionButtons({ report, actions }: { report: ReviewReport; actions: 
 
 /** The user's call once made, and the comment to the author it drafted. */
 function Decided({ decided, draft }: { decided: DirectionDecision; draft?: string }) {
+  const still = useContext(StaticContext)
   return (
     <div className="decided">
       <div><span className="badge src-yours">yours</span> <b>{choiceLine(decided)}</b>{decided.principle && <span className="muted"> · {decided.principle}</span>}</div>
@@ -129,7 +146,7 @@ function Decided({ decided, draft }: { decided: DirectionDecision; draft?: strin
         <div className="draft">
           <div className="cardhead">
             <span className="muted small">Draft to the author</span>
-            <button className="link small" title="Copy the draft" onClick={() => void navigator.clipboard.writeText(draft)}>copy</button>
+            {!still && <button className="link small" title="Copy the draft" onClick={() => void navigator.clipboard.writeText(draft)}>copy</button>}
           </div>
           <pre className="small">{draft}</pre>
         </div>
@@ -143,7 +160,7 @@ function Decided({ decided, draft }: { decided: DirectionDecision; draft?: strin
  * cards → changes table. The evidence views, the inventory and the rest go below it (`children`); a claim's view opens
  * its diagram there (`onView`).
  */
-export function ReportView({ report, fact, kind, onView, decisions, direction, expand, children }: {
+export function ReportView({ report, fact, kind, onView, decisions, direction, expand, staticPage = false, children }: {
   report: ReviewReport
   fact: Pick<StepFact, 'counts'> | null | undefined
   kind: ReportKind
@@ -154,24 +171,29 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
   direction?: DirectionActions
   /** The review window: every claim and change row expands its code hunks in place. */
   expand?: Expand
+  /** Rendered for a static page: no buttons, folds and anchors instead (the direction buttons are not passed then). */
+  staticPage?: boolean
   children?: ReactNode
 }) {
   const [routineOpen, setRoutineOpen] = useState(false)
   // Ids of the cards, unique on the page (a Diff tab shows the reports of several steps): a strip chip scrolls to its card.
   const at = useId()
-  const cardId = (key: string) => `${at}-${key}`
+  const cardId = (key: string) => `card${at.replace(/[^\w-]/g, '')}-${key}`
   const toCard = (key: string) => document.getElementById(cardId(key))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   const d = report.direction
   const { rows, routine } = reportChanges(report)
   return (
+    <StaticContext.Provider value={staticPage}>
     <div className="report">
       <div className="reportstrip">
         <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="From problem, conventions and risks only">Checks: {CHECKS_LABELS[report.checks]}</span>
-        {reportStrip(report, fact, kind).map((c) => (
-          <button key={c.key} className={`stripchip tone-${c.tone}`} title={`Go to ${c.label}`} onClick={() => toCard(c.key === 'coverage' ? 'changes' : c.key)}>
-            <span className="muted small">{c.label}</span> {c.value}
-          </button>
-        ))}
+        {reportStrip(report, fact, kind).map((c) => {
+          const card = c.key === 'coverage' ? 'changes' : c.key
+          const body = <><span className="muted small">{c.label}</span> {c.value}</>
+          return staticPage
+            ? <a key={c.key} className={`stripchip tone-${c.tone}`} href={`#${cardId(card)}`}>{body}</a>
+            : <button key={c.key} className={`stripchip tone-${c.tone}`} title={`Go to ${c.label}`} onClick={() => toCard(card)}>{body}</button>
+        })}
       </div>
 
       <section id={cardId('direction')} className="reportcard direction">
@@ -236,8 +258,8 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
               <ChangeRow
                 change={routine}
                 expand={expand}
-                open={routineOpen}
-                title={<button className="link" onClick={() => setRoutineOpen(!routineOpen)}>{routineOpen ? '▾' : '▸'} {routine.title}</button>}
+                open={routineOpen || staticPage}
+                title={staticPage ? <b>{routine.title}</b> : <button className="link" onClick={() => setRoutineOpen(!routineOpen)}>{routineOpen ? '▾' : '▸'} {routine.title}</button>}
               />
             )}
           </tbody>
@@ -245,5 +267,6 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
       </section>
       {children}
     </div>
+    </StaticContext.Provider>
   )
 }

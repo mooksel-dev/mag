@@ -4,12 +4,12 @@
 // (reviews-ahent-reviuit-pr-timeitiv.2) is the other caller: the PR's changes, without a plan to compare
 // (reviews-prybraty-spysok-pr-i.1); read from GitHub when the project has no checkout of its repository
 // (reviews-ahent-reviuit-pr-timeitiv.3).
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type Task, type TaskWork } from '@mag/core'
 import { additionCount, additionLine, outsideLine, phrase, type HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type Fact } from './core/services/fact/index.ts'
-import { diffHunks, diffText, forkPoint, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse } from './git.ts'
+import { diffHunks, diffText, forkPoint, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, parseDiff, revParse } from './git.ts'
 
 type DiffText = (at: string, base: string, head: string) => Promise<string>
 
@@ -51,8 +51,18 @@ export const github: ChangeSource = {
   hunkLines: async (at, base, head, ref) => hunkLines(await githubText(at, base, head), ref.path, ref),
 }
 
-/** Where a review reads its PR: the local checkout of a project repository, else GitHub. */
-export const reviewSource = (work: Task): ChangeSource => (work.prReview?.pr.outside ? github : localGit)
+/** Changes as the diff bundled with an imported review has them (review-v2-part-2-v1-2.3): `at` is the diff's file. */
+const bundledText = cachedDiffText(async (at) => readFileSync(at, 'utf8'))
+export const bundled: ChangeSource = {
+  diffHunks: async (at, base, head) => parseDiff(await bundledText(at, base, head)),
+  hunkLines: async (at, base, head, ref) => hunkLines(await bundledText(at, base, head), ref.path, ref),
+}
+
+/** Where a review reads its PR: its bundled diff when imported, the local checkout of a project repository, else GitHub. */
+export const reviewSource = (work: Task): ChangeSource => (work.imported ? bundled : work.prReview?.pr.outside ? github : localGit)
+
+/** Where the review's source reads its repository: the bundled diff's file, else the PR's repository. */
+const reviewAt = (work: Task) => work.imported?.diffPath ?? work.prReview!.pr.repo
 
 /** A review's fact set: its fact diagrams of every type, in the order they were drawn (povnyi-diff-nabir-pov-iazanykh.1). */
 export const reviewFacts = (canvases: Canvas[], workId: string) =>
@@ -176,6 +186,8 @@ export async function reviewTarget(project: Project, work: Task, head?: string, 
   const pr = work.prReview?.pr
   if (!pr) throw new Error(`${work.key} reviews no PR`)
   const name = prRepoName(project, pr)
+  const imported = work.imported
+  if (imported) return { repo: pr.repo, name, at: imported.diffPath, base: imported.base, head: imported.head, outside: true }
   const at = head ?? pr.head
   if (pr.outside) return { repo: pr.repo, name, at: pr.repo, base: await githubMergeBase(pr.repo, since ?? pr.base, at), head: at, outside: true }
   if (since) return { repo: pr.repo, name, at: pr.repo, base: since, head: at }
@@ -204,7 +216,16 @@ export async function reviewFactView(project: Project, work: Task, canvases: Can
 /** The lines of one hunk of a reviewed PR, between two commits of a FactView. */
 export async function reviewHunk(work: Task, repo: string, base: string, head: string, ref: HunkRef): Promise<string[]> {
   if (work.prReview?.pr.repo !== repo) throw new Error(`${work.key} does not review a PR of ${repo}`)
-  return hunk(reviewSource(work), repo, base, head, ref)
+  return hunk(reviewSource(work), reviewAt(work), base, head, ref)
+}
+
+/** The diff text of a review's PR at the head its fact is of, for its archive; an imported review's own bundled diff. */
+export async function reviewDiff(project: Project, work: Task): Promise<{ text: string; base: string; head: string }> {
+  const pr = work.prReview?.pr
+  if (!pr) throw new Error(`${work.key} reviews no PR`)
+  const t = await reviewTarget(project, work, work.fact?.heads[pr.repo] ?? pr.head)
+  const text = await (work.imported ? bundledText : pr.outside ? githubText : localDiffText)(t.at, t.base, t.head)
+  return { text, base: t.base, head: t.head }
 }
 
 /** The lines of one hunk of a step's PR in `repo` (one of the step's), between two commits of a FactView. */

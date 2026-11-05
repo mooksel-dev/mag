@@ -129,6 +129,22 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
   // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.
   const [format, setFormat] = useState<ReviewFormat>(projectReviewFormat(project))
   useEffect(() => setFormat(projectReviewFormat(project)), [project.reviewFormat])
+  // Import review (review-v2-part-2-v1-2.3): a review's .zip dropped on the field, or picked; it opens read only.
+  const [dropping, setDropping] = useState(false)
+  const importReview = async (zipPath?: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await mag.importReview(project.id, zipPath)
+      if (r && 'error' in r) return setError(r.error)
+      if (r) onSelect({ kind: 'work', id: r.taskId })
+    } catch (err) {
+      setError(String((err as Error).message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const zipOf = (e: React.DragEvent) => [...e.dataTransfer.files].find((f) => f.name.toLowerCase().endsWith('.zip'))
   const t = text.trim()
   const what = PR_RE.test(t) ? 'Review PR' : URL_RE.test(t) ? 'From ticket' : 'New work'
   const submit = async (e: React.FormEvent) => {
@@ -158,7 +174,23 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
     }
   }
   return (
-    <form className="newwork" onSubmit={submit}>
+    <form
+      className={`newwork${dropping ? ' dropping' : ''}`}
+      onSubmit={submit}
+      onDragOver={(e) => {
+        if (![...e.dataTransfer.items].some((i) => i.kind === 'file')) return
+        e.preventDefault()
+        setDropping(true)
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={(e) => {
+        setDropping(false)
+        const zip = zipOf(e)
+        if (!zip) return
+        e.preventDefault()
+        void importReview(mag.pathForFile(zip))
+      }}
+    >
       <input
         value={text}
         onChange={(e) => { setText(e.target.value); setError(null) }}
@@ -172,7 +204,8 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
           {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
       )}
-      {t && <button type="submit" className="primary small" disabled={busy}>{what}</button>}
+      {t ? <button type="submit" className="primary small" disabled={busy}>{what}</button>
+        : <button type="button" className="link small" disabled={busy} title="Open a review exported from another mag (.zip), read only; or drop the .zip on this field" onClick={() => void importReview()}>Import review…</button>}
       {error && <span className="err small" role="alert">{error}</span>}
     </form>
   )

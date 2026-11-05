@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
-import { parsePrUrl, type Mergeable, type PostReview, type TaskWork } from '@mag/core'
+import { parsePrUrl, type Mergeable, type PostReview, type PrDetails, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
 import type { PrCheck } from '../preload/api'
 
@@ -158,6 +158,23 @@ export async function prInfo(url: string): Promise<PrInfo> {
   const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,author,state,baseRefName,headRefOid,additions,deletions,changedFiles']))
   const repo = String(v.url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//i)?.[1]?.toLowerCase() ?? ''
   return { url: v.url, number: v.number, title: v.title, author: v.author?.login ?? '?', state: v.state, repo, base: v.baseRefName, head: v.headRefOid, additions: v.additions ?? 0, deletions: v.deletions ?? 0, changedFiles: v.changedFiles ?? 0 }
+}
+
+/** A PR as a review's archive keeps it (review-v2-part-2-v1-2.3): title, body, files, commits and checks, from GitHub. */
+export async function prDetails(url: string): Promise<PrDetails> {
+  const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,body,author,baseRefName,headRefOid,files,commits']))
+  return {
+    url: v.url,
+    number: v.number,
+    title: v.title,
+    body: v.body ?? '',
+    author: v.author?.login ?? '?',
+    base: v.baseRefName,
+    head: v.headRefOid,
+    files: (v.files ?? []).map((f: any) => ({ path: f.path, additions: f.additions ?? 0, deletions: f.deletions ?? 0 })),
+    commits: (v.commits ?? []).map((c: any) => ({ sha: c.oid, message: [c.messageHeadline, c.messageBody].filter(Boolean).join('\n\n'), author: c.authors?.[0]?.login || c.authors?.[0]?.name || '?' })),
+    checks: await prChecks(url),
+  }
 }
 
 /** The CI checks of a PR; [] when it has none. */

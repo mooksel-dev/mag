@@ -188,8 +188,18 @@ export function createWindows(store: Store) {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send('state', state)
   }
 
+  /**
+   * A window that can render a review for its archive (review-v2-part-2-v1-2.3): the review's own window when open, else
+   * its project's; null when neither is.
+   */
+  function rendererFor(projectId: string, taskId: string): WebContents | null {
+    const win = popouts.get(`review:${taskId}`) ?? projects.get(projectId)
+    return win && !win.isDestroyed() ? win.webContents : null
+  }
+
   return {
     openProject,
+    rendererFor,
     openProjectFrom,
     welcome,
     restore,

@@ -1,10 +1,10 @@
-import { app, crashReporter, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, crashReporter, dialog, ipcMain, net, protocol, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { basename, extname, join, normalize } from 'node:path'
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -14,8 +14,9 @@ import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
-import { prChecks, repoInfo } from './git'
-import { factView, reviewFactView, reviewHunk, stepHunk } from './fact'
+import { prChecks, prDetails, repoInfo } from './git'
+import { factView, reviewDiff, reviewFactView, reviewHunk, stepHunk } from './fact'
+import { exportReview, importReview } from './core/services/review-export/index.ts'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
 import { startAttention } from './attention'
@@ -99,7 +100,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -134,6 +135,44 @@ app.whenReady().then(async () => {
   actions.agentOf = (id, role) => orch.agentOf(id, role)
   actions.send = (sessionId, text) => orch.send(sessionId, text)
   actions.stopAgents = (id) => orch.stopAgents(id)
+
+  // A review's archive (review-v2-part-2-v1-2.3): a window renders the review window static, main adds the PR and zips.
+  const importsDir = join(userData, 'imports')
+  const renders = new Map<number, { done: (page: ReviewPage) => void; fail: (e: Error) => void }>()
+  let renderNo = 0
+  handle('review:rendered', (_, n: number, page: ReviewPage | { error: string }) => {
+    const r = renders.get(n)
+    renders.delete(n)
+    if ('error' in page) r?.fail(new Error(page.error))
+    else r?.done(page)
+  })
+  const renderReview = (taskId: string, via?: WebContents) =>
+    new Promise<ReviewPage>((done, fail) => {
+      const task = store.task(taskId)
+      const wc = via ?? windows.rendererFor(task.projectId, taskId)
+      if (!wc) return fail(new Error(`Open the project window of ${task.key}: mag renders the review's page there`))
+      const n = ++renderNo
+      const timer = setTimeout(() => (renders.delete(n), fail(new Error('The window did not render the review in time'))), 120_000)
+      renders.set(n, { done: (p) => (clearTimeout(timer), done(p)), fail: (e) => (clearTimeout(timer), fail(e)) })
+      wc.send('review:render', n, taskId)
+    })
+  const doExport = (taskId: string, dest: string, via?: WebContents) =>
+    exportReview(
+      {
+        review: (id) => {
+          const task = store.task(id)
+          return { task, doc: store.data.docs[id] ?? '', canvases: Object.values(store.data.canvases), from: store.project(task.projectId).name }
+        },
+        prDiff: (task) => reviewDiff(store.project(task.projectId), task),
+        prDetails: async (task) => task.imported?.pr ?? prDetails(task.prReview!.pr.url),
+        render: (id) => renderReview(id, via),
+        isDir: (p) => statSync(p, { throwIfNoEntry: false })?.isDirectory() ?? false,
+        write: (p, bytes) => writeFileSync(p, bytes),
+      },
+      taskId,
+      dest,
+    ).then((file) => (log.info('app', `${store.task(taskId).key}: review exported to ${file}`), file))
+  actions.exportReview = (id, path) => doExport(id, path ?? app.getPath('downloads'))
 
   protocol.handle('mag-file', (req) => {
     const file = normalize(join(attachmentsDir, decodeURIComponent(new URL(req.url).pathname)))
@@ -295,6 +334,44 @@ app.whenReady().then(async () => {
     const pr = store.task(id).prReview?.pr
     if (!pr) throw new Error('Not a review of a PR')
     return prChecks(pr.url)
+  })
+  // The user's Export review: a save dialog, then the archive; null when they cancel.
+  handle('review:export', async (e, id: string) => {
+    const review = store.task(id).prReview
+    if (!review) throw new Error('Not a review of a PR')
+    const r = await dialog.showSaveDialog({ title: 'Export review', defaultPath: join(app.getPath('downloads'), bundleFileName(review)), filters: [{ name: 'Review archive', extensions: ['zip'] }] })
+    if (r.canceled || !r.filePath) return null
+    return doExport(id, r.filePath, e.sender)
+  })
+  // The user's Import review: a dropped .zip, else one picked; a read-only review work, done. null when they cancel.
+  handle('review:import', async (_, projectId: string, zipPath?: string) => {
+    let path = zipPath
+    if (!path) {
+      const r = await dialog.showOpenDialog({ title: 'Import review', properties: ['openFile'], filters: [{ name: 'Review archive', extensions: ['zip'] }] })
+      if (r.canceled || !r.filePaths[0]) return null
+      path = r.filePaths[0]
+    }
+    try {
+      const task = importReview(
+        {
+          read: (p) => readFileSync(p),
+          newId: () => randomUUID().slice(0, 8),
+          saveDiff: (text) => {
+            mkdirSync(importsDir, { recursive: true })
+            const file = join(importsDir, `${randomUUID().slice(0, 8)}.diff`)
+            writeFileSync(file, text)
+            return file
+          },
+          create: (pid, review) => store.createImportedReview(pid, review),
+        },
+        projectId,
+        path,
+      )
+      log.info('app', `${task.key}: review imported from ${path}`)
+      return { taskId: task.id }
+    } catch (e) {
+      return { error: (e as Error).message.split('\n')[0] }
+    }
   })
   handle('attach:save', (_, f: { name: string; bytes?: Uint8Array; path?: string }): Attachment => {
     const name = basename(f.name || (f.path ? basename(f.path) : 'file')).replace(/[^\w.-]+/g, '_') || 'file'

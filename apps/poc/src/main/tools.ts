@@ -41,6 +41,8 @@ export interface ToolActions {
   branchChat(sessionId: string, text?: string): string
   /** A topic's review_pr: the review of a teammate's PR in `format` (the project's without one), run by `by`; returns the job for its turn. */
   reviewPr(projectId: string, url: string, by: string, format?: ReviewFormat): Promise<{ taskId: string; job: string }>
+  /** The user's export_review: the review's .zip at `path` (default: Downloads); returns the file's path. */
+  exportReview(workId: string, path?: string): Promise<string>
   /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
   reviewFact(workId: string): Promise<string>
   /** A review topic's set_pr_review, into the result of the format it runs; returns what to tell it. */
@@ -923,6 +925,13 @@ function sharedTool(
       const format = args.format == null || args.format === '' ? undefined : (args.format as ReviewFormat)
       if (format && !REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
       return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format).then((r) => r.job)
+    }
+
+    case 'export_review': {
+      const t = byKey(args.key)
+      if (!isReview(t)) throw new Error(`${t.key} is not a review of a PR`)
+      const path = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : undefined
+      return actions.exportReview(t.id, path).then((file) => `Exported ${t.key} to ${file}. Tell the user the path; on another mag it opens with Import review in the work list's PR field.`)
     }
 
     case 'branch_topic': {

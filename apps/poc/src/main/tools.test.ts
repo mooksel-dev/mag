@@ -57,6 +57,7 @@ const setup = () => {
       calls.push(`review_pr ${url} by ${by}${format ? ` ${format}` : ""}`)
       return { taskId: 'r', job: 'Review it.' }
     },
+    exportReview: async (id, path) => (calls.push(`export ${store.task(id).key}${path ? ` to ${path}` : ''}`), `${path ?? '/Downloads'}/api-418-review.zip`),
     reviewFact: async (id) => (calls.push(`fact of ${store.task(id).key}`), 'Fact'),
     setPrReview: (id, _s, r) => (calls.push(`pr review ${store.task(id).key}: ${r.verdict} ${r.findings.map((f) => `${f.level}|${f.where ?? ''}|${f.node ?? ''}|${f.text}`).join(';')}`), 'Recorded.'),
     decideDirection: (id, d) => (calls.push(`direction ${store.task(id).key}: ${d.choice}${d.option ? ` ${d.option}` : ''}${d.principle ? ` (${d.principle})` : ''}`), 'Recorded.'),
@@ -401,7 +402,7 @@ test('a doc that links a project-chat diagram adopts it; one of another task sta
   assert.deepEqual([store.data.canvases[old.id].role, copy.role, copy.version], [undefined, 'plan', 1])
   // The project chat writes a doc through update_task_doc and adopts the same way.
   const loose = store.saveCanvas({ projectId: project.id, taskId: null, sessionId: null, title: 'Loose', kind: 'diagram', diagram: state })
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '', askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '', decideDirection: () => '', ...NO_CONTROL })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: () => '', askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', exportReview: async () => '', setPrReview: () => '', decideDirection: () => '', ...NO_CONTROL })
   assert.match(await tools({ projectId: project.id }, 'update_task_doc', { key: 'big', markdown: `[l](canvas:${loose.id})` }), /Moved into big/)
   assert.equal(store.data.canvases[loose.id].taskId, task.id)
 })
@@ -560,7 +561,7 @@ test('add_idea: any agent puts a finding on the project ideas, with where it cam
 test('reopen_work: a project chat continues a done work it then owns (T-55.6)', async () => {
   const { store, project, task, call } = setup()
   const reopened: string[] = []
-  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.'), askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', setPrReview: () => '', decideDirection: () => '', ...NO_CONTROL })
+  const tools = createTools(store, { groom() {}, architect() {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error() }, setReview: () => '', reopen: (id, what, by) => (reopened.push(`${store.task(id).key}: ${what} by ${by}`), 'Back.'), askOwner: () => false, answerDeveloper: async () => {}, reviewPr: async () => { throw new Error() }, reviewFact: async () => '', exportReview: async () => '', setPrReview: () => '', decideDirection: () => '', ...NO_CONTROL })
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
   assert.match(await tools({ projectId: project.id, sessionId: topic.id }, 'reopen_work', { key: 'big', what: 'web' }), /^Back\. Plan what is left right here: .*work: "big"/)
   assert.deepEqual(reopened, [`big: web by ${topic.id}`])
@@ -588,6 +589,12 @@ test("a review of a teammate's PR: its v1 topic reads the fact, without an inten
   assert.equal(await own('review_pr', { url: 'https://github.com/acme/api/pull/418', format: 'v1' }), 'Review it.')
   await assert.rejects(own('review_pr', { url: 'https://github.com/acme/api/pull/418', format: 'v3' }), /format must be one of v1, v2/)
   assert.deepEqual(calls.splice(0), [`review_pr https://github.com/acme/api/pull/418 by ${topic.id}`, `review_pr https://github.com/acme/api/pull/418 by ${topic.id} v1`])
+
+  // export_review (review-v2-part-2-v1-2.3): a review by its key, to Downloads or a path; not a work of another type.
+  assert.match(await own('export_review', { key: review.key }), /Exported .* to \/Downloads\/api-418-review\.zip/)
+  assert.match(await own('export_review', { key: review.key, path: '/tmp' }), /to \/tmp\/api-418-review\.zip/)
+  await assert.rejects(own('export_review', { key: task.key }), /not a review of a PR/)
+  assert.deepEqual(calls.splice(0), [`export ${review.key}`, `export ${review.key} to /tmp`])
 
   // No intent any more (reviews-prybraty-spysok-pr-i.1): the review draws only its fact, which mag starts.
   const diagram: Diagram = { type: 'component', summary: 'Retries are idempotent.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'mod', uses: [] }] }

@@ -608,6 +608,20 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'export_review',
+    scope: 'project',
+    description:
+      "Export a review of a teammate's PR as one .zip, when the user asks (e.g. to take it to another machine): review.html (the review window, static, opens offline), review.json (the review with both results, the direction call, its doc and diagrams with the inventory), pr.diff, pr.json (title, body, files, commits, checks) and diagrams/*.svg. mag renders the page in the project window, which must be open. Answers with the file's path. The user imports it on another mag with Import review in the work list's PR field.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The key of the review work.' },
+        path: { type: 'string', description: 'A .zip file or a directory to write it into; default: the Downloads directory.' },
+      },
+      required: ['key'],
+    },
+  },
+  {
     name: 'branch_topic',
     scope: 'project',
     description:

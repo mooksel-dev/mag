@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -257,6 +257,18 @@ export interface MagApi {
    * review looks again; returns its topic. null when the user cancels.
    */
   connectReviewRepo(taskId: string): Promise<{ sessionId: string } | { error: string } | null>
+  /**
+   * The user's Export review (review-v2-part-2-v1-2.3): a save dialog, then one .zip of the review; its path, null when
+   * the user cancels.
+   */
+  exportReview(taskId: string): Promise<string | null>
+  /**
+   * The user's Import review: the .zip at `zipPath` (dropped), else one picked in a dialog, becomes a read-only review
+   * work of the project; null when the user cancels.
+   */
+  importReview(projectId: string, zipPath?: string): Promise<{ taskId: string } | { error: string } | null>
+  /** Main asks this window for a review's static page and diagram SVGs, for its archive; `fn` renders them. */
+  onRenderReviewExport(fn: (taskId: string) => Promise<ReviewPage>): () => void
   /** Save a renderer error as a crash report in the logs folder. */
   reportCrash(crash: RendererCrash): Promise<void>
   /** The newest crash from before this start that the user has not dismissed. */

@@ -18,6 +18,7 @@
     "@mag/diff": "workspace:*",
     "dompurify": "^3.4.17",
     "elkjs": "^0.12.1",
+    "fflate": "^0.8.3",
     "marked": "^16.4.2",
     "mermaid": "^12.2.0",
     "typescript": "^5.9.3"
