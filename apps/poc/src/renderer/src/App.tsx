@@ -32,21 +32,20 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
 import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
-import { ProjectPicker, ProjectSquare } from './Picker'
 import { useTheme, type ThemeMode } from './useTheme'
-import { WorkList, type Selection } from './WorkList'
+import { WorkList, type ListPage, type Selection } from './WorkList'
 import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-/** Pages of the project menu; they take the place of the conversation and the pane. */
-type Page = 'ideas' | 'architecture' | 'settings'
+/** Pages the list's footer opens; they take the place of the conversation and the pane. */
+type Page = ListPage
 const PAGE_NAMES: Record<Page, string> = { ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
 
 /**
  * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
  * the left, the open work's owner conversation in the centre, what it made on the right. Ideas, Architecture and
- * Settings open from the project menu.
+ * Settings open from the list's footer.
  */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
@@ -125,15 +124,6 @@ export function App({ projectId }: { projectId: string }) {
   return (
     <div className="app">
       <div className="titlebar">
-        <div className="projmenu">
-          <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => setPicker(picker ? null : 'open')}>
-            <ProjectSquare project={project} />
-            <span className="pname">{project.name}</span>
-            <span className="caret" aria-hidden>▾</span>
-          </button>
-          {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => setPicker(null)} />}
-        </div>
-        <ProjectMenu page={page} ideas={state.ideas.filter((i) => i.projectId === project.id).length} onOpen={setPage} />
         <span className="brand"><Logo size={16} />mag <span>PoC</span></span>
         <div className="grow" />
         <AgentCounter state={state} />
@@ -142,7 +132,7 @@ export function App({ projectId }: { projectId: string }) {
       </div>
       <div className="layout">
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} onSelect={select} onNew={() => select(null)} onOpenIdeas={() => setPage('ideas')} />
+          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onOpenPage={setPage} />
         </ErrorBoundary>
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {page ? (
@@ -174,29 +164,6 @@ export function App({ projectId }: { projectId: string }) {
           )}
         </ErrorBoundary>
       </div>
-    </div>
-  )
-}
-
-/** Ideas, Architecture and Settings: pages of the project, not tabs beside the works. */
-function ProjectMenu({ page, ideas, onOpen }: { page: Page | null; ideas: number; onOpen: (p: Page) => void }) {
-  const [open, setOpen] = useState(false)
-  const pick = (p: Page) => { onOpen(p); setOpen(false) }
-  return (
-    <div className="menu">
-      <button className={page ? 'on' : ''} aria-haspopup="menu" aria-expanded={open} title="Ideas, Architecture, Settings" onClick={() => setOpen((o) => !o)}>
-        {page ? PAGE_NAMES[page] : 'Project'} ▾
-      </button>
-      {open && (
-        <>
-          <div className="menuscrim" onClick={() => setOpen(false)} />
-          <div className="menulist small left" role="menu">
-            <button role="menuitem" onClick={() => pick('ideas')}><span className="title">Ideas</span><span className="muted small">{ideas}</span></button>
-            <button role="menuitem" onClick={() => pick('architecture')}><span className="title">Architecture</span></button>
-            <button role="menuitem" onClick={() => pick('settings')}><span className="title">Settings</span></button>
-          </div>
-        </>
-      )}
     </div>
   )
 }

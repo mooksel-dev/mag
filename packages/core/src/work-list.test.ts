@@ -6,6 +6,7 @@ import {
   cardMove,
   emptyResult,
   needsQuestions,
+  searchCards,
   shortTitle,
   span,
   stepsLine,
@@ -121,6 +122,37 @@ test('workCards: topics: approval waits on you; plain and running topics are dis
   assert.deepEqual(got.map((c) => [c.kind, c.title, c.stage, c.progress]), [['topic', 'Jira sync', null, null], ['topic', 'Pricing', null, null], ['topic', 'New topic', null, null]])
   assert.deepEqual(got[1].last, { text: 'agent: Depends.', at: NOW - MIN })
   assert.deepEqual(got[2].last, { text: 'you: how do we price the pro plan for teams', at: NOW - 2 * MIN })
+})
+
+test('workCards: a closed topic is done for 7 days after it was closed; running or asking, it is not', () => {
+  const approval = { kind: 'approval' as const, id: 'a1', tool: 'x', server: 'jira', input: {}, status: 'pending' as const, at: NOW }
+  const sessions = [
+    session('closed', { closedAt: NOW - DAY }),
+    session('old', { closedAt: NOW - 8 * DAY }),
+    session('runs', { closedAt: NOW - DAY, status: 'running', runStartedAt: NOW - MIN }),
+    session('asks', { closedAt: NOW - DAY, items: [approval] }),
+    session('open', { closedAt: null }),
+  ]
+  assert.deepEqual(cards([], sessions).map(line), [
+    'waiting:asks:amber you: Allow jira · x',
+    'topics:runs:green agent: agent · 1 min',
+    'topics:open:grey other: Discussion · no work yet',
+    'done:closed:grey other: Closed',
+  ])
+})
+
+test('searchCards: every word, case-insensitive, in the title, key, move, progress or last event', () => {
+  const all = cards(
+    [task('W-1', { title: 'Login page', status: 'ready' }), step('W-1.1', 'W-1'), task('W-2', { title: 'Billing' })],
+    [session('t', { title: 'Pricing talk', titleGenerated: true, items: [{ kind: 'user', text: 'pro plan for teams', at: NOW }] })],
+  )
+  const ids = (q: string) => searchCards(all, q).map((c) => c.id).sort()
+  assert.deepEqual(ids(''), ['W-1', 'W-2', 't'])
+  assert.deepEqual(ids('  login '), ['W-1'])
+  assert.deepEqual(ids('w-2'), ['W-2'])
+  assert.deepEqual(ids('PRICING teams'), ['t'])
+  assert.deepEqual(ids('start'), ['W-1'])
+  assert.deepEqual(ids('login billing'), [])
 })
 
 test('workCards: a pending approval in the owner topic waits for the work it opens as', () => {

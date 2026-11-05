@@ -656,6 +656,20 @@ export class Store {
     return full
   }
 
+  /** Closes a project topic: listed under Done, its history kept. */
+  closeSession(sid: string) {
+    this.session(sid).closedAt = Date.now()
+    this.changed()
+  }
+
+  /** Opens a closed topic again (writing to it does). */
+  reopenSession(sid: string) {
+    const s = this.session(sid)
+    if (!s.closedAt) return
+    s.closedAt = null
+    this.changed()
+  }
+
   /** Removes a session; canvases drawn in it and events stay. An idea it discussed has no discussion again. */
   deleteSession(sid: string) {
     this.session(sid)

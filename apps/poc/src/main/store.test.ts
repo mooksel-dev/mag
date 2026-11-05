@@ -267,6 +267,41 @@ test('deleteSession removes only the session; project canvases and events stay',
   assert.throws(() => store.deleteSession(s.id), /No session/)
 })
 
+test('closeSession keeps the history and persists; reopenSession opens it again', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const store = new Store(file)
+  const p = store.createProject('p')
+  const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Topic' })
+  store.pushItem(s.id, { kind: 'user', text: 'hi', at: 1 })
+  store.closeSession(s.id)
+  store.flush()
+  const again = new Store(file)
+  assert.ok(again.session(s.id).closedAt)
+  assert.deepEqual(again.session(s.id).items.map((i) => i.kind), ['user'])
+  again.reopenSession(s.id)
+  assert.equal(again.session(s.id).closedAt, null)
+  assert.throws(() => again.closeSession('nope'), /No session/)
+})
+
+test('deleteTask removes the task with its sessions, doc and canvases; others stay', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const work = store.createTask({ projectId: p.id, title: 'w', type: 'dev', description: '' })
+  const other = store.createTask({ projectId: p.id, title: 'o', type: 'dev', description: '' })
+  const dev = store.createSession({ projectId: p.id, taskId: work.id, role: 'developer', agent: 'claude-code', status: 'idle' })
+  const keep = store.createSession({ projectId: p.id, taskId: other.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  store.data.docs[work.id] = '# Problem'
+  store.data.docs[other.id] = '# Other'
+  const c = store.saveCanvas({ projectId: p.id, taskId: work.id, sessionId: null, title: 'mock', kind: 'html', html: '<p>' })
+  store.deleteTask(work.id)
+  assert.deepEqual(store.data.tasks.map((t) => t.id), [other.id])
+  assert.deepEqual(store.data.sessions.map((s) => s.id), [keep.id])
+  assert.equal(store.data.docs[work.id], undefined)
+  assert.equal(store.data.docs[other.id], '# Other')
+  assert.equal(store.data.canvases[c.id], undefined)
+  assert.ok(!store.data.sessions.some((s) => s.id === dev.id))
+})
+
 test('ideas (T-55.6): none in an older file; add, edit and delete persist', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   writeFileSync(file, JSON.stringify({ projects: [], tasks: [], sessions: [], docs: {}, canvases: {} }))
