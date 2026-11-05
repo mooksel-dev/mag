@@ -11,16 +11,44 @@ import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type Fact } from './core/services/fact/index.ts'
 import { diffHunks, diffText, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, revParse } from './git.ts'
 
+type DiffText = (at: string, base: string, head: string) => Promise<string>
+
+/**
+ * The diff text between two commits, fetched once for the last `max` (at, base, head): the review window opens many
+ * hunks of one PR, and each would run the whole diff again. Commits never change, so a kept text never goes stale; a
+ * failed fetch is not kept.
+ */
+export function cachedDiffText(fetch: DiffText, max = 8): DiffText {
+  const kept = new Map<string, Promise<string>>()
+  return (at, base, head) => {
+    const key = `${at}\0${base}\0${head}`
+    let text = kept.get(key)
+    if (text) {
+      kept.delete(key)
+      kept.set(key, text)
+      return text
+    }
+    text = fetch(at, base, head)
+    kept.set(key, text)
+    text.catch(() => kept.get(key) === text && kept.delete(key))
+    while (kept.size > max) kept.delete(kept.keys().next().value!)
+    return text
+  }
+}
+
+const localDiffText = cachedDiffText(diffText)
+const githubText = cachedDiffText(githubDiffText)
+
 /** Changes as the local git checkouts of the project's repositories have them. */
 export const localGit: ChangeSource = {
   diffHunks,
-  hunkLines: async (at, base, head, ref) => hunkLines(await diffText(at, base, head), ref.path, ref),
+  hunkLines: async (at, base, head, ref) => hunkLines(await localDiffText(at, base, head), ref.path, ref),
 }
 
 /** Changes as GitHub has them, for a repository without a local checkout: `at` is its owner/repo. */
 export const github: ChangeSource = {
   diffHunks: githubDiffHunks,
-  hunkLines: async (at, base, head, ref) => hunkLines(await githubDiffText(at, base, head), ref.path, ref),
+  hunkLines: async (at, base, head, ref) => hunkLines(await githubText(at, base, head), ref.path, ref),
 }
 
 /** Where a review reads its PR: the local checkout of a project repository, else GitHub. */

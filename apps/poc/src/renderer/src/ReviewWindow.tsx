@@ -23,18 +23,15 @@ import { DiffSetView, type DiagramCanvas } from './DiffSetView'
 import { Comparison, useHunks } from './FactPanel'
 import { ReportView } from './ReportView'
 import { FormatSwitch } from './Reviews'
-import { reviewWindowModel, type InlineSet } from './reviewWindowModel'
+import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
 
 const mag = window.mag
-
-/** A loaded hunk: its lines, null while loading, an error message. */
-type Lines = string[] | string | null
 
 /** What the window's inline hunks read: the fact's files and inventory, and the lines of the hunks opened so far. */
 interface HunkSource {
   files: FileChange[]
   inventory: ChangeInventory | null
-  lines: (file: FileChange, hunk: PrHunk) => Lines | undefined
+  lines: (file: FileChange, hunk: PrHunk) => HunkLines | undefined
   load: (file: FileChange, hunk: PrHunk) => void
 }
 
@@ -42,27 +39,26 @@ const HunksContext = createContext<HunkSource | null>(null)
 
 const hunkKey = (f: FileChange, h: PrHunk) => `${f.repo}\0${f.path}\0${h.id ?? `${h.newStart},${h.newLines}`}`
 
-/** The lines of the hunks of `stepId`'s PRs the page opened, each loaded once on its first open. */
+/**
+ * The lines of the hunks of `stepId`'s PRs the page opened, each loaded once per fact view. The cache follows the view
+ * in the same render, so a hunk open when the view refreshes loads again instead of waiting on the old one.
+ */
 function useHunkLines(stepId: string, view: FactView | null | undefined) {
-  const [cache, setCache] = useState<Record<string, Lines>>({})
-  // Asked already: a hunk a claim and the full diff both show loads once.
-  const asked = useRef(new Set<string>())
-  useEffect(() => {
-    asked.current = new Set()
-    setCache({})
-  }, [view])
+  const store = useRef<HunkCache<FactView | null | undefined> | null>(null)
+  store.current = hunkCacheFor(store.current, view)
+  const [, loaded] = useState(0)
   const load = (f: FileChange, h: PrHunk) => {
+    const cache = store.current!
     const repo = view?.repos.find((r) => r.name === f.repo)
     const key = hunkKey(f, h)
-    if (!repo || asked.current.has(key)) return
-    asked.current.add(key)
-    setCache((c) => ({ ...c, [key]: null }))
-    mag.stepHunk(stepId, repo.repo, repo.baseSha, repo.headSha, { ...h, path: f.path }).then(
-      (lines) => setCache((c) => ({ ...c, [key]: lines })),
-      (e) => setCache((c) => ({ ...c, [key]: String((e as Error).message ?? e) })),
-    )
+    if (!repo || !askHunk(cache, key)) return
+    const done = (lines: HunkLines) => {
+      cache.lines.set(key, lines)
+      if (store.current === cache) loaded((n) => n + 1)
+    }
+    mag.stepHunk(stepId, repo.repo, repo.baseSha, repo.headSha, { ...h, path: f.path }).then(done, (e) => done(String((e as Error).message ?? e)))
   }
-  return { load, lines: (f: FileChange, h: PrHunk) => cache[hunkKey(f, h)] }
+  return { load, lines: (f: FileChange, h: PrHunk) => store.current!.lines.get(hunkKey(f, h)) }
 }
 
 /** The fact of the task's PRs, loaded when the window opens and again when its heads or fact change. */
@@ -109,6 +105,19 @@ export function InlineHunks({ target }: { target: HunkTarget }) {
   return <>{picks.map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}</>
 }
 
+/** A file of the full diff, folded: its hunks render, and so load, only once it is opened. */
+function DiffFile({ file, hunks, src }: { file: FileChange; hunks: HunkPick<FileChange>[]; src: HunkSource }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <details className="difffile" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>
+        <code>{file.path}</code> <span className="muted small">{hunks.length} hunk{hunks.length === 1 ? '' : 's'}</span>
+      </summary>
+      {shownHunks(hunks, open).map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}
+    </details>
+  )
+}
+
 /** The full diff at the bottom: the files under each change, folded until opened. */
 export function FullDiff({ groups }: { groups: ChangeGroup<FileChange>[] }) {
   const src = useContext(HunksContext)
@@ -123,14 +132,7 @@ export function FullDiff({ groups }: { groups: ChangeGroup<FileChange>[] }) {
             <span className="muted small">{g.why}</span>
           </div>
           {g.files.length ? (
-            g.files.map((f) => (
-              <details key={f.file.repo + f.file.path} className="difffile">
-                <summary>
-                  <code>{f.file.path}</code> <span className="muted small">{f.hunks.length} hunk{f.hunks.length === 1 ? '' : 's'}</span>
-                </summary>
-                {f.hunks.map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}
-              </details>
-            ))
+            g.files.map((f) => <DiffFile key={f.file.repo + f.file.path} file={f.file} hunks={f.hunks} src={src} />)
           ) : (
             <p className="muted small">No code behind it in the diff.</p>
           )}

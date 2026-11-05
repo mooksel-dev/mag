@@ -74,3 +74,27 @@ export function reviewWindowModel(task: Task, canvases: AppState['canvases'], vi
   ]
   return { kind: pr ? 'pr' : 'step', result, report, blocks, sets, inventory, groups: view ? diffByChange(report, inventory, view.files) : [] }
 }
+
+/** A loaded hunk: its lines, null while loading, an error message. */
+export type HunkLines = string[] | string | null
+
+/** The hunk lines the window loaded for one fact view: a new view starts empty, so nothing waits on an old one. */
+export interface HunkCache<V> {
+  view: V
+  lines: Map<string, HunkLines>
+}
+
+/** The cache for `view`: `prev` while the view is the same, else a fresh one. Called in render, so effects see it. */
+export function hunkCacheFor<V>(prev: HunkCache<V> | null, view: V): HunkCache<V> {
+  return prev && prev.view === view ? prev : { view, lines: new Map() }
+}
+
+/** Whether a hunk is to be fetched now: not asked for this view yet. It is then marked loading. */
+export function askHunk(cache: HunkCache<unknown>, key: string): boolean {
+  if (cache.lines.has(key)) return false
+  cache.lines.set(key, null)
+  return true
+}
+
+/** The hunks of a file of the full diff to render, and so to load: none while the file is folded. */
+export const shownHunks = <T>(hunks: T[], open: boolean): T[] => (open ? hunks : [])

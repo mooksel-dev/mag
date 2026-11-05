@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { hunksOf, type ChangeInventory, type ReviewReport, type ReviewResult, type Task } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
-import { reviewWindowModel } from './reviewWindowModel.ts'
+import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
 
 // A synthetic review of a PR: a v2 report over a two-unit inventory, its fact set of a Component and a Data diagram.
 const inventory: ChangeInventory = {
@@ -88,4 +88,23 @@ test('no diagram of the window opens a separate window: the window never calls o
   const set = read('./DiffSetView.tsx')
   const calls = set.split('\n').filter((l) => l.includes('openWindow'))
   assert.ok(calls.length > 0 && calls.every((l) => l.includes('!inline &&')), 'every openWindow of DiffSetView is behind !inline')
+})
+
+test('the full diff loads a file\'s hunks only once the file is opened', () => {
+  assert.deepEqual(shownHunks(['H1', 'H2'], false), [], 'folded: nothing renders, nothing loads')
+  assert.deepEqual(shownHunks(['H1', 'H2'], true), ['H1', 'H2'])
+  assert.match(readFileSync(new URL('./ReviewWindow.tsx', import.meta.url), 'utf8'), /shownHunks\(hunks, open\)/, 'DiffFile renders through shownHunks')
+})
+
+test('a hunk loads once per fact view, and again after the view refreshes', () => {
+  const v1 = { at: 1 }
+  const v2 = { at: 2 }
+  const cache = hunkCacheFor(null, v1)
+  assert.equal(askHunk(cache, 'k'), true)
+  assert.equal(askHunk(cache, 'k'), false, 'asked already: loading')
+  assert.equal(hunkCacheFor(cache, v1), cache, 'the same view keeps its cache')
+  const next = hunkCacheFor(cache, v2)
+  assert.notEqual(next, cache)
+  assert.equal(next.lines.get('k'), undefined, 'the refreshed view does not wait on the old load')
+  assert.equal(askHunk(next, 'k'), true, 'so the open hunk loads again')
 })
