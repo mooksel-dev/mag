@@ -11,7 +11,6 @@ import {
   resolveChoice,
   runningAgents,
   taskByKey,
-  workCards,
   type AgentRole,
   type AgentSession,
   type Integration,
@@ -30,6 +29,7 @@ import { Architecture } from './Architecture'
 import { ArtifactPane } from './ArtifactPane'
 import { TopicConversation, WorkConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
+import { HomeScreen } from './Home'
 import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
 import { ProjectPicker, ProjectSquare } from './Picker'
@@ -88,6 +88,16 @@ export function App({ projectId }: { projectId: string }) {
   }, [openTaskId, state]) // eslint-disable-line react-hooks/exhaustive-deps
   // ⌘O, File → Open Project… / New Project…, the dock menu.
   useEffect(() => mag.onOpenPicker(setPicker), [])
+  // ⌘N opens Home, as ＋ New does.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'n') return
+      e.preventDefault()
+      select(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const project = state?.projects.find((p) => p.id === projectId) ?? null
   useEffect(() => {
@@ -97,25 +107,23 @@ export function App({ projectId }: { projectId: string }) {
   if (!state) return null
   if (!project) return <div className="app"><main className="main empty">This project no longer exists.</main></div>
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
-  const color = projectColor(project)
   const openKey = (key: string) => {
     const t = taskByKey(tasks, key)
     if (t) select({ kind: 'work', id: t.parentId ?? t.id })
   }
-  // The selection, while it still exists; else the first of the list. A topic that has come to own an open work since
-  // shows as that work: the conversation goes on there.
+  // The selection, while it still exists; else Home. A topic that has come to own an open work since shows as that work:
+  // the conversation goes on there.
   const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && s.role === 'chat') ?? null : null
   const owned = picked && tasks.filter((t) => !t.parentId && t.ownerSessionId === picked.id && t.status !== 'done' && t.status !== 'canceled').sort((a, b) => b.updatedAt - a.updatedAt)[0]
   const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
   const topic = owned ? null : picked
-  const first = !work && !topic ? workCards(project.id, tasks, state.sessions, Date.now())[0] : undefined
-  const shownWork = work ?? first?.task ?? null
-  const shownTopic = topic ?? first?.session ?? null
+  const shownWork = work
+  const shownTopic = topic
   const current: Selection | null = shownWork ? { kind: 'work', id: shownWork.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
-  const screen = page ? PAGE_NAMES[page] : shownWork ? `Work ${shownWork.key}` : shownTopic ? 'Topic' : 'Empty'
+  const screen = page ? PAGE_NAMES[page] : shownWork ? `Work ${shownWork.key}` : shownTopic ? 'Topic' : 'Home'
 
   return (
-    <div className="app" style={{ '--pc': color } as React.CSSProperties}>
+    <div className="app">
       <div className="titlebar">
         <div className="projmenu">
           <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => setPicker(picker ? null : 'open')}>
@@ -134,7 +142,7 @@ export function App({ projectId }: { projectId: string }) {
       </div>
       <div className="layout">
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page ? null : current} onSelect={select} onOpenIdeas={() => setPage('ideas')} />
+          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} onSelect={select} onNew={() => select(null)} onOpenIdeas={() => setPage('ideas')} />
         </ErrorBoundary>
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {page ? (
@@ -152,14 +160,14 @@ export function App({ projectId }: { projectId: string }) {
                 <Settings project={project} integrations={state.integrations} />
               )}
             </main>
+          ) : !current ? (
+            <HomeScreen project={project} state={state} onSelect={select} />
           ) : (
             <>
               {shownWork ? (
                 <WorkConversation key={shownWork.id} work={shownWork} state={state} onOpenKey={openKey} />
-              ) : shownTopic ? (
+              ) : shownTopic && (
                 <TopicConversation key={shownTopic.id} topic={shownTopic} state={state} onOpenKey={openKey} onSelectTopic={(id) => select({ kind: 'topic', id })} onDeleted={() => select(null)} />
-              ) : (
-                <section className="convo"><p className="muted pad">No works yet. Describe a problem on the left: a topic opens, and its agent plans the work with you.</p></section>
               )}
               <ArtifactPane work={shownWork} topic={shownTopic} state={state} onOpenKey={openKey} onDeleted={() => select(null)} />
             </>

@@ -359,6 +359,9 @@ export function Composer({
   onSend,
   onStop,
   chip,
+  intent,
+  onFiles,
+  autoFocus,
 }: {
   busy: boolean
   /** Messages may be sent while busy: the agent gets them in its current turn (live sessions). */
@@ -370,6 +373,11 @@ export function Composer({
   onStop?: () => void
   /** Shown next to the attach button, e.g. the model chip. */
   chip?: ReactNode
+  /** What send will do with the text, next to the send button (Home: the route chip). */
+  intent?: (text: string) => ReactNode
+  /** Files dropped or picked go here first; true = taken (Home: a review's .zip imports), else they are attached. */
+  onFiles?: (files: File[]) => boolean
+  autoFocus?: boolean
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
@@ -406,6 +414,7 @@ export function Composer({
   }, [text])
 
   const add = async (list: FileList | File[]) => {
+    if (onFiles?.(Array.from(list))) return
     for (const f of Array.from(list)) {
       const path = mag.pathForFile(f)
       const a = path
@@ -416,8 +425,13 @@ export function Composer({
   }
   const submit = async () => {
     if ((busy && !queue) || (!text.trim() && !files.length)) return
-    // Files never go with a command; they stay for the next message.
-    await onSend(text.trim(), isCommand ? [] : files)
+    // Files never go with a command; they stay for the next message. A failed send keeps both; the caller shows why.
+    try {
+      await onSend(text.trim(), isCommand ? [] : files)
+    } catch (err) {
+      console.error(err)
+      return
+    }
     setText('')
     if (!isCommand) setFiles([])
   }
@@ -485,8 +499,9 @@ export function Composer({
           }}
           onKeyDown={onKeyDown}
           placeholder={busy && !queue ? 'Wait for the agent to finish…' : placeholder}
-          rows={1}
+          rows={2}
           aria-label="Message"
+          autoFocus={autoFocus}
         />
         <div className="composerbar">
           <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>＋</button>
@@ -494,6 +509,7 @@ export function Composer({
           {chip}
           <div className="grow" />
           {commands.length > 0 && <span className="muted small nowrap">/ commands</span>}
+          {intent?.(text)}
           {busy && onStop && <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop">■</button>}
           {(!busy || !onStop || queue) && (
             <button type="submit" className="iconbtn send" disabled={busy && !queue} title={`Send (${keys})`} aria-label="Send">↑</button>
