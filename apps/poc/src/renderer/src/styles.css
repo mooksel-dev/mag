@@ -804,6 +804,13 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .drawerhead .title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drawerbody { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; }
 .drawerbody .canvasframe { flex: 1; border-radius: var(--r); }
+/* A diagram's set: wider; levels and the diagram side by side, the node's panel under them. */
+.drawer.set { width: clamp(560px, 66%, 1200px); }
+.drawer .setbody { grid-template-columns: 170px minmax(0, 1fr); }
+.drawer .setside { grid-column: 1 / -1; position: static; max-height: none; }
+@container (min-width: 1000px) { .drawer .setbody { grid-template-columns: 220px minmax(0, 1fr) 260px; } .drawer .setside { grid-column: auto; position: sticky; } }
+.drawer.set .drawerbody { container-type: inline-size; }
+.drawer.set .drawerbody > .diffset { flex: none; }
 .stepper { display: inline-flex; gap: 2px; font-size: 11px; }
 .stepper span { padding: 2px 8px; border-radius: 4px; background: var(--status); color: var(--muted); }
 .stepper span.past { background: var(--green-bg); color: var(--green-fg); }

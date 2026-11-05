@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from 'react'
+import { setOf } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { CanvasFrame } from './Chat'
+import { DiffSetView, setContext } from './DiffSetView'
 import { diagramsOf } from './DiffTab'
 
 const mag = window.mag
@@ -13,13 +15,14 @@ export interface DrawerCanvas {
 
 /**
  * A canvas at the right of a work's or a discussion's screen (redesign-start-screen-big-composer.3): it opens when you
- * click a diagram, ✕ (or Esc) closes it, ⧉ pops it out with its whole set. The latest version shows; a canvas deleted
- * meanwhile closes the drawer.
+ * click a diagram, ✕ (or Esc) closes it, ⧉ pops it out. A task's diagram opens with its whole linked set
+ * (DiffSetView: levels, trail, links, a fact's files and hunks), as in its own window; any other canvas alone. The
+ * latest version shows; a canvas deleted meanwhile closes the drawer.
  */
 export function DiagramDrawer({ open, state, onClose }: { open: DrawerCanvas; state: AppState; onClose: () => void }) {
   const canvas = state.canvases.find((c) => c.id === open.id)
   const taskId = canvas?.taskId
-  // The task's diagrams: a method's flow opens from its module (see DiagramView).
+  // The task's diagrams: a diagram of them opens with its set (povnyi-diff-nabir-pov-iazanykh.2).
   const siblings = useMemo(() => (taskId ? diagramsOf(state.canvases.filter((c) => c.taskId === taskId)) : []), [state.canvases, taskId])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose() }
@@ -30,8 +33,23 @@ export function DiagramDrawer({ open, state, onClose }: { open: DrawerCanvas; st
     if (!canvas) onClose()
   }, [canvas, onClose])
   if (!canvas) return null
+  const own = siblings.find((c) => c.id === canvas.id)
+  if (own) {
+    const set = setOf(own, siblings)
+    return (
+      <aside className="drawer set" aria-label={`Diagrams: ${canvas.title}`}>
+        <div className="drawerhead">
+          <span className="title">Diagrams · {set.length}</span>
+          <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+        </div>
+        <div className="drawerbody">
+          <DiffSetView key={set[0].id} set={set} current={own.id} {...setContext(set, state.tasks)} />
+        </div>
+      </aside>
+    )
+  }
   return (
-    <aside className="drawer" aria-label={`Diagram: ${canvas.title}`}>
+    <aside className="drawer" aria-label={`Canvas: ${canvas.title}`}>
       <div className="drawerhead">
         <span className="title" title={canvas.title}>{canvas.title}</span>
         <span className="muted small">v{canvas.version}</span>
@@ -39,7 +57,7 @@ export function DiagramDrawer({ open, state, onClose }: { open: DrawerCanvas; st
         <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
       </div>
       <div className="drawerbody">
-        <CanvasFrame key={canvas.id + canvas.version} canvas={canvas} height="100%" focus={open.focus} siblings={siblings} />
+        <CanvasFrame key={canvas.id + canvas.version} canvas={canvas} height="100%" focus={open.focus} />
       </div>
     </aside>
   )
