@@ -409,6 +409,67 @@ test('renameChat: project topics only, a non-empty title, kept over the first me
   assert.equal(store.session(id).title, 'Pricing ideas')
 })
 
+test('nameChat: the title lands after the turn; a failed naming runs again after the next one; a rename meanwhile wins', async () => {
+  const { store, orch, project } = setup()
+  const id = orch.newChat(project.id)
+  await orch.send(id, 'what should we charge for the pro plan?')
+  const live = opened.at(-1)!
+  const turn = async (reply: string) => {
+    live.emit({ type: 'message', text: reply })
+    live.emit({ type: 'turn.done', ok: true })
+    await tick()
+  }
+  const before = runs.length
+  await turn('Let us see.')
+  assert.equal(runs.length, before + 1, 'one naming run')
+  assert.equal(store.session(id).titleGenerated, undefined, 'not named until the title lands')
+  runs.at(-1)!.emit({ type: 'error', message: 'rate limited' })
+  runs.at(-1)!.end()
+  await tick()
+  assert.equal(store.session(id).titleGenerated, undefined)
+
+  await orch.send(id, 'and for teams?')
+  await turn('Per seat.')
+  assert.equal(runs.length, before + 2, 'named again after the next turn')
+  runs.at(-1)!.emit({ type: 'message', text: 'Pro plan pricing' })
+  runs.at(-1)!.emit({ type: 'turn.done', ok: true })
+  runs.at(-1)!.end()
+  await tick()
+  assert.deepEqual([store.session(id).title, store.session(id).titleGenerated], ['Pro plan pricing', true])
+
+  const other = orch.newChat(project.id)
+  await orch.send(other, 'hi')
+  const live2 = opened.at(-1)!
+  live2.emit({ type: 'message', text: 'Hello' })
+  live2.emit({ type: 'turn.done', ok: true })
+  await tick()
+  orch.renameChat(other, 'Mine')
+  runs.at(-1)!.emit({ type: 'message', text: 'Greeting' })
+  runs.at(-1)!.end()
+  await tick()
+  assert.equal(store.session(other).title, 'Mine')
+})
+
+test('nameUntitled: topics with replies and no generated title are named once at start; titled, empty and task sessions not', async () => {
+  const { store, orch, project, task } = setup()
+  const items = [{ kind: 'user' as const, text: 'old topic', at: 1 }, { kind: 'assistant' as const, text: 'reply', at: 2 }]
+  const untitled = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'old topic' })
+  untitled.items.push(...items)
+  const titled = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Named', titleGenerated: true })
+  titled.items.push(...items)
+  store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'New topic' })
+  store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' }).items.push(...items)
+  const before = runs.length
+  orch.nameUntitled()
+  orch.nameUntitled()
+  assert.equal(runs.length, before + 1, 'one run, for the untitled topic, not repeated while it runs')
+  assert.ok(runs.at(-1)!.spec.prompt.includes('old topic'))
+  runs.at(-1)!.emit({ type: 'message', text: 'Old topic' })
+  runs.at(-1)!.end()
+  await tick()
+  assert.deepEqual([store.session(untitled.id).title, store.session(untitled.id).titleGenerated], ['Old topic', true])
+})
+
 test('deleteChat: project topics only; closes the live process, then removes the topic', async () => {
   const { store, orch, project, task } = setup()
   const groomer = store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })

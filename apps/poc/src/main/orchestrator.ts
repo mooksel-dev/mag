@@ -335,6 +335,8 @@ export class Orchestrator {
   private reviewing = new Map<string, { round: number; heads: Record<string, string>; withContext: boolean; startedAt: number } | null>()
   /** The PR heads each step's review last started on: a failed review is not retried on its own (see review). */
   private reviewTried = new Map<string, string>()
+  /** Topics whose title is being generated. */
+  private naming = new Set<string>()
 
   constructor(
     private store: Store,
@@ -1895,14 +1897,17 @@ export class Orchestrator {
     return live.handle.done
   }
 
-  /** After a chat's first turn: a short generated title in place of the first message. Once; a failure keeps the old title. */
+  /**
+   * After a chat's turn: a short generated title in place of the first message, once it lands; a failed naming runs
+   * again after the next turn. A title the user gave (or mag set) meanwhile stays.
+   */
   private nameChat(session: AgentSession) {
-    if (session.role !== 'chat' || session.titleGenerated || session.status === 'error') return
+    if (session.role !== 'chat' || session.titleGenerated || session.status === 'error' || this.naming.has(session.id)) return
     // A topic mag started with a job (a work from an idea) is named from the job.
     const first = session.items.find((i) => i.kind === 'user' || i.kind === 'job')
     const reply = session.items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : [])).join('\n\n')
     if ((first?.kind !== 'user' && first?.kind !== 'job') || !reply) return
-    session.titleGenerated = true
+    this.naming.add(session.id)
     const adapter = adapters[session.agent]
     let text = ''
     let failed = false
@@ -1919,10 +1924,18 @@ export class Orchestrator {
       },
     )
     handle.done.then(() => {
+      this.naming.delete(session.id)
       const title = failed ? null : cleanTitle(text)
-      if (title) session.title = title
+      if (!title || session.titleGenerated) return
+      session.title = title
+      session.titleGenerated = true
       this.store.changed()
     })
+  }
+
+  /** At start: topics with replies that never got a generated title (older ones, or their naming failed) are named once. */
+  nameUntitled() {
+    for (const s of this.store.data.sessions) if (s.role === 'chat' && !s.taskId && s.status !== 'running') this.nameChat(s)
   }
 
   /** Task sessions only: project chats stay out of the log. */

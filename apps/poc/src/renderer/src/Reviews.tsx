@@ -14,6 +14,7 @@ import {
   resultOutdated,
   shownResult,
   REVIEW_FORMATS,
+  shortTitle,
   type PrReview,
   type PrVerdict,
   type ReviewFormat,
@@ -180,7 +181,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         <div className="grow" />
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
       </div>
-      <h1>{work.title.replace(/^[^:]*#\d+: /, '')}</h1>
+      <h1>{shortTitle(work)}</h1>
       <div className="taskrow">
         <TicketLinks task={work} />
         <div className="grow" />

@@ -11,7 +11,7 @@ import {
   resolveChoice,
   runningAgents,
   taskByKey,
-  workList,
+  workCards,
   type AgentRole,
   type AgentSession,
   type Integration,
@@ -105,9 +105,9 @@ export function App({ projectId }: { projectId: string }) {
   const owned = picked && tasks.filter((t) => !t.parentId && t.ownerSessionId === picked.id && t.status !== 'done' && t.status !== 'canceled').sort((a, b) => b.updatedAt - a.updatedAt)[0]
   const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
   const topic = owned ? null : picked
-  const first = !work && !topic ? workList(project.id, tasks, state.sessions, Date.now())[0] : undefined
-  const shownWork = work ?? (first?.kind === 'work' ? first.task : null)
-  const shownTopic = topic ?? (first?.kind === 'topic' ? first.session : null)
+  const first = !work && !topic ? workCards(project.id, tasks, state.sessions, Date.now())[0] : undefined
+  const shownWork = work ?? first?.task ?? null
+  const shownTopic = topic ?? first?.session ?? null
   const current: Selection | null = shownWork ? { kind: 'work', id: shownWork.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
   const screen = page ? PAGE_NAMES[page] : shownWork ? `Work ${shownWork.key}` : shownTopic ? 'Topic' : 'Empty'
 
@@ -131,7 +131,7 @@ export function App({ projectId }: { projectId: string }) {
       </div>
       <div className="layout">
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page ? null : current} onSelect={select} />
+          <WorkList project={project} state={state} selected={page ? null : current} onSelect={select} onOpenIdeas={() => setPage('ideas')} />
         </ErrorBoundary>
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {page ? (
