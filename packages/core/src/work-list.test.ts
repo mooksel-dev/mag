@@ -40,7 +40,7 @@ test('workList: a topic that owns an open work shows through it, and its turn co
 })
 
 test("workList: a review is a work; the topic mag made for it is not a topic of its own", () => {
-  const review = task('rv', { type: 'review', status: 'in_progress', ownerSessionId: 'rt', prReview: { pr: { url: 'https://github.com/o/r/pull/1', repo: 'o/r', number: 1, author: 'a', base: 'main', head: 'h' }, findings: [] } as unknown as Task['prReview'] })
+  const review = task('rv', { type: 'review', status: 'in_progress', ownerSessionId: 'rt', prReview: { pr: { url: 'https://github.com/o/r/pull/1', repo: 'o/r', number: 1, author: 'a', base: 'main', head: 'h' }, results: {}, shown: 'v2', posted: null } as Task['prReview'] })
   const sessions = [session('rt', { reviewOf: 'rv' })]
   assert.deepEqual(workList('p', [review], sessions, NOW).map(line), ['open:rv'])
   // Closed, it no longer owns the topic, which still is the review's.

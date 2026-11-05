@@ -180,7 +180,7 @@ test('the page model: strip, changes with routine folded, evidence views, ready 
   assert.equal(routine?.title, 'Wiring')
   assert.equal(reportLine(r), 'Request changes · Direction: your call')
   assert.equal(reportLine(r, 'step'), 'Request changes')
-  const pr = { verdict: 'request_changes', findings: [], report: r } as unknown as PrReview
+  const pr = { results: { v2: { verdict: 'request_changes', findings: [], report: r } }, shown: 'v2' } as unknown as PrReview
   assert.equal(reviewReadyText(pr), 'Review ready: Request changes · Direction: your call')
 })
 

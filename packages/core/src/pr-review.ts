@@ -42,9 +42,24 @@ export interface PrRef {
   head: string
 }
 
-/** A review of a teammate's PR: what the agent understood, whether the change solves it, and its findings. */
-export interface PrReview {
-  pr: PrRef
+/**
+ * The format of a review's result (review-v2-part-2-v1-2.1, Decision 7): v1, findings by level with a verdict (before
+ * review-v2-questions-first-direction); v2, the report of fixed questions with its direction for the user to decide.
+ */
+export type ReviewFormat = 'v1' | 'v2'
+
+export const REVIEW_FORMATS: ReviewFormat[] = ['v1', 'v2']
+
+export const REVIEW_FORMAT_LABELS: Record<ReviewFormat, string> = { v1: 'v1 · findings and a verdict', v2: 'v2 · questions and the direction' }
+
+/** A project's format for new reviews: its setting, v2 without one. */
+export const projectReviewFormat = (project: Pick<Project, 'reviewFormat'>): ReviewFormat => (project.reviewFormat === 'v1' ? 'v1' : 'v2')
+
+/** One format's review of the PR: what the agent understood, whether the change solves it, and its findings. */
+export interface ReviewResult {
+  format: ReviewFormat
+  /** The topic that runs this format, its own (a fresh one per format); a topic that asked (review_pr) when it did. */
+  sessionId: string
   /** The problem as the agent understood it, with evidence; empty until it has reviewed. */
   problem: string
   /** How the PR solves the problem and whether it does (reviews-prybraty-spysok-pr-i.1: not the agent's own design). */
@@ -54,16 +69,94 @@ export interface PrReview {
   /** The findings the user picks to publish; with a report, derived from it (reportFindings). */
   findings: ReviewFinding[]
   /**
-   * The answers to the review's questions (review-v2-questions-first-direction.1): direction (the user's call), problem,
-   * conventions, risks, questions, changes; verdict is its checks verdict. Missing on older reviews: they show as before.
+   * v2 only: the answers to the review's questions (review-v2-questions-first-direction.1): direction (the user's call),
+   * problem, conventions, risks, questions, changes; verdict is its checks verdict.
    */
   report?: ReviewReport
   /** The commit it reviewed; a newer head of the PR needs another look. null until it has reviewed. */
   head: string | null
-  /** Published to GitHub by the user's button. */
-  posted: { at: number; url: string } | null
   /** When the verdict was recorded; null until then. */
   at: number | null
+}
+
+/**
+ * A review of a teammate's PR: one result per format, each from its own run (review-v2-part-2-v1-2.1), and which one
+ * the page and the lists show.
+ */
+export interface PrReview {
+  pr: PrRef
+  results: Partial<Record<ReviewFormat, ReviewResult>>
+  /** The result the page and the lists show: the one started last, or the user's pick. */
+  shown: ReviewFormat
+  /** Published to GitHub by the user's button. */
+  posted: { at: number; url: string } | null
+}
+
+/** A result of `format` before its run has recorded anything. */
+export const emptyResult = (format: ReviewFormat, sessionId: string): ReviewResult => ({ format, sessionId, problem: '', approach: '', verdict: null, findings: [], head: null, at: null })
+
+/** The result the page and the lists show; null before any run of that format. */
+export function shownResult(review: PrReview | null | undefined): ReviewResult | null {
+  return review?.results[review.shown] ?? null
+}
+
+/** A review as stored before review-v2-part-2-v1-2.1: one result, its fields on the review. */
+export interface LegacyPrReview {
+  pr: PrRef
+  posted: { at: number; url: string } | null
+  problem?: string
+  approach?: string
+  verdict?: PrVerdict | null
+  findings?: ReviewFinding[]
+  report?: ReviewReport
+  head?: string | null
+  at?: number | null
+}
+
+/**
+ * A stored review in today's form (review-v2-part-2-v1-2.1): one of before keeps its result as v2 when it has a report
+ * (with the user's direction call and its draft), else as v1; one never reviewed has no result yet. `sessionId`: the
+ * review's owner topic, which ran it. A review in today's form stays as it is.
+ */
+export function migratePrReview(raw: PrReview | LegacyPrReview, sessionId?: string | null): PrReview {
+  if ('results' in raw && raw.results) return { pr: raw.pr, results: raw.results, shown: raw.shown === 'v1' ? 'v1' : 'v2', posted: raw.posted ?? null }
+  const old = raw as LegacyPrReview
+  const format: ReviewFormat = old.report ? 'v2' : 'v1'
+  const reviewed = !!(old.verdict || old.report || old.head)
+  const result: ReviewResult = {
+    ...emptyResult(format, sessionId ?? ''),
+    problem: old.problem ?? '',
+    approach: old.approach ?? '',
+    verdict: old.verdict ?? null,
+    findings: old.findings ?? [],
+    ...(old.report ? { report: old.report } : {}),
+    head: old.head ?? null,
+    at: old.at ?? null,
+  }
+  return { pr: old.pr, results: reviewed ? { [format]: result } : {}, shown: reviewed ? format : 'v2', posted: old.posted ?? null }
+}
+
+/**
+ * The format a topic records into (set_pr_review): its own (`reviewFormat`, mag's topic of that format), else the
+ * result it runs, the shown one first (a topic that asked for both); null when it runs none.
+ */
+export function formatOfTopic(review: PrReview, session: Pick<AgentSession, 'id' | 'reviewFormat'> | undefined): ReviewFormat | null {
+  if (!session) return null
+  if (session.reviewFormat) return session.reviewFormat
+  const mine = REVIEW_FORMATS.filter((f) => review.results[f]?.sessionId === session.id)
+  return mine.includes(review.shown) ? review.shown : (mine[0] ?? null)
+}
+
+/** The topics that may record a review: its owner and the topic of each result. */
+export function reviewTopicIds(task: Pick<Task, 'ownerSessionId' | 'prReview'>): string[] {
+  const ids = [task.ownerSessionId, ...REVIEW_FORMATS.map((f) => task.prReview?.results[f]?.sessionId)]
+  return [...new Set(ids.filter((id): id is string => !!id))]
+}
+
+/** Whether a result of a format is missing or older than the PR's head: its Run button offers a run. */
+export function resultOutdated(review: PrReview, format: ReviewFormat): boolean {
+  const r = review.results[format]
+  return !r?.at || r.head !== review.pr.head
 }
 
 /** A GitHub PR link: https://github.com/<owner>/<repo>/pull/<n>. Throws when the text is not one. */
@@ -116,14 +209,19 @@ export function findingCounts(findings: ReviewFinding[]): string {
 
 /** Whether the agent has recorded a verdict on the PR as mag last saw it. */
 export function reviewReady(task: Pick<Task, 'prReview'>): boolean {
-  const r = task.prReview
-  return !!r?.verdict && r.head === r.pr.head
+  const r = shownResult(task.prReview)
+  return !!r?.verdict && r.head === task.prReview!.pr.head
 }
 
 /** The line in Needs you once a review is ready: "Review ready: Request changes · 2 blockers". */
 export function reviewReadyText(review: PrReview): string {
-  if (review.report) return `Review ready: ${reportLine(review.report)}`
-  return `Review ready: ${review.verdict ? PR_VERDICT_LABELS[review.verdict] : '—'} · ${findingCounts(review.findings)}`
+  return `Review ready: ${resultLine(shownResult(review)) || '—'}`
+}
+
+/** A result's verdict line: its report's, else "Request changes · 2 blockers"; empty before it has one. */
+export function resultLine(r: ReviewResult | null): string {
+  if (r?.report) return reportLine(r.report)
+  return r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
 }
 
 /** The verdict a PR review keeps for GitHub from a report's checks verdict: look is a comment. */
@@ -131,9 +229,10 @@ export function prVerdictOf(checks: ChecksVerdict): PrVerdict {
   return checks === 'look' ? 'comment' : checks
 }
 
-/** The owner topic of a review is in a turn. */
-export function reviewRunning(task: Pick<Task, 'ownerSessionId'>, sessions: AgentSession[]): boolean {
-  return sessions.some((s) => s.id === task.ownerSessionId && s.status === 'running')
+/** A topic of a review (its owner, or the run of either format) is in a turn. */
+export function reviewRunning(task: Pick<Task, 'ownerSessionId' | 'prReview'>, sessions: AgentSession[]): boolean {
+  const ids = reviewTopicIds(task)
+  return sessions.some((s) => ids.includes(s.id) && s.status === 'running')
 }
 
 /**
@@ -143,22 +242,25 @@ export function reviewRunning(task: Pick<Task, 'ownerSessionId'>, sessions: Agen
  */
 export type ReviewState = 'reviewing' | 'question' | 'ready' | 'failed' | 'outdated' | 'waiting' | 'closed'
 
-/** A review's state. A verdict on the current head outranks an errored topic: a borrowed topic that fails later keeps it ready. */
+/**
+ * A review's state, from its shown result (review-v2-part-2-v1-2.1); reviewing while a run of either format is in a
+ * turn. A verdict on the current head outranks an errored topic: a borrowed topic that fails later keeps it ready.
+ */
 export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): ReviewState {
   if (task.status !== 'in_progress') return 'closed'
-  const owner = sessions.find((s) => s.id === task.ownerSessionId)
-  if (owner?.status === 'running') return 'reviewing'
+  if (reviewRunning(task, sessions)) return 'reviewing'
   if (task.needsInput) return 'question'
   if (reviewReady(task)) return 'ready'
-  if (owner?.status === 'error') return 'failed'
-  if (task.prReview?.verdict) return 'outdated'
+  const shown = shownResult(task.prReview)
+  const topic = sessions.find((s) => s.id === (shown?.sessionId || task.ownerSessionId))
+  if (topic?.status === 'error') return 'failed'
+  if (shown?.verdict) return 'outdated'
   return 'waiting'
 }
 
 /** A review's line in a list: its state with its detail, "Request changes · 2 blockers", "the agent is reviewing…". */
 export function reviewLine(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): string {
-  const r = task.prReview
-  const verdict = r?.report ? reportLine(r.report) : r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
+  const verdict = resultLine(shownResult(task.prReview))
   switch (reviewState(task, sessions)) {
     case 'closed':
       return 'closed'
@@ -254,5 +356,5 @@ export function reviewToPost(verdict: PrVerdict, findings: ReviewFinding[], inli
  */
 export function reviewPollOutcome(review: PrReview, live: { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: string | null }): 'done' | 'rereview' | null {
   if (live.state !== 'OPEN') return 'done'
-  return live.head && review.head && live.head !== review.pr.head ? 'rereview' : null
+  return live.head && shownResult(review)?.head && live.head !== review.pr.head ? 'rereview' : null
 }

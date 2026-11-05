@@ -16,6 +16,7 @@ import {
   type SetLevelKey,
   type Task,
   type TrailStep,
+  shownResult,
 } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
@@ -66,7 +67,7 @@ export function setContext(set: DiagramCanvas[], tasks: Task[]): { step?: Task; 
   const c = set[0]
   if (c?.role !== 'fact') return {}
   const step = tasks.find((t) => t.id === (c.stepId ?? c.taskId))
-  return { step, findings: step?.prReview?.findings ?? step?.review?.findings }
+  return { step, findings: shownResult(step?.prReview)?.findings ?? step?.review?.findings }
 }
 
 /** The FactView of a fact set's step, loaded once the set opens. */

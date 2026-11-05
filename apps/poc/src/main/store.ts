@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -53,6 +53,9 @@ interface LegacyWork {
   feedbackSeenAt: number
   checkError?: string | null
 }
+
+/** A review as a file may hold it: of today, or from before one result per format. */
+type PrReviewOnDisk = NonNullable<Task['prReview']> | LegacyPrReview
 
 /** Events kept per project. */
 const EVENTS_PER_PROJECT = 300
@@ -158,6 +161,7 @@ export class Store {
     () => this.migrateStatuses(),
     () => this.migrateToSteps(),
     () => this.migrateToWorkStates(),
+    () => this.migrateToReviewResults(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -176,10 +180,18 @@ export class Store {
    */
   private inferredVersion() {
     const { tasks } = this.data
-    if (tasks.some((t) => !t.parentId && (t.status === 'planning' || t.status === 'ready'))) return this.migrations.length
+    if (tasks.some((t) => !t.parentId && (t.status === 'planning' || t.status === 'ready'))) return 5
     // Through migrateToSteps.
     if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
     return 0
+  }
+
+  /**
+   * One result per format (review-v2-part-2-v1-2.1): a review's result moves from its top-level fields to results.v2
+   * when it has a report (with the user's direction call and its draft), else to results.v1; run by its owner topic.
+   */
+  private migrateToReviewResults() {
+    for (const t of this.data.tasks) if (t.prReview) t.prReview = migratePrReview(t.prReview as PrReviewOnDisk, t.ownerSessionId)
   }
 
   /**

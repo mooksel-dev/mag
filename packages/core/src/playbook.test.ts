@@ -79,3 +79,12 @@ test('DEFAULT_PLAYBOOK: reviews answer the report; a PR review works out options
   assert.ok(p.indexOf('Direction, before you read') < p.indexOf('gh pr view <url>'))
   assert.match(DEFAULT_PLAYBOOK.review, /Direction is the approved plan/)
 })
+
+test('prReviewV1: the v1 review text is its own section, editable like the others (review-v2-part-2-v1-2.1)', () => {
+  assert.match(DEFAULT_PLAYBOOK.prReviewV1, /Findings with set_pr_review, each with level/)
+  assert.match(DEFAULT_PLAYBOOK.prReviewV1, /Verdict: request_changes with any blocker/)
+  assert.doesNotMatch(DEFAULT_PLAYBOOK.prReviewV1, /decide_direction/)
+  assert.match(DEFAULT_PLAYBOOK.prReview, /decide_direction/)
+  assert.equal(playbookOf({ playbook: { prReviewV1: 'ours' } }).prReviewV1, 'ours')
+  assert.deepEqual(storedPlaybook({ ...DEFAULT_PLAYBOOK, prReviewV1: 'ours' }), { prReviewV1: 'ours' })
+})

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Diagram, TaskWork } from '@mag/core'
+import { emptyResult, type Diagram, type TaskWork } from '@mag/core'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
@@ -53,12 +53,12 @@ const setup = () => {
     answerDeveloper: async (id, text) => {
       calls.push(`answer ${store.task(id).key}: ${text}`)
     },
-    reviewPr: async (projectId, url, by) => {
-      calls.push(`review_pr ${url} by ${by}`)
+    reviewPr: async (projectId, url, by, format) => {
+      calls.push(`review_pr ${url} by ${by}${format ? ` ${format}` : ""}`)
       return { taskId: 'r', job: 'Review it.' }
     },
     reviewFact: async (id) => (calls.push(`fact of ${store.task(id).key}`), 'Fact'),
-    setPrReview: (id, r) => (calls.push(`pr review ${store.task(id).key}: ${r.verdict} ${r.findings.map((f) => `${f.level}|${f.where ?? ''}|${f.node ?? ''}|${f.text}`).join(';')}`), 'Recorded.'),
+    setPrReview: (id, _s, r) => (calls.push(`pr review ${store.task(id).key}: ${r.verdict} ${r.findings.map((f) => `${f.level}|${f.where ?? ''}|${f.node ?? ''}|${f.text}`).join(';')}`), 'Recorded.'),
     decideDirection: (id, d) => (calls.push(`direction ${store.task(id).key}: ${d.choice}${d.option ? ` ${d.option}` : ''}${d.principle ? ` (${d.principle})` : ''}`), 'Recorded.'),
     ...NO_CONTROL,
   }
@@ -574,16 +574,20 @@ test('reopen_work: a project chat continues a done work it then owns (T-55.6)', 
   assert.equal(store.task(task.id).status, 'planning')
 })
 
-test("a review of a teammate's PR: its topic reads the fact, without an intent, and records findings by level", async () => {
+test("a review of a teammate's PR: its v1 topic reads the fact, without an intent, and records findings by level", async () => {
   const { store, project, task, tools, calls } = setup()
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
   const other = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   const review = store.createTask({ projectId: project.id, title: 'api#418: Retry', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
+  const pr = { url: 'https://github.com/acme/api/pull/418', repo: '/r/api', number: 418, author: 'olena', base: 'main', head: 'abc' }
+  store.updateTask(review.id, { prReview: { pr, results: { v1: emptyResult('v1', topic.id) }, shown: 'v1', posted: null } })
   const as = (sid: string) => (name: string, args: Record<string, unknown> = {}) => tools({ projectId: project.id, sessionId: sid }, name, { work: review.key, ...args })
   const own = as(topic.id)
 
   assert.equal(await own('review_pr', { url: 'https://github.com/acme/api/pull/418' }), 'Review it.')
-  assert.deepEqual(calls, [`review_pr https://github.com/acme/api/pull/418 by ${topic.id}`])
+  assert.equal(await own('review_pr', { url: 'https://github.com/acme/api/pull/418', format: 'v1' }), 'Review it.')
+  await assert.rejects(own('review_pr', { url: 'https://github.com/acme/api/pull/418', format: 'v3' }), /format must be one of v1, v2/)
+  assert.deepEqual(calls.splice(0), [`review_pr https://github.com/acme/api/pull/418 by ${topic.id}`, `review_pr https://github.com/acme/api/pull/418 by ${topic.id} v1`])
 
   // No intent any more (reviews-prybraty-spysok-pr-i.1): the review draws only its fact, which mag starts.
   const diagram: Diagram = { type: 'component', summary: 'Retries are idempotent.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'mod', uses: [] }] }
@@ -598,13 +602,19 @@ test("a review of a teammate's PR: its topic reads the fact, without an intent, 
     verdict: 'request_changes',
     findings: [{ text: 'Key from the body', where: 'api/charge.go:88', level: 'blocker', node: `canvas:${fact.id}#charge` }, { text: 'Name', level: 'nit' }],
   })
-  assert.deepEqual(calls.slice(1), [`fact of ${review.key}`, `pr review ${review.key}: request_changes blocker|api/charge.go:88|canvas:${fact.id}#charge|Key from the body;nit|||Name`])
+  assert.deepEqual(calls, [`fact of ${review.key}`, `pr review ${review.key}: request_changes blocker|api/charge.go:88|canvas:${fact.id}#charge|Key from the body;nit|||Name`])
 
   await assert.rejects(own('set_pr_review', { problem: '', approach: '', verdict: 'approve', findings: [{ text: 'x', level: 'blocker' }] }), /blocker and approve/)
   await assert.rejects(own('set_pr_review', { problem: '', approach: '', verdict: 'comment', findings: [{ text: 'x' }] }), /needs its level/)
   await assert.rejects(own('set_pr_review', { problem: '', approach: '', verdict: 'merge', findings: [] }), /verdict must be one of approve/)
-  // Only its owner topic reviews it; set_pr_review is for reviews only.
+  // A v1 topic records no report.
+  await assert.rejects(own('set_pr_review', { problem: '', approach: '', report: {} }), /this is the v1 review of the PR/)
+  // Only a topic that runs it reviews it; set_pr_review is for reviews only.
   await assert.rejects(as(other.id)('set_pr_review', { problem: '', approach: '', verdict: 'comment', findings: [] }), /not planned in this topic/)
+  // The v2 run's own topic may too (review-v2-part-2-v1-2.1).
+  const v2 = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  store.updateTask(review.id, { prReview: { ...store.task(review.id).prReview!, results: { ...store.task(review.id).prReview!.results, v2: emptyResult('v2', v2.id) } } })
+  await assert.rejects(as(v2.id)('set_pr_review', { problem: '', approach: '', verdict: 'comment', findings: [] }), /this is the v2 review of the PR: record it with report/)
   await assert.rejects(tools({ taskId: task.id }, 'set_pr_review', { problem: '', approach: '', verdict: 'comment', findings: [] }), /not a review/)
 })
 

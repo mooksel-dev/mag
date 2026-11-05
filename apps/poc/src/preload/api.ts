@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck } from '@mag/diff/types'
 
 export interface AppState {
@@ -215,9 +215,14 @@ export interface MagApi {
   stepHunk(stepId: string, repo: string, base: string, head: string, hunk: HunkRef): Promise<string[]>
   /**
    * Review a teammate's PR of a project repository: its review (new, or the PR's own again) and the topic that does it.
-   * A link that is not one, or a PR outside the project, comes back as `error`.
+   * `format`: the result it runs, the project's default without one. A link that is not one, or a closed PR, comes
+   * back as `error`.
    */
-  startReview(projectId: string, url: string): Promise<{ taskId: string; sessionId: string } | { error: string }>
+  startReview(projectId: string, url: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string } | { error: string }>
+  /** Run v1 / Run v2: that format's review of the PR at its head, in its own topic; the other result stays. */
+  runReviewFormat(taskId: string, format: ReviewFormat): Promise<void>
+  /** The v1 | v2 switch: the review's page, lists and conversation show that format's result. */
+  showReviewResult(taskId: string, format: ReviewFormat): Promise<void>
   /** The review's PR as it is now gets another look by its topic (a new one if it is gone); returns the topic. */
   reviewAgain(taskId: string): Promise<string>
   /** Close a review: done; reviewAgain brings it back. */

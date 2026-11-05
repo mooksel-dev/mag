@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -121,9 +121,9 @@ app.whenReady().then(async () => {
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
   actions.branchChat = (sessionId, text) => orch.branchChat(sessionId, text)
-  actions.reviewPr = (projectId, url, by) => orch.reviewPr(projectId, url, by)
+  actions.reviewPr = (projectId, url, by, format) => orch.reviewPr(projectId, url, by, format)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
-  actions.setPrReview = (id, review) => orch.setPrReview(id, review)
+  actions.setPrReview = (id, sessionId, review) => orch.setPrReview(id, sessionId, review)
   actions.decideDirection = (id, decision) => orch.decideDirection(id, decision)
   actions.approve = (id) => orch.approve(id)
   actions.develop = (id, localRepos) => orch.develop(id, undefined, localRepos)
@@ -252,9 +252,9 @@ app.whenReady().then(async () => {
     return isReview(step) ? reviewHunk(step, repo, base, head, hunk) : stepHunk(step, repo, base, head, hunk)
   })
   // Reviews of teammates' PRs (reviews-ahent-reviuit-pr-timeitiv.2).
-  handle('review:start', async (_, projectId: string, url: string) => {
+  handle('review:start', async (_, projectId: string, url: string, format?: ReviewFormat) => {
     try {
-      const { taskId, sessionId } = await orch.reviewPr(projectId, url)
+      const { taskId, sessionId } = await orch.reviewPr(projectId, url, undefined, format)
       return { taskId, sessionId }
     } catch (e) {
       return { error: (e as Error).message.split('\n')[0] }
@@ -264,6 +264,8 @@ app.whenReady().then(async () => {
     const { sessionId } = await orch.rereview(id)
     return sessionId
   })
+  handle('review:run', async (_, id: string, format: ReviewFormat) => void (await orch.runReviewFormat(id, format)))
+  handle('review:show', (_, id: string, format: ReviewFormat) => orch.showReviewResult(id, format))
   handle('review:close', (_, id: string) => orch.closeReview(id))
   handle('review:decide', (_, id: string, decision: { choice: DirectionChoice; option?: string; principle?: string }) => void orch.decideDirection(id, decision))
   handle('review:discuss', async (_, id: string) => (await orch.discussDirection(id)).sessionId)

@@ -564,15 +564,15 @@ export const TOOL_DEFS = [
     name: 'set_pr_review',
     scope: 'task',
     description:
-      "The topic that owns a review of a teammate's PR: record it, once you have the report and again when it changes. mag checks the report against the inventory, takes its checks as the verdict and derives the findings the user may publish. It shows in the review's pane beside its conversation; nothing goes to GitHub. Without a report (older form): verdict and findings.",
+      "A topic that runs a review of a teammate's PR: record it into the result of its format, once you have it and again when it changes; the other format's result stays. v2 (your job says which): the report; mag checks it against the inventory, takes its checks as the verdict and derives the findings the user may publish. v1: verdict and findings, no report. It shows in the review's pane beside its conversation; nothing goes to GitHub.",
     inputSchema: {
       type: 'object',
       properties: {
         problem: { type: 'string', description: 'What the PR fixes and why it is real, with evidence (ticket, code path, logs); short.' },
         approach: { type: 'string', description: 'How the PR solves the problem and whether it does; short.' },
         report: REPORT,
-        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'], description: 'Only without a report.' },
-        findings: { type: 'array', description: 'Only without a report: one finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
+        verdict: { type: 'string', enum: ['approve', 'request_changes', 'comment'], description: 'v1 only.' },
+        findings: { type: 'array', description: 'v1 only: one finding per item, each with level, where (file:line) and node when they apply.', items: FINDING },
       },
       required: ['problem', 'approach'],
     },
@@ -597,8 +597,15 @@ export const TOOL_DEFS = [
     name: 'review_pr',
     scope: 'project',
     description:
-      "Review a teammate's PR of a project repository, by its GitHub link: mag starts (or reopens) its review, owned by this topic, fetches the PR and answers with the job. Do it right here, in this turn.",
-    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'https://github.com/<owner>/<repo>/pull/<n>' } }, required: ['url'] },
+      "Review a teammate's PR of a project repository, by its GitHub link: mag starts (or reopens) its review, run by this topic in one format, fetches the PR and answers with the job. Do it right here, in this turn. A review keeps one result per format; the other one stays.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'https://github.com/<owner>/<repo>/pull/<n>' },
+        format: { type: 'string', enum: ['v1', 'v2'], description: "v1: findings by level and a verdict; v2: the report of questions with the direction for the user. Without it: the project's setting (v2 by default)." },
+      },
+      required: ['url'],
+    },
   },
   {
     name: 'branch_topic',

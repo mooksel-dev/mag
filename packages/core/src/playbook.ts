@@ -2,9 +2,9 @@
 // prompt (role, repositories, tools, what is enforced); the playbook is the part a project may rewrite.
 
 /** Phase texts of the playbook; each one goes into the prompts of the roles doing that phase. */
-export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'prReview' | 'fact' | 'tracker' | 'significance'
+export type PlaybookSection = 'stance' | 'plan' | 'step' | 'review' | 'prReview' | 'prReviewV1' | 'fact' | 'tracker' | 'significance'
 
-export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'prReview', 'fact', 'tracker', 'significance']
+export const PLAYBOOK_SECTIONS: PlaybookSection[] = ['stance', 'plan', 'step', 'review', 'prReview', 'prReviewV1', 'fact', 'tracker', 'significance']
 
 export interface Playbook {
   /** How an agent leads: its own position, disagreement with a reason, the next move. Every role. */
@@ -21,6 +21,11 @@ export interface Playbook {
    * The project topic that owns the review.
    */
   prReview: string
+  /**
+   * The v1 review of a teammate's PR (review-v2-part-2-v1-2.1): the text before review-v2-questions-first-direction,
+   * findings by level with a verdict, kept to compare with v2 on the same PRs. The topic that runs the v1 format.
+   */
+  prReviewV1: string
   /**
    * How a reviewer writes the fact of code changes: the change inventory from the diff, then the scenarios and method
    * logic the review needs (diff-iak-inventar-zmin-ai.1). Shared by every review that reads a diff.
@@ -182,6 +187,31 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
 ${REPORT}
 ${CODE_CHECKS}`,
+  prReviewV1: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
+have done it: no diagram of your own design and no list of differences from it.
+1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
+   comments with gh api, reading only) and its diff (gh pr diff, or git in the repository).
+2. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it with
+   add_ticket. Without access to the tracker, say what is missing and work from the description.
+3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
+   framing or a problem that is not real.
+4. Fact: get_pr_changes lists the PR's hunks with their ids; write its change inventory (set_inventory), as the fact
+   section says.
+5. Check the fact and the code:
+   - Does the change solve the problem, all of it, and nothing it was not asked to do?
+   - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
+     (CLAUDE.md, AGENTS.md, README, the code around it), the architecture rules (layers, modules, interfaces)?
+   - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests, and the checks
+     of the code below.
+   Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
+6. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
+7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
+   question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
+   diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and
+   whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
+   otherwise.
+Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
+${CODE_CHECKS}`,
   fact: `The fact is the change inventory of the PR: write it with set_inventory from the hunk listing (get_pr_changes,
 or the review's message) and the diff. mag checks it against the hunks and generates the fact's Component and Data
 diagrams from it; you never draw those.
@@ -237,6 +267,7 @@ export function playbookOf(project: { playbook?: Partial<Playbook> | null }): Pl
     step: text('step'),
     review: text('review'),
     prReview: text('prReview'),
+    prReviewV1: text('prReviewV1'),
     fact: text('fact'),
     tracker: text('tracker'),
     significance: text('significance'),
