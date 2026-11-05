@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -124,6 +124,7 @@ app.whenReady().then(async () => {
   actions.reviewPr = (projectId, url, by) => orch.reviewPr(projectId, url, by)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
   actions.setPrReview = (id, review) => orch.setPrReview(id, review)
+  actions.decideDirection = (id, decision) => orch.decideDirection(id, decision)
   actions.approve = (id) => orch.approve(id)
   actions.develop = (id, localRepos) => orch.develop(id, undefined, localRepos)
   actions.approveAndStart = (id, localRepos) => orch.approveAndStart(id, localRepos)
@@ -264,6 +265,8 @@ app.whenReady().then(async () => {
     return sessionId
   })
   handle('review:close', (_, id: string) => orch.closeReview(id))
+  handle('review:decide', (_, id: string, decision: { choice: DirectionChoice; option?: string; principle?: string }) => void orch.decideDirection(id, decision))
+  handle('review:discuss', async (_, id: string) => (await orch.discussDirection(id)).sessionId)
   handle('review:delete', (_, id: string) => orch.deleteReview(id))
   // Publishing is the user's button only (reviews-ahent-reviuit-pr-timeitiv.3, Decision 7): mag posts, not an agent.
   handle('review:publish', async (_, id: string, verdict: PrVerdict, picks: number[]) => {

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_PLAYBOOK, PRECEDENCE, inbox, type AgentEvent } from '@mag/core'
+import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, findingsFolded, inbox, type AgentEvent } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -947,6 +947,61 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const v2 = store.task(work.id).prReview!
   assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
+
+  // The user's call on the direction (review-v2-questions-first-direction.2): the topic records it once they decide.
+  const decideTools = createTools(store, { setPrReview: (id, rv) => orch.setPrReview(id, rv), decideDirection: (id, d) => orch.decideDirection(id, d) } as ToolActions)
+  await assert.rejects(decideTools(ctx, 'decide_direction', { work: work.key, choice: 'prefer', option: 'constant' }), /prefer needs option: one of the options other than the PR's: config/)
+  await assert.rejects(decideTools(ctx, 'decide_direction', { work: work.key, choice: 'maybe' }), /choice must be one of ok, prefer, discuss/)
+  const other = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(decideTools({ projectId: project.id, sessionId: other.id }, 'decide_direction', { work: work.key, choice: 'ok' }), /not planned in this topic/)
+  const notesBefore = store.project(project.id).notes
+  assert.match(await decideTools(ctx, 'decide_direction', { work: work.key, choice: 'prefer', option: 'config', principle: 'no constants in billing' }), /^Recorded: Prefer config[\s\S]*draft to the author/)
+  const first = store.project(project.id).directionDecisions!
+  assert.deepEqual(first.map((d) => [d.reviewId, d.pr, d.decision, d.choice, d.option, d.principle]), [[work.id, pr.url, 'The charge is a constant', 'prefer', 'config', 'no constants in billing']])
+  const line = `- Direction ${pr.url}: The charge is a constant → Prefer config (no constants in billing)`
+  assert.equal(store.project(project.id).notes, [notesBefore, line].filter(Boolean).join('\n'))
+  const decided = store.task(work.id).prReview!.report!
+  assert.deepEqual([decided.decided?.id, decided.draft], [first[0].id, "I'd rather go with config than constant: per tenant.\n\nno constants in billing"])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Prefer config'])
+  assert.match(store.data.events.at(-1)!.text, /^Direction: Prefer config$/)
+  // Decided again (the page's button): it replaces the call in the review, the decisions and the notes; ok drafts nothing.
+  orch.decideDirection(work.id, { choice: 'ok' })
+  const again = store.project(project.id)
+  assert.equal(again.directionDecisions!.length, 1)
+  assert.equal(again.directionDecisions![0].choice, 'ok')
+  assert.equal(again.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
+  assert.equal(store.task(work.id).prReview!.report!.draft, undefined)
+  orch.decideDirection(work.id, { choice: 'discuss', draft: 'Why a constant?' })
+  const ask = store.project(project.id).directionDecisions![0]
+  assert.equal(store.task(work.id).prReview!.report!.draft, 'Why a constant?')
+
+  // Discuss with agent: the review's topic gets the direction card and decide_direction.
+  assert.deepEqual(await orch.discussDirection(work.id), { sessionId: topic.id })
+  const sent = opened.at(-1)!.sent.at(-1)!
+  assert.match(sent, /The user wants to discuss the direction of https:\/\/github\.com\/acme\/app\/pull\/7[\s\S]*Options:\n- constant \(the PR's\): simple\n- config: per tenant[\s\S]*call decide_direction with work: "[^"]+": choice ok[\s\S]*prefer with option \(one of: config\)/)
+  assert.equal(store.session(topic.id).items.at(-1)!.kind, 'job')
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await until(() => !orch.isRunning(topic.id))
+
+  // The next review cites the call as decision:<id>: the card shows it as yours; a decision that is not there is refused.
+  const cites = (id: string) => ({ ...reportArg, direction: { ...reportArg.direction, references: [{ text: 'you asked the author about constants before', source: 'agent', cites: [`decision:${id}`] }] }, checks: 'request_changes' })
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites('nope') }), /no direction decision decision:nope/)
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites(ask.id) })
+  const next = store.task(work.id).prReview!.report!
+  assert.deepEqual(directionReferences(next, store.project(project.id).directionDecisions).map((r) => [r.claim.source, r.decisions.map((d) => d.choice)]), [['yours', ['discuss']]])
+  // A new report of the same PR keeps the user's call and its draft; deciding again still replaces it.
+  assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Ask the author'])
+  orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
+  const kept = store.task(work.id).prReview!.report!
+  assert.deepEqual([kept.decided?.choice, kept.decided?.option, kept.draft], ['prefer', 'config', "I'd rather go with config than constant: per tenant."])
+  assert.equal(findingsFolded(kept), true)
+  orch.decideDirection(work.id, { choice: 'ok' })
+  assert.equal(findingsFolded(store.task(work.id).prReview!.report), false)
+  const final = store.project(project.id)
+  assert.deepEqual(final.directionDecisions!.map((d) => d.choice), ['ok'])
+  assert.equal(final.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
   // The older form still records, and drops the report it replaces.
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] })
   assert.equal(store.task(work.id).prReview!.report, undefined)
@@ -1054,7 +1109,11 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
   gh.set({ repo: remote, posts: gh.postsFile, pr })
   try {
     const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+    // The user's earlier direction decisions go to the reviewer's job (review-v2-questions-first-direction.2).
+    store.updateProject(project.id, { directionDecisions: [{ id: 'd9', reviewId: 'x', pr: 'https://github.com/acme/remote/pull/3', decision: 'Charges are constants', choice: 'prefer', option: 'config', principle: 'no constants in billing', at: 1 }] })
     const first = await orch.reviewPr(project.id, url, topic.id)
+    assert.match(first.job, /The user's earlier direction decisions[\s\S]*citing decision:<id>:\n- decision:d9: https:\/\/github\.com\/acme\/remote\/pull\/3: Charges are constants → Prefer config; principle: no constants in billing$/)
+    assert.match(first.job, /When the user decides it, record it with decide_direction/)
     const work = store.task(first.taskId)
     assert.deepEqual([work.prReview!.pr.repo, work.prReview!.pr.outside, work.title], ['acme/remote', true, 'remote#7: Charge'])
     assert.match(first.job, /Its repository acme\/remote is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff/)

@@ -4,6 +4,7 @@ import {
   PR_VERDICTS,
   PR_VERDICT_LABELS,
   findingCounts,
+  findingsFolded,
   findingsByLevel,
   prRepoName,
   reviewRunning,
@@ -103,6 +104,9 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
     setError(null)
     f().catch((e) => setError(String((e as Error).message ?? e)))
   }
+  // A call on its way to main: the buttons wait for it.
+  const [deciding, setDeciding] = useState(false)
+  const whileDeciding = (f: () => Promise<unknown>) => act(() => (setDeciding(true), f().finally(() => setDeciding(false))))
   if (!r) return <p className="muted">This review has no PR.</p>
   const repo = prRepoName(project, r.pr)
   const diffSection = (
@@ -123,8 +127,10 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
       <FactPanel step={work} diagramsKey={diagramsKey} />
     </>
   )
-  const findingsSection = (
-    <section>
+  // Preferring another option rejects the PR's direction: its detailed findings fold (review-v2-questions-first-direction.2).
+  const folded = findingsFolded(r.report)
+  const findingsBody = (
+    <>
       <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}{r.report ? ' · from the report, to publish' : ''}</span>}</h2>
       {r.findings.length ? (
         findingsByLevel(r.findings).map(({ level, findings }) =>
@@ -147,7 +153,15 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         <p className="muted small">{r.verdict ? 'No findings.' : 'None yet.'}</p>
       )}
       {r.verdict && <Publish work={work} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
-    </section>
+    </>
+  )
+  const findingsSection = folded ? (
+    <details className="reportfold">
+      <summary>Findings: folded, you prefer another direction ({findingCounts(r.findings)})</summary>
+      {findingsBody}
+    </details>
+  ) : (
+    <section>{findingsBody}</section>
   )
   return (
     <div className="reviewview">
@@ -193,7 +207,17 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
       )}
       {running && !r.verdict && <p className="muted">The agent is reviewing: fact, direction and its options, problem, conventions, risks.</p>}
       {r.report ? (
-        <ReportView report={r.report} fact={work.fact} kind="pr" onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}>
+        <ReportView
+          report={r.report}
+          fact={work.fact}
+          kind="pr"
+          decisions={project.directionDecisions}
+          direction={{
+            busy: running || deciding,
+            discuss: whileDeciding(() => mag.discussDirection(work.id)),
+            decide: (d) => whileDeciding(() => mag.decideDirection(work.id, d))(),
+          }}
+          onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}>
           {evidence && fact.some((d) => d.id === evidence) && (
             <section>
               <div className="cardhead">

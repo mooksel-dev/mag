@@ -175,6 +175,10 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
    pending ones are said.
 9. Record it with set_pr_review: problem, approach (how the PR solves the problem and whether it does, in a few lines)
    and the report, as the report below says.
+10. The direction is the user's call: argue its options with them when they ask, and once they decide, record it with
+   decide_direction (ok, prefer an option, or discuss with the author; the principle in their words; the comment to
+   the author you worded together). An earlier decision of the user that bears on it is a yours reference citing
+   decision:<id>.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
 ${REPORT}
 ${CODE_CHECKS}`,

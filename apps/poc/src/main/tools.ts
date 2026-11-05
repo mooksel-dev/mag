@@ -1,4 +1,4 @@
-import { checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -45,6 +45,8 @@ export interface ToolActions {
   reviewFact(workId: string): Promise<string>
   /** The owner topic's set_pr_review; returns what to tell it. */
   setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string
+  /** The owner topic's decide_direction: the user's call on the review's direction; returns what to tell it. */
+  decideDirection(workId: string, decision: { choice: DirectionChoice; option?: string; principle?: string; draft?: string }): string
   /** The user's Approve: planning → ready, with the button's checks. */
   approve(taskId: string): void
   /** The user's Start (or Restart) of a work; `localRepos`: repositories its steps work on in the main checkout. */
@@ -470,6 +472,8 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           const pr = task.prReview!.pr
           const head = task.fact?.heads[pr.repo]
           const report = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
+          const unknown = unknownDecisions(report, project.directionDecisions)
+          if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
           return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
         }
         const verdict = args.verdict as PrVerdict
@@ -478,6 +482,15 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (findings.some((f) => !f.level)) throw new Error(`Every finding needs its level: ${FINDING_LEVELS.join(', ')}`)
         if (verdict === 'approve' && findings.some((f) => f.level === 'blocker')) throw new Error('A blocker and approve do not go together: request_changes, or drop the blocker and say why')
         return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict, findings, report: undefined })
+      }
+
+      case 'decide_direction': {
+        if (!isReview(task)) throw new Error(`${task.key} is not a review of a teammate's PR`)
+        if (task.ownerSessionId !== ctx.sessionId) throw new Error(`decide_direction is for the topic that owns ${task.key}`)
+        const choice = args.choice as DirectionChoice
+        if (!DIRECTION_CHOICES.includes(choice)) throw new Error(`choice must be one of ${DIRECTION_CHOICES.join(', ')}`)
+        const opt = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+        return actions.decideDirection(task.id, { choice, option: opt(args.option), principle: opt(args.principle), draft: opt(args.draft) })
       }
 
       default:

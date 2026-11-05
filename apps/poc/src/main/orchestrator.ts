@@ -1,7 +1,8 @@
 import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { choiceLine, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -252,7 +253,17 @@ ${playbook.fact}
 mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
 Changed files (mag):
 ${files}
-Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide.`
+Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
+}
+
+/** The review topic's job when the user wants to discuss the direction (review-v2-questions-first-direction.2). */
+const discussPrompt = (work: Task, report: ReviewReport, decisions: DirectionDecision[] | undefined) => {
+  const others = report.direction.options.filter((o) => !o.pr).map((o) => o.name)
+  return `The user wants to discuss the direction of ${work.prReview!.pr.url} (review ${work.key}) before deciding it. The direction card:
+
+${directionCardText(report, decisions)}
+
+Argue the options with them: what each costs and breaks here, which facts and references weigh, and your view when they ask for it; the call is theirs. Help them word their feedback and the principle behind it. Once they pick, call decide_direction with work: "${work.key}": choice ok (the direction is fine), prefer with option (one of: ${others.join(', ') || 'none'}), or discuss (ask the author first); principle in their words when they gave one; draft, the comment to the author from this discussion (with prefer or discuss). Nothing goes to GitHub.`
 }
 
 /** What the developer is told when the agent review asks for changes. */
@@ -1318,11 +1329,75 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const prev = work.prReview
     if (!isReview(work) || !prev) throw new Error(`${work.key} is not a review of a PR`)
-    // A review recorded without a report drops the one before: it is the older form.
-    this.store.updateTask(workId, { prReview: { ...prev, ...r, report: r.report, head: prev.pr.head, at: Date.now() }, needsInput: null })
+    // A review recorded without a report drops the one before: it is the older form. A new report of the same PR keeps
+    // the user's call on its direction and its draft (review-v2-questions-first-direction.2): deciding again replaces it.
+    const kept = prev.report?.decided ? { decided: prev.report.decided, ...(prev.report.draft ? { draft: prev.report.draft } : {}) } : {}
+    const report = r.report && { ...r.report, ...kept }
+    this.store.updateTask(workId, { prReview: { ...prev, ...r, report, head: prev.pr.head, at: Date.now() }, needsInput: null })
     const n = r.findings.length
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
     return 'Recorded: the user sees it on the review\'s pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.'
+  }
+
+  /**
+   * The user's call on the direction of a review's PR (review-v2-questions-first-direction.2), by a button of its
+   * direction card or the topic's decide_direction: recorded on the report (with the comment to the author it drafts:
+   * the agent's, else mag's), in the project's direction decisions and as one line of its notes. A call made again
+   * replaces the earlier one in all three. Nothing goes to GitHub.
+   */
+  decideDirection(workId: string, input: { choice: DirectionChoice; option?: string; principle?: string; draft?: string }): string {
+    const work = this.store.task(workId)
+    const r = work.prReview
+    if (!isReview(work) || !r) throw new Error(`${work.key} is not a review of a PR`)
+    const report = r.report
+    if (!report) throw new Error(`${work.key} has no report to decide on: its review is of the older form; review it again`)
+    if (!DIRECTION_CHOICES.includes(input.choice)) throw new Error(`choice must be one of ${DIRECTION_CHOICES.join(', ')}`)
+    const option = input.option?.trim()
+    if (input.choice === 'prefer') {
+      const others = report.direction.options.filter((o) => !o.pr).map((o) => o.name)
+      if (!option || !others.includes(option)) throw new Error(`prefer needs option: one of the options other than the PR's: ${others.join(', ') || '(none)'}`)
+    }
+    const principle = input.principle?.trim()
+    const decided: DirectionDecision = {
+      id: randomUUID().slice(0, 8),
+      reviewId: work.id,
+      pr: r.pr.url,
+      decision: reportDecision(report),
+      choice: input.choice,
+      ...(input.choice === 'prefer' ? { option } : {}),
+      ...(principle ? { principle } : {}),
+      at: Date.now(),
+    }
+    const draft = input.choice === 'ok' ? '' : input.draft?.trim() || directionDraft(report, decided)
+    const project = this.store.project(work.projectId)
+    const prev = report.decided
+    const notes = prev ? project.notes.split('\n').filter((l) => l !== decisionNote(prev)).join('\n') : project.notes
+    this.store.updateProject(project.id, {
+      directionDecisions: [...(project.directionDecisions ?? []).filter((d) => d.id !== prev?.id), decided],
+      notes: [notes.trimEnd(), decisionNote(decided)].filter(Boolean).join('\n'),
+    })
+    const { draft: _, ...rest } = report
+    this.store.updateTask(workId, { prReview: { ...r, report: { ...rest, decided, ...(draft ? { draft } : {}) } } })
+    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `Direction: ${choiceLine(decided)}` })
+    log.info('agent', `${work.key}: direction ${decided.choice}${option ? ` (${option})` : ''}`)
+    return `Recorded: ${choiceLine(decided)}, on the review and in the project's decisions and notes.${draft ? ' The draft to the author shows on the direction card; nothing goes to GitHub until the user posts it.' : ''}`
+  }
+
+  /**
+   * The user's Discuss with agent (review-v2-questions-first-direction.2): the review's topic gets the direction card
+   * and argues the options with the user beside the page, until they decide with decide_direction.
+   */
+  async discussDirection(workId: string): Promise<{ sessionId: string }> {
+    const work = this.store.task(workId)
+    const report = work.prReview?.report
+    if (!isReview(work) || !report) throw new Error(`${work.key} has no report to discuss`)
+    // The topic that owns the review: decide_direction is its.
+    const topic = this.ownerSession(work)
+    if (!topic) throw new Error(`${work.key} has no topic: review it again`)
+    if (this.isRunning(topic.id)) throw new Error(`The topic of ${work.key} is still working; wait for it, then discuss`)
+    const project = this.store.project(work.projectId)
+    await this.send(topic.id, discussPrompt(work, report, project.directionDecisions), [], 'Discuss the direction')
+    return { sessionId: topic.id }
   }
 
   /**

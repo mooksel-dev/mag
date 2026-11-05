@@ -757,6 +757,10 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .option { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .option.pr { border-color: var(--violet-fg); }
 .option .pill { margin-left: 6px; }
+.directionbuttons { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.directionbuttons .taskrow { flex-wrap: wrap; gap: 6px; }
+.decided { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.decided .draft pre { white-space: pre-wrap; margin: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
 table.changes { width: 100%; border-collapse: collapse; }
 table.changes td { border-top: 1px solid var(--line); padding: 5px 4px; vertical-align: top; }
 table.changes code { margin-right: 4px; }

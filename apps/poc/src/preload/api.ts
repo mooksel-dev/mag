@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck } from '@mag/diff/types'
 
 export interface AppState {
@@ -222,6 +222,13 @@ export interface MagApi {
   reviewAgain(taskId: string): Promise<string>
   /** Close a review: done; reviewAgain brings it back. */
   closeReview(taskId: string): Promise<void>
+  /**
+   * The user's call on the direction of a review's PR: recorded on its report and in the project's decisions and notes;
+   * prefer and discuss draft a comment to the author. Nothing goes to GitHub.
+   */
+  decideDirection(taskId: string, decision: { choice: DirectionChoice; option?: string; principle?: string }): Promise<void>
+  /** Discuss with agent: the review's topic gets the direction card and argues the options with the user; returns the topic. */
+  discussDirection(taskId: string): Promise<string>
   /** Delete a review for good: it, its doc and diagrams, and the topic mag created for it. Nothing changes on GitHub. */
   deleteReview(taskId: string): Promise<void>
   /** The CI checks of a review's PR, from GitHub. */

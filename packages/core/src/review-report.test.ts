@@ -3,6 +3,13 @@ import assert from 'node:assert/strict'
 import {
   checkReport,
   checksVerdict,
+  decisionNote,
+  decisionsBlock,
+  directionCardText,
+  directionDraft,
+  directionReferences,
+  unknownDecisions,
+  type DirectionDecision,
   markChecked,
   normalizeReport,
   prVerdictOf,
@@ -188,4 +195,44 @@ test('reportCards: every question block as a card, failed rules and worst risks 
   ])
   assert.equal(cards[0].rows[1].about, 'Custom domains work')
   assert.equal(cards[2].rows[0].about, 'security: a crafted host maps to another tenant')
+})
+
+const decision = (over: Partial<DirectionDecision> = {}): DirectionDecision => ({
+  id: 'd1', reviewId: 't1', pr: 'https://github.com/acme/api/pull/1', decision: 'A tenant is identified by the suffix of its host name', choice: 'prefer', option: 'Tenant id in the token', principle: 'identity comes from auth', at: 10, ...over,
+})
+
+test('a direction decision: its notes line, the strip and line show it, the earlier ones go to the prompt newest first (review-v2-questions-first-direction.2)', () => {
+  const d = decision()
+  assert.equal(decisionNote(d), '- Direction https://github.com/acme/api/pull/1: A tenant is identified by the suffix of its host name → Prefer Tenant id in the token (identity comes from auth)')
+  assert.equal(decisionNote(decision({ choice: 'ok', option: undefined, principle: undefined })), '- Direction https://github.com/acme/api/pull/1: A tenant is identified by the suffix of its host name → Direction OK')
+  const r = { ...synthetic(), decided: d }
+  assert.equal(reportLine(r), 'Request changes · Direction: Prefer Tenant id in the token')
+  assert.equal(reportLine({ ...r, decided: decision({ choice: 'ok' }) }), 'Request changes · Direction: OK')
+  assert.equal(reportLine({ ...r, decided: decision({ choice: 'discuss' }) }), 'Request changes · Direction: Ask the author')
+  assert.deepEqual(reportStrip(r, null)[0], { key: 'direction', label: 'Direction', value: 'Prefer Tenant id in the token', tone: 'bad' })
+  assert.equal(reportStrip(r, null, 'step')[0].value, 'the approved plan')
+
+  assert.equal(decisionsBlock(undefined), '')
+  const block = decisionsBlock([d, decision({ id: 'd2', choice: 'ok', option: undefined, principle: undefined, at: 20 })])
+  assert.match(block, /put it in direction\.references with source yours, citing decision:<id>/)
+  assert.ok(block.indexOf('decision:d2') < block.indexOf('decision:d1'))
+  assert.match(block, /- decision:d1: https:\/\/github\.com\/acme\/api\/pull\/1: A tenant .* → Prefer Tenant id in the token; principle: identity comes from auth/)
+})
+
+test('directionReferences: a reference citing an earlier decision is yours, with it; unknown decision ids are found', () => {
+  const r = synthetic()
+  const withRef = { ...r, direction: { ...r.direction, references: [...r.direction.references, { text: 'You preferred auth for identity on api#1', source: 'agent' as const, cites: ['decision:d1'] }] } }
+  const refs = directionReferences(withRef, [decision()])
+  assert.deepEqual(refs.map((x) => [x.claim.source, x.decisions.map((d) => d.id)]), [['yours', []], ['yours', ['d1']]])
+  assert.equal(directionReferences(withRef, [])[1].claim.source, 'agent')
+  assert.deepEqual(unknownDecisions(withRef, [decision()]), [])
+  assert.deepEqual(unknownDecisions(withRef, undefined), ['d1'])
+  assert.match(directionCardText(withRef, [decision()]), /Options:\n- Suffix of the host \(the PR's\): no migration[\s\S]*References:[\s\S]*\[yours\] You preferred auth[\s\S]*earlier: Direction https/)
+})
+
+test('directionDraft: prefer names the option against the PR\'s, discuss asks why and the open questions, ok drafts nothing', () => {
+  const r = synthetic()
+  assert.equal(directionDraft(r, decision()), "I'd rather go with Tenant id in the token than Suffix of the host: one source of truth; touches auth.\n\nidentity comes from auth")
+  assert.equal(directionDraft(r, { choice: 'discuss' }), '- Why Suffix of the host over Tenant id in the token or Lookup table host → tenant?\n- Are custom domains in scope?')
+  assert.equal(directionDraft(r, { choice: 'ok' }), '')
 })
