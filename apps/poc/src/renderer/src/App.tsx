@@ -6,6 +6,7 @@ import {
   SETTABLE_ROLES,
   integrationMode,
   playbookOf,
+  placeNew,
   projectColor,
   storedPlaybook,
   resolveChoice,
@@ -33,7 +34,7 @@ import { HomeScreen } from './Home'
 import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
 import { useTheme, type ThemeMode } from './useTheme'
-import { WorkList, type ListPage, type Selection } from './WorkList'
+import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkList'
 import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
@@ -59,10 +60,13 @@ export function App({ projectId }: { projectId: string }) {
   /** The idea open on the Ideas page. */
   const [ideaId, setIdeaId] = useState<string | null>(null)
   const [theme, setTheme] = useTheme()
+  // A group's + opened Home: what it creates goes first in that group.
+  const [homeGroup, setHomeGroup] = useState<HomeGroup | null>(null)
   // This window renders a review's static page for its archive when main asks (review-v2-part-2-v1-2.3).
   useRenderReviewExport(state)
   const select = (s: Selection | null) => {
     setSelected(s)
+    setHomeGroup(null)
     setPage(null)
     try { localStorage.setItem(selKey, JSON.stringify(s)) } catch { /* ignore */ }
   }
@@ -132,7 +136,7 @@ export function App({ projectId }: { projectId: string }) {
       </div>
       <div className="layout">
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onOpenPage={setPage} />
+          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onNewIn={(g) => { select(null); setHomeGroup(g) }} onOpenPage={setPage} />
         </ErrorBoundary>
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {page ? (
@@ -151,7 +155,14 @@ export function App({ projectId }: { projectId: string }) {
               )}
             </main>
           ) : !current ? (
-            <HomeScreen project={project} state={state} onSelect={select} />
+            <HomeScreen
+              key={homeGroup?.id ?? ''}
+              project={project}
+              state={state}
+              group={homeGroup}
+              onSelect={select}
+              onCreated={(ref) => { if (homeGroup) void mag.updateProject(project.id, { sidebar: placeNew(project.sidebar ?? [], ref, homeGroup.id) }) }}
+            />
           ) : (
             <>
               {shownWork ? (

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   acceptRecommendations,
+  byActivity,
   cardFilter,
   cardMove,
   emptyResult,
@@ -80,8 +81,9 @@ test('workCards: the group, dot and whose-move line of a work in each state', ()
   for (const [name, tasks, sessions, want] of WORK_CASES) assert.equal(line(card(tasks, sessions)), want, name)
 })
 
-test('workCards: done over 7 days ago, canceled works and steps are left out; other projects too', () => {
-  assert.deepEqual(cards([task('old', { status: 'done', updatedAt: NOW - 8 * DAY }), task('gone', { status: 'canceled' }), step('s', 'gone'), task('x', { projectId: 'q' })], [session('t', { projectId: 'q' })]), [])
+test('workCards: done and canceled works stay, however old; a canceled one is closed; steps and other projects are left out', () => {
+  const got = cards([task('old', { status: 'done', updatedAt: NOW - 80 * DAY }), task('gone', { status: 'canceled' }), step('s', 'gone'), task('x', { projectId: 'q' })], [session('t', { projectId: 'q' })])
+  assert.deepEqual(got.map((c) => [line(c), c.closed]), [['done:old:grey other: Done', false], ['done:gone:grey other: Canceled', true]])
 })
 
 test('workCards: stage and progress of a work', () => {
@@ -107,7 +109,7 @@ test('workCards: last event: latest notice, agent review or merged step', () => 
 test('workCards: a topic that owns an open work shows through it, and its turn counts as the work running', () => {
   const tasks = [task('w', { ownerSessionId: 'owner' }), task('finished', { status: 'done', ownerSessionId: 'old', updatedAt: NOW })]
   const sessions = [session('owner', { status: 'running', runStartedAt: NOW - 1000 }), session('old', { title: 'Old talk', titleGenerated: true })]
-  assert.deepEqual(cards(tasks, sessions).map(line), ['working:w:green agent: owner · 1 min', 'topics:old:grey other: Discussion · no work yet', 'done:finished:grey other: Done'])
+  assert.deepEqual(cards(tasks, sessions).map(line), ['topics:old:grey other: Discussion · no work yet', 'working:w:green agent: owner · 1 min', 'done:finished:grey other: Done'])
 })
 
 test('workCards: topics: approval waits on you; plain and running topics are discussions; untitled is New topic', () => {
@@ -124,7 +126,7 @@ test('workCards: topics: approval waits on you; plain and running topics are dis
   assert.deepEqual(got[2].last, { text: 'you: how do we price the pro plan for teams', at: NOW - 2 * MIN })
 })
 
-test('workCards: a closed topic is done for 7 days after it was closed; running or asking, it is not', () => {
+test('workCards: a closed topic is closed however long ago; running or asking, it is not', () => {
   const approval = { kind: 'approval' as const, id: 'a1', tool: 'x', server: 'jira', input: {}, status: 'pending' as const, at: NOW }
   const sessions = [
     session('closed', { closedAt: NOW - DAY }),
@@ -133,11 +135,14 @@ test('workCards: a closed topic is done for 7 days after it was closed; running 
     session('asks', { closedAt: NOW - DAY, items: [approval] }),
     session('open', { closedAt: null }),
   ]
-  assert.deepEqual(cards([], sessions).map(line), [
-    'waiting:asks:amber you: Allow jira · x',
-    'topics:runs:green agent: agent · 1 min',
-    'topics:open:grey other: Discussion · no work yet',
+  const got = cards([], sessions)
+  assert.deepEqual(got.map((c) => [c.id, c.closed]), [['closed', true], ['old', true], ['runs', false], ['asks', false], ['open', false]])
+  assert.deepEqual(got.map(line), [
     'done:closed:grey other: Closed',
+    'done:old:grey other: Closed',
+    'topics:runs:green agent: agent · 1 min',
+    'waiting:asks:amber you: Allow jira · x',
+    'topics:open:grey other: Discussion · no work yet',
   ])
 })
 
@@ -215,20 +220,23 @@ test('workCards: question stage of a review is its report state, not Running, on
   assert.equal(card([reviewTask({ needsInput: 'Q?' }, ready)], [session('rt', { reviewOf: 'rv' })]).stage, 'Report ready')
 })
 
-test('workCards: group order, green before grey in Agents working, newest first within', () => {
+test('workCards: newest created first, whatever the state; byActivity (Home): green before grey, then the latest activity', () => {
   const tasks = [
-    task('ci', { status: 'in_progress', updatedAt: NOW - 1000 }), step('ci.1', 'ci', { status: 'in_progress', ...withPr(1, { ci: 'pending' }) }),
-    task('dev', { status: 'in_progress', updatedAt: NOW - 3 * DAY }), step('dev.1', 'dev', { status: 'in_progress' }),
-    task('a', { updatedAt: NOW - 3 * DAY }),
-    task('b', { updatedAt: NOW - 2 * DAY }),
-    task('done', { status: 'done', updatedAt: NOW }),
+    task('ci', { status: 'in_progress', updatedAt: NOW - 1000, createdAt: 5 }), step('ci.1', 'ci', { status: 'in_progress', ...withPr(1, { ci: 'pending' }) }),
+    task('dev', { status: 'in_progress', updatedAt: NOW - 3 * DAY, createdAt: 4 }), step('dev.1', 'dev', { status: 'in_progress' }),
+    task('a', { updatedAt: NOW - 3 * DAY, createdAt: 3 }),
+    task('b', { updatedAt: NOW - 2 * DAY, createdAt: 2 }),
+    task('done', { status: 'done', updatedAt: NOW, createdAt: 1 }),
   ]
   const sessions = [
     session('d', { taskId: 'dev', role: 'developer', status: 'running', runStartedAt: NOW - MIN }),
     session('g', { taskId: 'a', role: 'groomer', items: [{ kind: 'assistant', text: 'hi', at: NOW - 1000 }] }),
-    session('t'),
+    session('t', { createdAt: 0 }),
   ]
-  assert.deepEqual(cards(tasks, sessions).map((c) => c.id), ['a', 'b', 'dev', 'ci', 't', 'done'])
+  const all = cards(tasks, sessions)
+  assert.deepEqual(all.map((c) => c.id), ['ci', 'dev', 'a', 'b', 'done', 't'])
+  assert.deepEqual(byActivity(all.filter((c) => c.group === 'waiting')).map((c) => c.id), ['a', 'b'])
+  assert.deepEqual(byActivity(all.filter((c) => c.group === 'working')).map((c) => c.id), ['dev', 'ci'])
 })
 
 test('cardFilter: waiting = that group, working = green dots, reviews = review rows with done ones', () => {
@@ -260,10 +268,12 @@ test('workCard: the header shows the same card, move and action as the row, for 
   assert.equal(workCard(task('w'), [task('w')], [session('w')], NOW)?.kind, 'work')
 })
 
-test('workCard: none for what the list leaves out', () => {
-  assert.equal(workCard(task('w', { status: 'canceled' }), [task('w', { status: 'canceled' })], [], NOW), null)
-  const old = task('w', { status: 'done', updatedAt: NOW - 8 * DAY })
-  assert.equal(workCard(old, [old], [], NOW), null)
+test('workCard: a canceled or long done work has its card too; a step has none', () => {
+  assert.equal(workCard(task('w', { status: 'canceled' }), [task('w', { status: 'canceled' })], [], NOW)?.move.text, 'Canceled')
+  const old = task('w', { status: 'done', updatedAt: NOW - 80 * DAY })
+  assert.equal(workCard(old, [old], [], NOW)?.move.text, 'Done')
+  const s = step('w.1', 'w')
+  assert.equal(workCard(s, [old, s], [], NOW), null)
 })
 
 test('stepsLine: each step with its number, PRs and where it stands', () => {
