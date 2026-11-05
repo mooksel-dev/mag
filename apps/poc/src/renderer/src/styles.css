@@ -743,9 +743,22 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .newbtn kbd, .wlsearch kbd { margin-left: auto; font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); }
 .wlsearch { display: flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r); color: var(--faint); font-size: var(--fs-sm); }
 .wlsearch:hover, .wlsearch:focus-within { background: var(--hover); }
-.wlsearch input { flex: 1; min-width: 0; padding: 6px 0; border: none; outline: none; background: none; font-size: var(--fs-sm); color: var(--text); }
-.wlsearch input::placeholder { color: var(--faint); }
-.wlsearch input::-webkit-search-cancel-button { display: none; }
+.wlsearch { width: 100%; border: none; background: none; font-weight: 400; text-align: left; }
+.wlsearchtext { flex: 1; min-width: 0; padding: 6px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spscrim { position: fixed; inset: 0; z-index: 20; background: var(--scrim); }
+.spalette { position: fixed; z-index: 21; top: 12vh; left: 50%; transform: translateX(-50%); width: min(640px, calc(100vw - 48px)); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: 0 16px 48px rgba(0, 0, 0, .28); overflow: hidden; }
+.spalette > input { padding: 14px 16px; border: none; border-radius: 0; outline: none; background: none; font-size: var(--fs-lg); color: var(--text); }
+.spalette > input::-webkit-search-cancel-button { display: none; }
+.sphits { display: flex; flex-direction: column; max-height: 60vh; overflow: auto; padding: 4px; border-top: 1px solid var(--line); }
+.sphit { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
+.sphit.on { background: var(--hover); }
+.sptop { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.sptop .title { flex: 0 1 auto; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spkey { flex: none; font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); }
+.sparch { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--status); color: var(--muted); font-size: var(--fs-xs); }
+.sptime { flex: none; margin-left: auto; font-size: var(--fs-xs); color: var(--faint); }
+.spline { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spempty { padding: 6px 10px; margin: 0; }
 .wlscroll { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 10px; }
 .wlfilters { display: flex; flex-wrap: wrap; gap: 4px; }
 .wlfilters button { border: 1px solid var(--border); background: none; border-radius: var(--r-pill); padding: 2px 9px; font-size: 12px; font-weight: 400; color: var(--muted); }
