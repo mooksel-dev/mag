@@ -10,7 +10,6 @@ import {
   moveRef,
   removeGroup,
   renameGroup,
-  searchCards,
   sidebarRows,
   toggleGroup,
   workCards,
@@ -23,6 +22,7 @@ import {
 import type { AppState, CrashReport, PickerMode } from '../../preload/api'
 import { crashMarkdown, threadTime } from './format'
 import { ProjectPicker, ProjectSquare } from './Picker'
+import { SearchPalette } from './SearchPalette'
 import { useNow } from './Tasks'
 
 const mag = window.mag
@@ -59,8 +59,8 @@ type Drop = { groupId: string | null; before: string | null }
 /**
  * The sidebar in the user's order (redesign-start-screen-big-composer.2, decision 9): the project switcher, ＋ New
  * (Home), search (⌘K) and filters, then one list laid out by core sidebarRows from project.sidebar. Nothing re-sorts:
- * rows and groups move only by drag & drop, a new item shows on top; status is a badge; filters and search only hide;
- * closed items are under Archive at the bottom. Groups are the user's (create, rename, collapse, delete, + starts something
+ * rows and groups move only by drag & drop, a new item shows on top; status is a badge; filters only hide; closed items
+ * are under Archive at the bottom. Search (⌘K or its field) opens the SearchPalette over all chats, archive included. Groups are the user's (create, rename, collapse, delete, + starts something
  * in one). Each row has a ⋯ menu, also on right-click.
  */
 export function WorkList({ project, state, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage }: {
@@ -82,9 +82,8 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
   const all = workCards(project.id, tasks, state.sessions, now)
   const [filter, setFilter] = useFilter(project.id)
-  const [query, setQuery] = useState('')
-  const search = useRef<HTMLInputElement>(null)
-  const shown = new Set(searchCards(cardFilter(all, filter), query))
+  const [searching, setSearching] = useState(false)
+  const shown = new Set(cardFilter(all, filter))
   const sidebar = sidebarRows(project.sidebar ?? [], all, (c) => shown.has(c))
   const open = all.filter((c) => !c.closed)
   const ideas = state.ideas.filter((i) => i.projectId === project.id).length
@@ -97,19 +96,17 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   useEffect(() => {
     mag.lastCrash().then(setCrash, () => {})
   }, [])
-  // ⌘K: search the list.
+  // ⌘K: the search palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return
       e.preventDefault()
-      search.current?.focus()
-      search.current?.select()
+      setSearching(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-  const searching = !!query.trim()
-  const hiding = searching || filter !== 'all'
+  const hiding = filter !== 'all'
   const save = (layout: SidebarNode[]) => void mag.updateProject(project.id, { sidebar: layout })
   const edit = (f: (layout: SidebarNode[]) => SidebarNode[]) => save(f(sidebar.layout))
   // What the selection was is gone (deleted): Home.
@@ -177,19 +174,19 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
           ＋ New <kbd>⌘N</kbd>
         </button>
-        <label className="wlsearch">
+        <button className="wlsearch" aria-haspopup="dialog" aria-expanded={searching} title="Search chats and works by title, summary and messages, archive included" onClick={() => setSearching(true)}>
           <span aria-hidden>⌕</span>
-          <input
-            ref={search}
-            type="search"
-            value={query}
-            placeholder="Search works and chats"
-            aria-label="Search works and chats"
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); e.currentTarget.blur() } }}
+          <span className="wlsearchtext">Search works and chats</span>
+          <kbd>⌘K</kbd>
+        </button>
+        {searching && (
+          <SearchPalette
+            tasks={tasks}
+            sessions={state.sessions.filter((s) => s.projectId === project.id)}
+            onPick={(ref) => onSelect({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })}
+            onClose={() => setSearching(false)}
           />
-          {!searching && <kbd>⌘K</kbd>}
-        </label>
+        )}
         {open.length > 0 && (
           <div className="wlfilters" role="tablist" aria-label="Filter works">
             {CARD_FILTERS.map((f) => (
@@ -203,7 +200,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
       <div className="wlscroll">
         {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
         {!all.length && <p className="muted small pad">No works yet. Start one with ＋ New: a discussion opens, and its agent plans the work with you.</p>}
-        {!empty && hiding && !sidebar.entries.length && <p className="muted small pad">{searching ? 'Nothing matches.' : 'Nothing here.'}</p>}
+        {!empty && hiding && !sidebar.entries.length && <p className="muted small pad">Nothing here.</p>}
         {sidebar.entries.map((e) => e.kind === 'row' ? row(e.card, null) : (
           <Group
             key={groupKey(e.group.id)}
@@ -228,10 +225,10 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         )}
         {sidebar.closed.length > 0 && (
           <div className="wlclosed">
-            <button className="wlfold" aria-expanded={showClosed || searching} onClick={() => setShowClosed((d) => !d)}>
-              {showClosed || searching ? '▾' : '▸'} Archive · {sidebar.closed.length}
+            <button className="wlfold" aria-expanded={showClosed} onClick={() => setShowClosed((d) => !d)}>
+              {showClosed ? '▾' : '▸'} Archive · {sidebar.closed.length}
             </button>
-            {(showClosed || searching) && sidebar.closed.map((c) => row(c, null))}
+            {showClosed && sidebar.closed.map((c) => row(c, null))}
           </div>
         )}
       </div>

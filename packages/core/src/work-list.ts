@@ -5,6 +5,7 @@
 import {
   currentStep,
   inbox,
+  isArchived,
   isLegacy,
   isReview,
   openPrs,
@@ -293,6 +294,16 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
   group === 'waiting' ? 'amber' : group !== 'done' && move.who === 'agent' ? 'green' : 'grey'
 
 /**
+ * The topics of `mine` with a row of their own: a topic that owns an open work shows through it; a topic mag created for
+ * a review is that review's. `works` are the project's top-level tasks.
+ */
+function rowTopics(mine: AgentSession[], works: Task[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
+  const owners = new Set(works.filter((t) => t.status !== 'done' && t.status !== 'canceled').map((t) => t.ownerSessionId))
+  return mine.filter((s) =>
+    s.role === 'chat' && !s.taskId && !s.reviewOf && !owners.has(s.id) && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+}
+
+/**
  * The project's works and the topics that own no open work, as cards (`tasks` are the project's), newest created first;
  * done, canceled and closed ones included. A work's agents are its own sessions and, for a work owned by a topic (a
  * review too), that topic. The order means nothing to the sidebar (see sidebarRows): it never moves a row.
@@ -336,11 +347,7 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
       task,
     })
   }
-  // A topic that owns an open work shows through it; a topic mag created for a review is that review's.
-  const owners = new Set(works.filter((t) => t.status !== 'done' && t.status !== 'canceled').map((t) => t.ownerSessionId))
-  for (const s of mine) {
-    if (s.role !== 'chat' || s.taskId || s.reviewOf || owners.has(s.id)) continue
-    if (tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id)) continue
+  for (const s of rowTopics(mine, works, tasks, sessions)) {
     const approval = items.find((i) => i.kind === 'approval' && i.session?.id === s.id)
     // A closed topic asking or running again shows as open.
     const closed = !!s.closedAt && !approval && s.status !== 'running'
@@ -401,17 +408,89 @@ export function stepsLine(work: Task, tasks: Task[]): StepLine[] {
   })
 }
 
+/** A chat to open or reference: a topic (its session id) or a work or review (its task id). */
+export interface ChatRef {
+  kind: 'topic' | 'task'
+  id: string
+}
+
+/** One result of searchAll. */
+export interface SearchHit {
+  ref: ChatRef
+  title: string
+  /** A work's or review's key. */
+  key: string | null
+  /** The summary's first line, if it has one. */
+  line: string | null
+  /** Around the first word found only in the messages. */
+  snippet: string | null
+  archived: boolean
+  /** Per word: 3 in the title or key, 2 in the summary, 1 in the messages; summed. */
+  score: number
+  /** Last activity. */
+  at: number
+}
+
+/** Most hits searchAll returns. */
+export const SEARCH_MAX = 50
+
+const said = (s: AgentSession) => s.items.filter((i): i is Extract<ChatItem, { kind: 'user' | 'assistant' | 'job' }> => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'job')
+
+/** The sessions whose messages a work's search reads: its own and its steps' agents, its owner topic, a review's topics. */
+function searchSessions(task: Task, tasks: Task[], sessions: AgentSession[]): AgentSession[] {
+  const ids = new Set([task.id, ...subtasksOf(task.id, tasks).map((s) => s.id)])
+  const topics = reviewTopicIds(task)
+  return sessions.filter((s) => (s.taskId && ids.has(s.taskId)) || s.id === task.ownerSessionId || topics.includes(s.id))
+}
+
+/** ~120 characters of `text` around `at`, on one line. */
+function snippetAt(text: string, at: number, length: number): string {
+  const start = Math.max(0, at - 40)
+  const end = Math.min(text.length, at + length + 80)
+  return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${end < text.length ? '…' : ''}`
+}
+
 /**
- * The cards matching a search (⌘K): every word of `query`, case-insensitive, in the title, the work's key, whose move,
- * the progress or the last event. An empty query matches all.
+ * Searches the project's topics and top-level works and reviews, archive included (⌘K): every word of `query`,
+ * case-insensitive, must be in the title or key, the summary or the messages (user, assistant, job; a work's: its own,
+ * its steps' and its owner topic's). Best score first, then the latest activity; at most SEARCH_MAX. `tasks` and
+ * `sessions` are the project's. No words: no hits.
  */
-export function searchCards(cards: WorkCard[], query: string): WorkCard[] {
+export function searchAll(query: string, tasks: Task[], sessions: AgentSession[]): SearchHit[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return cards
-  return cards.filter((c) => {
-    const text = [c.title, c.task?.key, c.move.text, c.progress, c.last?.text].filter(Boolean).join('\n').toLowerCase()
-    return words.every((w) => text.includes(w))
-  })
+  if (!words.length) return []
+  const works = tasks.filter((t) => !t.parentId)
+  const items = [
+    ...works.map((t) => {
+      const own = searchSessions(t, tasks, sessions)
+      return { ref: { kind: 'task' as const, id: t.id }, item: t, key: t.key, own, at: Math.max(t.updatedAt, ...own.map(sessionActivity)) }
+    }),
+    ...rowTopics(sessions, works, tasks, sessions).map((s) => ({ ref: { kind: 'topic' as const, id: s.id }, item: s, key: null, own: [s], at: sessionActivity(s) })),
+  ]
+  const hits: SearchHit[] = []
+  for (const { ref, item, key, own, at } of items) {
+    const title = shortTitle(item)
+    const head = `${title}\n${key ?? ''}`.toLowerCase()
+    const sum = item.summary
+    const summary = sum ? [sum.title, ...sum.gist, ...sum.decisions, ...sum.open, ...sum.keywords].join('\n').toLowerCase() : ''
+    // Messages are read only for a word the title and summary don't have.
+    let messages: { text: string; lower: string }[] | null = null
+    let snippet: string | null = null
+    let score = 0
+    for (const w of words) {
+      if (head.includes(w)) score += 3
+      else if (summary.includes(w)) score += 2
+      else {
+        messages ??= own.flatMap(said).sort((a, b) => a.at - b.at).map((i) => ({ text: i.text, lower: i.text.toLowerCase() }))
+        const m = messages.find((x) => x.lower.includes(w))
+        if (!m) { score = 0; break }
+        score += 1
+        snippet ??= snippetAt(m.text, m.lower.indexOf(w), w.length)
+      }
+    }
+    if (score) hits.push({ ref, title, key, line: sum?.gist[0] ?? null, snippet, archived: isArchived(item), score, at })
+  }
+  return hits.sort((a, b) => b.score - a.score || b.at - a.at).slice(0, SEARCH_MAX)
 }
 
 /** The cards a filter shows: waiting = that group; working = an agent running (green dot); reviews = review rows, done included. */

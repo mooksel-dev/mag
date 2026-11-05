@@ -7,7 +7,7 @@ import {
   cardMove,
   emptyResult,
   needsQuestions,
-  searchCards,
+  searchAll,
   shortTitle,
   span,
   stepsLine,
@@ -146,18 +146,50 @@ test('workCards: a closed topic is closed however long ago; running or asking, i
   ])
 })
 
-test('searchCards: every word, case-insensitive, in the title, key, move, progress or last event', () => {
-  const all = cards(
-    [task('W-1', { title: 'Login page', status: 'ready' }), step('W-1.1', 'W-1'), task('W-2', { title: 'Billing' })],
-    [session('t', { title: 'Pricing talk', titleGenerated: true, items: [{ kind: 'user', text: 'pro plan for teams', at: NOW }] })],
-  )
-  const ids = (q: string) => searchCards(all, q).map((c) => c.id).sort()
-  assert.deepEqual(ids(''), ['W-1', 'W-2', 't'])
+const summary = (gist: string, keywords: string[] = []) => ({ title: 'Summary', gist: [gist], decisions: [], open: [], keywords })
+
+test('searchAll: every word, case-insensitive, in the title, key, summary or messages; archive included', () => {
+  const tasks = [
+    task('W-1', { title: 'Login page', status: 'ready' }),
+    step('W-1.1', 'W-1'),
+    task('W-2', { title: 'Billing', status: 'canceled', summary: summary('Invoices per seat', ['stripe']) }),
+  ]
+  const sessions = [
+    session('t', { title: 'Pricing talk', titleGenerated: true, closedAt: NOW, summary: summary('Plans for teams', ['kubernetes']), items: [{ kind: 'user', text: 'pro plan for teams', at: NOW }] }),
+    session('dev', { role: 'developer', taskId: 'W-1.1', items: [{ kind: 'assistant', text: 'Added the OAuth callback route', at: NOW }] }),
+  ]
+  const ids = (q: string) => searchAll(q, tasks, sessions).map((h) => h.ref.id).sort()
+  assert.deepEqual(ids('  '), [])
   assert.deepEqual(ids('  login '), ['W-1'])
   assert.deepEqual(ids('w-2'), ['W-2'])
-  assert.deepEqual(ids('PRICING teams'), ['t'])
-  assert.deepEqual(ids('start'), ['W-1'])
+  assert.deepEqual(ids('KUBERNETES'), ['t'], 'an archived topic by a word only in its summary')
+  assert.deepEqual(ids('stripe'), ['W-2'])
+  assert.deepEqual(ids('oauth callback'), ['W-1'], "a work by its step developer's messages")
+  assert.deepEqual(ids('pricing pro'), ['t'], 'title and message words together')
   assert.deepEqual(ids('login billing'), [])
+  assert.deepEqual(ids('dev'), [], 'a developer session has no row of its own')
+  const [t] = searchAll('kubernetes', tasks, sessions)
+  assert.deepEqual(t, { ref: { kind: 'topic', id: 't' }, title: 'Pricing talk', key: null, line: 'Plans for teams', snippet: null, archived: true, score: 2, at: NOW })
+  assert.equal(searchAll('oauth', tasks, sessions)[0].snippet, 'Added the OAuth callback route')
+  assert.equal(searchAll('login', tasks, sessions)[0].archived, false)
+})
+
+test('searchAll: the title ranks over the summary over the messages, then the latest activity', () => {
+  const sessions = [
+    session('msg', { title: 'One', titleGenerated: true, items: [{ kind: 'user', text: 'about redis', at: NOW }] }),
+    session('sum', { title: 'Two', titleGenerated: true, summary: summary('Redis cache'), items: [{ kind: 'user', text: 'x', at: NOW - 2 * DAY }] }),
+    session('old', { title: 'Redis old', titleGenerated: true, items: [{ kind: 'user', text: 'x', at: NOW - 3 * DAY }] }),
+    session('new', { title: 'Redis new', titleGenerated: true, items: [{ kind: 'user', text: 'x', at: NOW - DAY }] }),
+  ]
+  assert.deepEqual(searchAll('redis', [], sessions).map((h) => h.ref.id), ['new', 'old', 'sum', 'msg'])
+})
+
+test('searchAll: a snippet around the match, cut on both sides; a topic that owns an open work searches as the work', () => {
+  const long = `${'a '.repeat(60)}needle${' b'.repeat(80)}`
+  const sessions = [session('owner', { items: [{ kind: 'assistant', text: long, at: NOW }] })]
+  const hits = searchAll('needle', [task('W-1', { ownerSessionId: 'owner' })], sessions)
+  assert.deepEqual(hits.map((h) => h.ref), [{ kind: 'task', id: 'W-1' }])
+  assert.match(hits[0].snippet!, /^…(a )+needle( b)+…$/)
 })
 
 test('workCards: a pending approval in the owner topic waits for the work it opens as', () => {
