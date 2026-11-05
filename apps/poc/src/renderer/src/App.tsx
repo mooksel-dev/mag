@@ -26,7 +26,6 @@ import {
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
 import { Architecture } from './Architecture'
-import { ArtifactPane } from './ArtifactPane'
 import { TopicConversation, WorkConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
@@ -38,14 +37,14 @@ import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
-/** Pages the list's footer opens; they take the place of the conversation and the pane. */
+/** Pages the list's footer opens; they take the place of the conversation. */
 type Page = ListPage
 const PAGE_NAMES: Record<Page, string> = { ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
 
 /**
  * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
- * the left, the open work's owner conversation in the centre, what it made on the right. Ideas, Architecture and
- * Settings open from the list's footer.
+ * the left, the open work's or discussion's screen (or Home) in the rest; what a work made is in its tabs, a diagram
+ * opens in a drawer (redesign-start-screen-big-composer.3). Ideas, Architecture and Settings open from the list's footer.
  */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
@@ -150,17 +149,12 @@ export function App({ projectId }: { projectId: string }) {
                 <Settings project={project} integrations={state.integrations} />
               )}
             </main>
-          ) : !current ? (
-            <HomeScreen project={project} state={state} onSelect={select} />
+          ) : shownWork ? (
+            <WorkConversation key={shownWork.id} work={shownWork} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
+          ) : shownTopic ? (
+            <TopicConversation key={shownTopic.id} topic={shownTopic} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
           ) : (
-            <>
-              {shownWork ? (
-                <WorkConversation key={shownWork.id} work={shownWork} state={state} onOpenKey={openKey} />
-              ) : shownTopic && (
-                <TopicConversation key={shownTopic.id} topic={shownTopic} state={state} onOpenKey={openKey} onSelectTopic={(id) => select({ kind: 'topic', id })} onDeleted={() => select(null)} />
-              )}
-              <ArtifactPane work={shownWork} topic={shownTopic} state={state} onOpenKey={openKey} onDeleted={() => select(null)} />
-            </>
+            <HomeScreen project={project} state={state} onSelect={select} />
           )}
         </ErrorBoundary>
       </div>

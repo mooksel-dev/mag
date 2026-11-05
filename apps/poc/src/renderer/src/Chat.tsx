@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, interimReplies, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
@@ -102,16 +102,25 @@ export function CanvasFrame({ canvas, height = 340, focus, siblings }: { canvas:
   return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={content?.html ?? ''} style={{ height }} />
 }
 
-export function CanvasCard({ canvas, latest = true, focus }: { canvas: CanvasRef; latest?: boolean; focus?: string }) {
+/**
+ * Opens a canvas in the screen's diagram drawer (redesign-start-screen-big-composer.3): a work's or a discussion's
+ * screen provides it. Without one (a pop-out window) a canvas expands to a full-screen overlay.
+ */
+export const CanvasOpener = createContext<((canvas: CanvasRef, focus?: string) => void) | null>(null)
+
+/** A canvas in a chat or a doc: its preview; Open shows it in the drawer (or the overlay), ⧉ in its own window. */
+export function CanvasCard({ canvas, latest = true, focus, onOpen }: { canvas: CanvasRef; latest?: boolean; focus?: string; onOpen?: (canvas: CanvasRef, focus?: string) => void }) {
   const [full, setFull] = useState(false)
+  const opener = useContext(CanvasOpener)
+  const open = onOpen ?? opener
   return (
     <div className="canvascard">
       <div className="canvashead">
         <span className="title">{canvas.title}</span>
         <span className="muted small">v{canvas.version}</span>
         <div className="grow" />
-        {latest && <OpenCanvasWindow canvas={canvas} />}
-        {latest && <button className="link" onClick={() => setFull(true)}>Expand</button>}
+        {latest && !open && <OpenCanvasWindow canvas={canvas} />}
+        {latest && <button className="link" onClick={() => (open ? open(canvas, focus) : setFull(true))}>{open ? 'Open' : 'Expand'}</button>}
       </div>
       {latest ? <CanvasFrame canvas={canvas} focus={focus} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
       {full && <CanvasOverlay canvas={canvas} focus={focus} onClose={() => setFull(false)} />}

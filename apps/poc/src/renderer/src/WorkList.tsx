@@ -181,14 +181,25 @@ function Row({ card: c, now, on, menu, onMenu, onSelect, onGone }: {
   )
 }
 
+/** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
+export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session'>
+
 /** What the row menu shows instead of its items: a field for a topic's title, or for why a work closes. */
 type Asking = 'rename' | 'close' | null
 
 /**
  * The row menu: a discussion is renamed, branched, turned into a work, closed (history kept, under Done) or deleted; a
- * work is closed (canceled, with a reason) or deleted; a review closed or deleted. Delete asks first.
+ * work is closed (canceled, with a reason) or deleted; a review closed or deleted. Delete asks first. A work's or a
+ * discussion's header ⋯ opens the same menu.
  */
-function RowMenu({ card: c, onClose, onSelect, onGone }: { card: WorkCard; onClose: () => void; onSelect: (s: Selection) => void; onGone: () => void }) {
+export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmenu' }: {
+  card: MenuCard
+  onClose: () => void
+  onSelect: (s: Selection) => void
+  onGone: () => void
+  /** Where the menu sits: by a row (default) or under a screen's header ⋯. */
+  className?: string
+}) {
   const [asking, setAsking] = useState<Asking>(null)
   const [text, setText] = useState('')
   useEffect(() => {
@@ -256,7 +267,7 @@ function RowMenu({ card: c, onClose, onSelect, onGone }: { card: WorkCard; onClo
   return (
     <>
       <div className="menuscrim" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
-      <div className="menulist wlmenu small" role="menu" aria-label={`${c.title}: actions`}>{body}</div>
+      <div className={`menulist ${className} small`} role="menu" aria-label={`${c.title}: actions`}>{body}</div>
     </>
   )
 }
