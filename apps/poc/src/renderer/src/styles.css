@@ -822,3 +822,6 @@ table.changes code { margin-right: 4px; }
 .diffgroup.k-noise, .diffgroup.k-rest { opacity: 0.85; }
 .difffile > summary { cursor: pointer; padding: 2px 0; }
 details.inline { display: inline-block; margin-left: 6px; }
+
+/* A review's .zip dragged over the new-work field (review-v2-part-2-v1-2.3). */
+.newwork.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 8px; }

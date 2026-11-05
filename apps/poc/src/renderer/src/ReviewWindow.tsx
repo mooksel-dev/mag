@@ -3,6 +3,7 @@ import {
   FINDING_LEVEL_LABELS,
   findingsByLevel,
   hunksOf,
+  isImported,
   isReview,
   markBlocks,
   prRepoName,
@@ -21,7 +22,8 @@ import { Chat, Markdown } from './Chat'
 import { ownerSession } from './Conversation'
 import { DiffSetView, type DiagramCanvas } from './DiffSetView'
 import { Comparison, useHunks } from './FactPanel'
-import { ReportView } from './ReportView'
+import { ReportView, diagramAnchor } from './ReportView'
+import { ExportReviewButton, ImportedBanner } from './ReviewExport'
 import { FormatSwitch } from './Reviews'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
 
@@ -37,18 +39,33 @@ interface HunkSource {
 
 const HunksContext = createContext<HunkSource | null>(null)
 
-const hunkKey = (f: FileChange, h: PrHunk) => `${f.repo}\0${f.path}\0${h.id ?? `${h.newStart},${h.newLines}`}`
+/**
+ * What the window renders a static page from (a review's archive, review-v2-part-2-v1-2.3): the fact view, every hunk's
+ * lines and each diagram's SVG, all loaded before; no buttons, drawer or IPC on the page.
+ */
+export interface StaticData {
+  view: FactView | null
+  lines: Map<string, HunkLines>
+  /** Canvas id → the diagram as inline SVG. */
+  svgs: Record<string, string>
+}
+
+const StaticDataContext = createContext<StaticData | null>(null)
+
+export const hunkKey = (f: FileChange, h: PrHunk) => `${f.repo}\0${f.path}\0${h.id ?? `${h.newStart},${h.newLines}`}`
 
 /**
  * The lines of the hunks of `stepId`'s PRs the page opened, each loaded once per fact view. The cache follows the view
  * in the same render, so a hunk open when the view refreshes loads again instead of waiting on the old one.
  */
-function useHunkLines(stepId: string, view: FactView | null | undefined) {
+function useHunkLines(stepId: string, view: FactView | null | undefined, still: StaticData | null) {
   const store = useRef<HunkCache<FactView | null | undefined> | null>(null)
+  if (still) store.current = { view, lines: still.lines }
   store.current = hunkCacheFor(store.current, view)
   const [, loaded] = useState(0)
   const load = (f: FileChange, h: PrHunk) => {
     const cache = store.current!
+    if (still) return
     const repo = view?.repos.find((r) => r.name === f.repo)
     const key = hunkKey(f, h)
     if (!repo || !askHunk(cache, key)) return
@@ -62,15 +79,15 @@ function useHunkLines(stepId: string, view: FactView | null | undefined) {
 }
 
 /** The fact of the task's PRs, loaded when the window opens and again when its heads or fact change. */
-function useFactView(task: Task | undefined, key: string): FactView | null | undefined {
+function useFactView(task: Task | undefined, key: string, still: StaticData | null): FactView | null | undefined {
   const [view, setView] = useState<FactView | null | undefined>(undefined)
   useEffect(() => {
-    if (!task) return
+    if (!task || still) return
     let gone = false
     mag.stepFact(task.id).then((v) => !gone && setView(v), () => !gone && setView(null))
     return () => void (gone = true)
   }, [task?.id, key])
-  return view
+  return still ? still.view : view
 }
 
 /** One hunk, loaded when it shows: its cited blocks marked, the rest of it muted. */
@@ -108,12 +125,14 @@ export function InlineHunks({ target }: { target: HunkTarget }) {
 /** A file of the full diff, folded: its hunks render, and so load, only once it is opened. */
 function DiffFile({ file, hunks, src }: { file: FileChange; hunks: HunkPick<FileChange>[]; src: HunkSource }) {
   const [open, setOpen] = useState(false)
+  // A static page has every hunk in its fold.
+  const still = !!useContext(StaticDataContext)
   return (
     <details className="difffile" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>
         <code>{file.path}</code> <span className="muted small">{hunks.length} hunk{hunks.length === 1 ? '' : 's'}</span>
       </summary>
-      {shownHunks(hunks, open).map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}
+      {shownHunks(hunks, open || still).map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}
     </details>
   )
 }
@@ -159,6 +178,8 @@ export function ChatDrawer({ sessionId, state, onClose }: { sessionId: string | 
 /** A set of diagrams on the page: a node click expands its hunks under the diagram. */
 function InlineDiagrams({ entry, current, step }: { entry: InlineSet; current?: string; step: Task }) {
   const [node, setNode] = useState<{ diagram: DiagramCanvas; node: string } | null>(null)
+  const still = useContext(StaticDataContext)
+  if (still) return <StaticDiagrams entry={entry} svgs={still.svgs} />
   return (
     <div className="inlineset" data-set={entry.set.map((c) => c.id).join(' ')}>
       <div className="diffsub">{entry.title}</div>
@@ -180,6 +201,21 @@ function InlineDiagrams({ entry, current, step }: { entry: InlineSet; current?: 
   )
 }
 
+/** A set of diagrams on a static page: each one drawn, under its title, as the SVG rendered for it. */
+function StaticDiagrams({ entry, svgs }: { entry: InlineSet; svgs: Record<string, string> }) {
+  return (
+    <div className="inlineset">
+      <div className="diffsub">{entry.title}</div>
+      {entry.set.map((c) => (
+        <figure key={c.id} id={diagramAnchor(c.id)} className="staticdiagram">
+          <figcaption><b>{c.title}</b> <span className="muted small">v{c.version}</span></figcaption>
+          {svgs[c.id] ? <div className="staticsvg" dangerouslySetInnerHTML={{ __html: svgs[c.id] }} /> : <p className="muted small">Not drawn.</p>}
+        </figure>
+      ))}
+    </div>
+  )
+}
+
 /**
  * The review window (review-v2-part-2-v1-2.2): one full-window page in a pop-out. A PR's review shows the shown result
  * (v1 | v2): verdict strip → direction card with its buttons → the four question cards → the changes table → the
@@ -187,15 +223,20 @@ function InlineDiagrams({ entry, current, step }: { entry: InlineSet; current?: 
  * the same way. Every claim, diagram node and change row expands its hunks in place; no diagram opens a window. The
  * conversation is a drawer at the side; Discuss with agent opens it with the direction card.
  */
-export function ReviewWindow({ state, taskId }: { state: AppState; taskId: string }) {
+export function ReviewWindow({ state, taskId, still = null }: {
+  state: AppState
+  taskId: string
+  /** Rendered for a static page (review-v2-part-2-v1-2.3), from data loaded before. */
+  still?: StaticData | null
+}) {
   const task = state.tasks.find((t) => t.id === taskId)
   const project = state.projects.find((p) => p.id === task?.projectId)
   const pr = task ? isReview(task) : false
   const canvases = useMemo(() => state.canvases.filter((c) => c.projectId === task?.projectId), [state.canvases, task?.projectId])
   const diagramsKey = canvases.filter((c) => c.taskId === taskId || c.stepId === taskId).map((c) => `${c.id}@${c.version}`).join(',')
-  const view = useFactView(task, JSON.stringify([task?.prReview?.pr.head, task?.work?.repos.map((r) => r.prUrl), task?.fact?.at, diagramsKey]))
+  const view = useFactView(task, JSON.stringify([task?.prReview?.pr.head, task?.work?.repos.map((r) => r.prUrl), task?.fact?.at, diagramsKey]), still)
   const model = useMemo(() => (task ? reviewWindowModel(task, canvases, view) : null), [task, canvases, view])
-  const hunkLines = useHunkLines(taskId, view)
+  const hunkLines = useHunkLines(taskId, view, still)
   const hunks = useHunks(taskId, view)
   const [drawer, setDrawer] = useState(false)
   // The topic Discuss with agent went to; the owner conversation until then.
@@ -213,6 +254,8 @@ export function ReviewWindow({ state, taskId }: { state: AppState; taskId: strin
 
   const src: HunkSource | null = view ? { files: view.files, inventory: model.inventory, lines: hunkLines.lines, load: hunkLines.load } : null
   const running = pr && reviewRunning(task, state.sessions)
+  // Imported (read only) or static: no run, decision, publish or agent.
+  const ro = isImported(task) || !!still
   const act = (f: () => Promise<unknown>) => {
     setError(null)
     setDeciding(true)
@@ -226,30 +269,36 @@ export function ReviewWindow({ state, taskId }: { state: AppState; taskId: strin
   const review = task.prReview
   const r = model.result
   return (
+    <StaticDataContext.Provider value={still}>
     <HunksContext.Provider value={src}>
       <div className={`reviewwindow${drawer ? ' withdrawer' : ''}`}>
         <main className="reviewmain page">
           <div className="taskrow">
             <span className="key">{task.key}</span>
             {pr && review && project ? (
-              <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} ↗</button>
+              still ? <span title={review.pr.url}><b>{prRepoName(project, review.pr)}#{review.pr.number}</b> <span className="muted small">{review.pr.url}</span></span>
+              : <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} ↗</button>
             ) : (
               parent && <span className="muted small">step of {parent.key} {parent.title}</span>
             )}
             <div className="grow" />
             {model.report && <span className="muted small">{reportLine(model.report, model.kind)}</span>}
-            <button className="small" title="The conversation with the agent, at the side" onClick={() => setDrawer(!drawer)}>{drawer ? 'Hide agent' : 'Agent'}</button>
+            {!still && pr && <ExportReviewButton work={task} onError={setError} />}
+            {!ro && <button className="small" title="The conversation with the agent, at the side" onClick={() => setDrawer(!drawer)}>{drawer ? 'Hide agent' : 'Agent'}</button>}
           </div>
           <h1>{pr ? task.title.replace(/^[^:]*#\d+: /, '') : task.title}</h1>
           {error && <div className="banner">{error}</div>}
-          {pr && review && <FormatSwitch work={task} review={review} running={running} onError={setError} />}
+          {!still && <ImportedBanner work={task} />}
+          {still && pr && review && <p className="muted small">The {review.shown} result{review.results[review.shown === 'v1' ? 'v2' : 'v1'] ? `; the ${review.shown === 'v1' ? 'v2' : 'v1'} result is in review.json` : ''}. Exported from mag{task.imported ? ` (imported from ${task.imported.from})` : ''}.</p>}
+          {!still && pr && review && <FormatSwitch work={task} review={review} running={running} onError={setError} />}
           {model.report && (
             <ReportView
               report={model.report}
               fact={task.fact}
               kind={model.kind}
               decisions={project?.directionDecisions}
-              direction={pr ? {
+              staticPage={!!still}
+              direction={pr && !ro ? {
                 busy: running || deciding,
                 discuss: () => act(async () => {
                   setDiscussed(await mag.discussDirection(task.id))
@@ -302,8 +351,9 @@ export function ReviewWindow({ state, taskId }: { state: AppState; taskId: strin
             {view === null ? <p className="muted small">No PR: no diff.</p> : <FullDiff groups={model.groups} />}
           </section>
         </main>
-        {drawer && <ChatDrawer sessionId={discussed ?? owner?.id ?? null} state={state} onClose={() => setDrawer(false)} />}
+        {drawer && !ro && <ChatDrawer sessionId={discussed ?? owner?.id ?? null} state={state} onClose={() => setDrawer(false)} />}
       </div>
     </HunksContext.Provider>
+    </StaticDataContext.Provider>
   )
 }

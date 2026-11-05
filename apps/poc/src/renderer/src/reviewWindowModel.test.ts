@@ -93,7 +93,7 @@ test('no diagram of the window opens a separate window: the window never calls o
 test('the full diff loads a file\'s hunks only once the file is opened', () => {
   assert.deepEqual(shownHunks(['H1', 'H2'], false), [], 'folded: nothing renders, nothing loads')
   assert.deepEqual(shownHunks(['H1', 'H2'], true), ['H1', 'H2'])
-  assert.match(readFileSync(new URL('./ReviewWindow.tsx', import.meta.url), 'utf8'), /shownHunks\(hunks, open\)/, 'DiffFile renders through shownHunks')
+  assert.match(readFileSync(new URL('./ReviewWindow.tsx', import.meta.url), 'utf8'), /shownHunks\(hunks, open \|\| still\)/, 'DiffFile renders through shownHunks; a static page has every hunk')
 })
 
 test('a hunk loads once per fact view, and again after the view refreshes', () => {
@@ -107,4 +107,17 @@ test('a hunk loads once per fact view, and again after the view refreshes', () =
   assert.notEqual(next, cache)
   assert.equal(next.lines.get('k'), undefined, 'the refreshed view does not wait on the old load')
   assert.equal(askHunk(next, 'k'), true, 'so the open hunk loads again')
+})
+
+test('the static page and an imported review have no run, direction buttons, drawer or IPC (review-v2-part-2-v1-2.3)', () => {
+  const src = readFileSync(new URL('./ReviewWindow.tsx', import.meta.url), 'utf8')
+  assert.match(src, /const ro = isImported\(task\) \|\| !!still/)
+  assert.match(src, /\{!still && pr && review && <FormatSwitch/, 'no v1/v2 switch or Run on the static page')
+  assert.match(src, /direction=\{pr && !ro \?/, 'no direction buttons when read only')
+  assert.match(src, /\{drawer && !ro && <ChatDrawer/, 'no agent drawer when read only')
+  assert.match(src, /if \(still\) return <StaticDiagrams/, 'diagrams as their SVGs, never DiffSetView')
+  assert.match(src, /if \(!task \|\| still\) return/, 'the fact view is not fetched for a static page')
+  const reviews = readFileSync(new URL('./Reviews.tsx', import.meta.url), 'utf8')
+  assert.match(reviews, /direction=\{ro \? undefined/, 'the right pane: no direction buttons on an imported review')
+  assert.match(reviews, /r\.verdict && !ro && <Publish/, 'nor Publish')
 })

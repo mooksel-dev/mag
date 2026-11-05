@@ -99,6 +99,18 @@ const api: MagApi = {
   prChecks: (taskId) => ipcRenderer.invoke('review:checks', taskId),
   publishReview: (taskId, verdict, picks) => ipcRenderer.invoke('review:publish', taskId, verdict, picks),
   connectReviewRepo: (taskId) => ipcRenderer.invoke('review:connect', taskId),
+  exportReview: (taskId) => ipcRenderer.invoke('review:export', taskId),
+  importReview: (projectId, zipPath) => ipcRenderer.invoke('review:import', projectId, zipPath),
+  onRenderReviewExport: (fn) => {
+    const listener = (_: unknown, n: number, taskId: string) => {
+      fn(taskId).then(
+        (page) => ipcRenderer.invoke('review:rendered', n, page),
+        (e) => ipcRenderer.invoke('review:rendered', n, { error: String((e as Error)?.message ?? e) }),
+      )
+    }
+    ipcRenderer.on('review:render', listener)
+    return () => void ipcRenderer.removeListener('review:render', listener)
+  },
   reportCrash: (crash) => ipcRenderer.invoke('log:crash', crash),
   lastCrash: () => ipcRenderer.invoke('crash:last'),
   dismissCrash: () => ipcRenderer.invoke('crash:dismiss'),

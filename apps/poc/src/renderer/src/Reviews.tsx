@@ -6,6 +6,7 @@ import {
   findingCounts,
   findingsFolded,
   findingsByLevel,
+  isImported,
   prRepoName,
   reviewRunning,
   setOf,
@@ -30,6 +31,7 @@ import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ReportView } from './ReportView'
+import { ExportReviewButton, ImportedBanner } from './ReviewExport'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
 
@@ -46,7 +48,10 @@ const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'
 function Checks({ work }: { work: Task }) {
   const [checks, setChecks] = useState<PrCheck[] | string | null>(null)
   const head = work.prReview?.pr.head
+  const kept = work.imported?.pr.checks
   useEffect(() => {
+    // An imported review shows the checks as they were when it was exported.
+    if (kept) return void setChecks(kept)
     let gone = false
     setChecks(null)
     mag.prChecks(work.id).then(
@@ -103,6 +108,8 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
   useEffect(() => setPicks(new Set((r?.findings ?? []).flatMap((f, i) => (pickedByDefault(f) ? [i] : [])))), [r?.at, r?.format])
   const toggle = (i: number) => setPicks((p) => (p.has(i) ? new Set([...p].filter((x) => x !== i)) : new Set([...p, i])))
   const running = reviewRunning(work, state.sessions)
+  // Imported from an archive (review-v2-part-2-v1-2.3): read only, nothing to run, decide or publish.
+  const ro = isImported(work)
   // The fact, and any other diagram of the review (an intent of an older review shows as a plain one).
   const diagrams = diagramsOf(state.canvases.filter((c) => c.taskId === work.id))
   // The fact set in one window (povnyi-diff-nabir-pov-iazanykh.2); the rest as a list.
@@ -146,7 +153,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         findingsByLevel(r.findings).map(({ level, findings }) =>
           findings.map((f, i) => (
             <div key={`${level}${i}`} className="finding">
-              {r.verdict && (
+              {r.verdict && !ro && (
                 <input type="checkbox" title="Publish this finding" aria-label="Publish this finding" checked={picks.has(r.findings.indexOf(f))} onChange={() => toggle(r.findings.indexOf(f))} />
               )}
               <span className={`pill ${LEVEL_PILLS[level]}`}>{FINDING_LEVEL_LABELS[level]}</span>
@@ -162,7 +169,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
       ) : (
         <p className="muted small">{r.verdict ? 'No findings.' : 'None yet.'}</p>
       )}
-      {r.verdict && <Publish work={work} result={r} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
+      {r.verdict && !ro && <Publish work={work} result={r} repo={repo} picks={picks} running={running} now={now} onError={setError} />}
     </>
   )
   const findingsSection = folded ? (
@@ -180,6 +187,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         <span className="muted small">@{review.pr.author} · into {review.pr.base} · {r.head ? `reviewed at ${r.head.slice(0, 7)}` : 'not reviewed yet'}{r.at ? ` · ${ago(r.at, now)}` : ''}</span>
         <div className="grow" />
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
+        <ExportReviewButton work={work} onError={setError} />
         <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
       </div>
       <h1>{shortTitle(work)}</h1>
@@ -190,11 +198,12 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
       </div>
       {error && <div className="banner">{error}</div>}
       {work.needsInput && <div className="banner">{work.needsInput}</div>}
+      <ImportedBanner work={work} />
       <div className="taskrow">
-        <button disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={act(() => mag.reviewAgain(work.id))}>
+        {!ro && <button disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={act(() => mag.reviewAgain(work.id))}>
           {work.status === 'in_progress' ? 'Review again' : 'Reopen review'}
-        </button>
-        {work.status === 'in_progress' && <button onClick={act(() => mag.closeReview(work.id))}>Close review</button>}
+        </button>}
+        {!ro && work.status === 'in_progress' && <button onClick={act(() => mag.closeReview(work.id))}>Close review</button>}
         <button
           title="Delete the review for good, with its diagrams and the topic mag created for it; nothing changes on GitHub"
           onClick={act(async () => {
@@ -208,7 +217,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         <div className="grow" />
         <span className="muted small">Nothing goes to GitHub without your button.</span>
       </div>
-      {review.pr.outside && (
+      {review.pr.outside && !ro && (
         <div className="banner">
           {review.pr.repo} is not one of the project's repositories: mag reads the PR from GitHub, and its fact has modules by folder, without the project architecture.{' '}
           <button className="small" disabled={running} title="Pick a checkout of the repository: it joins the project, and the review looks again with its architecture" onClick={act(() => mag.connectReviewRepo(work.id).then((c) => {
@@ -224,7 +233,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
           fact={work.fact}
           kind="pr"
           decisions={project.directionDecisions}
-          direction={{
+          direction={ro ? undefined : {
             busy: running || deciding,
             discuss: whileDeciding(() => mag.discussDirection(work.id)),
             decide: (d) => whileDeciding(() => mag.decideDirection(work.id, d))(),
@@ -304,7 +313,7 @@ export function FormatSwitch({ work, review, running, onError }: { work: Task; r
           )
         })}
       </div>
-      {REVIEW_FORMATS.filter((f) => f !== review.shown && resultOutdated(review, f)).map((f) => (
+      {!isImported(work) && REVIEW_FORMATS.filter((f) => f !== review.shown && resultOutdated(review, f)).map((f) => (
         <button key={f} className="small" disabled={running || work.status !== 'in_progress'} title={review.results[f]?.at ? `The ${f} review is of an older head: look at the PR as it is now` : `A ${f} review of the PR in its own topic, beside the other result`} onClick={() => go(() => mag.runReviewFormat(work.id, f))}>
           Run {f}
         </button>

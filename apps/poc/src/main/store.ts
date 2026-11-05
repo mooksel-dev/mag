@@ -562,6 +562,20 @@ export class Store {
     return t
   }
 
+  /**
+   * An imported review (review-v2-part-2-v1-2.3): a review work, done and read only, with its doc and its diagrams as
+   * they came (their ids already new to this machine).
+   */
+  createImportedReview(projectId: string, r: { task: Pick<Task, 'title' | 'description' | 'prReview' | 'fact' | 'imported'>; doc: string; canvases: Omit<Canvas, 'projectId' | 'sessionId' | 'taskId'>[] }): Task {
+    for (const c of r.canvases) if (this.data.canvases[c.id]) throw new Error(`Canvas ${c.id} exists already`)
+    const t = this.createTask({ projectId, title: r.task.title, type: 'review', description: r.task.description, status: 'done' })
+    Object.assign(t, { prReview: r.task.prReview, fact: r.task.fact, imported: r.task.imported })
+    this.data.docs[t.id] = r.doc
+    for (const c of r.canvases) this.data.canvases[c.id] = { ...c, projectId, taskId: t.id, sessionId: null }
+    this.changed()
+    return t
+  }
+
   updateTask(tid: string, patch: Partial<Task>) {
     const t = this.task(tid)
     const prev = { ...t }
