@@ -6,6 +6,7 @@ import {
   directionReferences,
   type DirectionChoice,
   type DirectionDecision,
+  type DirectionView as View,
   reportCards,
   reportChanges,
   reportStrip,
@@ -136,6 +137,42 @@ function DirectionButtons({ report, actions }: { report: ReviewReport; actions: 
   )
 }
 
+/**
+ * The reviewer's own leaning on the direction (prompts-use-the-models-to.1), folded after the options so the user forms
+ * their own view first; it never affects the checks.
+ */
+function DirectionView({ view }: { view: View }) {
+  return (
+    <details className="directionview">
+      <summary className="link small">The reviewer's leaning</summary>
+      <div className="claim">
+        <span className="badge src-agent" title={SOURCE_TITLES.agent}>agent</span>
+        <div className="grow">
+          <div><b>{view.leaning}</b> <span className="pill small">{view.confidence} confidence</span></div>
+          <div className="small">{view.why}</div>
+          <div className="small muted">An opinion only: it does not count in the checks.</div>
+        </div>
+      </div>
+    </details>
+  )
+}
+
+/** Why the checks verdict is what it is: the reviewer's why, and mag's blockers when its floor holds (raised it or not). */
+function ChecksWhy({ report }: { report: ReviewReport }) {
+  if (!report.why && !report.floor) return null
+  return (
+    <div className="checkswhy small">
+      {report.why && <div><span className="muted">Reviewer{report.raisedFrom ? ` (${CHECKS_LABELS[report.raisedFrom]})` : ''}:</span> {report.why}</div>}
+      {report.floor && (
+        <div>
+          <span className="muted">{report.raisedFrom ? `mag raised it to ${CHECKS_LABELS[report.checks]}:` : 'mag:'}</span>
+          <ul>{report.floor.blockers.map((b) => <li key={b}>{b}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** The user's call once made, and the comment to the author it drafted. */
 function Decided({ decided, draft }: { decided: DirectionDecision; draft?: string }) {
   const still = useContext(StaticContext)
@@ -186,7 +223,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
     <StaticContext.Provider value={staticPage}>
     <div className="report">
       <div className="reportstrip">
-        <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="From problem, conventions and risks only">Checks: {CHECKS_LABELS[report.checks]}</span>
+        <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="The reviewer's verdict on problem, conventions and risks, never below mag's floor">Checks: {CHECKS_LABELS[report.checks]}</span>
         {reportStrip(report, fact, kind).map((c) => {
           const card = c.key === 'coverage' ? 'changes' : c.key
           const body = <><span className="muted small">{c.label}</span> {c.value}</>
@@ -195,6 +232,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
             : <button key={c.key} className={`stripchip tone-${c.tone}`} title={`Go to ${c.label}`} onClick={() => toCard(card)}>{body}</button>
         })}
       </div>
+      <ChecksWhy report={report} />
 
       <section id={cardId('direction')} className="reportcard direction">
         <div className="cardhead">
@@ -212,6 +250,8 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
             ))}
           </div>
         )}
+        {d.options.length === 1 && d.only && <div className="small muted">Only one option: {d.only}</div>}
+        {d.view && <DirectionView view={d.view} />}
         {d.facts.length > 0 && <h3>Facts</h3>}
         {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
         {d.references.length > 0 && <h3>References</h3>}

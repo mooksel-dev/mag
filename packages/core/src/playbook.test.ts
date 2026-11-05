@@ -64,16 +64,20 @@ test('DEFAULT_PLAYBOOK: both reviews check the contract of calls, unique indexes
   assert.match(DEFAULT_PLAYBOOK.plan, /each entity with module, its owner/)
 })
 
-test('DEFAULT_PLAYBOOK: reviews answer the report; a PR review works out options before the description and gives no direction verdict (review-v2-questions-first-direction.1)', () => {
+test('DEFAULT_PLAYBOOK: reviews answer the report; the verdict is the reviewer\'s over mag\'s floor, its leaning on direction has its own field (prompts-use-the-models-to.1)', () => {
   for (const s of [DEFAULT_PLAYBOOK.review, DEFAULT_PLAYBOOK.prReview]) {
     assert.match(s, /every item is a claim: text, source and cites/)
-    assert.match(s, /changes: the inventory grouped into 2–6 changes by importance/)
-    assert.match(s, /checks: request_changes with a failed rule[\s\S]*Direction never counts/)
+    assert.match(s, /changes: the inventory grouped into changes by importance/)
+    assert.match(s, /checks: \{ verdict, why \}: your judgment[\s\S]*direction never counts/)
+    assert.match(s, /mag keeps its own floor[\s\S]*attaches those blockers itself/)
+    assert.match(s, /view\s+\{ leaning, why, confidence \}/)
     assert.match(s, /never give\s+it/)
+    // No forced counts and no label-to-verdict mapping.
+    assert.doesNotMatch(s, /2–4|2–6|request_changes with a failed rule/)
   }
   const p = DEFAULT_PLAYBOOK.prReview
   assert.match(p, /user's call: prepare it, never decide it/)
-  assert.match(p, /No verdict on the direction/)
+  assert.match(p, /your own leaning, if you have one, goes in direction.view/)
   // Options from the inventory first, the author's description only after.
   assert.ok(p.indexOf('set_inventory') < p.indexOf('Direction, before you read'))
   assert.ok(p.indexOf('Direction, before you read') < p.indexOf('gh pr view <url>'))

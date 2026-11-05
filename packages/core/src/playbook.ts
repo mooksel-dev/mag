@@ -58,7 +58,8 @@ const CODE_CHECKS = `Checks of the code, each a finding when it fails:
 
 /**
  * The report every review records (review-v2-questions-first-direction.1): fixed questions, claims with sources,
- * changes, a checks verdict from Problem, Conventions and Risks only. Shared by the review of a step and of a PR.
+ * changes, the reviewer's checks verdict over mag's floors (prompts-use-the-models-to.1). Shared by the review of a
+ * step and of a PR.
  */
 const REPORT = `The report answers fixed questions; every item is a claim: text, source and cites (inventory unit ids or
 file:line; a PR comment, decision:<id> or a note for the user's words), view (canvas:<id>#<node> of the review's set)
@@ -66,16 +67,20 @@ when a diagram shows it.
 - source: agent (your reading, with code refs), yours (the user's own words: PR comments, notes, decisions), question,
   rule (a project rule fails). mag gives checked itself to a mechanical fact of the direction whose cites are all
   units it verified; never give it.
-- direction: decisions, options (name, tradeoffs, pr: true on the change's own), facts, references. No verdict.
+- direction: decisions, options (name, tradeoffs, pr: true on the change's own; as many as there really are, and a
+  single one says why in only), facts, references. The call is the user's; your own leaning may go in view
+  { leaning, why, confidence }: it never counts, and the user reads it after the options.
 - problem: { criterion, status: solved | partly | not, text, source, cites }.
 - conventions: { rule, status: pass | fail, text, source, cites }.
 - risks: { level: high | medium | low, kind: bug | data | ops | security | privacy, text, mechanism, source, cites }.
 - questions: to the author, { text, cites }.
-- changes: the inventory grouped into 2–6 changes by importance, each { title, why it matters, units }; routine
-  ones (wiring, renames, imports) in one row with routine: true, last. Every unit in exactly one change.
-- checks: request_changes with a failed rule, a criterion not solved or a high risk; look with one partly solved or
-  a medium risk; approve when you would merge it yourself. Direction never counts.
-  request_changes or look always has a risk, rule, criterion or question behind it.
+- changes: the inventory grouped into changes by importance, each { title, why it matters, units }; routine ones
+  (wiring, renames, imports) in one row with routine: true, last. Every unit in exactly one change.
+- checks: { verdict, why }: your judgment on problem, conventions and risks, with one line of why. approve when you
+  would merge it yourself; look when the user should decide or check something; request_changes when something must
+  be fixed first, with the criterion, rule, risk or question behind it. Risk levels inform, they do not decide it, and
+  direction never counts. mag keeps its own floor (a plan deviation or incomplete fact: look at least; failed CI or a
+  failed architecture rule: request_changes) and attaches those blockers itself.
 mag checks the report before it stores it and answers what to fix.`
 
 export const DEFAULT_PLAYBOOK: Playbook = {
@@ -159,10 +164,10 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
 1. Fact first: get_pr_changes lists the PR's hunks with their ids; read its diff (gh pr diff, or git in the
    repository) and write its change inventory (set_inventory), as the fact section says.
 2. Direction, before you read the author's description or the PR's comments: from the inventory and the code alone,
-   name the design decision(s) the change makes, one sentence each, and work out 2–4 options for it on your own, the
-   PR's design one of them (pr: true), each with one line of trade-offs. Then the mechanical facts of the PR's option:
-   how many modules learn the new concept, how many changes hit existing flows, new rule violations, each citing
-   units. No verdict on the direction, no "acceptable", no recommendation: the user decides.
+   name the design decision(s) the change makes, one sentence each, and work out the sensible options for it on your
+   own, the PR's design one of them (pr: true), each with one line of trade-offs. Then the mechanical facts of the PR's
+   option: how many modules learn the new concept, how many changes hit existing flows, new rule violations, each
+   citing units. The user decides the direction; your own leaning, if you have one, goes in direction.view.
 3. Only now read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view
    --comments; review comments with gh api, reading only). Add references: the project's notes and decisions, ADRs,
    CLAUDE.md / AGENTS.md rules, earlier decisions of the user, PR threads; the user's own words are yours.
@@ -176,8 +181,8 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
    fail, a failed one citing the offending edges or lines.
 7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code below;
    each with level, kind, mechanism and where.
-8. CI: gh pr checks. Tests are CI's, never run them. A failing check is a high risk (kind ops) citing its link;
-   pending ones are said.
+8. CI: gh pr checks. Tests are CI's, never run them. mag reads the checks too: a failing one makes the verdict
+   request_changes with its blocker attached; say what a failure means for the change, and the pending ones.
 9. Record it with set_pr_review: problem, approach (how the PR solves the problem and whether it does, in a few lines)
    and the report, as the report below says.
 10. The direction is the user's call: argue its options with them when they ask, and once they decide, record it with
