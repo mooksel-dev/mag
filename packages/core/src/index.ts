@@ -10,6 +10,7 @@ import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel,
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
 import type { SidebarNode } from './sidebar.ts'
+import type { ChatSummary } from './summary.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -19,6 +20,7 @@ export * from './diagram-rules.ts'
 export * from './inventory.ts'
 export * from './sets.ts'
 export * from './sidebar.ts'
+export * from './summary.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
 export * from './review-report.ts'
@@ -675,6 +677,10 @@ export interface Task {
    * new review run clears it. A canceled work is closed without it.
    */
   closedAt?: number | null
+  /** Top-level tasks, archived (closed or canceled): what its doc and owner topic were about (archive-of-chats-summaries-search.1). */
+  summary?: ChatSummary | null
+  /** `at` of the last item `summary` covers (summaryCovers); a later Close writes a new one only when newer items exist. */
+  summaryAt?: number | null
   /** Top-level tasks: the tickets the work is about, as links (T-55.5); [] or missing = none. */
   tickets?: TicketRef[]
   /**
@@ -886,6 +892,10 @@ export interface AgentSession {
   commands?: string[]
   /** A project topic the user closed: its history stays, the list shows it under Done; writing to it reopens it. */
   closedAt?: number | null
+  /** A closed topic: what it was about, written on Close (archive-of-chats-summaries-search.1). */
+  summary?: ChatSummary | null
+  /** `at` of the last item `summary` covers; a later Close writes a new one only when newer items exist. */
+  summaryAt?: number | null
   /** running = a turn is going on; a live process (see live) may stay between turns. */
   status: 'running' | 'idle' | 'error'
   /** A long-lived agent process is open for this session (see liveSession). */

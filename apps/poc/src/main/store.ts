@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -680,6 +680,14 @@ export class Store {
   /** Restore of a closed work or review: back in the list, where it was. */
   reopenTask(tid: string) {
     if (this.task(tid).closedAt) this.updateTask(tid, { closedAt: null })
+  }
+
+  /** An archived topic's or task's summary, covering its items up to `at`; not an update of the task (updatedAt stays). */
+  setSummary(kind: 'topic' | 'task', id: string, summary: ChatSummary, at: number) {
+    const item = kind === 'topic' ? this.session(id) : this.task(id)
+    item.summary = summary
+    item.summaryAt = at
+    this.changed()
   }
 
   /** Opens a closed topic again (writing to it does). */

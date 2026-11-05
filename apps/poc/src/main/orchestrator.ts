@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -356,6 +356,8 @@ export class Orchestrator {
   private reviewTried = new Map<string, string>()
   /** Topics whose title is being generated. */
   private naming = new Set<string>()
+  /** `topic:<id>` | `task:<id>` with a summary run going on. */
+  private summarizing = new Set<string>()
   /** Review runs' scratch worktrees by session, while its run (or live process) lasts (see ensureScratch). */
   private scratches = new Map<string, Scratch[]>()
   /** Making and removing a session's scratch worktrees, one after another: a closing process's removal goes first. */
@@ -533,6 +535,7 @@ export class Orchestrator {
     await Promise.all([run?.done, this.closeLive(sessionId)])
     this.store.closeSession(session.id)
     log.info('agent', 'topic closed', { session: sessionId })
+    void this.summarize('topic', session.id)
   }
 
   /**
@@ -545,6 +548,7 @@ export class Orchestrator {
     if (isReview(work)) return this.closeReview(taskId)
     if (work.status !== 'done') throw new Error(`${work.key} is ${work.status}; only a done work is closed this way (cancel the others)`)
     this.store.closeTask(taskId)
+    void this.summarize('task', taskId)
   }
 
   /** Restore of a closed work or review (not a canceled one: cancel is final) or topic: back where it was in the list. */
@@ -1415,6 +1419,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     if (!isReview(work)) throw new Error(`${work.key} is not a review of a PR`)
     this.store.updateTask(workId, { status: 'done', needsInput: null, closedAt: Date.now() })
+    void this.summarize('task', workId)
   }
 
   /**
@@ -1710,6 +1715,7 @@ export class Orchestrator {
     for (const r of runs) r.kill()
     this.store.updateTask(taskId, { status: 'canceled', cancelReason: reason, needsInput: null })
     log.info('agent', `${task.key} canceled`, { reason })
+    void this.summarize('task', taskId)
     await Promise.all([...runs.map((r) => r.done), ...sessions.map((s) => this.closeLive(s.id))])
     const steps = subtasksOf(taskId, this.store.data.tasks)
     this.wakeWaiting(steps.map((s) => s.key))
@@ -2172,6 +2178,46 @@ export class Orchestrator {
    */
   async nameUntitled() {
     for (const s of this.store.data.sessions) if (s.role === 'chat' && !s.taskId && s.status !== 'running') await this.nameChat(s)
+  }
+
+  /**
+   * An archived topic, work or review gets a summary (cheap model, no tools, like nameChat) unless the one it has covers
+   * its last item. A failed run or a reply that is not a summary keeps the old one and is logged; the next Close or
+   * start retries. Resolves when the run ends; never rejects.
+   */
+  async summarize(kind: 'topic' | 'task', id: string): Promise<void> {
+    const key = `${kind}:${id}`
+    if (this.summarizing.has(key)) return
+    const { sessions } = this.store.data
+    const item = kind === 'topic' ? sessions.find((s) => s.id === id) : this.store.data.tasks.find((t) => t.id === id)
+    if (!item || !needsSummary(item, sessions)) return
+    const at = summaryCovers(item, sessions)
+    const prompt = summaryPrompt(summarySource(item, sessions, kind === 'task' ? this.store.data.docs[id] : ''))
+    const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.choice(item.projectId, 'chat').agent)
+    const adapter = adapters[agent]
+    this.summarizing.add(key)
+    let text = ''
+    let failed = false
+    try {
+      const handle = adapter.start({ cwd: this.paths.runsDir, prompt, model: adapter.cheapModel, noTools: true }, (e) => {
+        if (e.type === 'message') text += e.text
+        else if (e.type === 'error' || (e.type === 'turn.done' && !e.ok)) failed = true
+      })
+      await handle.done
+      const summary = failed ? null : parseSummary(text)
+      if (summary) this.store.setSummary(kind, id, summary, at)
+      else log.warn('agent', 'summary failed; the old one stays', { [kind]: id, reply: failed ? '(run failed)' : text.slice(0, 200) })
+    } catch (e) {
+      log.warn('agent', 'summary failed; the old one stays', { [kind]: id, error: String(e) })
+    } finally {
+      this.summarizing.delete(key)
+    }
+  }
+
+  /** At start: archived topics, works and reviews without a summary covering them get one, one after another. */
+  async summarizeArchived() {
+    for (const s of this.store.data.sessions) if (needsSummary(s, this.store.data.sessions)) await this.summarize('topic', s.id)
+    for (const t of this.store.data.tasks) if (needsSummary(t, this.store.data.sessions)) await this.summarize('task', t.id)
   }
 
   /** Task sessions only: project chats stay out of the log. */
