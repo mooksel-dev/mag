@@ -94,3 +94,13 @@ test('buildArgs: system prompt and MCP servers become TOML -c overrides', () => 
   assert.ok(c.includes('mcp_servers.mag.args=["/x/task \\"mcp\\".js"]'))
   assert.ok(c.includes('mcp_servers.mag.env={"MAG_TASK_ID" = "t 1"}'))
 })
+
+test('buildArgs: a read-only run gets the read-only sandbox without network, even with Bash (prompts-use-the-models-to.2)', () => {
+  const fresh = buildArgs({ cwd: '/repo', prompt: 'p', addDirs: ['/a'], allowedTools: ['Read', 'Bash', 'WebSearch'], readOnly: true })
+  assert.deepEqual(values(fresh, '-s'), ['read-only'])
+  assert.ok(!fresh.includes('--add-dir'))
+  assert.ok(!values(fresh, '-c').includes('sandbox_workspace_write.network_access=true'))
+  const resumed = values(buildArgs({ cwd: '/repo', prompt: 'p', resumeId: 'th-1', allowedTools: ['Bash'], readOnly: true }), '-c')
+  assert.ok(resumed.includes('sandbox_mode="read-only"'))
+  assert.ok(!resumed.includes('sandbox_workspace_write.network_access=true'))
+})

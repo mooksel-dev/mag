@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_CHOICE, DEFAULT_TEMPLATES, TASK_KEY_RE, resolveChoice, rewriteKeys, subtaskKey, type ModelChoice } from './index.ts'
+import { DEFAULT_CHOICE, DEFAULT_TEMPLATES, TASK_KEY_RE, agentAllowed, resolveChoice, rewriteKeys, subtaskKey, type ModelChoice } from './index.ts'
 
 const opus: ModelChoice = { agent: 'claude-code', model: 'opus' }
 const haiku: ModelChoice = { agent: 'claude-code', model: 'haiku' }
@@ -18,6 +18,24 @@ test('reviewer follows developer unless set', () => {
   assert.deepEqual(resolveChoice({ agents: { developer: opus } }, 'reviewer'), opus)
   assert.deepEqual(resolveChoice({ agents: { developer: opus, reviewer: haiku } }, 'reviewer'), haiku)
   assert.deepEqual(resolveChoice({ agents: {} }, 'reviewer'), DEFAULT_CHOICE)
+})
+
+test('Codex never reviews: refused for the reviewer and a PR review, allowed elsewhere (prompts-use-the-models-to.2)', () => {
+  for (const job of ['reviewer', 'pr-review'] as const) {
+    const r = agentAllowed(job, 'codex')
+    assert.equal(r.ok, false)
+    assert.match(r.why, /no deny rules[\s\S]*writing to the PR/)
+    assert.equal(agentAllowed(job, 'claude-code').ok, true)
+  }
+  for (const role of ['chat', 'groomer', 'developer', 'architect'] as const) assert.equal(agentAllowed(role, 'codex').ok, true, role)
+})
+
+test('a Codex developer reviews on Claude Code; a Codex reviewer set by hand is refused the same way', () => {
+  const gpt: ModelChoice = { agent: 'codex', model: 'gpt-6-luna' }
+  assert.deepEqual(resolveChoice({ agents: { developer: gpt } }, 'reviewer'), DEFAULT_CHOICE)
+  assert.deepEqual(resolveChoice({ agents: { developer: opus, reviewer: gpt } }, 'reviewer'), opus)
+  assert.deepEqual(resolveChoice({ agents: { developer: gpt } }, 'developer'), gpt)
+  assert.deepEqual(resolveChoice({ agents: { chat: gpt } }, 'chat'), gpt)
 })
 
 test('TASK_KEY_RE matches task and subtask keys', () => {

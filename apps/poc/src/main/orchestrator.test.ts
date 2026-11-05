@@ -835,10 +835,9 @@ test('review: the first round forks the owner session; changes go to the develop
   // The developer pushed: the end of its run asks for the next round, on the heads GitHub has now.
   ;(orch as unknown as { prHeads: () => Promise<Record<string, string>> }).prHeads = async () => ({ [dir]: 'b2b2b2' })
   live.emit({ type: 'turn.done', ok: true })
-  await tick()
-  await tick()
+  // The round makes its scratch worktree (git) before it starts.
+  await until(() => runs.at(-1) !== first)
   const second = runs.at(-1)!
-  assert.notEqual(second, first)
   assert.equal(second.spec.resumeId, 'fork-1')
   assert.equal(second.spec.forkSession, false)
   assert.match(second.spec.prompt, /round 2\)[\s\S]*addressed:\n- a\.ts:3: no test/)
@@ -924,6 +923,71 @@ test('review: changes past the rounds go to the user (T-55.1)', async () => {
   await tick()
   assert.equal(store.task(step.id).review?.round, 3)
   assert.equal(live.sent.length, sent)
+})
+
+test('review: the reviewer runs in a scratch worktree at the PR head, with the web; the deny list holds; the worktree goes with the run (prompts-use-the-models-to.2)', async () => {
+  const { store, orch, step, project, workDir, dir } = await inReview(true)
+  const app = gitRepo(join(dir, 'repos', 'app'))
+  const head = git(app, 'rev-parse', 'HEAD')
+  store.updateProject(project.id, { repos: [app] })
+  const repo = { repo: app, branch: 'mag/login-1', worktree: join(workDir, 'app'), prUrl: 'https://github.com/o/app/pull/7', prState: 'open' as const }
+  store.updateTask(step.id, { work: { dir: workDir, repos: [repo], feedbackSeenAt: 0 } })
+  await orch.review(step.id, { [app]: head })
+  const run = runs.at(-1)!
+  const scratch = join(run.spec.cwd, 'app')
+  assert.ok(![...store.project(project.id).repos, workDir, repo.worktree].includes(run.spec.cwd), 'never the user\'s checkout or the developer\'s worktree')
+  assert.ok(run.spec.addDirs?.includes(workDir), 'the developer\'s worktrees stay readable')
+  assert.equal(git(scratch, 'rev-parse', 'HEAD'), head)
+  assert.ok(run.spec.prompt.includes(`your scratch worktree ${scratch}`))
+  assert.match(run.spec.prompt, /run a focused test or a script in your scratch worktree/)
+  assert.doesNotMatch(run.spec.prompt, /Run no tests/)
+  for (const t of ['Bash', 'WebSearch', 'WebFetch']) assert.ok(run.spec.allowedTools?.includes(t), t)
+  for (const t of ['Edit', 'Write', 'Bash(gh pr comment:*)', 'Bash(gh pr review:*)', 'Bash(gh api * -X *)', 'Bash(git push:*)', 'Bash(gh pr merge:*)']) assert.ok(run.spec.disallowedTools?.includes(t), t)
+  assert.equal(run.spec.readOnly, true)
+  run.end()
+  await until(() => !existsSync(scratch))
+  assert.ok(!git(app, 'worktree', 'list').includes(scratch))
+})
+
+test('Codex never reviews: a Codex developer\'s PRs are reviewed on Claude Code, said in the review; a PR review on a Codex chat is refused (prompts-use-the-models-to.2)', async () => {
+  const { store, orch, step, project, dir } = await inReview(false)
+  store.updateProject(project.id, { agents: { developer: { agent: 'codex', model: 'gpt-6-luna' } } })
+  await orch.review(step.id, { [dir]: 'a1' })
+  const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
+  assert.equal(reviewer.agent, 'claude-code')
+  assert.equal(runs.at(-1)!.spec.model, undefined, 'Claude Code on its default model')
+  assert.match(reviewer.items.find((i) => i.kind === 'notice')!.text, /Codex can't review[\s\S]*This review runs on Claude Code/)
+  store.updateProject(project.id, { agents: { chat: { agent: 'codex', model: null } } })
+  await assert.rejects(orch.reviewPr(project.id, 'https://github.com/acme/api/pull/4'), /Codex can't review[\s\S]*Pick Claude Code for Project chat/)
+})
+
+test('architect: Bash and the web to check what it reads; no edits and nothing that writes to a PR; read only under Codex (prompts-use-the-models-to.2)', async () => {
+  const { orch, project } = setup()
+  orch.architect(project.id)
+  const spec = runs.at(-1)!.spec
+  for (const t of ['Bash', 'WebSearch', 'WebFetch']) assert.ok(spec.allowedTools?.includes(t), t)
+  assert.ok(!spec.disallowedTools?.includes('Bash'))
+  for (const t of ['Edit', 'Write', 'Bash(gh pr comment:*)', 'Bash(git push:*)', 'Bash(gh pr merge:*)']) assert.ok(spec.disallowedTools?.includes(t), t)
+  assert.equal(spec.readOnly, true)
+  assert.match(spec.appendSystemPrompt ?? '', /Bash is for reading only, because this checkout is the user's/)
+})
+
+test('every role has the web; only the developer may write (prompts-use-the-models-to.2)', async () => {
+  await developing()
+  const dev = specs.at(-1)!
+  for (const t of ['WebSearch', 'WebFetch']) assert.ok(dev.allowedTools?.includes(t), `developer ${t}`)
+  assert.equal(dev.readOnly, undefined)
+  const { store, orch, project, task } = setup()
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'hi')
+  const chatSpec = specs.at(-1)!
+  orch.groom(task.id)
+  await tick()
+  for (const [role, spec] of [['chat', chatSpec], ['groomer', specs.at(-1)!]] as const) {
+    for (const t of ['WebSearch', 'WebFetch']) assert.ok(spec.allowedTools?.includes(t), `${role} ${t}`)
+    assert.equal(spec.readOnly, true, role)
+    assert.equal(spec.cwd, project.repos[0], `${role}: no review, no scratch`)
+  }
 })
 
 test('review: the playbook\'s review section and the step\'s decisions go in every round; its reviewRounds limits the changes (T-55.2)', async () => {
@@ -1316,7 +1380,13 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.ok(store.project(project.id).repos.includes(remote))
     const local = store.task(work.id).prReview!
     assert.deepEqual([local.pr.repo, local.pr.outside, shownResult(local)!.head], [remote, undefined, head])
-    assert.match(opened.at(-1)!.sent.at(-1)!, /Its code is in .*remote, the main checkout[\s\S]*New commits since: review only what changed after \w+ \(git diff /)
+    const job = opened.at(-1)!.sent.at(-1)!
+    assert.match(job, /Its repository is .*remote, the user's main checkout[\s\S]*New commits since: review only what changed after \w+ \(git diff /)
+    // Its own checkout now: a scratch worktree at the PR's head to run focused tests in, never the user's checkout.
+    const scratch = job.match(/The code at the PR's head is in (\S+)\.\n/)![1]
+    assert.ok(!store.project(project.id).repos.includes(scratch))
+    assert.equal(git(scratch, 'rev-parse', 'HEAD'), next)
+    assert.match(job, /run a focused test or a script in .*scratch/)
   } finally {
     gh.restore()
     delete process.env.GIT_SSH_COMMAND

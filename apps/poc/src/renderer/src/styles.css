@@ -518,6 +518,7 @@ button.iconbtn { flex: none; position: relative; width: 28px; height: 28px; padd
 button.iconbtn:not(:disabled):hover { background: var(--hover); color: var(--text); }
 .agentroles { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 6px 8px; align-items: center; }
 .agentrole { display: contents; }
+.agentnote { grid-column: 1 / -1; margin: -2px 0 4px; }
 
 /* messages */
 .msg.agent { white-space: normal; }

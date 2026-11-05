@@ -96,10 +96,10 @@ export const DEFAULT_PLAYBOOK: Playbook = {
 - Concise is not agreeable: short answers, with your view in them.
 - Reviewing: be the skeptic. Say merge only when you would merge it yourself.`,
   plan: `1. Gather what there is: the work and its tickets (read every ticket, as the tracker section says), the relevant
-   code in the project repos (read-only), docs and earlier decisions.
+   code in the project repos (read-only), docs, the web and earlier decisions.
 2. Write the doc with update_doc following docTemplate. Be concise: short sentences, no filler.
 3. Problem check. Restate the problem in one or two sentences. Look for evidence that it is real: the code path, the
-   ticket, logs, a reproduction from reading the code. Call out a wrong framing ("the brief asks for X, but the cause
+   ticket, logs, a reproduction. Call out a wrong framing ("the brief asks for X, but the cause
    is Y"). Write the result in §Problem with the evidence. If the problem is not real, write why in §Problem,
    recommend canceling and call set_needs_input.
 4. Options. List every sensible way to fix it. Don't limit the count and don't force a fast/right split: options may be
@@ -149,7 +149,8 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
 4. At the end, append to §Progress in the doc (update_doc): what was done in the step and what changed against the plan.
 Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
 what and where.`,
-  review: `1. Read the PRs with gh pr view and gh pr diff, and the code in the worktrees.
+  review: `1. Read the PRs with gh pr view and gh pr diff, and the code in your scratch worktrees; run a focused test there
+   when reading leaves a doubt.
 2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
 3. Answer the review's questions in a report (set_review), as the report below says. Direction is the approved plan:
    its decision and the chosen option (pr: true; the rejected ones from §Options), cited as yours from §Decisions;
@@ -181,8 +182,9 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
    fail, a failed one citing the offending edges or lines.
 7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code below;
    each with level, kind, mechanism and where.
-8. CI: gh pr checks. Tests are CI's, never run them. mag reads the checks too: a failing one makes the verdict
-   request_changes with its blocker attached; say what a failure means for the change, and the pending ones.
+8. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
+   says. mag reads the checks too: a failing one makes the verdict request_changes with its blocker attached; say what
+   a failure means for the change, and the pending ones.
 9. Record it with set_pr_review: problem, approach (how the PR solves the problem and whether it does, in a few lines)
    and the report, as the report below says.
 10. The direction is the user's call: argue its options with them when they ask, and once they decide, record it with
@@ -209,7 +211,8 @@ have done it: no diagram of your own design and no list of differences from it.
    - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests, and the checks
      of the code below.
    Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
-6. CI: gh pr checks. Tests are CI's, never run them. A failing check is a blocker with its link; pending ones are said.
+6. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
+   says. A failing check is a blocker with its link; pending ones are said.
 7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
    question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
    diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and

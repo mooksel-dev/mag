@@ -726,9 +726,24 @@ export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'arc
 
 export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null }
 
+/** A run that reviews: a step's reviewer, or a topic's review of a teammate's PR (it runs on the chat's choice). */
+export type AgentJob = AgentRole | 'pr-review'
+
+/**
+ * Whether `agent` may run `job`. Codex has no deny rules, only a sandbox: with the network `gh` needs, nothing would
+ * stop it writing to a PR, so it never runs a review (prompts-use-the-models-to, Decisions).
+ */
+export function agentAllowed(job: AgentJob, agent: AgentKind): { ok: boolean; why: string } {
+  if (agent === 'codex' && (job === 'reviewer' || job === 'pr-review'))
+    return { ok: false, why: "Codex can't review in mag: it has no deny rules, so with the network gh needs nothing would stop it writing to the PR." }
+  return { ok: true, why: '' }
+}
+
+/** The reviewer follows the developer, unless that agent may not review: then Claude Code (see agentAllowed). */
 export function resolveChoice(project: Pick<Project, 'agents'>, role: AgentRole): ModelChoice {
   const agents = project.agents ?? {}
-  return agents[role] ?? (role === 'reviewer' ? agents.developer : undefined) ?? DEFAULT_CHOICE
+  const choices = role === 'reviewer' ? [agents.reviewer, agents.developer] : [agents[role]]
+  return choices.find((c) => c && agentAllowed(role, c.agent).ok) ?? DEFAULT_CHOICE
 }
 
 /** off = hidden from the agent, ask = each call waits for the user, auto = allowed. */

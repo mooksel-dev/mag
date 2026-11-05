@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parsePrUrl, type Mergeable, type PostReview, type PrDetails, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
@@ -37,6 +37,24 @@ export async function prepareWorktree(repo: string, base: string, branch: string
 
 export async function removeWorktree(repo: string, dir: string) {
   await ok(run('git', ['worktree', 'remove', '--force', dir], repo))
+}
+
+/**
+ * A detached worktree of `repo` at `ref` in `dir`, for a review run to try things in (prompts-use-the-models-to.2):
+ * kept as it is when it is at `ref` already, moved there when it is not, made anew when it is no worktree.
+ */
+export async function scratchWorktree(repo: string, ref: string, dir: string) {
+  const sha = await run('git', ['rev-parse', '--verify', `${ref}^{commit}`], repo)
+  // A dir without its own .git is no worktree: git would act on whatever repository holds it.
+  if (existsSync(join(dir, '.git'))) {
+    if ((await run('git', ['rev-parse', 'HEAD'], dir).catch(() => '')) === sha) return
+    if (await ok(run('git', ['checkout', '--detach', '--force', sha], dir))) return
+  }
+  await removeWorktree(repo, dir)
+  rmSync(dir, { recursive: true, force: true })
+  await ok(run('git', ['worktree', 'prune'], repo))
+  mkdirSync(dirname(dir), { recursive: true })
+  await run('git', ['worktree', 'add', '--detach', dir, sha], repo)
 }
 
 /** Uncommitted files of a checkout (untracked ones too), as git status names them. */
