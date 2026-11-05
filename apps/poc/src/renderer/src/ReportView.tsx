@@ -1,6 +1,11 @@
 import { useId, useState, type ReactNode } from 'react'
 import {
   CHECKS_LABELS,
+  choiceLine,
+  decisionNote,
+  directionReferences,
+  type DirectionChoice,
+  type DirectionDecision,
   reportCards,
   reportChanges,
   reportStrip,
@@ -47,16 +52,68 @@ function ClaimLine({ claim, onView, children }: { claim: Claim; onView: (canvasI
   )
 }
 
+/** The user's buttons on a PR's direction card (review-v2-questions-first-direction.2). */
+export interface DirectionActions {
+  decide: (decision: { choice: DirectionChoice; option?: string; principle?: string }) => void
+  discuss: () => void
+  /** The review's topic is in a turn, or a call is on its way. */
+  busy: boolean
+}
+
+/**
+ * Discuss with agent first (the topic argues the options with the user), then the call: Direction OK, Prefer an option
+ * other than the PR's, Ask the author; the principle in the user's words goes with it.
+ */
+function DirectionButtons({ report, actions }: { report: ReviewReport; actions: DirectionActions }) {
+  const [principle, setPrinciple] = useState('')
+  const decide = (choice: DirectionChoice, option?: string) => actions.decide({ choice, ...(option ? { option } : {}), ...(principle.trim() ? { principle: principle.trim() } : {}) })
+  return (
+    <div className="directionbuttons">
+      <div className="taskrow">
+        <button className="primary" disabled={actions.busy} title="The review's agent argues the options with you beside this page, then records your call" onClick={actions.discuss}>Discuss with agent</button>
+        <button disabled={actions.busy} title="The PR's direction is fine" onClick={() => decide('ok')}>Direction OK</button>
+        {report.direction.options.filter((o) => !o.pr).map((o) => (
+          <button key={o.name} disabled={actions.busy} title={`Prefer ${o.name}: findings fold, and a comment to the author is drafted`} onClick={() => decide('prefer', o.name)}>Prefer {o.name}</button>
+        ))}
+        <button disabled={actions.busy} title="Ask the author first: questions to the author are drafted" onClick={() => decide('discuss')}>Ask the author</button>
+      </div>
+      <input className="grow" value={principle} onChange={(e) => setPrinciple(e.target.value)} placeholder="The principle behind your call, in your words (optional)" aria-label="Principle" />
+    </div>
+  )
+}
+
+/** The user's call once made, and the comment to the author it drafted. */
+function Decided({ decided, draft }: { decided: DirectionDecision; draft?: string }) {
+  return (
+    <div className="decided">
+      <div><span className="badge src-yours">yours</span> <b>{choiceLine(decided)}</b>{decided.principle && <span className="muted"> · {decided.principle}</span>}</div>
+      {draft && (
+        <div className="draft">
+          <div className="cardhead">
+            <span className="muted small">Draft to the author</span>
+            <button className="link small" title="Copy the draft" onClick={() => void navigator.clipboard.writeText(draft)}>copy</button>
+          </div>
+          <pre className="small">{draft}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * The review report (review-v2-questions-first-direction.1), as the mockup: verdict strip → direction card → question
  * cards → changes table. The evidence views, the inventory and the rest go below it (`children`); a claim's view opens
  * its diagram there (`onView`).
  */
-export function ReportView({ report, fact, kind, onView, children }: {
+export function ReportView({ report, fact, kind, onView, decisions, direction, children }: {
   report: ReviewReport
   fact: Pick<StepFact, 'counts'> | null | undefined
   kind: ReportKind
   onView: (canvasId: string) => void
+  /** The project's direction decisions: references citing one show it, as yours. */
+  decisions?: DirectionDecision[]
+  /** The direction buttons; without them (a step's review: the approved plan) the card is read only. */
+  direction?: DirectionActions
   children?: ReactNode
 }) {
   const [routineOpen, setRoutineOpen] = useState(false)
@@ -80,7 +137,7 @@ export function ReportView({ report, fact, kind, onView, children }: {
       <section id={cardId('direction')} className="reportcard direction">
         <div className="cardhead">
           <h2>Direction</h2>
-          <span className="pill violet">{kind === 'pr' ? 'Direction: your call' : 'The approved plan'}</span>
+          <span className="pill violet">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</span>
         </div>
         {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} />)}
         {d.options.length > 0 && (
@@ -96,7 +153,13 @@ export function ReportView({ report, fact, kind, onView, children }: {
         {d.facts.length > 0 && <h3>Facts</h3>}
         {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} />)}
         {d.references.length > 0 && <h3>References</h3>}
-        {d.references.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} />)}
+        {directionReferences(report, decisions).map((r, i) => (
+          <ClaimLine key={i} claim={r.claim} onView={onView}>
+            {r.decisions.map((x) => <div key={x.id} className="small muted">Your decision: {decisionNote(x).slice(2)}</div>)}
+          </ClaimLine>
+        ))}
+        {kind === 'pr' && report.decided && <Decided decided={report.decided} draft={report.draft} />}
+        {kind === 'pr' && direction && <DirectionButtons report={report} actions={direction} />}
       </section>
 
       {reportCards(report).map((card) => (

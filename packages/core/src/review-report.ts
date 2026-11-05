@@ -105,6 +105,35 @@ export interface ReviewReport {
   /** In order of importance; the routine row last. */
   changes: ReportChange[]
   checks: ChecksVerdict
+  /** The user's call on the direction of this review (review-v2-questions-first-direction.2); a PR's review only. */
+  decided?: DirectionDecision
+  /** The comment to the author drafted with the call: the preferred option (prefer) or questions (discuss). */
+  draft?: string
+}
+
+/** The user's call on a direction: it is fine, another option is better, or the author is asked first. */
+export type DirectionChoice = 'ok' | 'prefer' | 'discuss'
+export const DIRECTION_CHOICES: DirectionChoice[] = ['ok', 'prefer', 'discuss']
+export const DIRECTION_CHOICE_LABELS: Record<DirectionChoice, string> = { ok: 'Direction OK', prefer: 'Prefer', discuss: 'Ask the author' }
+
+/**
+ * The user's call on the direction of a reviewed PR (review-v2-questions-first-direction.2): on the review's report and in
+ * the project's list, so later reviews and plans cite it (decision:<id>) as the user's own.
+ */
+export interface DirectionDecision {
+  id: string
+  /** The review (task id) it was made on. */
+  reviewId: string
+  /** The PR's link. */
+  pr: string
+  /** The design decision the PR makes, one sentence (the report's direction.decisions). */
+  decision: string
+  choice: DirectionChoice
+  /** With prefer: the option the user prefers, by name. */
+  option?: string
+  /** The principle behind it, in the user's words, when they gave one. */
+  principle?: string
+  at: number
 }
 
 /** Which review a report is of: a step's (direction is the approved plan) or a teammate's PR (direction is the user's call). */
@@ -318,7 +347,7 @@ export function reportStrip(report: ReviewReport, fact: Pick<StepFact, 'counts'>
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
   const gaps = fact ? fact.counts.unaccounted + fact.counts.ungrounded : null
   return [
-    { key: 'direction', label: 'Direction', value: kind === 'pr' ? 'your call' : 'the approved plan', tone: 'neutral' },
+    { key: 'direction', label: 'Direction', value: kind === 'step' ? 'the approved plan' : report.decided ? choiceLine(report.decided) : 'your call', tone: report.decided?.choice === 'prefer' ? 'bad' : report.decided?.choice === 'discuss' ? 'warn' : report.decided ? 'good' : 'neutral' },
     {
       key: 'problem',
       label: 'Problem',
@@ -341,9 +370,9 @@ export function reportChanges(report: Pick<ReviewReport, 'changes'>): { rows: Re
   return { rows: report.changes.filter((c) => !c.routine), routine: report.changes.find((c) => c.routine) ?? null }
 }
 
-/** "Request changes · Direction: your call", the line of a ready review. */
-export function reportLine(report: Pick<ReviewReport, 'checks'>, kind: ReportKind = 'pr'): string {
-  return `${CHECKS_LABELS[report.checks]}${kind === 'pr' ? ' · Direction: your call' : ''}`
+/** "Request changes · Direction: your call" (or the user's call once made: "Direction: Prefer X"), the line of a ready review. */
+export function reportLine(report: Pick<ReviewReport, 'checks' | 'decided'>, kind: ReportKind = 'pr'): string {
+  return `${CHECKS_LABELS[report.checks]}${kind === 'pr' ? ` · Direction: ${report.decided ? choiceLine(report.decided).replace(/^Direction /, '') : 'your call'}` : ''}`
 }
 
 export type Tone = StripChip['tone']
@@ -367,6 +396,92 @@ export interface ReportCard {
 
 const CRITERION_TONES: Record<CriterionStatus, Tone> = { solved: 'good', partly: 'warn', not: 'bad' }
 const RISK_TONES: Record<RiskLevel, Tone> = { high: 'bad', medium: 'warn', low: 'neutral' }
+
+/** The design decision(s) of a report as one line: what a direction decision is about. */
+export function reportDecision(report: Pick<ReviewReport, 'direction'>): string {
+  return report.direction.decisions.map((c) => c.text.replace(/\.$/, '')).join('; ')
+}
+
+/** What the call says, in a few words: "Direction OK", "Prefer <option>", "Ask the author". */
+export function choiceLine(d: Pick<DirectionDecision, 'choice' | 'option'>): string {
+  return d.choice === 'prefer' ? `Prefer ${d.option}` : DIRECTION_CHOICE_LABELS[d.choice]
+}
+
+/** The line a direction decision appends to the project's notes: "- Direction <PR>: <decision> → Prefer X (principle)". */
+export function decisionNote(d: DirectionDecision): string {
+  return `- Direction ${d.pr}: ${d.decision} → ${choiceLine(d)}${d.principle ? ` (${d.principle})` : ''}`
+}
+
+/**
+ * The user's earlier direction decisions for a reviewer's prompt, newest first (at most `max`), each with the id it is
+ * cited by; empty without any.
+ */
+export function decisionsBlock(decisions: DirectionDecision[] | undefined, max = 20): string {
+  const list = [...(decisions ?? [])].sort((a, b) => b.at - a.at).slice(0, max)
+  if (!list.length) return ''
+  return `The user's earlier direction decisions (newest first). Where one bears on this change's direction, put it in direction.references with source yours, citing decision:<id>:
+${list.map((d) => `- decision:${d.id}: ${d.pr}: ${d.decision} → ${choiceLine(d)}${d.principle ? `; principle: ${d.principle}` : ''}`).join('\n')}`
+}
+
+const DECISION_CITE = /^decision:(\S+)$/
+
+/** The decision:<id> cites of a report that name no decision of the project. */
+export function unknownDecisions(report: ReviewReport, decisions: DirectionDecision[] | undefined): string[] {
+  const ids = new Set((decisions ?? []).map((d) => d.id))
+  return reportClaims(report)
+    .flatMap(({ claim }) => claim.cites)
+    .flatMap((c) => DECISION_CITE.exec(c)?.[1] ?? [])
+    .filter((id) => !ids.has(id))
+}
+
+/** A reference of the direction card with the user's earlier decisions it cites. */
+export interface DirectionReference {
+  claim: Claim
+  decisions: DirectionDecision[]
+}
+
+/** The direction's references, those citing an earlier decision of the user (decision:<id>) as yours, with it. */
+export function directionReferences(report: Pick<ReviewReport, 'direction'>, decisions: DirectionDecision[] | undefined): DirectionReference[] {
+  const byId = new Map((decisions ?? []).map((d) => [d.id, d]))
+  return report.direction.references.map((claim) => {
+    const cited = claim.cites.flatMap((c) => byId.get(DECISION_CITE.exec(c)?.[1] ?? '') ?? [])
+    return { claim: cited.length ? { ...claim, source: 'yours' } : claim, decisions: cited }
+  })
+}
+
+/**
+ * The comment to the author a call drafts when the agent did not word one: prefer, the option with its trade-offs against
+ * the PR's; discuss, the report's open questions and why this option over the others. Empty for ok.
+ */
+export function directionDraft(report: Pick<ReviewReport, 'direction' | 'questions'>, d: Pick<DirectionDecision, 'choice' | 'option' | 'principle'>): string {
+  const own = report.direction.options.find((o) => o.pr)
+  const why = d.principle ? `\n\n${d.principle}` : ''
+  if (d.choice === 'prefer') {
+    const o = report.direction.options.find((x) => x.name === d.option)
+    return `I'd rather go with ${d.option} than ${own?.name ?? 'the approach here'}${o ? `: ${o.tradeoffs}` : ''}.${why}`
+  }
+  if (d.choice === 'discuss') {
+    const others = report.direction.options.filter((o) => !o.pr).map((o) => o.name)
+    const asks = [...(own && others.length ? [`Why ${own.name} over ${others.join(' or ')}?`] : []), ...report.questions.map((q) => q.text)]
+    return `${asks.map((q) => `- ${q}`).join('\n')}${why}`
+  }
+  return ''
+}
+
+/** The direction card as text: what the review's topic gets when the user wants to discuss the direction. */
+export function directionCardText(report: Pick<ReviewReport, 'direction'>, decisions: DirectionDecision[] | undefined): string {
+  const d = report.direction
+  const claim = (c: Claim) => `- [${c.source}] ${c.text}${c.cites.length ? ` (${c.cites.join(', ')})` : ''}`
+  const refs = directionReferences(report, decisions).map((r) => `${claim(r.claim)}${r.decisions.map((x) => `\n  earlier: ${decisionNote(x).slice(2)}`).join('')}`)
+  return [
+    `Decision${d.decisions.length > 1 ? 's' : ''}:\n${d.decisions.map(claim).join('\n')}`,
+    `Options:\n${d.options.map((o) => `- ${o.name}${o.pr ? " (the PR's)" : ''}: ${o.tradeoffs}`).join('\n')}`,
+    d.facts.length ? `Facts:\n${d.facts.map(claim).join('\n')}` : '',
+    refs.length ? `References:\n${refs.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
 
 /** The question cards of a report; a failed rule and the worst risks first within their card. */
 export function reportCards(report: ReviewReport): ReportCard[] {

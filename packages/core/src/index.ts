@@ -7,7 +7,7 @@ import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReadyText, reviewState, type FindingLevel, type PrReview } from './pr-review.ts'
-import type { ReviewReport } from './review-report.ts'
+import type { DirectionDecision, ReviewReport } from './review-report.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -67,6 +67,11 @@ export interface Project {
   color?: string | null
   /** The repositories the last Start worked on locally (the Start popup's last choice): its default next time. */
   lastLocalRepos?: string[]
+  /**
+   * The user's calls on the direction of reviewed PRs (review-v2-questions-first-direction.2), oldest first; each also
+   * appends one line to notes. Missing = none.
+   */
+  directionDecisions?: DirectionDecision[]
   createdAt: number
 }
 

@@ -578,6 +578,22 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'decide_direction',
+    scope: 'task',
+    description:
+      "The topic that owns a review of a teammate's PR: record the user's call on the direction of its report, once they made it here (after you argued the options with them): ok (the direction is fine), prefer (another option; option: its name as the report has it), or discuss (ask the author first). mag records it on the review, in the project's direction decisions and as one line of its notes; later reviews cite it as the user's. Only the user decides: never call it on your own judgement. Nothing goes to GitHub.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        choice: { type: 'string', enum: ['ok', 'prefer', 'discuss'] },
+        option: { type: 'string', description: "With prefer: the option's name, one of the report's options other than the PR's." },
+        principle: { type: 'string', description: "The principle behind the call in the user's words, when they gave one; one line." },
+        draft: { type: 'string', description: 'With prefer or discuss: the comment to the author, as worded with the user here (markdown). Without it mag drafts one from the report.' },
+      },
+      required: ['choice'],
+    },
+  },
+  {
     name: 'review_pr',
     scope: 'project',
     description:
@@ -862,7 +878,7 @@ export const APPROVE_TOOL = 'mcp__mag__approve_tool'
  * reviews a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2). In a
  * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
  */
-export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_inventory', 'set_pr_review'] as const
+export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_inventory', 'set_pr_review', 'decide_direction'] as const
 
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 
