@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, PRECEDENCE, contextBlocks, docDecisions, playbookOf, storedPlaybook } from './index.ts'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, DEVELOPER_BAR, PRECEDENCE, contextBlocks, docDecisions, playbookOf, storedPlaybook } from './index.ts'
 
 test('playbookOf: own sections win, empty or missing ones and bad rounds fall back to the default', () => {
   assert.deepEqual(playbookOf({}), DEFAULT_PLAYBOOK)
@@ -91,4 +91,14 @@ test('prReviewV1: the v1 review text is its own section, editable like the other
   assert.match(DEFAULT_PLAYBOOK.prReview, /decide_direction/)
   assert.equal(playbookOf({ playbook: { prReviewV1: 'ours' } }).prReviewV1, 'ours')
   assert.deepEqual(storedPlaybook({ ...DEFAULT_PLAYBOOK, prReviewV1: 'ours' }), { prReviewV1: 'ours' })
+})
+
+test('developer bar: the reviewer\'s code checks from the same constant, the deviation rule and the quality bar (prompts-use-the-models-to.3)', () => {
+  assert.ok(DEVELOPER_BAR.includes(CODE_CHECKS))
+  assert.ok(DEFAULT_PLAYBOOK.review.includes(CODE_CHECKS) && DEFAULT_PLAYBOOK.prReview.includes(CODE_CHECKS), 'the same checks the reviews apply')
+  assert.match(DEVELOPER_BAR, /State\s+each deviation and why in §Progress and in the PR body/)
+  assert.match(DEVELOPER_BAR, /correct for every valid input/)
+  assert.match(DEVELOPER_BAR, /Never weaken, skip or delete a test/)
+  assert.match(DEVELOPER_BAR, /Done means[\s\S]*acceptance/)
+  assert.doesNotMatch(DEVELOPER_BAR, /\b[A-Z]{4,}\b/, 'no ALL-CAPS emphasis')
 })

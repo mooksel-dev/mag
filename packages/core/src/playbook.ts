@@ -47,7 +47,7 @@ export interface Playbook {
  * Decision 13; the lesson of duff-brewery#297, where GetContent got a signing ceremony id and an upsert had no unique
  * index): shared by the review of a step and of a teammate's PR.
  */
-const CODE_CHECKS = `Checks of the code, each a finding when it fails:
+export const CODE_CHECKS = `Checks of the code, each a finding when it fails:
 - The contract of every new or changed call: its arguments match the signature and the documentation of what it
   calls (which id exactly, which units, what nil or empty means). Read the callee; a name alike is no proof.
 - Data: every upsert, ensure or "create if missing" rests on a unique index on its key (else two concurrent calls
@@ -55,6 +55,25 @@ const CODE_CHECKS = `Checks of the code, each a finding when it fails:
   points at is that entity's).
 - Read but unused: a value read and checked, then not used (a sign of a mixed-up argument, e.g. a document found by
   one id, its content read by another).`
+
+/**
+ * How a developer's work is judged (prompts-use-the-models-to.3, audit F8): the quality bar, the reviewer's checks of
+ * the code (the same constant, never a copy) and the deviation rule, so the developer meets them before a review round
+ * is spent on them. mag's frame, not the playbook: it states what mag and the reviewer do.
+ */
+export const DEVELOPER_BAR = `How your work is judged: a reviewer agent reads your PRs before the user does, and each thing it has to send back
+costs a review round. Meet the bar in your own review first.
+- Done means the plan's part for this work and the doc's acceptance hold, not that the code compiles. The code is
+  correct for every valid input, edge cases included: handle the ones the ticket and the plan imply instead of leaving
+  them to the review.
+- Tests show the behaviour works. Never weaken, skip or delete a test to make it pass; a test that is itself wrong is
+  fixed with the reason in the PR body.
+- The reviewer applies these checks of the code; apply them to your diff too.
+${CODE_CHECKS}
+- Deviations: mag and the reviewer compare your PRs with the plan and its diagrams. A planned change done otherwise or
+  not done, or a module, entity or dependency the plan lacks, keeps the PR from merge until the user accepts it. State
+  each deviation and why in §Progress and in the PR body, so it can be accepted rather than guessed at. A deviation
+  that changes what was decided is a question before it is code.`
 
 /**
  * The report every review records (review-v2-questions-first-direction.1): fixed questions, claims with sources,

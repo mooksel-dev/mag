@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, shownResult, type AgentEvent, type PrReview } from '@mag/core'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, shownResult, type AgentEvent, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -368,6 +368,19 @@ test('stance: the playbook\'s stance goes into the groomer, step developer and p
   assert.ok(!dev.includes(DEFAULT_PLAYBOOK.stance))
   await orch.send(orch.newChat(project.id), 'hi')
   assert.ok(specs.at(-1)!.appendSystemPrompt!.includes('OUR STANCE'))
+})
+
+test('step developer prompt: how it is judged, the code checks and the deviation rule after the playbook\'s step, also with a project\'s own step (prompts-use-the-models-to.3)', async () => {
+  const { store, orch, project, task } = setup()
+  store.updateProject(project.id, { playbook: { step: 'OUR STEP', review: 'OUR REVIEW' } })
+  store.updateTask(task.id, { status: 'ready' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const dev = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(dev.includes(DEVELOPER_BAR))
+  assert.ok(dev.includes(CODE_CHECKS), 'mag\'s checks even when the project rewrote its review')
+  assert.match(dev, /State\s+each deviation and why in §Progress and in the PR body/)
+  assert.ok(dev.indexOf('OUR STEP') < dev.indexOf(DEVELOPER_BAR), 'the bar follows the playbook\'s step')
 })
 
 test('playbook: a project\'s own section replaces the default in the prompt; the rest stays default (T-55.2)', async () => {
