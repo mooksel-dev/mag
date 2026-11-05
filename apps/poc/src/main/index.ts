@@ -112,7 +112,12 @@ app.whenReady().then(async () => {
     logsDir,
   })
   app.on('will-quit', () => orch.shutdown())
-  void orch.nameUntitled().catch((e) => log.warn('agent', 'naming untitled topics failed', e))
+  // Naming first, then the archive's summaries: one cheap run at a time.
+  void orch
+    .nameUntitled()
+    .catch((e) => log.warn('agent', 'naming untitled topics failed', e))
+    .then(() => orch.summarizeArchived())
+    .catch((e) => log.warn('agent', 'summarizing the archive failed', e))
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)

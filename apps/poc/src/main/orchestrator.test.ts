@@ -580,6 +580,96 @@ test('closeWork / closeReview / restore: a done work and a review close with all
   assert.equal(store.session(topic).closedAt, null)
 })
 
+const SUMMARY = { title: 'Login token', gist: ['The token expired early'], decisions: ['Rotate tokens'], open: [], keywords: ['auth.ts'] }
+/** The last one-off run answers `text` and ends. */
+async function answer(text: string, ok = true) {
+  const run = runs.at(-1)!
+  run.emit({ type: 'message', text })
+  run.emit({ type: 'turn.done', ok })
+  run.end()
+  await tick()
+}
+
+test('summarize on Close: a closed topic gets a summary with the cheap model and no tools; a second Close without new items does not rerun', async () => {
+  const { store, orch, project } = setup()
+  const id = orch.newChat(project.id)
+  store.session(id).items.push({ kind: 'user', text: 'Why does login fail?', at: 10 }, { kind: 'assistant', text: 'The token expires early.', at: 12 })
+  const before = runs.length
+  await orch.closeChat(id)
+  assert.equal(runs.length, before + 1)
+  const spec = runs.at(-1)!.spec
+  assert.deepEqual([spec.model, spec.noTools], [adapters['claude-code'].cheapModel, true])
+  assert.match(spec.prompt, /User: Why does login fail\?/)
+  await answer(JSON.stringify(SUMMARY))
+  assert.deepEqual([store.session(id).summary, store.session(id).summaryAt], [SUMMARY, 12])
+  assert.equal(store.session(id).title !== SUMMARY.title, true, 'the summary title does not rename the topic')
+
+  orch.restore('topic', id)
+  await orch.closeChat(id)
+  assert.equal(runs.length, before + 1, 'nothing new since the summary')
+
+  orch.restore('topic', id)
+  store.session(id).items.push({ kind: 'user', text: 'And refresh?', at: 20 })
+  await orch.closeChat(id)
+  assert.equal(runs.length, before + 2)
+  await answer('not json')
+  assert.deepEqual([store.session(id).summary, store.session(id).summaryAt], [SUMMARY, 12], 'a bad reply keeps the old summary')
+})
+
+test('summarize on Close: a done work, a review and a canceled work get one from their doc and owner topic; a failed run keeps none', async () => {
+  const { store, orch, project, task } = setup()
+  const topic = orch.newChat(project.id)
+  store.session(topic).items.push({ kind: 'user', text: 'Plan the login fix', at: 30 })
+  store.updateTask(task.id, { status: 'done', ownerSessionId: topic })
+  store.data.docs[task.id] = '# Plan\nRotate tokens'
+  const before = runs.length
+  orch.closeWork(task.id)
+  assert.equal(runs.length, before + 1)
+  assert.ok(runs.at(-1)!.spec.prompt.includes('Rotate tokens') && runs.at(-1)!.spec.prompt.includes('Plan the login fix'))
+  await answer(JSON.stringify(SUMMARY))
+  assert.deepEqual([store.task(task.id).summary, store.task(task.id).summaryAt], [SUMMARY, 30])
+
+  const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
+  orch.closeReview(review.id)
+  assert.equal(runs.length, before + 2)
+  await answer('', false)
+  assert.equal(store.task(review.id).summary ?? null, null)
+
+  const gone = store.createTask({ projectId: project.id, title: 'g', type: 'dev', description: '' })
+  await orch.cancel(gone.id, 'nope')
+  assert.equal(runs.length, before + 3)
+  assert.match(runs.at(-1)!.spec.prompt, /Work .*: g/)
+  await answer(JSON.stringify(SUMMARY))
+  assert.deepEqual(store.task(gone.id).summary, SUMMARY)
+})
+
+test('summarizeArchived: closed topics and works without a fresh summary get one at start, one after another; open and fresh ones not', async () => {
+  const { store, orch, project, task } = setup()
+  const chat = (text: string) => {
+    const s = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: text })
+    s.items.push({ kind: 'user', text, at: 10 }, { kind: 'assistant', text: 'ok', at: 11 })
+    return s
+  }
+  const old = chat('old closed topic')
+  old.closedAt = 50
+  const fresh = chat('fresh closed topic')
+  Object.assign(fresh, { closedAt: 50, summary: SUMMARY, summaryAt: 11 })
+  chat('open topic')
+  store.updateTask(task.id, { status: 'done', closedAt: 60 })
+  const before = runs.length
+  const done = orch.summarizeArchived()
+  await tick()
+  assert.equal(runs.length, before + 1, 'one run at a time')
+  assert.match(runs.at(-1)!.spec.prompt, /old closed topic/)
+  await answer(JSON.stringify(SUMMARY))
+  await until(() => runs.length === before + 2)
+  assert.match(runs.at(-1)!.spec.prompt, /Work .*: Login/)
+  await answer(JSON.stringify(SUMMARY))
+  await done
+  assert.equal(runs.length, before + 2)
+  assert.deepEqual([store.session(old.id).summaryAt, store.task(task.id).summary], [11, SUMMARY])
+})
+
 test('reopen of a closed done work clears its closed mark', () => {
   const { store, orch, project, task } = setup()
   store.updateTask(task.id, { status: 'done' })

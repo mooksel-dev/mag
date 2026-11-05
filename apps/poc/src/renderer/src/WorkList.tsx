@@ -60,7 +60,7 @@ type Drop = { groupId: string | null; before: string | null }
  * The sidebar in the user's order (redesign-start-screen-big-composer.2, decision 9): the project switcher, ＋ New
  * (Home), search (⌘K) and filters, then one list laid out by core sidebarRows from project.sidebar. Nothing re-sorts:
  * rows and groups move only by drag & drop, a new item shows on top; status is a badge; filters and search only hide;
- * closed items are under Closed at the bottom. Groups are the user's (create, rename, collapse, delete, + starts something
+ * closed items are under Archive at the bottom. Groups are the user's (create, rename, collapse, delete, + starts something
  * in one). Each row has a ⋯ menu, also on right-click.
  */
 export function WorkList({ project, state, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage }: {
@@ -229,7 +229,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         {sidebar.closed.length > 0 && (
           <div className="wlclosed">
             <button className="wlfold" aria-expanded={showClosed || searching} onClick={() => setShowClosed((d) => !d)}>
-              {showClosed || searching ? '▾' : '▸'} Closed · {sidebar.closed.length}
+              {showClosed || searching ? '▾' : '▸'} Archive · {sidebar.closed.length}
             </button>
             {(showClosed || searching) && sidebar.closed.map((c) => row(c, null))}
           </div>
