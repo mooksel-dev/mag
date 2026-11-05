@@ -2,17 +2,17 @@ import { useRef, useState } from 'react'
 import {
   agentState,
   chatCommands,
-  currentStep,
-  isLegacy,
   isReview,
   openPrs,
   prRepoName,
   resolveChoice,
   reviewTopic,
-  subtasksOf,
+  shortTitle,
+  workStage,
   type AgentSession,
   type Attachment,
   type Task,
+  type WorkStage,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { WorkCards } from './Cards'
@@ -35,21 +35,11 @@ export function ownerSession(work: Task, sessions: AgentSession[]): AgentSession
   )
 }
 
-type Stage = 'Plan' | 'Approve' | 'Build' | 'Merge'
+type Stage = Exclude<WorkStage, 'Done'>
 const STAGES: Stage[] = ['Plan', 'Approve', 'Build', 'Merge']
 
-/** Where the work is: planning, its plan waiting for Approve & Start, steps being built, or PRs waiting for merge. */
-function stageOf(work: Task, tasks: Task[]): Stage | 'done' | null {
-  if (work.status === 'canceled') return null
-  if (work.status === 'done') return 'done'
-  if (work.status === 'ready') return 'Approve'
-  if (work.status === 'planning') return subtasksOf(work.id, tasks).length && work.needsInput ? 'Approve' : 'Plan'
-  const step = isLegacy(work) ? null : currentStep(work.id, tasks)
-  return (step ? openPrs(step) : openPrs(work)).length ? 'Merge' : 'Build'
-}
-
-function Stepper({ stage }: { stage: Stage | 'done' }) {
-  const at = stage === 'done' ? STAGES.length : STAGES.indexOf(stage)
+function Stepper({ stage }: { stage: WorkStage }) {
+  const at = stage === 'Done' ? STAGES.length : STAGES.indexOf(stage)
   return (
     <span className="stepper" aria-label={`Stage: ${stage}`}>
       {STAGES.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
@@ -65,7 +55,7 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
   const project = state.projects.find((p) => p.id === work.projectId)
   const owner = ownerSession(work, state.sessions)
   const mine = state.sessions.filter((s) => s.taskId === work.id)
-  const stage = stageOf(work, tasks)
+  const stage = workStage(work, tasks)
   const [fullBrief, setFullBrief] = useState(false)
   const review = isReview(work)
   const pr = work.prReview?.pr
@@ -87,7 +77,7 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
           {!review && <ReopenButton task={work} />}
           {!review && <CancelButton task={work} small />}
         </div>
-        <h1>{review ? work.title.replace(/^[^:]*#\d+: /, '') : work.title}</h1>
+        <h1>{shortTitle(work)}</h1>
         {work.description && (
           <div className={`brief ${fullBrief ? 'full' : ''}`}>
             <span className="brieftext">{work.description}</span>

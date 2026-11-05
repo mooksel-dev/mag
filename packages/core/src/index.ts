@@ -789,7 +789,7 @@ export interface AgentSession {
   taskId: string | null
   /** Project chats: the first message until a title is generated after the first turn. */
   title?: string
-  /** A title generation has run for this chat (whatever its outcome); it runs once. */
+  /** The chat has a real title: generated, given by the user or set by mag; until then the list shows "New topic". */
   titleGenerated?: boolean
   role: AgentRole
   /** Developer sessions: the step they implement; null for groomers, chats and legacy developers. */

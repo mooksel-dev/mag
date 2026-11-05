@@ -14,6 +14,7 @@ import {
   resultOutdated,
   shownResult,
   REVIEW_FORMATS,
+  shortTitle,
   type PrReview,
   type PrVerdict,
   type ReviewFormat,
@@ -181,7 +182,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
         <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
       </div>
-      <h1>{work.title.replace(/^[^:]*#\d+: /, '')}</h1>
+      <h1>{shortTitle(work)}</h1>
       <div className="taskrow">
         <TicketLinks task={work} />
         <div className="grow" />

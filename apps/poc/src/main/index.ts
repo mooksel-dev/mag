@@ -111,6 +111,7 @@ app.whenReady().then(async () => {
     logsDir,
   })
   app.on('will-quit', () => orch.shutdown())
+  void orch.nameUntitled().catch((e) => log.warn('agent', 'naming untitled topics failed', e))
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)
