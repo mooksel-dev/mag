@@ -192,6 +192,12 @@ export interface MagApi {
   renameChat(sessionId: string, title: string): Promise<void>
   /** Deletes a project chat (topic) with its history; its agent stops first. */
   deleteChat(sessionId: string): Promise<void>
+  /** Closes a project chat (topic): its agent stops, it goes to Done with its history; writing to it reopens it. */
+  closeChat(sessionId: string): Promise<void>
+  /** Asks the topic's agent to create a work from the discussion; the topic owns it. */
+  turnIntoWork(sessionId: string): Promise<void>
+  /** Deletes a work for good (a review as deleteReview): steps, sessions, docs, diagrams; refused while its agents run. */
+  deleteWork(taskId: string): Promise<void>
   /** A canvas's content: the HTML page or the diagram. */
   getCanvas(id: string): Promise<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null>
   /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */

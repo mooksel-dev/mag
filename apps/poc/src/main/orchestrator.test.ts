@@ -494,6 +494,73 @@ test('deleteChat: project topics only; closes the live process, then removes the
   assert.equal(store.data.sessions.some((s) => s.id === groomer.id), true)
 })
 
+test('closeChat: the live process closes, the history stays; writing to it reopens it; a topic owning an open work is not closed on its own', async () => {
+  const { store, orch, project, task } = setup()
+  const id = orch.newChat(project.id)
+  await orch.send(id, 'hi')
+  const live = opened.at(-1)!
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await orch.closeChat(id)
+  assert.equal(live.closed, true)
+  assert.ok(store.session(id).closedAt)
+  assert.deepEqual(store.session(id).items.map((i) => i.kind).slice(0, 1), ['user'])
+  await orch.send(id, 'again')
+  assert.equal(store.session(id).closedAt, null)
+
+  store.updateTask(task.id, { ownerSessionId: id })
+  await assert.rejects(orch.closeChat(id), /owns .*close the work instead/)
+  assert.equal(store.session(id).closedAt, null)
+})
+
+test('turnIntoWork: the topic\'s agent gets the fixed request; not while it works', async () => {
+  const { store, orch, project } = setup()
+  const id = orch.newChat(project.id)
+  await orch.turnIntoWork(id)
+  const job = store.session(id).items.at(-1)
+  assert.equal(job?.kind === 'job' && job.title, 'Turn into a work')
+  assert.match(opened.at(-1)!.sent.at(-1)!, /create_work from this discussion/)
+  assert.throws(() => orch.turnIntoWork(id), /still working/)
+})
+
+test('deleteWork: steps, sessions, docs and the owner topic go; refused while an agent runs; an owner of another work stays; a review as deleteReview', async () => {
+  const { store, orch, project } = setup()
+  const newWork = (owner: string) => {
+    const work = store.createTask({ projectId: project.id, title: 'w', type: 'dev', description: '', status: 'in_progress', ownerSessionId: owner })
+    const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: work.id, status: 'in_progress' })
+    // A turn that ends without a PR just stops (as in developing()).
+    store.updateTask(step.id, { autoFix: { ci: 0, conflict: 0, continue: 1 } })
+    store.data.docs[work.id] = '# Problem'
+    return { work, step }
+  }
+
+  const owner = orch.newChat(project.id)
+  const { work, step } = newWork(owner)
+  const dev = store.createSession({ projectId: project.id, taskId: work.id, stepId: step.id, role: 'developer', agent: 'claude-code', status: 'idle' })
+  await orch.send(dev.id, 'go')
+  await assert.rejects(orch.deleteWork(work.id), /still working/)
+  assert.ok(store.data.tasks.some((t) => t.id === work.id))
+  await assert.rejects(orch.deleteWork(step.id), /is a step/)
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await orch.deleteWork(work.id)
+  assert.equal(opened.at(-1)!.closed, true)
+  assert.equal(store.data.tasks.some((t) => t.id === work.id || t.id === step.id), false)
+  assert.equal(store.data.sessions.some((s) => s.id === dev.id || s.id === owner), false)
+  assert.equal(store.data.docs[work.id], undefined)
+
+  // The owner topic stays while it owns another work.
+  const shared = orch.newChat(project.id)
+  const one = newWork(shared).work
+  newWork(shared)
+  await orch.deleteWork(one.id)
+  assert.ok(store.data.sessions.some((s) => s.id === shared))
+
+  const review = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress' })
+  await orch.deleteWork(review.id)
+  assert.equal(store.data.tasks.some((t) => t.id === review.id), false)
+})
+
 test('discussIdea: the idea\'s own topic, created once and titled after it; its agent sees the idea', async () => {
   const { store, orch, project } = setup()
   const idea = store.addIdea(project.id, 'Dark mode\nthe whole app, not just the editor', 'T-3.1')

@@ -298,7 +298,7 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
 /**
  * The project's works and the topics that own no open work, as cards in group order (`tasks` are the project's):
  * waiting on the user first, then agents working (someone else's move, grey, at its end), discussions, and done in the
- * last 7 days; canceled works are left out. A work's agents are its own sessions and, for a work owned by a topic (a
+ * last 7 days (topics the user closed too); canceled works are left out. A work's agents are its own sessions and, for a work owned by a topic (a
  * review too), that topic. Within a group the most recent activity comes first.
  */
 export function workCards(projectId: string, tasks: Task[], sessions: AgentSession[], now: number): WorkCard[] {
@@ -344,10 +344,13 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
     if (s.role !== 'chat' || s.taskId || s.reviewOf || owners.has(s.id)) continue
     if (tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id)) continue
     const approval = items.find((i) => i.kind === 'approval' && i.session?.id === s.id)
+    // A closed topic is done: listed under Done for 7 days after it was closed.
+    const closed = !!s.closedAt && !approval && s.status !== 'running'
+    if (closed && s.closedAt! < now - WEEK_MS) continue
     const move: CardMove = approval
       ? approvalMove(approval)
-      : s.status === 'running' ? agentMove(s, false, now) : { who: 'other', text: 'Discussion · no work yet' }
-    const group: WorkGroup = approval ? 'waiting' : 'topics'
+      : s.status === 'running' ? agentMove(s, false, now) : { who: 'other', text: closed ? 'Closed' : 'Discussion · no work yet' }
+    const group: WorkGroup = approval ? 'waiting' : closed ? 'done' : 'topics'
     out.push({ id: s.id, kind: 'topic', group, dot: dotOf(group, move), title: shortTitle(s), stage: null, progress: null, move, last: lastEvent(s, mine), at: sessionActivity(s), session: s })
   }
   const order = (c: WorkCard) => WORK_GROUPS.indexOf(c.group) * 2 + (c.group === 'working' && c.dot === 'grey' ? 1 : 0)
@@ -396,6 +399,19 @@ export function stepsLine(work: Task, tasks: Task[]): StepLine[] {
       state,
       ...(state === 'waiting' ? { waitsFor: s.waitingFor!.key } : {}),
     }
+  })
+}
+
+/**
+ * The cards matching a search (⌘K): every word of `query`, case-insensitive, in the title, the work's key, whose move,
+ * the progress or the last event. An empty query matches all.
+ */
+export function searchCards(cards: WorkCard[], query: string): WorkCard[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return cards
+  return cards.filter((c) => {
+    const text = [c.title, c.task?.key, c.move.text, c.progress, c.last?.text].filter(Boolean).join('\n').toLowerCase()
+    return words.every((w) => text.includes(w))
   })
 }
 

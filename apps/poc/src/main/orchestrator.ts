@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -493,6 +493,55 @@ export class Orchestrator {
     await Promise.all([run?.done, this.closeLive(sessionId)])
     this.store.deleteSession(sessionId)
     log.info('agent', 'topic deleted', { session: sessionId })
+  }
+
+  /**
+   * The user closes a topic: its turn and live process end, it goes to Done with its history; writing to it reopens it.
+   * A topic that owns an open work is closed with that work (Close of a work cancels it), not on its own.
+   */
+  async closeChat(sessionId: string) {
+    const session = this.projectChat(sessionId)
+    const owned = this.store.data.tasks.find((t) => !t.parentId && t.ownerSessionId === sessionId && canCancel(t))
+    if (owned) throw new Error(`This topic owns ${owned.key}: close the work instead`)
+    const run = this.runs.get(sessionId)
+    run?.kill()
+    await Promise.all([run?.done, this.closeLive(sessionId)])
+    this.store.closeSession(session.id)
+    log.info('agent', 'topic closed', { session: sessionId })
+  }
+
+  /**
+   * The user's Turn into a work: the topic's agent gets a fixed request to create a work from what was discussed (it
+   * becomes the work's owner, as with create_work from any topic).
+   */
+  turnIntoWork(sessionId: string) {
+    this.projectChat(sessionId)
+    if (this.isRunning(sessionId)) throw new Error('The topic is still working; turn it into a work when it is done')
+    return this.send(sessionId, TURN_INTO_WORK_PROMPT, [], 'Turn into a work')
+  }
+
+  /**
+   * The user deletes a work for good: a review as deleteReview; otherwise, while no agent of the work runs, its steps
+   * and the work with their sessions, docs and diagrams, their worktrees, and the owner topic unless it owns another
+   * work. Branches and PRs stay as they are.
+   */
+  async deleteWork(taskId: string) {
+    const work = this.store.task(taskId)
+    if (work.parentId) throw new Error(`${work.key} is a step; delete its work`)
+    if (isReview(work)) return this.deleteReview(taskId)
+    const sessions = this.store.data.sessions
+    const owner = sessions.find((s) => s.id === work.ownerSessionId && s.role === 'chat' && !s.taskId)
+    const ownsOther = !!owner && this.store.data.tasks.some((t) => t.id !== taskId && t.ownerSessionId === owner.id)
+    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? [owner] : [])]
+    if (gone.some((s) => this.isRunning(s.id))) throw new Error(`An agent of ${work.key} is still working; stop it first, then delete the work`)
+    const steps = subtasksOf(taskId, this.store.data.tasks)
+    await Promise.all(gone.map((s) => this.closeLive(s.id)))
+    for (const t of [work, ...steps]) await this.removeWork(t.work)
+    for (const s of steps) this.store.deleteTask(s.id)
+    this.store.deleteTask(taskId)
+    if (owner && !ownsOther) await this.deleteChat(owner.id)
+    this.wakeWaiting(steps.map((s) => s.key))
+    log.info('agent', `${work.key}: work deleted`, { steps: steps.length, topic: !!owner && !ownsOther })
   }
 
   /** Start (or restart) grooming in a new background session; `message`, if given, is its first message (shown in its chat). */
@@ -1526,6 +1575,8 @@ export class Orchestrator {
   async send(sessionId: string, text: string, attachments: Attachment[] = [], job?: string) {
     const session = this.store.session(sessionId)
     if (this.runs.has(sessionId)) throw new Error('Agent is still working')
+    // Writing to a closed topic opens it again.
+    this.store.reopenSession(sessionId)
     session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
     // A topic the user renamed keeps its title.
     if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
