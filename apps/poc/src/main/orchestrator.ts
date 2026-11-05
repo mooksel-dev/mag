@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -216,11 +216,12 @@ First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's 
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
-The fact is yours to write: the change inventory of the PRs with set_inventory, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them); mag generates the fact's Component and Data diagrams from it, and you add scenarios and method logic with show_diagram, without role, where the review needs them. Following the project's playbook:
+${CODE_CHECKS}
+The fact is yours to write, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
 ${playbookOf(project).fact}
-mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
+Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
 ${fact}
-Call set_review once with the report. mag checks it against your inventory. The checks verdict is yours, with a one-line why: request_changes = changes, the developer must fix something before the user looks (the findings from the report go to the developer, not to GitHub); approve = merge, ready, nothing the user has to check; look = the user should decide or check something. mag keeps its own floor: a plan deviation or an incomplete fact (the threshold above) makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so you need not restate them as risks.
+Call set_review once with the report; the verdict is yours, its schema says what each means and what mag adds.
 ${scratch.length ? scratchLine('your scratch worktree') : 'Run no tests: CI runs them, and you have no scratch worktree this time.'}
 Change no files of the PRs, never push, comment on GitHub or merge, and leave the doc and the plan as they are: the developer fixes what you find. Then reply in one line.
 
@@ -269,10 +270,10 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     : `Its repository is ${pr.repo}, the user's main checkout: never change it there; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.${scratch ? ` The code at the PR's head is in ${scratch}.` : ''}`
   const fact = shared
     ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
-    : "The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:"
+    : "The fact, by the project's playbook:"
   const order = v1
     ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
-    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it; your own leaning, if you have one, goes in direction.view."
+    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's."
   const close = v1
     ? 'Call set_pr_review with the verdict and the findings once you have them (again whenever the user asks for more and they change), then reply in a few lines: the verdict and the blockers.'
     : `Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
@@ -280,6 +281,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
 ${order}
 ${v1 ? playbook.prReviewV1 : playbook.prReview}
+${CODE_CHECKS}
 ${fact}
 ${playbook.fact}
 mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. ${scratch ? scratchLine(scratch) : 'Run no tests: there is no checkout of it here, and CI runs them.'}

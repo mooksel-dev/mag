@@ -1024,7 +1024,11 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report\. mag checks it against your inventory\. The checks verdict is yours, with a one-line why[\s\S]*mag keeps its own floor[\s\S]*need not restate them as risks/)
+  assert.match(run.spec.prompt, /The fact is yours to write, from the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is yours, its schema says what each means and what mag adds\./)
+  // Each contract once (prompts-use-the-models-to.4): the code checks in mag's frame, the verdict mapping in set_review.
+  assert.ok(run.spec.prompt.includes(CODE_CHECKS))
+  assert.equal(run.spec.prompt.split(CODE_CHECKS).length, 2, 'the code checks once')
+  assert.doesNotMatch(run.spec.prompt, /request_changes = changes|need not restate them as risks/)
   assert.match(run.spec.prompt, /Direction is the approved plan/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
@@ -1507,7 +1511,8 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.doesNotMatch(first.job, /New commits since/)
     // Options before the author's description; no verdict on the direction (review-v2-questions-first-direction.1).
     assert.match(first.job, /the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments \(gh pr view\)/)
-    assert.match(first.job, /The direction is the user's call: no verdict on it/)
+    assert.match(first.job, /The user decides the direction; your own leaning, if you have one, goes in direction.view/)
+    assert.equal(first.job.split(CODE_CHECKS).length, 2, 'the code checks once, in mag\'s frame')
     assert.match(first.job, /Call set_pr_review with the report/)
     assert.ok(first.job.indexOf('Direction, before you read') < first.job.indexOf('3. Only now read the PR: gh pr view'))
     assert.match(await orch.reviewFactOf(work.id), /Without the project architecture: the repository is outside the project/)
@@ -1586,10 +1591,11 @@ test('v1 and v2 side by side: each format in its own topic, both results kept, t
     assert.deepEqual([t1.reviewFormat, t1.reviewOf, t1.title, work.prReview!.shown], ['v1', work.id, 'Review remote#7 · v1', 'v1'])
     assert.equal(opened.at(-1)!.sent.at(-1), first.job)
     assert.match(first.job, /you own the v1 review of /)
-    assert.match(first.job, /7\. Findings with set_pr_review, each with level/)
+    assert.match(first.job, /7\. Record it with set_pr_review: the findings/)
+    assert.ok(first.job.includes(CODE_CHECKS), 'v1 gets the code checks too')
     assert.match(first.job, /Call set_pr_review with the verdict and the findings/)
     assert.doesNotMatch(first.job, /decide_direction|Direction, before you read/)
-    assert.match(first.job, /The fact: the PR's change inventory \(set_inventory/)
+    assert.match(first.job, /The fact, by the project's playbook:\nThe fact is the change inventory/)
     await assert.rejects(orch.runReviewFormat(work.id, 'v1'), /The v1 review of .* is still working/)
     // The v1 run writes the inventory and its result.
     await orch.reviewFactOf(work.id)

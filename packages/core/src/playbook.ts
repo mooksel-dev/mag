@@ -43,9 +43,26 @@ export interface Playbook {
 }
 
 /**
+ * The rules for any new prompt text in mag (prompts-use-the-models-to.4, from the prompt audit): the playbook below,
+ * mag's frame around it in the orchestrator, and the tool descriptions follow them. Not sent to agents.
+ */
+export const PRINCIPLES = [
+  'Mechanism for guarantees (deny rules, validators, holding under Codex too), words for judgment.',
+  'Goal + why + quality bar, not procedure; keep an order only with a stated reason.',
+  'Say each thing once, where it is used: contracts in tool schemas, process in the playbook, mag facts in the frame.',
+  'Tell the model what only mag knows: who reads, what mag checks, round limits, what the next agent sees.',
+  'Give it ways to check its work: web, docs, focused tests, scratch worktrees.',
+  'Honest judgment never conflicts with the schema: opinions get their own field, mag derives only its floors, no forced counts.',
+  'Calm, positive phrasing with reasons; no ALL-CAPS emphasis (newer models over-follow it).',
+  'XML sections for long prompts; large data first, the job last.',
+  'Plain words over house jargon.',
+] as const
+
+/**
  * What every review checks in the code besides the problem and the agreements (povnyi-diff-nabir-pov-iazanykh.3,
  * Decision 13; the lesson of duff-brewery#297, where GetContent got a signing ceremony id and an upsert had no unique
- * index): shared by the review of a step and of a teammate's PR.
+ * index): mag's frame of the review of a step, of a teammate's PR and of the developer's bar, never the editable
+ * playbook, so a project's own review text cannot drop it (prompts-use-the-models-to.4).
  */
 export const CODE_CHECKS = `Checks of the code, each a finding when it fails:
 - The contract of every new or changed call: its arguments match the signature and the documentation of what it
@@ -76,31 +93,12 @@ ${CODE_CHECKS}
   that changes what was decided is a question before it is code.`
 
 /**
- * The report every review records (review-v2-questions-first-direction.1): fixed questions, claims with sources,
- * changes, the reviewer's checks verdict over mag's floors (prompts-use-the-models-to.1). Shared by the review of a
- * step and of a PR.
+ * How the reviews use their report (review-v2-questions-first-direction.1; prompts-use-the-models-to.4): intent only.
+ * Its shape, the meaning of each verdict and mag's floor are the report schema of set_review / set_pr_review.
  */
-const REPORT = `The report answers fixed questions; every item is a claim: text, source and cites (inventory unit ids or
-file:line; a PR comment, decision:<id> or a note for the user's words), view (canvas:<id>#<node> of the review's set)
-when a diagram shows it.
-- source: agent (your reading, with code refs), yours (the user's own words: PR comments, notes, decisions), question,
-  rule (a project rule fails). mag gives checked itself to a mechanical fact of the direction whose cites are all
-  units it verified; never give it.
-- direction: decisions, options (name, tradeoffs, pr: true on the change's own; as many as there really are, and a
-  single one says why in only), facts, references. The call is the user's; your own leaning may go in view
-  { leaning, why, confidence }: it never counts, and the user reads it after the options.
-- problem: { criterion, status: solved | partly | not, text, source, cites }.
-- conventions: { rule, status: pass | fail, text, source, cites }.
-- risks: { level: high | medium | low, kind: bug | data | ops | security | privacy, text, mechanism, source, cites }.
-- questions: to the author, { text, cites }.
-- changes: the inventory grouped into changes by importance, each { title, why it matters, units }; routine ones
-  (wiring, renames, imports) in one row with routine: true, last. Every unit in exactly one change.
-- checks: { verdict, why }: your judgment on problem, conventions and risks, with one line of why. approve when you
-  would merge it yourself; look when the user should decide or check something; request_changes when something must
-  be fixed first, with the criterion, rule, risk or question behind it. Risk levels inform, they do not decide it, and
-  direction never counts. mag keeps its own floor (a plan deviation or incomplete fact: look at least; failed CI or a
-  failed architecture rule: request_changes) and attaches those blockers itself.
-mag checks the report before it stores it and answers what to fix.`
+const REPORT = `The report answers fixed questions, so the user reads every review the same way and can follow each claim to
+the code: cite what shows it. Its shape, what each verdict means and mag's floor under it are in the report schema of
+the tool you record it with; mag checks the report before it stores it and answers what to fix.`
 
 export const DEFAULT_PLAYBOOK: Playbook = {
   stance: `- Lead the work. You hold the problem, the options and the plan; the user reviews, helps decide and approves. End
@@ -137,17 +135,10 @@ export const DEFAULT_PLAYBOOK: Playbook = {
    the chosen option and add one line per rejected option saying why it lost; its sketch links stay by that line.
 7. Design the chosen option per layer: revise its sketches by their ids (never redraw copies) and add diagrams where
    the change needs more, before splitting it into steps. Draw every level the change touches (system, modules, data,
-   scenarios, logic of methods), each a separate named diagram, and link them in the doc. The diagrams of one place
-   (an option, a step's plan) are one set: one is its root (root: true, the system level or the top component
-   diagram), and every other is reached from it through links (links on a module, interface line, use or entity: kind
-   detail, data, scenario or logic; a flowchart's of counts as logic). Every changed module with changed data, a
-   scenario or the logic of a method links to that diagram; the flowchart of a private method is linked from the step
-   of the flowchart that calls it. A data diagram shows stored data only (collections, tables, their fields, indexes
-   and unique keys), each entity with module, its owner, and a relation for each reference field (user_id, *_id, a
-   composite key) to the entity it points at, unchanged ones too; between modules or systems cross: true. Arguments
-   of calls, interfaces and clients go in the signature of an interface line, never on a data diagram. Mocks and
-   test-only types are on no diagram; a rename is one line, move with from. UI mockups and other visuals without a
-   type go through show_canvas.
+   scenarios, logic of methods), each a separate named diagram, and link them in the doc. An option's or a step's
+   diagrams form one linked set under a root, so a reader reaches every level from the top.
+   show_diagram's description holds the grammar of each kind and of a set, and its answer says what to fix. UI mockups
+   and other visuals without a type go through show_canvas.
 8. Split the work into execution steps with create_subtask, in order; at least one. A step's title and note (one line)
    say what ships in it; the doc carries the details. A small task is one step. Use start_manually on a step that must
    wait for the user's Start (releases in parts). Give every step repos: the project repositories it changes, [] for a
@@ -166,8 +157,7 @@ add_idea (one line: what and where), not into the doc or a step; ask the user on
    A draft PR only if the decisions say so. Body: short summary, how you tested, and any assumptions you were not sure
    about.
 4. At the end, append to §Progress in the doc (update_doc): what was done in the step and what changed against the plan.
-Something worth doing outside this step (a bug, a smell, a missed case) is not fixed here: add_idea, one line with
-what and where.`,
+Something worth doing outside this step is not fixed here: add_idea, one line with what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in your scratch worktrees; run a focused test there
    when reading leaves a doubt.
 2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
@@ -175,51 +165,48 @@ what and where.`,
    its decision and the chosen option (pr: true; the rejected ones from §Options), cited as yours from §Decisions;
    facts say where the PRs leave the plan. Problem: each item of the step's plan and the doc's acceptance → solved /
    partly / not. Conventions: the decisions, the project's rules, modules, layers and interfaces as in the diagrams.
-   Risks: bugs, missing tests, risky changes, and the checks of the code below.
+   Risks: bugs, missing tests, risky changes, and the checks of the code your job lists.
 4. Something worth doing that is outside the step and need not block it: add_idea, not a claim.
-${REPORT}
-${CODE_CHECKS}`,
+${REPORT}`,
   prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
 have done it. Whether its direction is right is the user's call: prepare it, never decide it.
 1. Fact first: get_pr_changes lists the PR's hunks with their ids; read its diff (gh pr diff, or git in the
    repository) and write its change inventory (set_inventory), as the fact section says.
 2. Direction, before you read the author's description or the PR's comments: from the inventory and the code alone,
-   name the design decision(s) the change makes, one sentence each, and work out the sensible options for it on your
+   name each design decision the change takes, one sentence each, and work out the sensible options for it on your
    own, the PR's design one of them (pr: true), each with one line of trade-offs. Then the mechanical facts of the PR's
    option: how many modules learn the new concept, how many changes hit existing flows, new rule violations, each
    citing units. The user decides the direction; your own leaning, if you have one, goes in direction.view.
 3. Only now read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view
-   --comments; review comments with gh api, reading only). Add references: the project's notes and decisions, ADRs,
-   CLAUDE.md / AGENTS.md rules, earlier decisions of the user, PR threads; the user's own words are yours.
+   --comments; review comments with gh api, reading only). Add the references that bear on the direction; the
+   user's own words are yours.
 4. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it
    with add_ticket. Without access to the tracker, say what is missing and work from the description.
-5. Problem: what the PR fixes and why it is real, with evidence (problem argument). In the report, each acceptance
+5. Problem: show that the PR's problem is real (the problem argument). In the report, each acceptance
    criterion of the ticket → solved / partly / not, with evidence. Call out a wrong framing or a problem that is not
    real.
 6. Conventions: each relevant rule of the project (decisions and notes, the playbook, the repository's conventions in
    CLAUDE.md, AGENTS.md, README and the code around it, the architecture's layers, modules and interfaces) → pass /
    fail, a failed one citing the offending edges or lines.
-7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code below;
-   each with level, kind, mechanism and where.
+7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code your
+   job lists; each with level, kind, mechanism and where.
 8. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
-   says. mag reads the checks too: a failing one makes the verdict request_changes with its blocker attached; say what
-   a failure means for the change, and the pending ones.
-9. Record it with set_pr_review: problem, approach (how the PR solves the problem and whether it does, in a few lines)
-   and the report, as the report below says.
+   says. mag reads the checks too and holds a failing one as its floor under your verdict; say what a failure means
+   for the change, and the pending ones.
+9. Record it with set_pr_review: problem, approach and the report, as the report below says.
 10. The direction is the user's call: argue its options with them when they ask, and once they decide, record it with
    decide_direction (ok, prefer an option, or discuss with the author; the principle in their words; the comment to
    the author you worded together). An earlier decision of the user that bears on it is a yours reference citing
    decision:<id>.
 Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
-${REPORT}
-${CODE_CHECKS}`,
+${REPORT}`,
   prReviewV1: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
 have done it: no diagram of your own design and no list of differences from it.
 1. Read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view --comments; review
    comments with gh api, reading only) and its diff (gh pr diff, or git in the repository).
 2. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it with
    add_ticket. Without access to the tracker, say what is missing and work from the description.
-3. Problem: what the PR fixes and why it is real, with evidence (the ticket, the code path, logs). Call out a wrong
+3. Problem: is the PR's problem real? Look for evidence in the ticket, the code path and logs. Call out a wrong
    framing or a problem that is not real.
 4. Fact: get_pr_changes lists the PR's hunks with their ids; write its change inventory (set_inventory), as the fact
    section says.
@@ -228,44 +215,21 @@ have done it: no diagram of your own design and no list of differences from it.
    - Does it keep the project's agreements: its decisions and notes, the playbook, the repository's conventions
      (CLAUDE.md, AGENTS.md, README, the code around it), the architecture rules (layers, modules, interfaces)?
    - Bugs and risks: wrong logic, missed cases, errors, security, data and migrations, missing tests, and the checks
-     of the code below.
+     of the code your job lists.
    Another approach is a finding only when this one does not solve the problem; say why, without drawing it.
 6. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
    says. A failing check is a blocker with its link; pending ones are said.
-7. Findings with set_pr_review, each with level (blocker: must not merge; should_fix: fix before merge unless argued;
-   question: you need the author's answer; nit: optional), where (file:line) and node (canvas:<id>#<node> of the fact
-   diagram) when it applies, and the agreement or the problem it is about. approach: how the PR solves the problem and
-   whether it does. Verdict: request_changes with any blocker, approve when you would merge it yourself, comment
-   otherwise.
-Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.
-${CODE_CHECKS}`,
+7. Record it with set_pr_review: the findings, each about an agreement or the problem, so the author sees what it
+   rests on; approach; and the verdict. Their levels and what each verdict means are in its schema.
+Read only: nothing goes to the PR or the tracker. The user publishes the findings they pick.`,
   fact: `The fact is the change inventory of the PR: write it with set_inventory from the hunk listing (get_pr_changes,
-or the review's message) and the diff. mag checks it against the hunks and generates the fact's Component and Data
-diagrams from it; you never draw those.
-- Every block of changed lines of a code hunk (marked [H3.1] in the listing) is in the hunks of a unit or in noise
-  with why. Cite the blocks that change a unit, not the other blocks of its hunk; H3 stands for every block of H3.
-  Tests, docs, styles and lock files need not be cited.
-- One unit per change, by kind. method: every function or method added, removed or changed, public and private;
-  before / after its signature (both for a changed one, also when only its body changes), note what it does now or
-  what changes in it (required for a changed one); logic nontrivial when branches, loops, error handling, external calls or data access
-  change, trivial for wiring, renames and one-liners, none when only the signature changes. model / field: a type of
-  data and its fields (name "<model>.<field>"); stored: true only for persisted data (a table, collection, document,
-  cache entry), never arguments, options or DTOs. index: an index or unique key added, removed or changed, owner its
-  model. dependency: a module starts or stops using another module or system (name: its module id or package), not
-  imports inside a module. call: a call from one module to another added, removed or with changed arguments (mod),
-  one per target method: module the module that calls, name "<target module id>#<method>" ("<package>#<func>" with
-  external: true outside the project), before / after the call as the code makes it. config / template: a prompt, template or config entry whose change alters behaviour, one
-  per constant.
-- module as the listing names the hunk's module; owner the type or file a method belongs to; names copied from the
-  diff, one name per unit (never "a, b" or "a / b"). A rename is one unit, change rename with from, never a del and an
-  add. Mocks, fakes and test helpers are never units.
-- summary: 3–6 bullets on what the change does, by meaning.
-Then draw with show_diagram (without role: it joins the fact set) only what the inventory cannot give and the review
-needs: a scenario (sequence, its participants with module ids) and the logic of a method whose logic is nontrivial
-(flowchart with of "<module>#<method>"). mag answers each save with its check: fix the blockers (blocks in no unit,
-cited ids that do not exist, units their hunks do not bear out, units on another module, calls to no module,
-several names in a unit, changed methods without before, after and note) and answer the warnings
-(code blocks called noise, declarations no unit names).`,
+or the review's message) and the diff. It is what the user reads instead of the diff and what mag compares with the
+plan, so it covers every change at the level the code is designed at, named as the code names it. set_inventory's
+schema says what a unit is and how mag checks it; mag draws the component and data diagrams of the fact from it, so you
+never draw those.
+Then draw with show_diagram (no role, so it joins the fact set) only what the inventory cannot give and the review
+needs: a scenario, or the logic of a method whose logic is nontrivial. mag answers each save with its check: fix the
+blockers, and answer each warning with a fix or a reason.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks. If you cannot read a ticket, say what is missing (e.g. no
