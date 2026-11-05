@@ -160,9 +160,6 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .brief.full { align-items: flex-start; }
 .brief.full .brieftext { white-space: pre-wrap; }
 .brief button.link { flex: none; }
-.tasktabs { display: flex; gap: 18px; padding: 0 28px; border-bottom: 1px solid var(--line); }
-.tasktabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 10px 0; color: var(--muted); }
-.tasktabs button.on { border-bottom-color: var(--accent); color: var(--text); font-weight: 500; }
 .taskbody { flex: 1; min-height: 0; overflow: auto; padding: 18px 28px; }
 .taskbody > * { max-width: 900px; }
 .sublist { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -583,7 +580,6 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .popdoc .taskrow .title { font-weight: 600; font-size: 15px; }
 .popdoc .docmd { max-width: 900px; }
 .archhead .popbtn { margin-left: auto; }
-.tasktabs .popbtn { margin-left: auto; align-self: center; border: none; padding: 0 4px; color: var(--accent); }
 .menu { position: relative; }
 .menulist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: 300px; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
 .menulist button { display: flex; gap: 8px; align-items: baseline; border: none; background: none; text-align: left; padding: 6px 8px; }
@@ -725,9 +721,8 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .setfinding { padding-left: 8px; border-left: 2px solid var(--line); }
 .popset { padding: 12px; overflow: auto; }
 
-/* One conversation per work (ux-odna-rozmova-na-robotu.2): work list | owner conversation | artifact pane. */
-.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr) minmax(360px, 44%); border-top: 1px solid var(--line); }
-.layout > .pagewrap, .layout > .home { grid-column: 2 / 4; }
+/* The work list and one screen (redesign-start-screen-big-composer.3): no right column; a diagram opens in a drawer. */
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); border-top: 1px solid var(--line); }
 .worklist { min-height: 0; display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line); }
 .wlhead2 { display: flex; flex-direction: column; gap: 10px; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
 .wlhead2 .projbtn { width: 100%; padding: 0 6px; border-radius: var(--r); }
@@ -775,19 +770,48 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .wlcrash { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; }
 .wlcrash .wltop { display: flex; align-items: flex-start; gap: 6px; }
 .wlcrash .actions { display: flex; gap: 4px; margin-top: 4px; }
-.convo { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
-.convohead { padding: 14px 20px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); }
-.convohead h1 { font-size: 19px; margin: 0; }
+/* A work's and a discussion's screen: compact header, step chips, Waiting bar, tabs; the tab and the drawer below. */
+.convo { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.convohead { flex: none; padding: 14px var(--sp-6) 0; display: flex; flex-direction: column; gap: var(--sp-2); border-bottom: 1px solid var(--line); }
+.convohead:not(:has(.worktabs)) { padding-bottom: var(--sp-3); }
+.headline { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.headline h1 { font-size: var(--fs-xl); font-weight: 650; margin: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.headline .kind { flex: none; font-size: var(--fs-xs); color: var(--faint); white-space: nowrap; }
+.headline > button, .headline > .menu { flex: none; }
+.headmenu { right: 0; top: calc(100% + 4px); }
+.stepchips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--muted); }
+.stepchips .arrow { color: var(--faint); }
+.stepchip { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 9px; border-radius: var(--r-pill); background: var(--status); white-space: nowrap; }
+.stepchip .t { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.stepchip.done { background: var(--green-bg); color: var(--green-fg); }
+.stepchip.now { background: var(--amber-bg); color: var(--amber-fg); font-weight: 600; }
+.worktabs { display: flex; gap: 2px; margin-top: var(--sp-1); }
+.worktabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: var(--sp-2) var(--sp-3); color: var(--muted); font-weight: 500; }
+.worktabs button:hover { color: var(--text); }
+.worktabs button.on { color: var(--text); border-bottom-color: var(--text); }
+.worktabs .n { margin-left: 4px; font-size: var(--fs-xs); color: var(--faint); }
+.screenbody { flex: 1; min-height: 0; display: flex; }
+.screenmain { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* The conversation reads in one centred column of about 780px; the composer under it the same width. */
+.screenmain > .chatbox > .items { padding: 18px max(var(--sp-6), calc((100% - 780px) / 2)) var(--sp-2); gap: var(--sp-3); }
+.screenmain > .chatbox > .composer { width: 100%; max-width: calc(780px + 2 * var(--sp-6)); margin: 0 auto; padding: var(--sp-2) var(--sp-6) 18px; }
+.tabbody { flex: 1; min-height: 0; overflow: auto; padding: 20px var(--sp-6); }
+.tabin { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-3); }
+.brieffull { white-space: pre-wrap; color: var(--muted); line-height: var(--lh); }
+.tabtools { display: flex; justify-content: flex-end; }
+.drawer { flex: none; width: clamp(380px, 42%, 720px); min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
+.drawerhead { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.drawerhead .title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drawerbody { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; }
+.drawerbody .canvasframe { flex: 1; border-radius: var(--r); }
 .stepper { display: inline-flex; gap: 2px; font-size: 11px; }
 .stepper span { padding: 2px 8px; border-radius: 4px; background: var(--status); color: var(--muted); }
 .stepper span.past { background: var(--green-bg); color: var(--green-fg); }
 .stepper span.now { background: var(--accent); color: var(--on-accent); }
-.stepsline { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
-.stepsline .step.done { color: var(--green-fg); }
-.stepsline .step.now { color: var(--text); font-weight: 600; }
-.waitingbar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; background: var(--amber-bg); color: var(--amber-fg); }
+.waitingbar { display: flex; align-items: center; gap: 10px; margin-top: var(--sp-1); padding: 9px var(--sp-3); border-radius: 10px; background: var(--amber-bg); border: 1px solid var(--amber-line); }
+.waitingbar > b { flex: none; color: var(--amber-fg); font-weight: 600; }
 .waitingbar > span { flex: 1; min-width: 0; }
-.topictitle { border: none; background: none; padding: 0; font: inherit; font-weight: 600; font-size: 15px; min-width: 0; }
+.topictitle { border: none; background: none; padding: 0; font: inherit; font-weight: 650; font-size: var(--fs-xl); min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .workcard.ask { border-left-color: var(--amber-fg); }
@@ -797,10 +821,7 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .questions, .plansteps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .questions .rec { color: var(--green-fg); }
-.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
-.panetabs { padding: 0 16px; }
-.panebody { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; }
-.agentlog { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: -14px -16px; }
+.agentlog { display: flex; flex-direction: column; height: calc(100% + 40px); min-height: 0; margin: -20px calc(-1 * var(--sp-6)); }
 .pagewrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pagewrap > .page { flex: 1; min-height: 0; }
 .pagehead { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); font-weight: 600; }

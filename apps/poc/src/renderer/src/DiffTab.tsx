@@ -44,10 +44,11 @@ const hasFact = (step: Task) => !!step.fact || Object.keys(prHeads(step.work)).l
 /**
  * The diagrams of a work by their place (T-55.3): Options side by side → Plan by step and repository, with plan ↔ fact
  * of the step's PRs (T-57.5) → the rest. Options fold once there is a plan. Click a diagram to open its whole set here
- * (DiffSetView), ⧉ in its own window.
+ * (DiffSetView), ⧉ in its own window. `onOpen`: a diagram opens there instead (a work's diagram drawer).
  */
-export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks: Task[]; project: Project | undefined; diagrams: DiagramCanvas[] }) {
-  const [openId, setOpenId] = useState<string | null>(null)
+export function DiffTab({ task, tasks, project, diagrams, onOpen }: { task: Task; tasks: Task[]; project: Project | undefined; diagrams: DiagramCanvas[]; onOpen?: (id: string) => void }) {
+  const [openId, setOpenIdState] = useState<string | null>(null)
+  const setOpenId = onOpen ?? setOpenIdState
   const repos = project?.repos ?? []
   const steps = subtasksOf(task.id, tasks)
   const groups = diagramGroups(diagrams, steps, repos)
@@ -63,7 +64,7 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
   if (open) {
     // The whole set of the diagram in one window: its option, its step's plan or fact (povnyi-diff-nabir-pov-iazanykh.2).
     const set = setOf(open, diagrams)
-    return <DiffSetView key={set[0].id} set={set} current={open.id} {...setContext(set, tasks)} onClose={() => setOpenId(null)} />
+    return <DiffSetView key={set[0].id} set={set} current={open.id} {...setContext(set, tasks)} onClose={() => setOpenIdState(null)} />
   }
   const from = (d: DiagramCanvas) => (d.taskId === task.id ? null : (tasks.find((t) => t.id === d.taskId)?.key ?? 'another task'))
   const repoName = (r: string | null) => (r === null ? 'Whole step' : (repoNames({ repos })[repos.indexOf(r)] ?? r))

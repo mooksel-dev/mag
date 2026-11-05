@@ -2,9 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   currentStep,
   isLegacy,
-  isReview,
   repoWorkName,
-  subtaskProgress,
   subtasksOf,
   taskDiagrams,
   taskPrs,
@@ -15,111 +13,96 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
-import { CanvasCard, Chat, Markdown } from './Chat'
+import { Chat, Markdown } from './Chat'
 import { DiffTab, diagramsOf } from './DiffTab'
 import { PrPill } from './LinkPill'
 import { ReviewView } from './Reviews'
 import { SubtaskIcon, SubtaskList, useNow } from './Tasks'
 
+/**
+ * The bodies of a work's tabs (redesign-start-screen-big-composer.3): Plan & steps, Diagrams, Doc, Agents, and a review's
+ * page. They were the right column; the work's screen shows them under its header, one at a time.
+ */
+
 const mag = window.mag
 
-type PaneTab = 'diff' | 'doc' | 'steps' | 'agents'
-
 /**
- * The right column (ux-odna-rozmova-na-robotu.2): what the work has made. A work: Diff, Doc, Steps and Agents (their
- * chats as logs: Stop and Restart, no composer). A review: its page. A topic: its canvases.
+ * A work's diagrams and canvases for its tabs: its own diagrams, then those of other tasks its doc links (T-55.3); its
+ * HTML canvases and those its owner topic drew before the work existed.
  */
-export function ArtifactPane({ work, topic, state, onOpenKey, onDeleted }: {
-  work: Task | null
-  topic?: AgentSession | null
-  state: AppState
-  onOpenKey: (key: string) => void
-  /** The open work is gone (a review deleted). */
-  onDeleted: () => void
-}) {
-  if (work && isReview(work)) {
-    const project = state.projects.find((p) => p.id === work.projectId)
-    return (
-      <aside className="pane">
-        <div className="panebody">{project && <ReviewPage work={work} project={project} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} />}</div>
-      </aside>
-    )
-  }
-  if (work) return <WorkPane key={work.id} work={work} state={state} onOpenKey={onOpenKey} />
-  if (topic) return <TopicPane topic={topic} state={state} />
-  return <aside className="pane"><p className="muted pad">Pick a work on the left.</p></aside>
+export function useWorkCanvases(work: Task, state: AppState) {
+  const doc = state.docs[work.id]
+  const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === work.projectId), [state.canvases, work.projectId])
+  const diagrams = useMemo(() => diagramsOf(taskDiagrams(work, doc, projectCanvases)), [projectCanvases, work, doc])
+  const canvases = useMemo(() => workCanvases(work, projectCanvases), [projectCanvases, work])
+  return { projectCanvases, diagrams, canvases }
 }
 
-function ReviewPage(props: Omit<React.ComponentProps<typeof ReviewView>, 'now'>) {
-  const now = useNow(15_000)
-  return <ReviewView key={props.work.id} {...props} now={now} />
-}
-
-function WorkPane({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
+/** Plan & steps: the brief, then the steps in order (a legacy work: its checklist). */
+export function PlanTab({ work, state }: { work: Task; state: AppState }) {
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
   const steps = subtasksOf(work.id, tasks)
-  const legacy = isLegacy(work)
-  const doc = state.docs[work.id]
-  const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === work.projectId), [state.canvases, work.projectId])
-  // Its own diagrams, then those of other tasks the doc links (T-55.3).
-  const diagrams = useMemo(() => diagramsOf(taskDiagrams(work, doc, projectCanvases)), [projectCanvases, work, doc])
-  // Its own canvases and those its owner topic drew before the work existed.
-  const canvases = useMemo(() => workCanvases(work, projectCanvases), [projectCanvases, work])
-  const progress = subtaskProgress(work.id, tasks)
-  const sessions = state.sessions.filter((s) => s.taskId === work.id)
-  // A work being planned shows its doc first; one in progress what it changed.
-  const [tab, setTab] = useState<PaneTab>(() => (diagrams.length && work.status !== 'planning' ? 'diff' : 'doc'))
-  const tabs: [PaneTab, string][] = [
-    ['diff', `Diff · ${diagrams.length}`],
-    ['doc', 'Doc'],
-    ['steps', steps.length ? `Steps · ${progress.done}/${progress.total}` : 'Steps'],
-    ['agents', `Agents · ${sessions.length}`],
-  ]
   return (
-    <aside className="pane">
-      <div className="tasktabs panetabs" role="tablist">
-        {tabs.map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}</button>
-        ))}
-        {tab === 'doc' && doc && (
-          <button className="link popbtn" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'doc', taskId: work.id })}>⧉</button>
-        )}
-      </div>
-      <div className="panebody">
-        {tab === 'diff' && <DiffTab task={work} tasks={tasks} project={project} diagrams={diagrams} />}
-        {tab === 'doc' && (
-          <>
-            {doc ? <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet: the owner writes it while planning.</p>}
-            {canvases.length > 0 && (
-              <>
-                <h2>Canvases · {canvases.length}</h2>
-                <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
-              </>
-            )}
-          </>
-        )}
-        {tab === 'steps' && (steps.length ? <SubtaskList parent={work} subs={steps} tasks={tasks} steps={!legacy} project={project} /> : <p className="muted">No steps yet: the owner plans them.</p>)}
-        {tab === 'agents' && <AgentsTab work={work} steps={legacy ? [] : steps} sessions={sessions} state={state} onOpenKey={onOpenKey} />}
-      </div>
-    </aside>
+    <div className="tabin">
+      {work.description && <div className="brieffull">{work.description}</div>}
+      {steps.length ? <SubtaskList parent={work} subs={steps} tasks={tasks} steps={!isLegacy(work)} project={project} /> : <p className="muted">No steps yet: the owner plans them.</p>}
+      <p className="muted small">To change the plan, tell the owner in the conversation.</p>
+    </div>
   )
 }
 
-/** A topic's canvases: what its agent drew. */
-function TopicPane({ topic, state }: { topic: AgentSession; state: AppState }) {
-  const canvases = state.canvases.filter((c) => c.sessionId === topic.id && c.taskId === null).sort((a, b) => b.updatedAt - a.updatedAt)
+/**
+ * Diagrams: by their place (options, plan by step with plan ↔ fact, the rest), then the other canvases of the work and
+ * its owner topic. A click opens one in the drawer.
+ */
+export function DiagramsTab({ work, state, onOpen }: { work: Task; state: AppState; onOpen: (canvasId: string) => void }) {
+  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
+  const project = state.projects.find((p) => p.id === work.projectId)
+  const { diagrams, canvases } = useWorkCanvases(work, state)
   return (
-    <aside className="pane">
-      <div className="panebody">
-        {canvases.length ? (
-          <div className="canvaslist">{canvases.map((c) => <CanvasCard key={c.id + c.version} canvas={c} />)}</div>
-        ) : (
-          <p className="muted">Mockups and diagrams the agent draws show here. Once you agree on the problem and the plan, the topic owns a work and it moves up the list.</p>
-        )}
-      </div>
-    </aside>
+    <div className="tabin">
+      <DiffTab task={work} tasks={tasks} project={project} diagrams={diagrams} onOpen={onOpen} />
+      {canvases.length > 0 && (
+        <section>
+          <div className="diffhead">Canvases · {canvases.length}</div>
+          <div className="difflistrows">
+            {canvases.map((c) => (
+              <button key={c.id} className="diffrow" onClick={() => onOpen(c.id)}>
+                <span className="type">{c.kind === 'diagram' ? 'Diagram' : 'Mockup'}</span>
+                <span className="title">{c.title}</span>
+                <span className="muted small">v{c.version}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
   )
+}
+
+/** Doc: the work's document; its canvases open in the drawer, ⧉ pops the doc out. */
+export function DocTab({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
+  const doc = state.docs[work.id]
+  const { projectCanvases } = useWorkCanvases(work, state)
+  return (
+    <div className="tabin">
+      {doc ? (
+        <>
+          <div className="tabtools"><button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'doc', taskId: work.id })}>⧉ Open in window</button></div>
+          <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} />
+        </>
+      ) : <p className="muted">No document yet: the owner writes it while planning.</p>}
+    </div>
+  )
+}
+
+/** A review's page: the report, its fact and diagrams. */
+export function ReviewTab({ work, state, onOpenKey, onDeleted }: { work: Task; state: AppState; onOpenKey: (key: string) => void; onDeleted: () => void }) {
+  const now = useNow(15_000)
+  const project = state.projects.find((p) => p.id === work.projectId)
+  if (!project) return null
+  return <div className="tabin"><ReviewView key={work.id} work={work} project={project} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} /></div>
 }
 
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
@@ -141,18 +124,24 @@ function sessionGroups(steps: Task[], sessions: AgentSession[]): SessionGroup[] 
   return groups.filter((g) => g.sessions.length || g.step)
 }
 
+/** The agents that worked on a work (its own sessions). */
+export const workSessions = (work: Task, state: AppState) => state.sessions.filter((s) => s.taskId === work.id)
+
 /**
  * Per step its worktrees, branches, PRs and agents; an agent opens as its log. The user never writes there: questions
  * go through the owner, who passes them on with message_agent.
  */
-function AgentsTab({ work, steps, sessions, state, onOpenKey }: { work: Task; steps: Task[]; sessions: AgentSession[]; state: AppState; onOpenKey: (key: string) => void }) {
+export function AgentsTab({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
   const [shownId, setShownId] = useState<string | null>(null)
+  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
+  const steps = isLegacy(work) ? [] : subtasksOf(work.id, tasks)
+  const sessions = workSessions(work, state)
   const shown = sessions.find((s) => s.id === shownId)
   if (shown) return <AgentLog session={shown} work={work} state={state} onBack={() => setShownId(null)} onOpenKey={onOpenKey} />
   const groups = sessionGroups(steps, sessions)
   const anyPr = taskPrs(work, steps).length > 0
   return (
-    <>
+    <div className="tabin">
       <p className="muted small">Agents' chats are logs: write to the owner in the conversation, it passes things on. {anyPr && <button className="link small" onClick={() => mag.checkPrs()}>check PRs now</button>}</p>
       {work.work && (
         <div className="workgroup">
@@ -171,7 +160,7 @@ function AgentsTab({ work, steps, sessions, state, onOpenKey }: { work: Task; st
         </div>
       ))}
       {!sessions.length && <p className="muted">No agent has worked on this yet.</p>}
-    </>
+    </div>
   )
 }
 
