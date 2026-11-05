@@ -198,6 +198,10 @@ export interface MagApi {
   turnIntoWork(sessionId: string): Promise<void>
   /** Deletes a work for good (a review as deleteReview): steps, sessions, docs, diagrams; refused while its agents run. */
   deleteWork(taskId: string): Promise<void>
+  /** Closes a done work (a review as closeReview): it stays done and goes to Closed. */
+  closeWork(taskId: string): Promise<void>
+  /** Restore of a closed work, review or topic: back where it was in the list; a canceled work cannot be. */
+  restore(kind: 'work' | 'topic', id: string): Promise<void>
   /** A canvas's content: the HTML page or the diagram. */
   getCanvas(id: string): Promise<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null>
   /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */

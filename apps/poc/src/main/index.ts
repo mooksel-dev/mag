@@ -280,6 +280,8 @@ app.whenReady().then(async () => {
   handle('chat:close', (_, sessionId: string) => orch.closeChat(sessionId))
   handle('chat:turn-into-work', (_, sessionId: string) => orch.turnIntoWork(sessionId))
   handle('task:delete', (_, id: string) => orch.deleteWork(id))
+  handle('task:close', (_, id: string) => orch.closeWork(id))
+  handle('sidebar:restore', (_, kind: 'work' | 'topic', id: string) => orch.restore(kind, id))
   handle('canvas:get', (_, id: string) => {
     const c = store.data.canvases[id]
     return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null

@@ -345,8 +345,9 @@ function Row({ card: c, now, on, menu, over, drag, onMenu, onSelect, onGone }: {
 type Asking = 'rename' | 'close' | null
 
 /**
- * The row menu: a discussion is renamed, branched, turned into a work, closed (history kept, under Done) or deleted; a
- * work is closed (canceled, with a reason) or deleted; a review closed or deleted. Delete asks first.
+ * The row menu: a discussion is renamed, branched, turned into a work, closed (history kept) or deleted; an open work
+ * is closed by cancel (with a reason), a done work or a review closed with all it has; a closed row (not a canceled
+ * work) is restored to where it was. Delete asks first.
  */
 function RowMenu({ card: c, onClose, onSelect, onGone }: { card: WorkCard; onClose: () => void; onSelect: (s: Selection) => void; onGone: () => void }) {
   const [asking, setAsking] = useState<Asking>(null)
@@ -388,7 +389,9 @@ function RowMenu({ card: c, onClose, onSelect, onGone }: { card: WorkCard; onClo
         <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A new topic that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.branchChat(s.id).then((id) => onSelect({ kind: 'topic', id })))}>Branch</button>
         <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>
         <hr />
-        {!s.closedAt && <button role="menuitem" onClick={act(() => mag.closeChat(s.id))}>Close (keep history)</button>}
+        {c.closed
+          ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>
+          : <button role="menuitem" onClick={act(() => mag.closeChat(s.id))}>Close (keep history)</button>}
         <button role="menuitem" className="danger" onClick={() => {
           if (!confirm(`Delete topic "${c.title}"? Its history is lost.`)) return onClose()
           act(() => mag.deleteChat(s.id).then(onGone))()
@@ -397,12 +400,15 @@ function RowMenu({ card: c, onClose, onSelect, onGone }: { card: WorkCard; onClo
     )
   } else if (t) {
     const review = c.kind === 'review'
-    const closable = review ? t.status === 'in_progress' && !t.imported : canCancel(t)
+    // Open: canceled with a reason (final). Done or a review: closed with all it has, Restore brings it back.
+    const close = c.closed
+      ? t.status !== 'canceled' && <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('work', t.id))}>Restore</button>
+      : !review && canCancel(t)
+        ? <button role="menuitem" onClick={() => ask('close')}>Close…</button>
+        : <button role="menuitem" onClick={act(() => (review ? mag.closeReview(t.id) : mag.closeWork(t.id)))}>Close (keep history)</button>
     body = (
       <>
-        {closable && (review
-          ? <button role="menuitem" onClick={act(() => mag.closeReview(t.id))}>Close (keep history)</button>
-          : <button role="menuitem" onClick={() => ask('close')}>Close…</button>)}
+        {close}
         <button role="menuitem" className="danger" onClick={() => {
           const q = review
             ? `Delete review ${t.key}? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`

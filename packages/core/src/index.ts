@@ -670,6 +670,11 @@ export interface Task {
   nextSubNo: number
   /** Why the user canceled the task, if they said. */
   cancelReason?: string | null
+  /**
+   * Top-level tasks: the user closed it (a done work, a review): it stays done and goes to Closed; Restore, reopen or a
+   * new review run clears it. A canceled work is closed without it.
+   */
+  closedAt?: number | null
   /** Top-level tasks: the tickets the work is about, as links (T-55.5); [] or missing = none. */
   tickets?: TicketRef[]
   /**
