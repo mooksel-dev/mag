@@ -5,9 +5,9 @@ import type { AgentEvent } from '@mag/core'
 import { findBin } from './bin.ts'
 import type { AgentAdapter, RunSpec } from './index'
 
-/** Edit or Bash allowed = the agent changes the repo, so it gets a writable sandbox. */
+/** Edit or Bash allowed = the agent changes the repo, so it gets a writable sandbox; never a read-only run. */
 function writes(spec: RunSpec): boolean {
-  return spec.allowedTools?.some((t) => t === 'Edit' || t === 'Bash') ?? false
+  return !spec.readOnly && (spec.allowedTools?.some((t) => t === 'Edit' || t === 'Bash') ?? false)
 }
 
 /** A git worktree commits into the main repo's .git, which is outside the sandbox root. */
@@ -113,8 +113,9 @@ function mcpArgs(path: string): string[] {
 
 /**
  * Arguments for `codex exec`. `allowedTools`/`disallowedTools` have no Codex equivalent;
- * the sandbox is the only control: workspace-write when Edit or Bash is allowed, read-only otherwise.
- * workspace-write also gets network, since developers push and open PRs.
+ * the sandbox is the only control: workspace-write when Edit or Bash is allowed, read-only otherwise and always for a
+ * readOnly run (chat, owner, architect: its Bash can't push or write to a PR). workspace-write also gets network, since
+ * developers push and open PRs; read-only never does.
  */
 export function buildArgs(spec: RunSpec): string[] {
   const write = writes(spec)

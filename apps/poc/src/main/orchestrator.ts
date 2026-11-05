@@ -2,13 +2,13 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
@@ -100,7 +100,9 @@ ${stanceLine(playbookOf(project))}`
 }
 
 const ARCHITECT_PROMPT = `You are the architect agent in "mag". Read the project's code (read-only) and record its
-architecture with set_architecture. The project's preferred pattern, use it to classify everything:
+architecture with set_architecture. Bash and the web are there to check what you read (git log, ls, a package's docs);
+Bash is for reading only, because this checkout is the user's and the tree you record feeds the diagrams, plan ↔ fact
+and check_architecture of every work. The project's preferred pattern, use it to classify everything:
 - lib: project libraries and utils. - client: one per other runtime (3rd-party API, database, queue, storage,
   OS/process, another app over IPC), hiding the implementation. - service: business logic for one area,
   may combine clients. - app: what sits on top (React components/pages/hooks, HTTP handlers, workers, CLI, entrypoints).
@@ -195,8 +197,11 @@ ${playbookOf(project).tracker}`
  * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
  * so the whole job is said here, every round.
  */
-const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string, fact: string) => {
-  const prs = work.repos.filter((r) => heads[r.repo]).map((r) => `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, code in ${r.worktree}`)
+const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string, fact: string, scratch: Scratch[]) => {
+  const prs = work.repos.filter((r) => heads[r.repo]).map((r) => {
+    const own = scratch.find((s) => s.repo === r.repo)
+    return `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, the developer's worktree ${r.worktree}${own ? `, your scratch worktree ${own.dir}` : ''}`
+  })
   const prev = step.review
   const again =
     prev?.verdict === 'changes'
@@ -214,10 +219,22 @@ ${playbookOf(project).fact}
 mag checks each save: the inventory against the hunks (blocks of changed code in no unit, units their hunks do not bear out), whether the set hangs together, and plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
 ${fact}
 Call set_review once with the report. mag checks it against your inventory. The checks verdict is yours, with a one-line why: request_changes = changes, the developer must fix something before the user looks (the findings from the report go to the developer, not to GitHub); approve = merge, ready, nothing the user has to check; look = the user should decide or check something. mag keeps its own floor: a plan deviation or an incomplete fact (the threshold above) makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so you need not restate them as risks.
-Read only: change no files, run nothing that writes, never push, comment on GitHub or merge, and leave the doc and the plan as they are. Then reply in one line.
+${scratch.length ? scratchLine('your scratch worktree') : 'Run no tests: CI runs them, and you have no scratch worktree this time.'}
+Change no files of the PRs, never push, comment on GitHub or merge, and leave the doc and the plan as they are: the developer fixes what you find. Then reply in one line.
 
 ${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
 }
+
+/** A review run's own worktree of one repository at the PR head (prompts-use-the-models-to.2): `key` is the repo or the review. */
+interface Scratch {
+  repo: string
+  dir: string
+  key: string
+}
+
+/** What a review run may do in its scratch worktree, and why there only. */
+const scratchLine = (where: string) =>
+  `To check a doubt, run a focused test or a script in ${where}: a detached worktree at the PR's head that mag made for this run and removes after it, so nothing you run touches the user's checkout or the developer's worktree. Install what the test needs there; CI runs the full suite.`
 
 const findingLines = (findings: ReviewFinding[]) =>
   findings.map((f) => `- ${f.level ? `[${FINDING_LEVEL_LABELS[f.level]}] ` : ''}${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
@@ -229,7 +246,7 @@ const findingLines = (findings: ReviewFinding[]) =>
  * after the head this format reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8). `shared`: the review's
  * inventory at this head is there already (one per head, by either format's run): this run reads it, never writes it anew.
  */
-const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null, format: ReviewFormat, shared: boolean) => {
+const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null, format: ReviewFormat, shared: boolean, scratch: string | null) => {
   const review = work.prReview!
   const r = review.results[format] ?? emptyResult(format, '')
   const pr = review.pr
@@ -247,7 +264,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     : ''
   const where = pr.outside
     ? `Its repository ${pr.repo} is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff ${pr.url}, gh pr view and gh api (read only). Its fact is drawn without the project's architecture: its modules are its folders, as get_pr_changes lists them; say so in the review.`
-    : `Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.`
+    : `Its repository is ${pr.repo}, the user's main checkout: never change it there; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.${scratch ? ` The code at the PR's head is in ${scratch}.` : ''}`
   const fact = shared
     ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
     : "The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:"
@@ -263,7 +280,7 @@ ${order}
 ${v1 ? playbook.prReviewV1 : playbook.prReview}
 ${fact}
 ${playbook.fact}
-mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
+mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. ${scratch ? scratchLine(scratch) : 'Run no tests: there is no checkout of it here, and CI runs them.'}
 Changed files (mag):
 ${files}
 ${close}`
@@ -337,6 +354,10 @@ export class Orchestrator {
   private reviewTried = new Map<string, string>()
   /** Topics whose title is being generated. */
   private naming = new Set<string>()
+  /** Review runs' scratch worktrees by session, while its run (or live process) lasts (see ensureScratch). */
+  private scratches = new Map<string, Scratch[]>()
+  /** Making and removing a session's scratch worktrees, one after another: a closing process's removal goes first. */
+  private scratchOps = new Map<string, Promise<unknown>>()
 
   constructor(
     private store: Store,
@@ -386,8 +407,10 @@ export class Orchestrator {
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
         appendSystemPrompt: ARCHITECT_PROMPT + blocks(contextBlocks({ notes: project.notes })),
         mcpConfigPath,
-        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Skill', 'mcp__mag'],
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
+        // Bash read only by the prompt (Claude Code has no read-only Bash), and nothing that writes to a PR.
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
+        readOnly: true,
       }),
       (e) => {
         if (e.type === 'session.started' && e.integrations) this.store.saveIntegrations(e.integrations)
@@ -1178,7 +1201,11 @@ export class Orchestrator {
       this.reviewing.delete(stepId)
       return
     }
-    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact)
+    const scratch = await this.ensureScratch(session)
+    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
+    // A Codex developer's PRs are reviewed on Claude Code (resolveChoice): say so where the review runs.
+    const refused = agentAllowed('reviewer', this.choice(task.projectId, 'developer').agent)
+    if (!refused.ok) session.items.push({ kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
     session.items.push({ kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
     return this.run(session, text)
   }
@@ -1280,6 +1307,9 @@ export class Orchestrator {
    */
   async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
+    // The review runs on the chat's agent; Codex can't be held to "nothing goes to the PR".
+    const allowed = agentAllowed('pr-review', this.choice(projectId, 'chat').agent)
+    if (!allowed.ok) throw new Error(`${allowed.why} Pick Claude Code for Project chat in the project's settings to review PRs.`)
     const info = await prInfo(parsePrUrl(url).url)
     if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
     // A repository the project has no checkout of is read from GitHub (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10).
@@ -1315,7 +1345,8 @@ export class Orchestrator {
     const now = this.store.task(work.id)
     const { files, since } = await this.prFiles(project, now, f)
     // One inventory per head, whichever format wrote it: a later run at that head reuses it, never writes it anew.
-    const job = prReviewPrompt(project, now, files, since, f, this.inventoryAt(now))
+    const scratch = (await this.ensureScratch(this.store.session(sessionId))).find((s) => s.key === now.id)
+    const job = prReviewPrompt(project, now, files, since, f, this.inventoryAt(now), scratch?.dir ?? null)
     if (!by) await this.send(sessionId, job, [], `Review ${name}#${info.number} · ${f}`)
     return { taskId: work.id, sessionId, job }
   }
@@ -1666,14 +1697,17 @@ export class Orchestrator {
     if (session.role === 'chat' || !session.taskId) {
       // A topic opened from an idea discusses it (its text as of the topic's first run).
       const idea = this.store.data.ideas.find((i) => i.topicId === session.id)
+      // A topic that reviews a teammate's PR works in its scratch worktrees, never in the user's checkout.
+      const scratch = this.scratches.get(session.id)
       return {
-        cwd: first,
-        addDirs: [...rest, this.paths.attachmentsDir, this.paths.logsDir],
+        cwd: scratch ? this.scratchRoot(session) : first,
+        addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
         appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
         // Bash reads tickets through CLIs like acli or gh (T-37); read only by the prompt, and never a merge or a push.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         // A topic may own a review of a teammate's PR: nothing it runs writes to a PR.
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
+        readOnly: true,
       }
     }
     const task = this.store.task(session.taskId)
@@ -1683,14 +1717,17 @@ export class Orchestrator {
     const context = (stepKey?: string) => blocks(contextBlocks({ decisions: docDecisions(doc, stepKey), notes: project.notes }))
     if (session.role === 'reviewer') {
       const work = owner.work
+      // Its scratch worktrees at the PR heads: tests run there, never in the developer's worktrees or the user's checkout.
+      const scratch = this.scratches.get(session.id)
       return {
-        cwd: work?.dir ?? first,
-        addDirs: work ? project.repos : rest,
+        cwd: scratch ? this.scratchRoot(session) : (work?.dir ?? first),
+        addDirs: work ? [...project.repos, ...(scratch ? [work.dir] : [])] : rest,
         // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job and the decisions are in the message.
         appendSystemPrompt: `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` + arch + blocks(contextBlocks({ notes: project.notes })),
-        // Bash for gh pr view / diff and git; read only by the prompt, and never a merge or a push.
-        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
+        // Bash for gh, git and focused tests in its scratch worktrees; nothing that edits the PR or writes to GitHub.
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
+        readOnly: true,
       }
     }
     if (session.role === 'developer' && owner.work) {
@@ -1707,7 +1744,7 @@ export class Orchestrator {
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
             : '') +
           context(owner.parentId ? owner.key : undefined),
-        allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'Skill', 'mcp__mag'],
+        allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: [NEVER_MERGE, ...noPushTo(project.baseBranch)],
       }
     }
@@ -1724,7 +1761,83 @@ export class Orchestrator {
       // The owner reads tickets, docs and the web (T-55.5): Bash read only by the prompt, and never a merge or a push.
       allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
       disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
+      readOnly: true,
     }
+  }
+
+  /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */
+  private scratchRoot(session: AgentSession) {
+    return join(this.paths.worktreesDir, session.projectId, 'scratch', session.id)
+  }
+
+  /**
+   * What a session reviews at which head: a step reviewer, each PR of its step (at the heads of its review); a topic,
+   * each review of a teammate's PR in progress it runs, of a repository the project has a checkout of.
+   */
+  private scratchTargets(session: AgentSession): (Scratch & { ref: string })[] {
+    const root = this.scratchRoot(session)
+    if (session.role === 'reviewer' && session.stepId) {
+      const step = this.store.task(session.stepId)
+      const heads = this.reviewing.get(step.id)?.heads ?? step.review?.heads ?? {}
+      const work = step.work
+      if (!work) return []
+      return work.repos.filter((r) => r.prUrl).map((r) => ({ repo: r.repo, key: r.repo, ref: heads[r.repo] ?? r.branch, dir: join(root, repoWorkName(work, r)) }))
+    }
+    if (session.role !== 'chat') return []
+    return this.store.data.tasks
+      .filter((t) => isReview(t) && !t.imported && t.status === 'in_progress' && t.projectId === session.projectId)
+      .filter((t) => t.prReview && !t.prReview.pr.outside && Object.values(t.prReview.results).some((r) => r?.sessionId === session.id))
+      .map((t) => ({ repo: t.prReview!.pr.repo, key: t.id, ref: t.prReview!.pr.head, dir: join(root, t.key) }))
+  }
+
+  /** Whether the session has scratch worktrees to make, move or remove; most sessions never do. */
+  private hasScratch(session: AgentSession) {
+    return this.scratches.has(session.id) || this.scratchTargets(session).length > 0
+  }
+
+  /**
+   * The session's scratch worktrees, made or moved to the heads it reviews now (prompts-use-the-models-to.2): a review
+   * runs focused tests there, so its cwd is never the user's checkout. One that fails is left out (the run reads code
+   * and CI instead); ones it no longer reviews go.
+   */
+  private ensureScratch(session: AgentSession): Promise<Scratch[]> {
+    return this.scratchOp(session, () => this.makeScratch(session))
+  }
+
+  private scratchOp<T>(session: AgentSession, f: () => Promise<T>): Promise<T> {
+    const next = (this.scratchOps.get(session.id) ?? Promise.resolve()).then(f)
+    const tail = next.catch(() => {})
+    this.scratchOps.set(session.id, tail)
+    void tail.then(() => this.scratchOps.get(session.id) === tail && this.scratchOps.delete(session.id))
+    return next
+  }
+
+  private async makeScratch(session: AgentSession): Promise<Scratch[]> {
+    const targets = this.scratchTargets(session)
+    const made: Scratch[] = []
+    for (const { ref, ...t } of targets) {
+      try {
+        await scratchWorktree(t.repo, ref, t.dir)
+        made.push(t)
+      } catch (e) {
+        log.warn('agent', `scratch worktree at ${ref.slice(0, 12)} failed: ${(e as Error).message.split('\n')[0]}`, { session: session.id })
+      }
+    }
+    for (const old of this.scratches.get(session.id) ?? []) if (!made.some((m) => m.dir === old.dir)) await removeWorktree(old.repo, old.dir)
+    if (made.length) this.scratches.set(session.id, made)
+    else this.scratches.delete(session.id)
+    return made
+  }
+
+  /** The run (or live process) ended: its scratch worktrees go with it. */
+  private removeScratch(session: AgentSession) {
+    return this.scratchOp(session, async () => {
+      const scratch = this.scratches.get(session.id)
+      if (!scratch) return
+      this.scratches.delete(session.id)
+      for (const s of scratch) await removeWorktree(s.repo, s.dir)
+      rmSync(this.scratchRoot(session), { recursive: true, force: true })
+    })
   }
 
   /**
@@ -1749,6 +1862,7 @@ export class Orchestrator {
     // The agent the session runs on next decides; a live process of an agent without them goes first.
     if (liveSession({ role: session.role, agent: this.choice(session.projectId, session.role).agent })) return this.runLive(session, prompt)
     if (this.lives.has(session.id)) await this.closeLive(session.id)
+    if (this.hasScratch(session)) await this.ensureScratch(session)
     this.runOnce(session, prompt)
   }
 
@@ -1786,6 +1900,7 @@ export class Orchestrator {
     this.runs.set(session.id, handle)
     handle.done.then(() => {
       this.runs.delete(session.id)
+      void this.removeScratch(session)
       if (session.status === 'running') session.status = 'idle'
       log.info('agent', `${session.role} run ended: ${session.status}`, { ...who, seconds: Math.round((Date.now() - startedAt) / 1000) })
       if (session.status === 'error') this.logSessionEvent(session, 'agent_failed', `${session.role} failed`)
@@ -1850,6 +1965,11 @@ export class Orchestrator {
       await live.handle.done
       live = this.lives.get(session.id)
     }
+    // After a closing process has taken its scratch along: a new one starts in its own.
+    if (this.hasScratch(session)) {
+      await this.ensureScratch(session)
+      live = this.lives.get(session.id)
+    }
     if (!live) live = this.openLive(session, c)
     if (!inTurn) this.turnStarted(session, true)
     live.handle.send(prompt)
@@ -1891,6 +2011,7 @@ export class Orchestrator {
     this.store.changed()
     handle.done.then(() => {
       if (this.lives.get(session.id) === live) this.lives.delete(session.id)
+      if (!this.lives.has(session.id)) void this.removeScratch(session)
       this.clearIdle(session.id)
       session.live = false
       const waited = !!session.background?.length

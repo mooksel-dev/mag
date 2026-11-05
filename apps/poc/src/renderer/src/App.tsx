@@ -11,6 +11,7 @@ import {
   resolveChoice,
   runningAgents,
   taskByKey,
+  agentAllowed,
   type AgentRole,
   type AgentSession,
   type Integration,
@@ -203,6 +204,14 @@ function RepoStatus({ path }: { path: string }) {
 
 const ROLE_LABELS: Record<string, string> = { chat: 'Project chat', groomer: 'Groomer', developer: 'Developer', architect: 'Architect' }
 
+/** What a role on Codex gives up, and why: Codex has a sandbox, not deny rules (see agentAllowed). */
+const CODEX_NOTES: Partial<Record<AgentRole, string>> = {
+  developer: `${agentAllowed('reviewer', 'codex').why} Its PRs are reviewed on Claude Code.`,
+  chat: "Codex runs it read-only without network, so its Bash can't push or write to a PR; it can't read tickets with gh or review teammates' PRs.",
+  groomer: "Codex runs it read-only without network, so its Bash can't push or write to a PR.",
+  architect: 'Codex runs it read-only without network.',
+}
+
 function AgentSettings({ project }: { project: Project }) {
   const agents = useAgents()
   return (
@@ -218,10 +227,11 @@ function AgentSettings({ project }: { project: Project }) {
               choice={resolveChoice(project, role)}
               onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, [role]: c } })}
             />
+            {resolveChoice(project, role).agent === 'codex' && CODEX_NOTES[role] && <span className="muted small agentnote">{CODEX_NOTES[role]}</span>}
           </div>
         ))}
       </div>
-      <span className="muted small">Reviewer uses the Developer choice. Changes apply to the next agent turn; switching the provider starts a fresh agent session.</span>
+      <span className="muted small">Reviewer uses the Developer choice, except Codex: reviews run on Claude Code. Changes apply to the next agent turn; switching the provider starts a fresh agent session.</span>
     </div>
   )
 }

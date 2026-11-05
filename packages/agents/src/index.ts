@@ -22,6 +22,11 @@ export interface RunSpec {
   env?: Record<string, string>
   /** Plain completion: no tools and no MCP servers. Codex runs read-only anyway. */
   noTools?: boolean
+  /**
+   * The run changes nothing (Bash is for reading by its prompt): Codex, which has no deny rules, runs it in a read-only
+   * sandbox without network. Claude Code holds it with disallowedTools.
+   */
+  readOnly?: boolean
 }
 
 export interface RunHandle {
