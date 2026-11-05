@@ -65,13 +65,15 @@ export interface NewTask {
 }
 
 /** A kind of pop-out window; each kind remembers its own size and position. */
-export type WindowKind = 'architecture' | 'canvas' | 'doc'
+export type WindowKind = 'architecture' | 'canvas' | 'doc' | 'review'
 
 /** What a pop-out window shows. */
 export type WindowTarget =
   | { kind: 'architecture'; projectId: string }
   | { kind: 'canvas'; canvasId: string }
   | { kind: 'doc'; taskId: string }
+  /** The review window (review-v2-part-2-v1-2.2): a review of a PR, or a step's review with its plan ↔ fact. */
+  | { kind: 'review'; taskId: string }
 
 /** One CI check of a PR; bucket: pass, fail, pending, skipping or cancel. */
 export interface PrCheck {

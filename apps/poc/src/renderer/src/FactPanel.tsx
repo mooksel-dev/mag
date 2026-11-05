@@ -183,7 +183,7 @@ function Body({ step, view }: { step: Task; view: FactView }) {
 }
 
 /** Plan ↔ fact of a step: the counts by status and the differences, the significant ones first. */
-function Comparison({ view, hunks }: { view: FactView; hunks: ReturnType<typeof useHunks> }) {
+export function Comparison({ view, hunks }: { view: FactView; hunks: ReturnType<typeof useHunks> }) {
   const [all, setAll] = useState(false)
   const [matches, setMatches] = useState(false)
   const r = rows(view.items, all)

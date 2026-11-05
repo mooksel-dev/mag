@@ -95,6 +95,9 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
             <div key={p.step.id} className="diffstep">
               <div className="diffsub">
                 <SubtaskIcon status={p.step.status} /> {p.step.key} · {p.step.title}
+                {(hasFact(p.step) || p.step.review?.report) && (
+                  <button className="link small" title="The step's review, plan ↔ fact, its diagrams and diff in one window" onClick={() => mag.openWindow({ kind: 'review', taskId: p.step.id })}>Open review ⧉</button>
+                )}
               </div>
               {p.repos.map((r) => (
                 <div key={r.repo ?? ''} className="diffrepo">

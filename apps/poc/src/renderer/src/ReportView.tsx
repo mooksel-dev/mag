@@ -11,6 +11,8 @@ import {
   reportStrip,
   type ChecksVerdict,
   type Claim,
+  type HunkTarget,
+  type ReportChange,
   type ReportKind,
   type ReviewReport,
   type StepFact,
@@ -34,9 +36,43 @@ function Badge({ source }: { source: Claim['source'] }) {
   return <span className={`badge src-${source}`} title={SOURCE_TITLES[source]}>{source}</span>
 }
 
-/** A claim: its badge, text and cites; its view opens the diagram of the set it cites. */
-function ClaimLine({ claim, onView, children }: { claim: Claim; onView: (canvasId: string) => void; children?: ReactNode }) {
+/** What the review window expands in place: the code hunks a claim or a change row rests on (review-v2-part-2-v1-2.2). */
+export type Expand = (target: HunkTarget) => ReactNode
+
+/** A toggle that expands the code behind a claim or a change row: its button, and the code once open. */
+function useCode(target: HunkTarget, expand: Expand | undefined): { button: ReactNode; code: ReactNode } {
+  const [open, setOpen] = useState(false)
+  if (!expand) return { button: null, code: null }
+  return {
+    button: <button className="link small" title="Show the code it rests on, here" onClick={() => setOpen(!open)}>code {open ? '▾' : '▸'}</button>,
+    code: open && <div className="inlinehunks">{expand(target)}</div>,
+  }
+}
+
+/** A row of the changes table (the routine one folds: `title` is its toggle); in the window, its units' code expands under it. */
+function ChangeRow({ change, expand, title, open = true }: { change: ReportChange; expand?: Expand; title?: ReactNode; open?: boolean }) {
+  const { button, code } = useCode({ kind: 'change', units: change.units }, expand)
+  return (
+    <tr className={change.routine ? 'routine' : undefined}>
+      <td>
+        {title ?? <b>{change.title}</b>}
+        {open && (
+          <>
+            <div className="small muted">{change.why}</div>
+            {button}
+            {code}
+          </>
+        )}
+      </td>
+      <td className="small">{open ? change.units.map((u) => <code key={u}>{u}</code>) : `${change.units.length} units`}</td>
+    </tr>
+  )
+}
+
+/** A claim: its badge, text and cites; its view opens the diagram of the set it cites; in the window, its code expands. */
+function ClaimLine({ claim, onView, expand, children }: { claim: Claim; onView: (canvasId: string) => void; expand?: Expand; children?: ReactNode }) {
   const canvas = viewCanvas(claim.view)
+  const { button, code } = useCode({ kind: 'claim', cites: claim.cites }, expand)
   return (
     <div className="claim">
       <Badge source={claim.source} />
@@ -46,7 +82,9 @@ function ClaimLine({ claim, onView, children }: { claim: Claim; onView: (canvasI
         <div className="small muted">
           {claim.cites.map((c) => <code key={c}>{c}</code>)}
           {canvas && <button className="link small" title="Show the diagram it cites" onClick={() => onView(canvas)}>{claim.view!.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ↓</button>}
+          {button}
         </div>
+        {code}
       </div>
     </div>
   )
@@ -105,7 +143,7 @@ function Decided({ decided, draft }: { decided: DirectionDecision; draft?: strin
  * cards → changes table. The evidence views, the inventory and the rest go below it (`children`); a claim's view opens
  * its diagram there (`onView`).
  */
-export function ReportView({ report, fact, kind, onView, decisions, direction, children }: {
+export function ReportView({ report, fact, kind, onView, decisions, direction, expand, children }: {
   report: ReviewReport
   fact: Pick<StepFact, 'counts'> | null | undefined
   kind: ReportKind
@@ -114,6 +152,8 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, c
   decisions?: DirectionDecision[]
   /** The direction buttons; without them (a step's review: the approved plan) the card is read only. */
   direction?: DirectionActions
+  /** The review window: every claim and change row expands its code hunks in place. */
+  expand?: Expand
   children?: ReactNode
 }) {
   const [routineOpen, setRoutineOpen] = useState(false)
@@ -139,7 +179,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, c
           <h2>Direction</h2>
           <span className="pill violet">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</span>
         </div>
-        {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} />)}
+        {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
         {d.options.length > 0 && (
           <div className="options">
             {d.options.map((o) => (
@@ -151,10 +191,10 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, c
           </div>
         )}
         {d.facts.length > 0 && <h3>Facts</h3>}
-        {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} />)}
+        {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
         {d.references.length > 0 && <h3>References</h3>}
         {directionReferences(report, decisions).map((r, i) => (
-          <ClaimLine key={i} claim={r.claim} onView={onView}>
+          <ClaimLine key={i} claim={r.claim} onView={onView} expand={expand}>
             {r.decisions.map((x) => <div key={x.id} className="small muted">Your decision: {decisionNote(x).slice(2)}</div>)}
           </ClaimLine>
         ))}
@@ -170,7 +210,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, c
           </div>
           {card.rows.length ? (
             card.rows.map((r, i) => (
-              <ClaimLine key={i} claim={r.claim} onView={onView}>
+              <ClaimLine key={i} claim={r.claim} onView={onView} expand={expand}>
                 {(r.about || r.status) && (
                   <div className="small">
                     {r.status && <span className={`pill ${TONE_PILLS[r.tone]}`}>{r.status}</span>} {r.about}
@@ -191,20 +231,14 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, c
         </div>
         <table className="changes">
           <tbody>
-            {rows.map((c) => (
-              <tr key={c.title}>
-                <td><b>{c.title}</b><div className="small muted">{c.why}</div></td>
-                <td className="small">{c.units.map((u) => <code key={u}>{u}</code>)}</td>
-              </tr>
-            ))}
+            {rows.map((c) => <ChangeRow key={c.title} change={c} expand={expand} />)}
             {routine && (
-              <tr className="routine">
-                <td>
-                  <button className="link" onClick={() => setRoutineOpen(!routineOpen)}>{routineOpen ? '▾' : '▸'} {routine.title}</button>
-                  {routineOpen && <div className="small muted">{routine.why}</div>}
-                </td>
-                <td className="small">{routineOpen ? routine.units.map((u) => <code key={u}>{u}</code>) : `${routine.units.length} units`}</td>
-              </tr>
+              <ChangeRow
+                change={routine}
+                expand={expand}
+                open={routineOpen}
+                title={<button className="link" onClick={() => setRoutineOpen(!routineOpen)}>{routineOpen ? '▾' : '▸'} {routine.title}</button>}
+              />
             )}
           </tbody>
         </table>

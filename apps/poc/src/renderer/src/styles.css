@@ -765,3 +765,19 @@ table.changes { width: 100%; border-collapse: collapse; }
 table.changes td { border-top: 1px solid var(--line); padding: 5px 4px; vertical-align: top; }
 table.changes code { margin-right: 4px; }
 .reportfold > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+
+/* The review window (review-v2-part-2-v1-2.2): one scroll of the review, the agent in a drawer at the side. */
+.reviewwindow { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.reviewwindow.withdrawer { grid-template-columns: minmax(0, 1fr) 400px; }
+.reviewmain { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.reviewmain h1 { margin: 0; }
+.reviewmain h2 { font-size: 14px; margin: 8px 0 4px; }
+.chatdrawer { min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); padding: 8px 10px; }
+.inlinehunks { margin: 4px 0 6px; padding-left: 8px; border-left: 2px solid var(--line); }
+.hunkblock + .hunkblock { margin-top: 6px; }
+.facthunk .uncited { opacity: 0.45; }
+.inlineset + .inlineset { margin-top: 14px; }
+.diffgroup { padding: 6px 0; border-top: 1px solid var(--line); }
+.diffgroup.k-noise, .diffgroup.k-rest { opacity: 0.85; }
+.difffile > summary { cursor: pointer; padding: 2px 0; }
+details.inline { display: inline-block; margin-left: 6px; }
