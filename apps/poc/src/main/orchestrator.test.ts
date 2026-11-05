@@ -724,7 +724,8 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once/)
+  assert.match(run.spec.prompt, /The fact is yours to write: the change inventory of the PRs with set_inventory[\s\S]*Every block of changed lines of a code hunk[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report\. mag checks it against your inventory and takes the verdict from its checks/)
+  assert.match(run.spec.prompt, /Direction is the approved plan/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
   assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
@@ -734,6 +735,10 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   store.updateTask(step.id, { fact: { ...store.task(step.id).fact!, heads: { [dir]: 'zz' } } })
   orch.setReview(step.id, 'merge', [])
   assert.equal(store.task(step.id).review?.verdict, 'merge')
+  // A report is stored with the review; its findings are what the developer gets.
+  const report = { direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: 'look' as const }
+  orch.setReview(step.id, 'look', [{ text: 'q', level: 'question' }], report)
+  assert.deepEqual([store.task(step.id).review?.verdict, store.task(step.id).review?.report?.checks], ['look', 'look'])
   run.end()
   await tick()
 })
@@ -918,6 +923,34 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
   assert.match(store.data.events.at(-1)!.text, /PR review: Request changes · 1 finding/)
 
+  // The report (review-v2-questions-first-direction.1): checked against the inventory, its checks are the verdict, findings derived.
+  const own = createTools(store, { setPrReview: (id, rv) => orch.setPrReview(id, rv) } as ToolActions)
+  const ctx = { projectId: project.id, sessionId: topic.id }
+  const claim = (text: string, cites: string[]) => ({ text, source: 'agent', cites })
+  const reportArg = {
+    direction: {
+      decisions: [claim('The charge is a constant', ['u1'])],
+      options: [{ name: 'constant', tradeoffs: 'simple', pr: true }, { name: 'config', tradeoffs: 'per tenant' }],
+      facts: [claim('one module learns it', ['u1'])],
+      references: [{ text: 'your note: no constants', source: 'yours', cites: ['notes'] }],
+    },
+    problem: [{ criterion: 'charges', status: 'solved', ...claim('it charges', ['src/charge.ts:1']) }],
+    conventions: [{ rule: 'no magic numbers', status: 'fail', ...claim('1 is magic', ['src/charge.ts:1']) }],
+    risks: [],
+    questions: [{ text: 'why 1?', cites: ['src/charge.ts:1'] }],
+    changes: [{ title: 'charge', why: 'the whole PR', units: ['u1'] }],
+    checks: 'approve',
+  }
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg }), /Not recorded\. Fix the report[\s\S]*checks: approve with a failed rule/)
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [], checks: 'request_changes' } }), /units in no change: u1/)
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
+  const v2 = store.task(work.id).prReview!
+  assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
+  // The older form still records, and drops the report it replaces.
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] })
+  assert.equal(store.task(work.id).prReview!.report, undefined)
+
   orch.closeReview(work.id)
   assert.equal(store.task(work.id).status, 'done')
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions), [])
@@ -1027,6 +1060,11 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.match(first.job, /Its repository acme\/remote is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff/)
     assert.match(first.job, /Changed files \(mag\):\n[\s\S]*src-billing[\s\S]*src\/billing\/charge\.ts/)
     assert.doesNotMatch(first.job, /New commits since/)
+    // Options before the author's description; no verdict on the direction (review-v2-questions-first-direction.1).
+    assert.match(first.job, /the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments \(gh pr view\)/)
+    assert.match(first.job, /The direction is the user's call: no verdict on it/)
+    assert.match(first.job, /Call set_pr_review with the report/)
+    assert.ok(first.job.indexOf('Direction, before you read') < first.job.indexOf('3. Only now read the PR: gh pr view'))
     assert.match(await orch.reviewFactOf(work.id), /Without the project architecture: the repository is outside the project/)
 
     orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'charges twice', level: 'blocker', where: 'src/billing/charge.ts:1' }, { text: 'name', level: 'nit', where: 'charge' }] })

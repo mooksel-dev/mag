@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { diagramGroups, diagramSummary, prHeads, repoNames, setOf, subtasksOf, type Project, type Task } from '@mag/core'
+import { diagramGroups, diagramSummary, prHeads, repoNames, reportLine, setOf, subtasksOf, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { DIAGRAM_NAMES } from './diagrams/DiagramView'
 import { Changes, DiffSetView, setContext, type DiagramCanvas } from './DiffSetView'
 import { FactPanel } from './FactPanel'
+import { ReportView } from './ReportView'
 import { SubtaskIcon } from './Tasks'
 
 const mag = window.mag
@@ -102,6 +103,12 @@ export function DiffTab({ task, tasks, project, diagrams }: { task: Task; tasks:
                 </div>
               ))}
               {hasFact(p.step) && <FactPanel step={p.step} diagramsKey={p.repos.flatMap((r) => r.diagrams.map((d) => `${d.id}@${d.version}`)).join(',')} />}
+              {p.step.review?.report && (
+                <details className="reportfold">
+                  <summary>Agent review: {reportLine(p.step.review.report, 'step')}</summary>
+                  <ReportView report={p.step.review.report} fact={p.step.fact} kind="step" onView={setOpenId} />
+                </details>
+              )}
             </div>
           ))}
         </section>

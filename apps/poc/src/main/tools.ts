@@ -1,4 +1,4 @@
-import { CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -6,7 +6,7 @@ import type { Store } from './store'
 import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
-import { changes as factChanges, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget } from './core/services/fact/index.ts'
+import { changes as factChanges, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepFact, stepSet } from './fact.ts'
 import { MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
@@ -30,7 +30,7 @@ export interface ToolActions {
   /** A developer's add_repo: a worktree of one more project repository in its step. */
   addRepo(stepId: string, ref: string, worktree?: boolean): Promise<RepoWork>
   /** The reviewer's verdict on the step under review (T-55.1); returns what to tell it. */
-  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[]): string
+  setReview(stepId: string, verdict: ReviewVerdict, findings: ReviewFinding[], report?: ReviewReport): string
   /** Continue a done work (T-55.6): back to planning; `by`, the topic asking, owns it. Returns what to tell the agent. */
   reopen(taskId: string, what: string, by?: string): string
   /** A step developer's question goes to the work's owner (ahent-vede-robotu-vlasna-pozytsiia.2); false: busy or gone. */
@@ -44,7 +44,7 @@ export interface ToolActions {
   /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
   reviewFact(workId: string): Promise<string>
   /** The owner topic's set_pr_review; returns what to tell it. */
-  setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings'>): string
+  setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string
   /** The user's Approve: planning → ready, with the button's checks. */
   approve(taskId: string): void
   /** The user's Start (or Restart) of a work; `localRepos`: repositories its steps work on in the main checkout. */
@@ -121,6 +121,19 @@ function findingsArg(v: unknown): ReviewFinding[] {
     if (opt(x.node)) f.node = opt(x.node)
     return f
   })
+}
+
+/**
+ * A review report from a tool argument (review-v2-questions-first-direction.1): its shape, then checkReport against the
+ * inventory of the review's fact; mag's checked badge on the claims that cite only units the hunks bear out. Throws with
+ * everything to fix; nothing is stored then.
+ */
+function reportArg(raw: unknown, kind: ReportKind, fact: Pick<Fact, 'inventory' | 'inventoryCheck'> | null): ReviewReport {
+  const { report, errors } = normalizeReport(raw)
+  const all = [...errors, ...(errors.length ? [] : checkReport(report, fact?.inventory ?? null, kind))]
+  if (all.length) throw new Error(`Not recorded. Fix the report and call again:\n- ${all.join('\n- ')}`)
+  const bad = new Set([...(fact?.inventoryCheck?.ungrounded ?? []), ...(fact?.inventoryCheck?.otherModule ?? [])].map((u) => u.unit))
+  return markChecked(report, (fact?.inventory?.units ?? []).map((u) => u.id).filter((id) => !bad.has(id)))
 }
 
 /** Tickets from a tool argument: [{ url, key? }] (a plain string is a URL); some agent CLIs pass the array as a JSON string. */
@@ -435,6 +448,13 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       case 'set_review': {
         const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
         if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
+        if (args.report != null) {
+          const step = store.task(stepId)
+          const report = reportArg(args.report, 'step', step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null)
+          const verdict = stepVerdict(report.checks)
+          if (args.verdict != null && args.verdict !== verdict) throw new Error(`Not recorded: verdict ${String(args.verdict)} and checks ${report.checks} disagree; checks ${report.checks} is ${verdict}. Leave verdict out.`)
+          return actions.setReview(stepId, verdict, reportFindings(report), report)
+        }
         const verdict = args.verdict as ReviewVerdict
         if (!REVIEW_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${REVIEW_VERDICTS.join(', ')}`)
         const findings = findingsArg(args.findings)
@@ -445,13 +465,19 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       case 'set_pr_review': {
         if (!isReview(task)) throw new Error(`${task.key} is not a review of a teammate's PR`)
         if (task.ownerSessionId !== ctx.sessionId) throw new Error(`set_pr_review is for the topic that owns ${task.key}`)
+        const text = (v: unknown) => String(v ?? '').trim()
+        if (args.report != null) {
+          const pr = task.prReview!.pr
+          const head = task.fact?.heads[pr.repo]
+          const report = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
+          return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
+        }
         const verdict = args.verdict as PrVerdict
         if (!PR_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${PR_VERDICTS.join(', ')}`)
         const findings = findingsArg(args.findings)
         if (findings.some((f) => !f.level)) throw new Error(`Every finding needs its level: ${FINDING_LEVELS.join(', ')}`)
         if (verdict === 'approve' && findings.some((f) => f.level === 'blocker')) throw new Error('A blocker and approve do not go together: request_changes, or drop the blocker and say why')
-        const text = (v: unknown) => String(v ?? '').trim()
-        return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict, findings })
+        return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict, findings, report: undefined })
       }
 
       default:

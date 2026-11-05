@@ -733,3 +733,31 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .titlebar .menu > button { padding: 3px 10px; font-size: 12px; }
 .titlebar .seg button { border: none; border-radius: 0; padding: 3px 8px; font-size: 12px; color: var(--muted); background: none; }
 .titlebar .seg button.on { background: var(--accent); color: var(--on-accent); }
+
+/* The review report (review-v2-questions-first-direction.1): strip, direction card, question cards, changes. */
+.report { display: flex; flex-direction: column; gap: 10px; }
+.reportstrip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.stripchip { cursor: pointer; background: none; color: inherit; font: inherit; display: inline-flex; gap: 6px; align-items: baseline; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--line); font-size: 12px; }
+.stripchip.tone-good { border-color: var(--green-fg); }
+.stripchip.tone-warn { border-color: var(--amber-fg); }
+.stripchip.tone-bad { border-color: var(--danger-fg); }
+.reportcard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.reportcard.direction { border-color: var(--violet-fg); }
+.reportcard h3 { font-size: 12px; margin: 8px 0 2px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.cardhead { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.cardhead h2 { margin: 0 0 4px; }
+.claim { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--line); }
+.claim code { margin-right: 6px; }
+.badge { font-size: 11px; padding: 0 6px; border-radius: 6px; min-width: 58px; text-align: center; border: 1px solid var(--line); }
+.badge.src-checked { background: var(--green-bg); color: var(--green-fg); }
+.badge.src-yours { background: var(--violet-bg); color: var(--violet-fg); }
+.badge.src-question { background: var(--amber-bg); color: var(--amber-fg); }
+.badge.src-rule { background: var(--danger-bg); color: var(--danger-fg); }
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px; margin: 6px 0; }
+.option { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.option.pr { border-color: var(--violet-fg); }
+.option .pill { margin-left: 6px; }
+table.changes { width: 100%; border-collapse: collapse; }
+table.changes td { border-top: 1px solid var(--line); padding: 5px 4px; vertical-align: top; }
+table.changes code { margin-right: 4px; }
+.reportfold > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
