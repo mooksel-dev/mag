@@ -2,20 +2,26 @@ import { useRef, useState } from 'react'
 import {
   agentState,
   chatCommands,
+  isLegacy,
   isReview,
   openPrs,
   prRepoName,
   resolveChoice,
   reviewTopic,
   shortTitle,
+  stepsLine,
+  workCard,
   workStage,
   type AgentSession,
   type Attachment,
+  type CardMove,
+  type ReviewStage,
+  type StepLine,
   type Task,
   type WorkStage,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { WorkCards } from './Cards'
+import { MoveButton, WorkCards } from './Cards'
 import { Chat, Composer, ModelChip } from './Chat'
 import { prLabel } from './format'
 import { CancelButton, ReopenButton, StatusPill, TicketLinks, AgentDot, useNow } from './Tasks'
@@ -35,15 +41,44 @@ export function ownerSession(work: Task, sessions: AgentSession[]): AgentSession
   )
 }
 
-type Stage = Exclude<WorkStage, 'Done'>
-const STAGES: Stage[] = ['Plan', 'Approve', 'Build', 'Merge']
+const WORK_STAGES: WorkStage[] = ['Plan', 'Approve', 'Build', 'Merge']
+const REVIEW_STAGES: ReviewStage[] = ['Running', 'Report ready', 'Waiting for author']
 
-function Stepper({ stage }: { stage: WorkStage }) {
-  const at = stage === 'Done' ? STAGES.length : STAGES.indexOf(stage)
+/** A work's stages Plan → Merge, a review's Running → Waiting for author; Done shows them all past. */
+function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: (WorkStage | ReviewStage)[] }) {
+  const at = stage === 'Done' ? stages.length : stages.indexOf(stage)
   return (
     <span className="stepper" aria-label={`Stage: ${stage}`}>
-      {STAGES.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
+      {stages.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
     </span>
+  )
+}
+
+const STEP_STATE: Record<StepLine['state'], string> = { done: 'done', merge: 'merge', build: 'building', waiting: 'waits', manual: 'start manually', todo: 'next' }
+/** ① … ⑳, then the plain number. */
+const circled = (no: number) => (no <= 20 ? String.fromCharCode(0x2460 + no - 1) : `${no}.`)
+
+/** The work's steps in one line: "① Model · PR #84 · done  ② Rows · PR #85 · merge"; the current one stands out. */
+function StepsLine({ steps }: { steps: StepLine[] }) {
+  const current = steps.find((s) => s.state !== 'done')
+  return (
+    <div className="stepsline small">
+      {steps.map((s) => (
+        <span key={s.key} className={`step ${s.state}${s === current ? ' now' : ''}`} title={s.key}>
+          {circled(s.no)} {s.title}{s.pr && ` · ${s.pr}`} · {s.state === 'waiting' ? `waits for ${s.waitsFor}` : STEP_STATE[s.state]}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** "Waiting on you: <the row's move>" with the button for it (work-list-the-left-column.2). */
+function WaitingBar({ move, work, state, onAnswer }: { move: CardMove; work: Task; state: AppState; onAnswer: () => void }) {
+  return (
+    <div className="waitingbar" role="status">
+      <span><b>Waiting on you:</b> {move.text}</span>
+      {move.action && <MoveButton action={move.action} work={work} state={state} onAnswer={onAnswer} />}
+    </div>
   )
 }
 
@@ -55,9 +90,14 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
   const project = state.projects.find((p) => p.id === work.projectId)
   const owner = ownerSession(work, state.sessions)
   const mine = state.sessions.filter((s) => s.taskId === work.id)
-  const stage = workStage(work, tasks)
-  const [fullBrief, setFullBrief] = useState(false)
   const review = isReview(work)
+  // The same card as the work's row: its stage and whose move. A review without a stage (asking, failed) has none here
+  // either; a work the list leaves out (canceled, done long ago) keeps its own.
+  const card = workCard(work, tasks, state.sessions, now)
+  const stage = card ? card.stage : review ? null : workStage(work, tasks)
+  // A legacy work's subtasks are a checklist, not steps.
+  const steps = review || isLegacy(work) ? [] : stepsLine(work, tasks)
+  const [fullBrief, setFullBrief] = useState(false)
   const pr = work.prReview?.pr
   const canGroom = !review && !mine.some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const focus = () => box.current?.querySelector('textarea')?.focus()
@@ -69,7 +109,8 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
           <span className="key">{work.key}</span>
           {review && pr && project ? <button className="link" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : <TicketLinks task={work} />}
           <StatusPill status={work.status} />
-          {stage && !review && <Stepper stage={stage} />}
+          <span className="wlkind small">{review ? 'review' : 'work'}</span>
+          {stage && <Stepper stage={stage} stages={review ? REVIEW_STAGES : WORK_STAGES} />}
           <AgentDot state={agentState(work, mine, tasks)} now={now} />
           <div className="grow" />
           {canGroom && !owner && <button className="small" onClick={() => mag.groom(work.id)}>Groom</button>}
@@ -78,6 +119,8 @@ export function WorkConversation({ work, state, onOpenKey }: { work: Task; state
           {!review && <CancelButton task={work} small />}
         </div>
         <h1>{shortTitle(work)}</h1>
+        {steps.length > 0 && <StepsLine steps={steps} />}
+        {card?.move.who === 'you' && <WaitingBar move={card.move} work={work} state={state} onAnswer={focus} />}
         {work.description && (
           <div className={`brief ${fullBrief ? 'full' : ''}`}>
             <span className="brieftext">{work.description}</span>

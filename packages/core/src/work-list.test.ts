@@ -8,6 +8,8 @@ import {
   needsQuestions,
   shortTitle,
   span,
+  stepsLine,
+  workCard,
   workCards,
   workStage,
   type AgentReview,
@@ -49,30 +51,32 @@ const line = (c: WorkCard) => `${c.group}:${c.id}:${c.dot} ${c.move.who}: ${c.mo
 const cards = (tasks: Task[], sessions: AgentSession[] = []) => workCards('p', tasks, sessions, NOW)
 const card = (tasks: Task[], sessions: AgentSession[] = [], id = tasks[0].id) => cards(tasks, sessions).find((c) => c.id === id)!
 
+/** A work in each state: name, its tasks and sessions, its row line. Shared with the header's card (workCard). */
+const WORK_CASES: [string, Task[], AgentSession[], string][] = [
+  ['planning', [task('w')], [], 'waiting:w:amber you: Continue planning'],
+  ['planning with questions', [task('w', { needsInput: 'Two questions', needsQuestions: [{ text: 'a', recommendation: '' }, { text: 'b', recommendation: '' }] })], [], 'waiting:w:amber you: Your call: 2 questions'],
+  ['plan ready', [task('w', { needsInput: 'Plan ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
+  ['plan with steps, nothing asked', [task('w'), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
+  ['ready', [task('w', { status: 'ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Start'],
+  ['groomer planning', [task('w')], [session('g', { taskId: 'w', role: 'groomer', status: 'running', runStartedAt: NOW - 3 * MIN })], 'working:w:green agent: groomer · 3 min'],
+  ['owner topic planning', [task('w', { ownerSessionId: 'o' })], [session('o', { status: 'running', runStartedAt: NOW - 5 * MIN })], 'working:w:green agent: owner · 5 min'],
+  ['building', building('w'), [session('d', { taskId: 'w', role: 'developer', stepId: 'w.1', status: 'running', runStartedAt: NOW - 12 * MIN, items: [{ kind: 'tool', id: 't', name: 'Bash', summary: 'pnpm test', at: NOW - MIN }] })], 'working:w:green agent: developer · 12 min · Bash pnpm test'],
+  ['PR open, CI pending', building('w', withPr(85, { ci: 'pending' })), [], 'working:w:grey other: CI · PR #85'],
+  ['PR check failed', building('w', withPr(85, { checkError: 'gh: not logged in' })), [], 'waiting:w:amber you: PR check failed: gh: not logged in'],
+  ['agent review: look', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('look', 2) }), [], 'waiting:w:amber you: Look at PR #85'],
+  ['ready to merge', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('merge', 0) }), [], 'waiting:w:amber you: Merge PR #85'],
+  ['ready to merge, no review yet', building('w', withPr(85, { ci: 'pass' })), [], 'waiting:w:amber you: Merge PR #85'],
+  ['step waits for Start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1, startManually: true })], [], 'waiting:w:amber you: Start step 2'],
+  ['next step about to start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1 })], [], 'working:w:grey other: Starting step 2'],
+  ['step waits for another', building('w', { status: 'todo', waitingFor: { key: 'x.1', repo: '/r' } }), [], 'working:w:grey other: Waits for x.1'],
+  ["developer's question", building('w', { ownerQuestion: 'Which table?' }, { needsInput: 'The developer asks' }), [], "waiting:w:amber you: Answer the developer's question"],
+  ['agent failed', building('w'), [session('d', { taskId: 'w', role: 'developer', status: 'error' })], 'waiting:w:amber you: Restart the developer'],
+  ['developer stopped', building('w'), [session('d', { taskId: 'w', role: 'developer' })], 'waiting:w:amber you: The developer stopped: look at the work'],
+  ['done in 7 days', [task('w', { status: 'done', updatedAt: NOW - 2 * DAY })], [], 'done:w:grey other: Done'],
+]
+
 test('workCards: the group, dot and whose-move line of a work in each state', () => {
-  const cases: [string, Task[], AgentSession[], string][] = [
-    ['planning', [task('w')], [], 'waiting:w:amber you: Continue planning'],
-    ['planning with questions', [task('w', { needsInput: 'Two questions', needsQuestions: [{ text: 'a', recommendation: '' }, { text: 'b', recommendation: '' }] })], [], 'waiting:w:amber you: Your call: 2 questions'],
-    ['plan ready', [task('w', { needsInput: 'Plan ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
-    ['plan with steps, nothing asked', [task('w'), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
-    ['ready', [task('w', { status: 'ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Start'],
-    ['groomer planning', [task('w')], [session('g', { taskId: 'w', role: 'groomer', status: 'running', runStartedAt: NOW - 3 * MIN })], 'working:w:green agent: groomer · 3 min'],
-    ['owner topic planning', [task('w', { ownerSessionId: 'o' })], [session('o', { status: 'running', runStartedAt: NOW - 5 * MIN })], 'working:w:green agent: owner · 5 min'],
-    ['building', building('w'), [session('d', { taskId: 'w', role: 'developer', stepId: 'w.1', status: 'running', runStartedAt: NOW - 12 * MIN, items: [{ kind: 'tool', id: 't', name: 'Bash', summary: 'pnpm test', at: NOW - MIN }] })], 'working:w:green agent: developer · 12 min · Bash pnpm test'],
-    ['PR open, CI pending', building('w', withPr(85, { ci: 'pending' })), [], 'working:w:grey other: CI · PR #85'],
-    ['PR check failed', building('w', withPr(85, { checkError: 'gh: not logged in' })), [], 'waiting:w:amber you: PR check failed: gh: not logged in'],
-    ['agent review: look', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('look', 2) }), [], 'waiting:w:amber you: Look at PR #85'],
-    ['ready to merge', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('merge', 0) }), [], 'waiting:w:amber you: Merge PR #85'],
-    ['ready to merge, no review yet', building('w', withPr(85, { ci: 'pass' })), [], 'waiting:w:amber you: Merge PR #85'],
-    ['step waits for Start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1, startManually: true })], [], 'waiting:w:amber you: Start step 2'],
-    ['next step about to start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1 })], [], 'working:w:grey other: Starting step 2'],
-    ['step waits for another', building('w', { status: 'todo', waitingFor: { key: 'x.1', repo: '/r' } }), [], 'working:w:grey other: Waits for x.1'],
-    ["developer's question", building('w', { ownerQuestion: 'Which table?' }, { needsInput: 'The developer asks' }), [], "waiting:w:amber you: Answer the developer's question"],
-    ['agent failed', building('w'), [session('d', { taskId: 'w', role: 'developer', status: 'error' })], 'waiting:w:amber you: Restart the developer'],
-    ['developer stopped', building('w'), [session('d', { taskId: 'w', role: 'developer' })], 'waiting:w:amber you: The developer stopped: look at the work'],
-    ['done in 7 days', [task('w', { status: 'done', updatedAt: NOW - 2 * DAY })], [], 'done:w:grey other: Done'],
-  ]
-  for (const [name, tasks, sessions, want] of cases) assert.equal(line(card(tasks, sessions)), want, name)
+  for (const [name, tasks, sessions, want] of WORK_CASES) assert.equal(line(card(tasks, sessions)), want, name)
 })
 
 test('workCards: done over 7 days ago, canceled works and steps are left out; other projects too', () => {
@@ -145,21 +149,23 @@ const reviewTask = (patch: Partial<Task> = {}, review: ResultPatch = {}) =>
   task('rv', { type: 'review', title: 'r#12: Charge cards', status: 'in_progress', ownerSessionId: 'rt', prReview: prReview(review), ...patch })
 const ready = { verdict: 'comment' as const, head: 'h2', at: NOW - 30 * MIN }
 
+const rt = (patch: Partial<AgentSession> = {}) => session('rt', { reviewOf: 'rv', ...patch })
+/** A review in each state: name, the review, its topic, its stage and its row line. Shared with the header's card. */
+const REVIEW_CASES = (): [string, Task, AgentSession, string | null, string][] => [
+  ['running', reviewTask(), rt({ status: 'running', runStartedAt: NOW - 4 * MIN }), 'Running', 'working:rv:green agent: agent · 4 min'],
+  ['question', reviewTask({ needsInput: 'Which ticket?' }), rt(), null, "waiting:rv:amber you: Answer the agent's question"],
+  ['direction open', reviewTask({}, { ...ready, report: report() }), rt(), 'Report ready', 'waiting:rv:amber you: Your call on direction (2 options)'],
+  ['decided, not posted', reviewTask({}, { ...ready, report: report({ decided: { id: 'd', reviewId: 'rv', pr: '', decision: '', choice: 'ok', at: NOW } }) }), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
+  ['v1 ready', reviewTask({}, ready), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
+  ['posted', reviewTask({}, { ...ready, posted: { at: NOW - 2 * 60 * MIN, url: 'u' } }), rt(), 'Waiting for author', 'working:rv:grey other: PR author · 2 h'],
+  ['failed, no verdict', reviewTask(), rt({ status: 'error' }), null, 'waiting:rv:amber you: Review again'],
+  ['not started, no verdict', reviewTask(), rt(), null, 'working:rv:grey other: Waits for the agent'],
+  ['outdated', reviewTask({}, { ...ready, head: 'h1' }), rt(), 'Report ready', 'waiting:rv:amber you: Review the new commits'],
+  ['closed', reviewTask({ status: 'done', updatedAt: NOW }), rt(), 'Done', 'done:rv:grey other: Closed'],
+]
+
 test('workCards: a review: its stage and whose move in each state; its topic is not a topic of its own', () => {
-  const rt = (patch: Partial<AgentSession> = {}) => session('rt', { reviewOf: 'rv', ...patch })
-  const cases: [string, Task, AgentSession, string | null, string][] = [
-    ['running', reviewTask(), rt({ status: 'running', runStartedAt: NOW - 4 * MIN }), 'Running', 'working:rv:green agent: agent · 4 min'],
-    ['question', reviewTask({ needsInput: 'Which ticket?' }), rt(), null, "waiting:rv:amber you: Answer the agent's question"],
-    ['direction open', reviewTask({}, { ...ready, report: report() }), rt(), 'Report ready', 'waiting:rv:amber you: Your call on direction (2 options)'],
-    ['decided, not posted', reviewTask({}, { ...ready, report: report({ decided: { id: 'd', reviewId: 'rv', pr: '', decision: '', choice: 'ok', at: NOW } }) }), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
-    ['v1 ready', reviewTask({}, ready), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
-    ['posted', reviewTask({}, { ...ready, posted: { at: NOW - 2 * 60 * MIN, url: 'u' } }), rt(), 'Waiting for author', 'working:rv:grey other: PR author · 2 h'],
-    ['failed, no verdict', reviewTask(), rt({ status: 'error' }), null, 'waiting:rv:amber you: Review again'],
-    ['not started, no verdict', reviewTask(), rt(), null, 'working:rv:grey other: Waits for the agent'],
-    ['outdated', reviewTask({}, { ...ready, head: 'h1' }), rt(), 'Report ready', 'waiting:rv:amber you: Review the new commits'],
-    ['closed', reviewTask({ status: 'done', updatedAt: NOW }), rt(), 'Done', 'done:rv:grey other: Closed'],
-  ]
-  for (const [name, t, s, stage, want] of cases) {
+  for (const [name, t, s, stage, want] of REVIEW_CASES()) {
     const got = cards([t], [s])
     assert.deepEqual(got.map(line), [want], name)
     assert.deepEqual([got[0].kind, got[0].title, got[0].stage, got[0].progress], ['review', 'Charge cards', stage, 'PR #12 · @ann'], name)
@@ -213,6 +219,40 @@ test('cardMove: the same line for a work given its inbox item, so the header bar
   const tasks = building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('merge', 0) })
   assert.deepEqual(cardMove(tasks[0], { task: tasks[0], kind: 'ready_to_merge', text: '' }, [], tasks, NOW), { who: 'you', text: 'Merge PR #85', action: { kind: 'open_pr', url: 'https://github.com/o/r/pull/85' } })
   assert.deepEqual(cardMove(tasks[0], { task: tasks[0], kind: 'ready_to_start', text: '' }, [], [tasks[0], step('w.1', 'w', { startManually: true })], NOW).action, { kind: 'start_step', stepId: 'w.1' })
+})
+
+test('workCard: the header shows the same card, move and action as the row, for every work and review state', () => {
+  for (const [name, tasks, sessions] of WORK_CASES) assert.deepEqual(workCard(tasks[0], tasks, sessions, NOW), card(tasks, sessions), name)
+  for (const [name, t, s] of REVIEW_CASES()) assert.deepEqual(workCard(t, [t], [s], NOW), card([t], [s]), name)
+  // A topic that owns the work is not taken for it, even with the same id.
+  assert.equal(workCard(task('w'), [task('w')], [session('w')], NOW)?.kind, 'work')
+})
+
+test('workCard: none for what the list leaves out', () => {
+  assert.equal(workCard(task('w', { status: 'canceled' }), [task('w', { status: 'canceled' })], [], NOW), null)
+  const old = task('w', { status: 'done', updatedAt: NOW - 8 * DAY })
+  assert.equal(workCard(old, [old], [], NOW), null)
+})
+
+test('stepsLine: each step with its number, PRs and where it stands', () => {
+  const tasks = [
+    task('w', { status: 'in_progress' }),
+    step('w.1', 'w', { title: 'Model', status: 'done', ...withPr(84, { prState: 'merged' }) }),
+    step('w.2', 'w', { title: 'Rows', status: 'in_progress', rank: 1, ...withPr(85) }),
+    step('w.3', 'w', { title: 'Header', status: 'in_progress', rank: 2 }),
+    step('w.4', 'w', { title: 'Wait', rank: 3, waitingFor: { key: 'x.1', repo: '/r' } }),
+    step('w.5', 'w', { title: 'Later', rank: 4, startManually: true }),
+    step('w.6', 'w', { title: 'Next', rank: 5, ...withPr(86, { prState: 'closed' }) }),
+  ]
+  assert.deepEqual(stepsLine(tasks[0], tasks), [
+    { no: 1, key: 'w.1', title: 'Model', pr: 'PR #84', state: 'done' },
+    { no: 2, key: 'w.2', title: 'Rows', pr: 'PR #85', state: 'merge' },
+    { no: 3, key: 'w.3', title: 'Header', state: 'build' },
+    { no: 4, key: 'w.4', title: 'Wait', state: 'waiting', waitsFor: 'x.1' },
+    { no: 5, key: 'w.5', title: 'Later', state: 'manual' },
+    { no: 6, key: 'w.6', title: 'Next', state: 'todo' },
+  ])
+  assert.deepEqual(stepsLine(task('solo'), [task('solo')]), [])
 })
 
 test('workStage: canceled has none; shortTitle: review without its prefix, topic only by its generated title', () => {

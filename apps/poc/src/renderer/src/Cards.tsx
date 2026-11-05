@@ -11,6 +11,7 @@ import {
   taskPrs,
   type AgentSession,
   type InboxItem,
+  type MoveAction,
   type Project,
   type Task,
 } from '@mag/core'
@@ -139,19 +140,11 @@ function ItemCard({ item, work, tasks }: { item: InboxItem; work: Task; tasks: T
     )
   }
   if (kind === 'agent_failed') {
-    const last = item.session
-    const restart = () => {
-      if (isReview(work)) return mag.reviewAgain(work.id)
-      if (last?.role === 'reviewer') return mag.review(work.id)
-      // A work in progress is never groomed again: its developer goes on.
-      if (last?.role !== 'groomer' || work.status === 'in_progress') return mag.develop(work.id)
-      return mag.groom(work.id)
-    }
     return (
       <div className="workcard bad">
         <div className="cardtitle">{text}</div>
         <div className="muted small">Its log is under Agents. Restart runs it again where it stopped.</div>
-        <div className="actions"><button className="primary" onClick={() => void restart()}>Restart</button></div>
+        <div className="actions"><button className="primary" onClick={() => void restartAgent(work, item.session)}>Restart</button></div>
       </div>
     )
   }
@@ -172,6 +165,48 @@ function ItemCard({ item, work, tasks }: { item: InboxItem; work: Task; tasks: T
     )
   }
   return null
+}
+
+/** Runs the failed agent of a work again: a review's agent, its reviewer, its developer, else its groomer. */
+function restartAgent(work: Task, last: AgentSession | undefined) {
+  if (isReview(work)) return mag.reviewAgain(work.id)
+  if (last?.role === 'reviewer') return mag.review(work.id)
+  // A work in progress is never groomed again: its developer goes on.
+  if (last?.role !== 'groomer' || work.status === 'in_progress') return mag.develop(work.id)
+  return mag.groom(work.id)
+}
+
+/**
+ * The button of a card's move (work-list-the-left-column.2), for the Waiting-on-you bar: the same handlers as the cards
+ * above. Approve & Start and Start are the cards' buttons (they pick local repos); a review's direction and Publish
+ * happen in its review window. None where the conversation itself is the action (an approval card in it, a stopped
+ * developer).
+ */
+export function MoveButton({ action, work, state, onAnswer }: { action: MoveAction; work: Task; state: AppState; onAnswer: () => void }) {
+  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
+  const project = state.projects.find((p) => p.id === work.projectId)
+  const sessions = state.sessions.filter((s) => s.taskId === work.id)
+  const openReview = () => mag.openWindow({ kind: 'review', taskId: work.id })
+  switch (action.kind) {
+    case 'open_pr':
+      return <button className="primary small" onClick={() => mag.open(action.url)}>Open PR ↗</button>
+    case 'approve_start':
+      return <ApproveButton task={work} tasks={tasks} sessions={sessions} project={project} small />
+    case 'start':
+      return <StartButton task={work} tasks={tasks} project={project} className="primary small" disabled={!!work.needsInput || sessions.some((s) => s.status === 'running')} />
+    case 'start_step':
+      return <button className="primary small" onClick={() => mag.startStep(work.id)}>Start step</button>
+    case 'answer':
+      return <button className="primary small" onClick={onAnswer}>Answer…</button>
+    case 'restart':
+      return <button className="primary small" onClick={() => void restartAgent(work, state.sessions.find((s) => s.id === action.sessionId))}>Restart</button>
+    case 'publish':
+      return <button className="primary small" title="Publish from the review window: the verdict and the findings to post" onClick={openReview}>Publish…</button>
+    case 'review_again':
+      return <button className="primary small" onClick={() => mag.reviewAgain(work.id)}>Review again</button>
+    case 'open':
+      return isReview(work) ? <button className="primary small" onClick={openReview}>Open review</button> : null
+  }
 }
 
 /** The step's PRs wait for the user's merge: the owner's verdict, where to look, and the PRs to open. */
