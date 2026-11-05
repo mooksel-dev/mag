@@ -226,8 +226,8 @@ const findingLines = (findings: ReviewFinding[]) =>
  * The job of the topic that runs one format of a review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2;
  * review-v2-part-2-v1-2.1): said in full every time, a first look or a look again, in the playbook's text of that
  * format. `files`: the PR's changed files as mag read them; `since`: on a look again at new commits, only what changed
- * after the head this format reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8). `shared`: the inventory
- * at this head is there already, written by the other format's run: this run reads it instead of writing its own.
+ * after the head this format reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8). `shared`: the review's
+ * inventory at this head is there already (one per head, by either format's run): this run reads it, never writes it anew.
  */
 const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null, format: ReviewFormat, shared: boolean) => {
   const review = work.prReview!
@@ -242,14 +242,14 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
         newer
           ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact set and revise it where the new commits change it.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
-          : 'Look again: whether each finding still holds; keep the fact set and revise it.'
+          : `Look again: whether each finding still holds${shared ? '' : '; keep the fact set and revise it'}.`
       }`
     : ''
   const where = pr.outside
     ? `Its repository ${pr.repo} is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff ${pr.url}, gh pr view and gh api (read only). Its fact is drawn without the project's architecture: its modules are its folders, as get_pr_changes lists them; say so in the review.`
     : `Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.`
   const fact = shared
-    ? `The fact: the PR's change inventory at this head is already written (by the review's other format): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
+    ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
     : "The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:"
   const order = v1
     ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
@@ -1263,7 +1263,8 @@ export class Orchestrator {
     log.info('agent', `${work.key}: ${f} review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
     const now = this.store.task(work.id)
     const { files, since } = await this.prFiles(project, now, f)
-    const job = prReviewPrompt(project, now, files, since, f, !before?.verdict && this.inventoryAt(now))
+    // One inventory per head, whichever format wrote it: a later run at that head reuses it, never writes it anew.
+    const job = prReviewPrompt(project, now, files, since, f, this.inventoryAt(now))
     if (!by) await this.send(sessionId, job, [], `Review ${name}#${info.number} · ${f}`)
     return { taskId: work.id, sessionId, job }
   }

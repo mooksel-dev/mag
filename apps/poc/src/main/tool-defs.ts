@@ -597,7 +597,7 @@ export const TOOL_DEFS = [
     name: 'review_pr',
     scope: 'project',
     description:
-      "Review a teammate's PR of a project repository, by its GitHub link: mag starts (or reopens) its review, run by this topic in one format, fetches the PR and answers with the job. Do it right here, in this turn. A review keeps one result per format; the other one stays.",
+      "Review a teammate's PR of a project repository, by its GitHub link: mag starts (or reopens) its review, run by this topic in one format, fetches the PR and answers with the job. Do it right here, in this turn. A review keeps one result per format; the other one stays. Run only one format of a PR in this topic: a second one here has seen what the first read (v2 must reach its options before the author's description); the user gets the other format in its own topic with Run v1 / Run v2 on the review's page.",
     inputSchema: {
       type: 'object',
       properties: {

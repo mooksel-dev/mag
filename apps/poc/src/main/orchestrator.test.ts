@@ -1227,7 +1227,7 @@ test('v1 and v2 side by side: each format in its own topic, both results kept, t
     const job2 = opened.at(-1)!.sent.at(-1)!
     assert.match(job2, /you own the v2 review of /)
     assert.match(job2, /Direction, before you read/)
-    assert.match(job2, /The fact: the PR's change inventory at this head is already written \(by the review's other format\)[\s\S]*never to write it anew/)
+    assert.match(job2, /The fact: the PR's change inventory at this head is already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
     assert.doesNotMatch(job2, /You reviewed it before/, 'v2 does not see the v1 result')
     await endTurn(t2.id)
     orch.setPrReview(work.id, t2.id, { problem: 'p2', approach: 'a2', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker' }] })
@@ -1239,11 +1239,11 @@ test('v1 and v2 side by side: each format in its own topic, both results kept, t
     orch.showReviewResult(work.id, 'v1')
     assert.deepEqual([store.task(work.id).prReview!.shown, store.task(work.id).ownerSessionId], ['v1', t1.id])
     assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Approve · no findings'])
-    // Review again is the shown format's, in its own topic: a look again, not a reuse.
+    // Review again is the shown format's, in its own topic; at the same head it reads the one inventory, never writes it anew.
     const again = await orch.rereview(work.id)
     assert.equal(again.sessionId, t1.id)
-    assert.match(again.job, /You reviewed it before[\s\S]*Look again: whether each finding still holds/)
-    assert.doesNotMatch(again.job, /already written/)
+    assert.match(again.job, /You reviewed it before[\s\S]*Look again: whether each finding still holds\./)
+    assert.match(again.job, /already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
     await endTurn(t1.id)
     assert.equal(store.task(work.id).prReview!.results.v2?.verdict, 'request_changes', 'the other result stays')
     await assert.rejects(Promise.resolve().then(() => orch.runReviewFormat(work.id, 'v3' as 'v1')), /format must be one of v1, v2/)
