@@ -21,17 +21,11 @@ import {
   type Task,
 } from './index.ts'
 
-/** waiting = on the user; working = an agent runs (or someone else: CI, the PR author); topics = without a work. */
+/**
+ * Where a card stands: waiting = on the user; working = an agent runs (or someone else: CI, the PR author); topics =
+ * without a work; done = finished or closed. Home lists by it; the sidebar never groups or sorts by it (decision 9).
+ */
 export type WorkGroup = 'waiting' | 'working' | 'topics' | 'done'
-
-export const WORK_GROUPS: WorkGroup[] = ['waiting', 'working', 'topics', 'done']
-
-export const WORK_GROUP_LABELS: Record<WorkGroup, string> = {
-  waiting: 'Waiting on you',
-  working: 'Agents working',
-  topics: 'Discussions',
-  done: 'Done · 7 days',
-}
 
 export type CardKind = 'work' | 'review' | 'topic'
 /** amber = waiting on you, green = an agent working, grey = idle or someone else's move. */
@@ -73,6 +67,10 @@ export interface WorkCard {
   last: { text: string; at: number } | null
   /** Last activity: the work's update or its sessions' last item. */
   at: number
+  /** When the work or topic was created: fixed, so it orders new rows stably. */
+  createdAt: number
+  /** The user closed it: a topic with closedAt, a canceled work, a closed review. */
+  closed: boolean
   task?: Task
   session?: AgentSession
 }
@@ -81,7 +79,6 @@ export type CardFilter = 'all' | 'waiting' | 'working' | 'reviews'
 export const CARD_FILTERS: CardFilter[] = ['all', 'waiting', 'working', 'reviews']
 export const CARD_FILTER_LABELS: Record<CardFilter, string> = { all: 'All', waiting: 'Waiting on you', working: 'Working', reviews: 'Reviews' }
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 const MIN_MS = 60_000
 
 /** When a session last did something: its last item, else when its run started or it was created. */
@@ -296,32 +293,32 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
   group === 'waiting' ? 'amber' : group !== 'done' && move.who === 'agent' ? 'green' : 'grey'
 
 /**
- * The project's works and the topics that own no open work, as cards in group order (`tasks` are the project's):
- * waiting on the user first, then agents working (someone else's move, grey, at its end), discussions, and done in the
- * last 7 days (topics the user closed too); canceled works are left out. A work's agents are its own sessions and, for a work owned by a topic (a
- * review too), that topic. Within a group the most recent activity comes first.
+ * The project's works and the topics that own no open work, as cards (`tasks` are the project's), newest created first;
+ * done, canceled and closed ones included. A work's agents are its own sessions and, for a work owned by a topic (a
+ * review too), that topic. The order means nothing to the sidebar (see sidebarRows): it never moves a row.
  */
 export function workCards(projectId: string, tasks: Task[], sessions: AgentSession[], now: number): WorkCard[] {
   const items = inbox(projectId, tasks, sessions)
   const mine = sessions.filter((s) => s.projectId === projectId)
-  const works = tasks.filter((t) => !t.parentId && t.projectId === projectId && t.status !== 'canceled')
+  const works = tasks.filter((t) => !t.parentId && t.projectId === projectId)
   const out: WorkCard[] = []
   // A topic that owns several open works opens as the latest updated one (as App does): its approvals count for that one.
   const latestOwned = new Map<string, Task>()
   for (const t of works) {
-    if (t.status === 'done' || !t.ownerSessionId) continue
+    if (t.status === 'done' || t.status === 'canceled' || !t.ownerSessionId) continue
     const prev = latestOwned.get(t.ownerSessionId)
     if (!prev || t.updatedAt > prev.updatedAt) latestOwned.set(t.ownerSessionId, t)
   }
   for (const task of works) {
-    const finished = task.status === 'done'
-    if (finished && task.updatedAt < now - WEEK_MS) continue
+    const finished = task.status === 'done' || task.status === 'canceled'
     const own = sessionsOf(task, mine)
     const at = Math.max(task.updatedAt, ...own.map(sessionActivity))
     // A pending approval in the owner topic counts for the work too.
     const ownsTopic = !!task.ownerSessionId && latestOwned.get(task.ownerSessionId) === task
     const item = finished ? undefined : items.find((i) => i.task?.id === task.id || (!i.task && ownsTopic && i.session?.id === task.ownerSessionId))
     const review = isReview(task)
+    // A review is closed by closeReview (done); an imported one is done from the start and stays like a done work.
+    const closed = task.status === 'canceled' || (review && task.status === 'done' && !task.imported)
     const move = cardMove(task, item, mine, tasks, now)
     const group: WorkGroup = finished ? 'done' : move.who === 'you' ? 'waiting' : 'working'
     out.push({
@@ -335,32 +332,35 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
       move,
       last: lastEvent(task, mine, tasks),
       at,
+      createdAt: task.createdAt,
+      closed,
       task,
     })
   }
   // A topic that owns an open work shows through it; a topic mag created for a review is that review's.
-  const owners = new Set(works.filter((t) => t.status !== 'done').map((t) => t.ownerSessionId))
+  const owners = new Set(works.filter((t) => t.status !== 'done' && t.status !== 'canceled').map((t) => t.ownerSessionId))
   for (const s of mine) {
     if (s.role !== 'chat' || s.taskId || s.reviewOf || owners.has(s.id)) continue
     if (tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id)) continue
     const approval = items.find((i) => i.kind === 'approval' && i.session?.id === s.id)
-    // A closed topic is done: listed under Done for 7 days after it was closed.
+    // A closed topic asking or running again shows as open.
     const closed = !!s.closedAt && !approval && s.status !== 'running'
-    if (closed && s.closedAt! < now - WEEK_MS) continue
     const move: CardMove = approval
       ? approvalMove(approval)
       : s.status === 'running' ? agentMove(s, false, now) : { who: 'other', text: closed ? 'Closed' : 'Discussion · no work yet' }
     const group: WorkGroup = approval ? 'waiting' : closed ? 'done' : 'topics'
-    out.push({ id: s.id, kind: 'topic', group, dot: dotOf(group, move), title: shortTitle(s), stage: null, progress: null, move, last: lastEvent(s, mine), at: sessionActivity(s), session: s })
+    out.push({ id: s.id, kind: 'topic', group, dot: dotOf(group, move), title: shortTitle(s), stage: null, progress: null, move, last: lastEvent(s, mine), at: sessionActivity(s), createdAt: s.createdAt, closed, session: s })
   }
-  const order = (c: WorkCard) => WORK_GROUPS.indexOf(c.group) * 2 + (c.group === 'working' && c.dot === 'grey' ? 1 : 0)
-  return out.sort((a, b) => order(a) - order(b) || b.at - a.at)
+  return out.sort((a, b) => b.createdAt - a.createdAt)
 }
 
-/**
- * The card of one work (a review too), as workCards builds it for its row, so the selected work's header shows the same
- * move. null for what the list leaves out: a canceled work, one done over 7 days ago, a step.
- */
+/** Home's order of a group's cards: the agent working before someone else's move, then the latest activity first. */
+export function byActivity(cards: WorkCard[]): WorkCard[] {
+  const grey = (c: WorkCard) => (c.group === 'working' && c.dot === 'grey' ? 1 : 0)
+  return [...cards].sort((a, b) => grey(a) - grey(b) || b.at - a.at)
+}
+
+/** The card of one work (a review too), as workCards builds it for its row, so the selected work's header shows the same move. null for a step. */
 export function workCard(task: Task, tasks: Task[], sessions: AgentSession[], now: number): WorkCard | null {
   return workCards(task.projectId, tasks, sessions, now).find((c) => c.id === task.id && c.kind !== 'topic') ?? null
 }

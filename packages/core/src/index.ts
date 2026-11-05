@@ -9,6 +9,7 @@ import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
+import type { SidebarNode } from './sidebar.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -17,6 +18,7 @@ export * from './diagram.ts'
 export * from './diagram-rules.ts'
 export * from './inventory.ts'
 export * from './sets.ts'
+export * from './sidebar.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
 export * from './review-report.ts'
@@ -77,6 +79,8 @@ export interface Project {
   directionDecisions?: DirectionDecision[]
   /** The format a new review of a PR starts with (review-v2-part-2-v1-2.1); missing = v2. */
   reviewFormat?: ReviewFormat
+  /** The sidebar in the user's order, with the user's groups (see sidebarRows); missing or empty = one flat list. */
+  sidebar?: SidebarNode[]
   createdAt: number
 }
 

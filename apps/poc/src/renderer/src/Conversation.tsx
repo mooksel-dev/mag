@@ -162,7 +162,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
   const mine = workSessions(work, state)
   const review = isReview(work)
   // The same card as the work's row: its stage and whose move. A review without a stage (asking, failed) has none here
-  // either; a work the list leaves out (canceled, done long ago) keeps its own.
+  // either.
   const card = workCard(work, tasks, state.sessions, now)
   const stage = card ? card.stage : review ? null : workStage(work, tasks)
   // A legacy work's subtasks are a checklist, not steps.

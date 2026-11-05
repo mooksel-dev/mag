@@ -503,7 +503,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
