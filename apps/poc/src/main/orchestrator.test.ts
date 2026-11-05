@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, findingsFolded, inbox, type AgentEvent } from '@mag/core'
+import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, shownResult, type AgentEvent, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -903,7 +903,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   const pr = { url: 'https://github.com/acme/app/pull/7', repo: app, number: 7, author: 'olena', base: 'main', head }
   const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
-  store.updateTask(work.id, { prReview: { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null } })
+  store.updateTask(work.id, { prReview: { pr, results: { v1: emptyResult('v1', topic.id) }, shown: 'v1', posted: null } })
 
   // No plan: the topic reads the hunks and writes the inventory; mag compares it with nothing.
   const report = await orch.reviewFactOf(work.id)
@@ -917,14 +917,21 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const fact = Object.values(store.data.canvases).find((c) => c.role === 'fact' && c.taskId === work.id)!
   assert.deepEqual([fact.stepId, fact.repo, fact.root, store.task(work.id).fact?.canvasId, store.task(work.id).fact?.blockers], [null, app, true, fact.id, []])
 
-  assert.match(orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /Nothing goes to GitHub/)
-  const r = store.task(work.id).prReview!
-  assert.deepEqual([r.verdict, r.head, r.problem], ['request_changes', head, 'p'])
+  assert.match(orch.setPrReview(work.id, topic.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /^Recorded as the review's v1 result[\s\S]*Nothing goes to GitHub/)
+  const r = shownResult(store.task(work.id).prReview)!
+  assert.deepEqual([r.format, r.verdict, r.head, r.problem], ['v1', 'request_changes', head, 'p'])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
-  assert.match(store.data.events.at(-1)!.text, /PR review: Request changes · 1 finding/)
+  assert.match(store.data.events.at(-1)!.text, /PR review v1: Request changes · 1 finding/)
+  // The v1 topic records findings and a verdict, never a report.
+  const v1Tools = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv) } as ToolActions)
+  await assert.rejects(v1Tools({ projectId: project.id, sessionId: topic.id }, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: {} }), /this is the v1 review of the PR: record verdict and findings/)
+
+  // The same topic runs the v2 format too (as review_pr would): its report goes to results.v2, the v1 result stays.
+  const started = store.task(work.id).prReview!
+  store.updateTask(work.id, { prReview: { ...started, shown: 'v2', results: { ...started.results, v2: emptyResult('v2', topic.id) } } })
 
   // The report (review-v2-questions-first-direction.1): checked against the inventory, its checks are the verdict, findings derived.
-  const own = createTools(store, { setPrReview: (id, rv) => orch.setPrReview(id, rv) } as ToolActions)
+  const own = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv) } as ToolActions)
   const ctx = { projectId: project.id, sessionId: topic.id }
   const claim = (text: string, cites: string[]) => ({ text, source: 'agent', cites })
   const reportArg = {
@@ -944,12 +951,12 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg }), /Not recorded\. Fix the report[\s\S]*checks: approve with a failed rule/)
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [], checks: 'request_changes' } }), /units in no change: u1/)
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
-  const v2 = store.task(work.id).prReview!
+  const v2 = store.task(work.id).prReview!.results.v2!
   assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
 
   // The user's call on the direction (review-v2-questions-first-direction.2): the topic records it once they decide.
-  const decideTools = createTools(store, { setPrReview: (id, rv) => orch.setPrReview(id, rv), decideDirection: (id, d) => orch.decideDirection(id, d) } as ToolActions)
+  const decideTools = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv), decideDirection: (id, d) => orch.decideDirection(id, d) } as ToolActions)
   await assert.rejects(decideTools(ctx, 'decide_direction', { work: work.key, choice: 'prefer', option: 'constant' }), /prefer needs option: one of the options other than the PR's: config/)
   await assert.rejects(decideTools(ctx, 'decide_direction', { work: work.key, choice: 'maybe' }), /choice must be one of ok, prefer, discuss/)
   const other = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
@@ -960,7 +967,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.deepEqual(first.map((d) => [d.reviewId, d.pr, d.decision, d.choice, d.option, d.principle]), [[work.id, pr.url, 'The charge is a constant', 'prefer', 'config', 'no constants in billing']])
   const line = `- Direction ${pr.url}: The charge is a constant → Prefer config (no constants in billing)`
   assert.equal(store.project(project.id).notes, [notesBefore, line].filter(Boolean).join('\n'))
-  const decided = store.task(work.id).prReview!.report!
+  const decided = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual([decided.decided?.id, decided.draft], [first[0].id, "I'd rather go with config than constant: per tenant.\n\nno constants in billing"])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Prefer config'])
   assert.match(store.data.events.at(-1)!.text, /^Direction: Prefer config$/)
@@ -970,10 +977,10 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.equal(again.directionDecisions!.length, 1)
   assert.equal(again.directionDecisions![0].choice, 'ok')
   assert.equal(again.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
-  assert.equal(store.task(work.id).prReview!.report!.draft, undefined)
+  assert.equal(store.task(work.id).prReview!.results.v2!.report!.draft, undefined)
   orch.decideDirection(work.id, { choice: 'discuss', draft: 'Why a constant?' })
   const ask = store.project(project.id).directionDecisions![0]
-  assert.equal(store.task(work.id).prReview!.report!.draft, 'Why a constant?')
+  assert.equal(store.task(work.id).prReview!.results.v2!.report!.draft, 'Why a constant?')
 
   // Discuss with agent: the review's topic gets the direction card and decide_direction.
   assert.deepEqual(await orch.discussDirection(work.id), { sessionId: topic.id })
@@ -987,24 +994,30 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const cites = (id: string) => ({ ...reportArg, direction: { ...reportArg.direction, references: [{ text: 'you asked the author about constants before', source: 'agent', cites: [`decision:${id}`] }] }, checks: 'request_changes' })
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites('nope') }), /no direction decision decision:nope/)
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites(ask.id) })
-  const next = store.task(work.id).prReview!.report!
+  const next = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual(directionReferences(next, store.project(project.id).directionDecisions).map((r) => [r.claim.source, r.decisions.map((d) => d.choice)]), [['yours', ['discuss']]])
   // A new report of the same PR keeps the user's call and its draft; deciding again still replaces it.
   assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Ask the author'])
   orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
-  const kept = store.task(work.id).prReview!.report!
+  const kept = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual([kept.decided?.choice, kept.decided?.option, kept.draft], ['prefer', 'config', "I'd rather go with config than constant: per tenant."])
   assert.equal(findingsFolded(kept), true)
   orch.decideDirection(work.id, { choice: 'ok' })
-  assert.equal(findingsFolded(store.task(work.id).prReview!.report), false)
+  assert.equal(findingsFolded(store.task(work.id).prReview!.results.v2!.report), false)
   const final = store.project(project.id)
   assert.deepEqual(final.directionDecisions!.map((d) => d.choice), ['ok'])
   assert.equal(final.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
-  // The older form still records, and drops the report it replaces.
-  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] })
-  assert.equal(store.task(work.id).prReview!.report, undefined)
+  // The v2 topic records a report only; both results are kept, and the switch shows either.
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] }), /this is the v2 review of the PR: record it with report/)
+  const both = store.task(work.id).prReview!
+  assert.deepEqual([both.shown, both.results.v1?.verdict, both.results.v1?.report, both.results.v2?.verdict], ['v2', 'request_changes', undefined, 'request_changes'])
+  orch.showReviewResult(work.id, 'v1')
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
+  // The direction is v2's: deciding it with v1 shown still goes to results.v2.
+  orch.decideDirection(work.id, { choice: 'discuss' })
+  assert.deepEqual([store.task(work.id).prReview!.results.v2!.report!.decided?.choice, store.task(work.id).prReview!.results.v1!.report], ['discuss', undefined])
 
   orch.closeReview(work.id)
   assert.equal(store.task(work.id).status, 'done')
@@ -1025,7 +1038,7 @@ test('send with a job: the chat gets a job item, the agent its text; a new topic
 test('deleteReview: the review, its doc, diagrams and own topic go; a topic that asked for it stays, and while it works nothing is deleted (reviews-normalnyi-ux-stan-reviu.1)', async () => {
   const { store, orch, project } = setup()
   const pr = { url: 'https://github.com/acme/app/pull/7', repo: '/r/app', number: 7, author: 'olena', base: 'main', head: 'abc' }
-  const fresh = { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null }
+  const fresh: PrReview = { pr, results: {}, shown: 'v2', posted: null }
   const newReview = (owner: string) => {
     const work = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress', ownerSessionId: owner })
     store.updateTask(work.id, { prReview: fresh })
@@ -1126,11 +1139,11 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.ok(first.job.indexOf('Direction, before you read') < first.job.indexOf('3. Only now read the PR: gh pr view'))
     assert.match(await orch.reviewFactOf(work.id), /Without the project architecture: the repository is outside the project/)
 
-    orch.setPrReview(work.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'charges twice', level: 'blocker', where: 'src/billing/charge.ts:1' }, { text: 'name', level: 'nit', where: 'charge' }] })
+    orch.setPrReview(work.id, topic.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'charges twice', level: 'blocker', where: 'src/billing/charge.ts:1' }, { text: 'name', level: 'nit', where: 'charge' }] })
     assert.match(await orch.publishReview(work.id, 'request_changes', [0]), /#review-1$/)
     assert.deepEqual(gh.posts(), [{ commit_id: head, event: 'REQUEST_CHANGES', body: '1 blocker', comments: [{ path: 'src/billing/charge.ts', line: 1, side: 'RIGHT', body: '**blocker**: charges twice' }] }])
     const r = store.task(work.id).prReview!
-    assert.deepEqual(r.findings.map((f) => f.post), [true, false])
+    assert.deepEqual(shownResult(r)!.findings.map((f) => f.post), [true, false])
     assert.equal(r.posted?.url, `${url}#review-1`)
     // GitHub refuses a line comment: everything goes in the text.
     gh.set({ repo: remote, posts: gh.postsFile, pr, reject: true })
@@ -1159,11 +1172,83 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.equal(sessionId, topic.id)
     assert.ok(store.project(project.id).repos.includes(remote))
     const local = store.task(work.id).prReview!
-    assert.deepEqual([local.pr.repo, local.pr.outside, local.head], [remote, undefined, head])
+    assert.deepEqual([local.pr.repo, local.pr.outside, shownResult(local)!.head], [remote, undefined, head])
     assert.match(opened.at(-1)!.sent.at(-1)!, /Its code is in .*remote, the main checkout[\s\S]*New commits since: review only what changed after \w+ \(git diff /)
   } finally {
     gh.restore()
     delete process.env.GIT_SSH_COMMAND
+  }
+})
+
+test('v1 and v2 side by side: each format in its own topic, both results kept, the inventory reused at the same head, the prompt per format (review-v2-part-2-v1-2.1)', async () => {
+  const { dir, store, orch, project } = setup()
+  const remote = gitRepo(join(dir, 'remote'))
+  git(remote, 'checkout', '-q', '-b', 'feature')
+  writeFileSync(join(remote, 'charge.ts'), 'export const charge = 1\n')
+  git(remote, 'add', '.')
+  git(remote, 'commit', '-q', '-m', 'charge')
+  const head = git(remote, 'rev-parse', 'HEAD')
+  const url = 'https://github.com/acme/remote/pull/7'
+  const gh = fakeGh(dir)
+  gh.set({ repo: remote, posts: gh.postsFile, pr: { url, number: 7, title: 'Charge', author: { login: 'olena' }, state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head } })
+  // Each topic's live process, by the order they open.
+  const lives = new Map<string, (typeof opened)[number]>()
+  const endTurn = async (id: string) => {
+    lives.get(id)!.emit({ type: 'turn.done', ok: true })
+    await until(() => !orch.isRunning(id))
+  }
+  try {
+    // The project's format preselects it: v1 here, in mag's own topic for v1.
+    store.updateProject(project.id, { reviewFormat: 'v1' })
+    const first = await orch.reviewPr(project.id, url)
+    const work = store.task(first.taskId)
+    const t1 = store.session(first.sessionId)
+    lives.set(t1.id, opened.at(-1)!)
+    assert.deepEqual([t1.reviewFormat, t1.reviewOf, t1.title, work.prReview!.shown], ['v1', work.id, 'Review remote#7 · v1', 'v1'])
+    assert.equal(opened.at(-1)!.sent.at(-1), first.job)
+    assert.match(first.job, /you own the v1 review of /)
+    assert.match(first.job, /7\. Findings with set_pr_review, each with level/)
+    assert.match(first.job, /Call set_pr_review with the verdict and the findings/)
+    assert.doesNotMatch(first.job, /decide_direction|Direction, before you read/)
+    assert.match(first.job, /The fact: the PR's change inventory \(set_inventory/)
+    await assert.rejects(orch.runReviewFormat(work.id, 'v1'), /The v1 review of .* is still working/)
+    // The v1 run writes the inventory and its result.
+    await orch.reviewFactOf(work.id)
+    store.saveCanvas({ projectId: project.id, taskId: work.id, sessionId: t1.id, title: 'fact', kind: 'diagram', diagram: { type: 'component', summary: '', modules: [] }, placement: { role: 'fact', option: null, stepId: null, repo: 'acme/remote', planOf: null }, root: true, inventory: { summary: ['charge'], units: [], noise: [] } })
+    await endTurn(t1.id)
+    orch.setPrReview(work.id, t1.id, { problem: 'p1', approach: 'a1', verdict: 'approve', findings: [] })
+
+    // Run v2: a fresh topic of its own; at the same head it reads the v1 run's inventory instead of writing one.
+    await orch.runReviewFormat(work.id, 'v2')
+    const t2 = store.session(store.task(work.id).ownerSessionId!)
+    lives.set(t2.id, opened.at(-1)!)
+    assert.notEqual(t2.id, t1.id)
+    assert.deepEqual([t2.reviewFormat, t2.reviewOf, store.task(work.id).prReview!.shown], ['v2', work.id, 'v2'])
+    const job2 = opened.at(-1)!.sent.at(-1)!
+    assert.match(job2, /you own the v2 review of /)
+    assert.match(job2, /Direction, before you read/)
+    assert.match(job2, /The fact: the PR's change inventory at this head is already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
+    assert.doesNotMatch(job2, /You reviewed it before/, 'v2 does not see the v1 result')
+    await endTurn(t2.id)
+    orch.setPrReview(work.id, t2.id, { problem: 'p2', approach: 'a2', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker' }] })
+    const both = store.task(work.id).prReview!
+    assert.deepEqual([both.results.v1?.verdict, both.results.v1?.problem, both.results.v1?.sessionId, both.results.v2?.verdict, both.results.v2?.sessionId], ['approve', 'p1', t1.id, 'request_changes', t2.id])
+    assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
+
+    // The switch: v1 is shown, and its topic is the conversation beside it.
+    orch.showReviewResult(work.id, 'v1')
+    assert.deepEqual([store.task(work.id).prReview!.shown, store.task(work.id).ownerSessionId], ['v1', t1.id])
+    assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Approve · no findings'])
+    // Review again is the shown format's, in its own topic; at the same head it reads the one inventory, never writes it anew.
+    const again = await orch.rereview(work.id)
+    assert.equal(again.sessionId, t1.id)
+    assert.match(again.job, /You reviewed it before[\s\S]*Look again: whether each finding still holds\./)
+    assert.match(again.job, /already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
+    await endTurn(t1.id)
+    assert.equal(store.task(work.id).prReview!.results.v2?.verdict, 'request_changes', 'the other result stays')
+    await assert.rejects(Promise.resolve().then(() => orch.runReviewFormat(work.id, 'v3' as 'v1')), /format must be one of v1, v2/)
+  } finally {
+    gh.restore()
   }
 })
 

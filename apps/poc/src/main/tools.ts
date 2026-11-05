@@ -1,4 +1,4 @@
-import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, type PrReview, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
@@ -39,12 +39,12 @@ export interface ToolActions {
   answerDeveloper(stepId: string, text: string): Promise<void>
   /** A topic's Branch: a new topic forking its agent session; `text` is its first message. Returns the new topic's id. */
   branchChat(sessionId: string, text?: string): string
-  /** A topic's review_pr: the review of a teammate's PR, owned by `by`; returns the job for its turn. */
-  reviewPr(projectId: string, url: string, by: string): Promise<{ taskId: string; job: string }>
+  /** A topic's review_pr: the review of a teammate's PR in `format` (the project's without one), run by `by`; returns the job for its turn. */
+  reviewPr(projectId: string, url: string, by: string, format?: ReviewFormat): Promise<{ taskId: string; job: string }>
   /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
   reviewFact(workId: string): Promise<string>
-  /** The owner topic's set_pr_review; returns what to tell it. */
-  setPrReview(workId: string, review: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string
+  /** A review topic's set_pr_review, into the result of the format it runs; returns what to tell it. */
+  setPrReview(workId: string, sessionId: string, review: Pick<ReviewResult, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string
   /** The owner topic's decide_direction: the user's call on the review's direction; returns what to tell it. */
   decideDirection(workId: string, decision: { choice: DirectionChoice; option?: string; principle?: string; draft?: string }): string
   /** The user's Approve: planning → ready, with the button's checks. */
@@ -176,7 +176,9 @@ function ownerContext(store: Store, ctx: ToolContext, name: string, args: Record
   }
   const work = store.data.tasks.find((t) => t.projectId === ctx.projectId && !t.parentId && t.key.toLowerCase() === key.toLowerCase())
   if (!work) throw new Error(`No work ${key}`)
-  if (work.ownerSessionId !== ctx.sessionId) throw new Error(`${work.key} is not planned in this topic${work.ownerSessionId ? ' (its owner is another session)' : ''}: only its owner changes its plan`)
+  // A review is run by a topic per format (review-v2-part-2-v1-2.1): each of them may.
+  const owns = isReview(work) ? !!ctx.sessionId && reviewTopicIds(work).includes(ctx.sessionId) : work.ownerSessionId === ctx.sessionId
+  if (!owns) throw new Error(`${work.key} is not planned in this topic${work.ownerSessionId ? ' (its owner is another session)' : ''}: only its owner changes its plan`)
   return { ...ctx, taskId: work.id }
 }
 
@@ -465,28 +467,33 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
       }
 
       case 'set_pr_review': {
-        if (!isReview(task)) throw new Error(`${task.key} is not a review of a teammate's PR`)
-        if (task.ownerSessionId !== ctx.sessionId) throw new Error(`set_pr_review is for the topic that owns ${task.key}`)
+        if (!isReview(task) || !task.prReview) throw new Error(`${task.key} is not a review of a teammate's PR`)
+        if (!ctx.sessionId || !reviewTopicIds(task).includes(ctx.sessionId)) throw new Error(`set_pr_review is for a topic that runs ${task.key}`)
+        const review = task.prReview!
+        const format = formatOfTopic(review, store.data.sessions.find((s) => s.id === ctx.sessionId)) ?? review.shown
         const text = (v: unknown) => String(v ?? '').trim()
-        if (args.report != null) {
-          const pr = task.prReview!.pr
+        // Each format records its own form (review-v2-part-2-v1-2.1): v1 a verdict with findings, v2 a report.
+        if (format === 'v2') {
+          if (args.report == null) throw new Error('Not recorded: this is the v2 review of the PR: record it with report (problem and approach beside it), not verdict and findings')
+          const pr = review.pr
           const head = task.fact?.heads[pr.repo]
           const report = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
           const unknown = unknownDecisions(report, project.directionDecisions)
           if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
-          return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
+          return actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
         }
+        if (args.report != null) throw new Error('Not recorded: this is the v1 review of the PR: record verdict and findings (problem and approach beside them), no report')
         const verdict = args.verdict as PrVerdict
         if (!PR_VERDICTS.includes(verdict)) throw new Error(`verdict must be one of ${PR_VERDICTS.join(', ')}`)
         const findings = findingsArg(args.findings)
         if (findings.some((f) => !f.level)) throw new Error(`Every finding needs its level: ${FINDING_LEVELS.join(', ')}`)
         if (verdict === 'approve' && findings.some((f) => f.level === 'blocker')) throw new Error('A blocker and approve do not go together: request_changes, or drop the blocker and say why')
-        return actions.setPrReview(task.id, { problem: text(args.problem), approach: text(args.approach), verdict, findings, report: undefined })
+        return actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict, findings, report: undefined })
       }
 
       case 'decide_direction': {
         if (!isReview(task)) throw new Error(`${task.key} is not a review of a teammate's PR`)
-        if (task.ownerSessionId !== ctx.sessionId) throw new Error(`decide_direction is for the topic that owns ${task.key}`)
+        if (!ctx.sessionId || !reviewTopicIds(task).includes(ctx.sessionId)) throw new Error(`decide_direction is for a topic that runs ${task.key}`)
         const choice = args.choice as DirectionChoice
         if (!DIRECTION_CHOICES.includes(choice)) throw new Error(`choice must be one of ${DIRECTION_CHOICES.join(', ')}`)
         const opt = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
@@ -615,7 +622,7 @@ function factPlace(store: Store, ctx: ToolContext, task: Task, role: string | un
     return step ? { step, heads: step.fact?.heads ?? {} } : null
   }
   const pr = task.prReview?.pr
-  if (isReview(task) && pr && task.ownerSessionId === ctx.sessionId) return { work: task, heads: task.fact?.heads[pr.repo] ? { [pr.repo]: task.fact.heads[pr.repo] } : {} }
+  if (isReview(task) && pr && !!ctx.sessionId && reviewTopicIds(task).includes(ctx.sessionId)) return { work: task, heads: task.fact?.heads[pr.repo] ? { [pr.repo]: task.fact.heads[pr.repo] } : {} }
   return null
 }
 
@@ -913,7 +920,9 @@ function sharedTool(
     case 'review_pr': {
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       if (session?.role !== 'chat') throw new Error('review_pr is for a project topic')
-      return actions.reviewPr(project.id, String(args.url ?? ''), session.id).then((r) => r.job)
+      const format = args.format == null || args.format === '' ? undefined : (args.format as ReviewFormat)
+      if (format && !REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
+      return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format).then((r) => r.job)
     }
 
     case 'branch_topic': {

@@ -88,7 +88,9 @@ const api: MagApi = {
       if (openTaskCb === cb) openTaskCb = null
     }
   },
-  startReview: (projectId, url) => ipcRenderer.invoke('review:start', projectId, url),
+  startReview: (projectId, url, format) => ipcRenderer.invoke('review:start', projectId, url, format),
+  runReviewFormat: (taskId, format) => ipcRenderer.invoke('review:run', taskId, format),
+  showReviewResult: (taskId, format) => ipcRenderer.invoke('review:show', taskId, format),
   reviewAgain: (taskId) => ipcRenderer.invoke('review:again', taskId),
   closeReview: (taskId) => ipcRenderer.invoke('review:close', taskId),
   decideDirection: (taskId, decision) => ipcRenderer.invoke('review:decide', taskId, decision),

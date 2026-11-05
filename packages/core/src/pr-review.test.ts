@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, type AgentSession, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -20,17 +20,10 @@ const task = (id: string, patch: Partial<Task> = {}): Task => ({
   ...patch,
 })
 
-const prReview = (patch: Partial<PrReview> = {}): PrReview => ({
-  pr: { url: 'https://github.com/acme/api/pull/418', repo: '/r/api', number: 418, author: 'olena', base: 'main', head: 'abc' },
-  problem: '',
-  approach: '',
-  verdict: null,
-  findings: [],
-  head: null,
-  posted: null,
-  at: null,
-  ...patch,
-})
+const PR = { url: 'https://github.com/acme/api/pull/418', repo: '/r/api', number: 418, author: 'olena', base: 'main', head: 'abc' }
+
+/** A review with one result, written as before one result per format: migratePrReview places it (v2 with a report). */
+const prReview = (patch: Partial<LegacyPrReview> = {}): PrReview => migratePrReview({ pr: PR, posted: null, ...patch }, 'topic')
 
 const review = (id: string, patch: Partial<Task> = {}) => task(id, { type: 'review', prReview: prReview(), ownerSessionId: 'topic', ...patch })
 
@@ -128,6 +121,7 @@ test('reviewPollOutcome: done when merged or closed; new commits after a review 
 
 test('reviewState: one state of a review for every view, in order (reviews-normalnyi-ux-stan-reviu.1)', () => {
   const ready = prReview({ verdict: 'request_changes', head: 'abc', at: 2, findings: [{ text: 'x', level: 'blocker' }] })
+  const old = prReview({ verdict: 'request_changes', head: 'old', at: 2, findings: [{ text: 'x', level: 'blocker' }] })
   const states = (t: Task, s: AgentSession['status']) => [reviewState(t, [topic(s)]), reviewLine(t, [topic(s)])]
   assert.deepEqual(states(review('r', { status: 'done', prReview: ready }), 'running'), ['closed', 'closed'])
   assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'q' }), 'running'), ['reviewing', 'the agent is reviewing…'])
@@ -136,8 +130,8 @@ test('reviewState: one state of a review for every view, in order (reviews-norma
   // A borrowed topic that errors later in another chat keeps the review ready.
   assert.equal(reviewState(review('r', { prReview: ready }), [topic('error')]), 'ready')
   assert.deepEqual(states(review('r'), 'error'), ['failed', 'the agent failed: review again'])
-  assert.deepEqual(states(review('r', { prReview: { ...ready, head: 'old' } }), 'error'), ['failed', 'the agent failed: review again'])
-  assert.deepEqual(states(review('r', { prReview: { ...ready, head: 'old' } }), 'idle'), ['outdated', 'Request changes · 1 blocker · new commits since'])
+  assert.deepEqual(states(review('r', { prReview: old }), 'error'), ['failed', 'the agent failed: review again'])
+  assert.deepEqual(states(review('r', { prReview: old }), 'idle'), ['outdated', 'Request changes · 1 blocker · new commits since'])
   assert.deepEqual(states(review('r'), 'idle'), ['waiting', 'waits for the agent'])
   assert.equal(reviewState(review('r', { ownerSessionId: 'gone' }), []), 'waiting')
 })
@@ -164,4 +158,50 @@ test('reviewOfTopic: the open review a topic owns', () => {
   const tasks = [review('old', { status: 'done' }), task('w', { ownerSessionId: 'topic' }), review('r')]
   assert.equal(reviewOfTopic(tasks, 'topic')?.id, 'r')
   assert.equal(reviewOfTopic(tasks, 'other'), undefined)
+})
+
+test('migratePrReview: a report moves to v2 with its direction call and draft, a verdict alone to v1, none to no result', () => {
+  const report = { checks: 'request_changes', decided: { id: 'd1', choice: 'prefer', option: 'B' }, draft: 'Please use B' } as unknown as NonNullable<LegacyPrReview['report']>
+  const v2 = migratePrReview({ pr: PR, posted: { at: 3, url: 'u' }, problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker' }], report, head: 'abc', at: 2 }, 'topic')
+  assert.equal(v2.shown, 'v2')
+  assert.equal(v2.results.v1, undefined)
+  assert.deepEqual(v2.results.v2, { format: 'v2', sessionId: 'topic', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker' }], report, head: 'abc', at: 2 })
+  assert.deepEqual(v2.results.v2?.report?.decided, report.decided, 'a decided report keeps its decision')
+  assert.equal(v2.results.v2?.report?.draft, 'Please use B')
+  assert.deepEqual(v2.posted, { at: 3, url: 'u' })
+  const v1 = migratePrReview({ pr: PR, posted: null, verdict: 'approve', findings: [], head: 'abc', at: 2 }, 'topic')
+  assert.equal(v1.shown, 'v1')
+  assert.equal(v1.results.v1?.verdict, 'approve')
+  assert.equal(v1.results.v1?.report, undefined)
+  assert.deepEqual(migratePrReview({ pr: PR, posted: null, problem: '', verdict: null, findings: [], head: null, at: null }), { pr: PR, results: {}, shown: 'v2', posted: null })
+  // Today's form stays as it is: the migration runs once, and again changes nothing.
+  assert.deepEqual(migratePrReview(v2), v2)
+})
+
+test('both results are kept: the shown one makes the state and the line; Run for a missing or older one', () => {
+  const v1 = { ...emptyResult('v1', 't1'), verdict: 'approve' as const, head: 'abc', at: 2 }
+  const v2 = { ...emptyResult('v2', 't2'), verdict: 'request_changes' as const, findings: [{ text: 'x', level: 'blocker' as const }], head: 'old', at: 1 }
+  const both: PrReview = { pr: PR, results: { v1, v2 }, shown: 'v1', posted: null }
+  assert.equal(shownResult(both), v1)
+  const rv = (r: PrReview) => review('r', { prReview: r, ownerSessionId: 't1' })
+  const s = (id: string, status: AgentSession['status']) => ({ ...topic(status), id })
+  assert.deepEqual([reviewState(rv(both), [s('t1', 'idle'), s('t2', 'idle')]), reviewLine(rv(both), [])], ['ready', 'Approve · no findings'])
+  assert.deepEqual([reviewState(rv({ ...both, shown: 'v2' }), []), reviewLine(rv({ ...both, shown: 'v2' }), [])], ['outdated', 'Request changes · 1 blocker · new commits since'])
+  // A run of the other format in a turn: the review is reviewing.
+  assert.equal(reviewRunning(rv(both), [s('t2', 'running')]), true)
+  assert.equal(reviewState(rv(both), [s('t2', 'running')]), 'reviewing')
+  assert.deepEqual(reviewTopicIds(rv(both)), ['t1', 't2'])
+  assert.equal(resultOutdated(both, 'v1'), false)
+  assert.equal(resultOutdated(both, 'v2'), true, 'older than the head')
+  assert.equal(resultOutdated({ ...both, results: { v1 } }, 'v2'), true, 'missing')
+  assert.equal(resultOutdated({ ...both, results: { v1, v2: emptyResult('v2', 't2') } }, 'v2'), true, 'started, not recorded')
+})
+
+test('formatOfTopic: the topic\'s own format, else the result it runs, the shown one first', () => {
+  const both: PrReview = { pr: PR, results: { v1: emptyResult('v1', 'asker'), v2: emptyResult('v2', 'asker') }, shown: 'v2', posted: null }
+  assert.equal(formatOfTopic(both, { id: 'mine', reviewFormat: 'v1' }), 'v1')
+  assert.equal(formatOfTopic(both, { id: 'asker' }), 'v2')
+  assert.equal(formatOfTopic({ ...both, results: { v1: emptyResult('v1', 'asker') } }, { id: 'asker' }), 'v1')
+  assert.equal(formatOfTopic(both, { id: 'other' }), null)
+  assert.equal(formatOfTopic(both, undefined), null)
 })

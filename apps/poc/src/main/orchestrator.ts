@@ -2,7 +2,7 @@ import { mkdirSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { choiceLine, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { choiceLine, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -223,43 +223,56 @@ const findingLines = (findings: ReviewFinding[]) =>
   findings.map((f) => `- ${f.level ? `[${FINDING_LEVEL_LABELS[f.level]}] ` : ''}${f.where ? `${f.where}: ` : ''}${f.text}`).join('\n')
 
 /**
- * The job of the topic that owns a review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): said in full every
- * time, a first look or a look again. `files`: the PR's changed files as mag read them; `since`: on a look again at new
- * commits, only what changed after the head reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8).
+ * The job of the topic that runs one format of a review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2;
+ * review-v2-part-2-v1-2.1): said in full every time, a first look or a look again, in the playbook's text of that
+ * format. `files`: the PR's changed files as mag read them; `since`: on a look again at new commits, only what changed
+ * after the head this format reviewed last (reviews-ahent-reviuit-pr-timeitiv.3, Decision 8). `shared`: the review's
+ * inventory at this head is there already (one per head, by either format's run): this run reads it, never writes it anew.
  */
-const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null) => {
-  const r = work.prReview!
-  const pr = r.pr
+const prReviewPrompt = (project: Project, work: Task, files: string, since: string | null, format: ReviewFormat, shared: boolean) => {
+  const review = work.prReview!
+  const r = review.results[format] ?? emptyResult(format, '')
+  const pr = review.pr
   const name = prRepoName(project, pr)
   const playbook = playbookOf(project)
+  const v1 = format === 'v1'
   const newer = r.head && r.head !== pr.head
   const sinceDiff = pr.outside ? `gh api -H "Accept: application/vnd.github.diff" repos/${pr.repo}/compare/${r.head}...${pr.head}` : `git diff ${r.head} ${pr.head}`
   const before = r.verdict
     ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
         newer
           ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact set and revise it where the new commits change it.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
-          : 'Look again: whether each finding still holds; keep the fact set and revise it.'
+          : `Look again: whether each finding still holds${shared ? '' : '; keep the fact set and revise it'}.`
       }`
     : ''
   const where = pr.outside
     ? `Its repository ${pr.repo} is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff ${pr.url}, gh pr view and gh api (read only). Its fact is drawn without the project's architecture: its modules are its folders, as get_pr_changes lists them; say so in the review.`
     : `Its code is in ${pr.repo}, the main checkout: read it there and never change it; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.`
-  return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own its review ${work.key}. ${where}${before}
+  const fact = shared
+    ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
+    : "The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:"
+  const order = v1
+    ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
+    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it."
+  const close = v1
+    ? 'Call set_pr_review with the verdict and the findings once you have them (again whenever the user asks for more and they change), then reply in a few lines: the verdict and the blockers.'
+    : `Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
+  return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own the ${format} review of ${work.key}. ${where}${before}
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
-Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's. The direction is the user's call: no verdict on it.
-${playbook.prReview}
-The fact: the PR's change inventory (set_inventory, from the hunks get_pr_changes lists), then scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:
+${order}
+${v1 ? playbook.prReviewV1 : playbook.prReview}
+${fact}
 ${playbook.fact}
 mag forbids writing to GitHub here (gh pr review, comment, merge, close or edit, gh api with a write method, git push): the user publishes what they pick. Run no tests: CI runs them.
 Changed files (mag):
 ${files}
-Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
+${close}`
 }
 
 /** The review topic's job when the user wants to discuss the direction (review-v2-questions-first-direction.2). */
 const discussPrompt = (work: Task, report: ReviewReport, decisions: DirectionDecision[] | undefined) => {
   const others = report.direction.options.filter((o) => !o.pr).map((o) => o.name)
-  return `The user wants to discuss the direction of ${work.prReview!.pr.url} (review ${work.key}) before deciding it. The direction card:
+  return `The user wants to discuss the direction of ${work.prReview!.pr.url} (review ${work.key}, its v2 result) before deciding it. The direction card:
 
 ${directionCardText(report, decisions)}
 
@@ -1209,11 +1222,13 @@ export class Orchestrator {
 
   /**
    * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2): the PR of a project repository, by its link. Its
-   * work (type review, in progress at once, no steps) is the PR's open one if it has one, else a new one. `by`: the
-   * project topic that asks (review_pr); it owns the review and gets the job back to do in its turn. Without it (a PR
-   * link in the work list) the review's topic does it, a new one titled after the PR when it has none.
+   * work (type review, in progress at once, no steps) is the PR's open one if it has one, else a new one. `format`
+   * (review-v2-part-2-v1-2.1): the result this run records, the project's default without one; the review keeps one
+   * result per format and shows this one. `by`: the project topic that asks (review_pr); it runs the review and gets
+   * the job back to do in its turn. Without it (the work list, Run v1 / Run v2) the topic that ran this format before
+   * does it, else a new one of mag's for the format, so v2 never sees what a v1 run read first.
    */
-  async reviewPr(projectId: string, url: string, by?: string): Promise<{ taskId: string; sessionId: string; job: string }> {
+  async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
     const info = await prInfo(parsePrUrl(url).url)
     if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
@@ -1223,34 +1238,70 @@ export class Orchestrator {
     const pr: PrRef = { url: info.url, repo: repo ?? info.repo, ...(repo ? {} : { outside: true }), number: info.number, author: info.author, base: info.base, head: info.head }
     const name = prRepoName(project, pr)
     const prev = reviewOf(tasks, info.url)
-    const owner = by ?? (prev && this.ownerSession(prev)?.id) ?? undefined
-    if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is still working; ask it there`)
+    const f = format ?? projectReviewFormat(project)
+    const before = prev?.prReview?.results[f]
+    // The topic that ran this format before, while it is there; never the other format's.
+    const own = before && this.store.data.sessions.find((s) => s.id === before.sessionId)
+    const owner = by ?? own?.id
+    if (owner && !by && this.isRunning(owner)) throw new Error(`The ${f} review of ${prev!.key} is still working; ask it there`)
     const sessionId = owner ?? this.newChat(projectId)
-    const fresh: PrReview = { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null }
     const title = `${name}#${info.number}: ${info.title}`
+    const base: PrReview = prev?.prReview ?? { pr, results: {}, shown: f, posted: null }
+    const prReview: PrReview = { ...base, pr, shown: f, results: { ...base.results, [f]: { ...(before ?? emptyResult(f, sessionId)), sessionId } } }
     const work = prev
-      ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview: { ...(prev.prReview ?? fresh), pr } }), this.store.task(prev.id))
+      ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview }), this.store.task(prev.id))
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
-    if (!prev) this.store.updateTask(work.id, { prReview: fresh })
-    // mag's own topic for the review: Delete review takes it along; the work list shows it as the review.
+    if (!prev) this.store.updateTask(work.id, { prReview })
+    // mag's own topic for the review's format: Delete review takes it along; the work list shows it as the review.
     if (!owner) {
       const topic = this.store.session(sessionId)
-      topic.title = `Review ${name}#${info.number}`
+      topic.title = `Review ${name}#${info.number} · ${f}`
       topic.titleGenerated = true
       topic.reviewOf = work.id
+      topic.reviewFormat = f
     }
-    log.info('agent', `${work.key}: review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
-    const { files, since } = await this.prFiles(project, this.store.task(work.id))
-    const job = prReviewPrompt(project, this.store.task(work.id), files, since)
-    if (!by) await this.send(sessionId, job, [], `Review ${name}#${info.number}`)
+    log.info('agent', `${work.key}: ${f} review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
+    const now = this.store.task(work.id)
+    const { files, since } = await this.prFiles(project, now, f)
+    // One inventory per head, whichever format wrote it: a later run at that head reuses it, never writes it anew.
+    const job = prReviewPrompt(project, now, files, since, f, this.inventoryAt(now))
+    if (!by) await this.send(sessionId, job, [], `Review ${name}#${info.number} · ${f}`)
     return { taskId: work.id, sessionId, job }
   }
 
-  /** The user's Review again: the review's PR as it is now gets another look. */
+  /** Whether a review has its inventory at its PR's head: a run of the other format reuses it. */
+  private inventoryAt(work: Task): boolean {
+    const pr = work.prReview?.pr
+    return !!pr && work.fact?.heads[pr.repo] === pr.head && reviewFacts(Object.values(this.store.data.canvases), work.id).some((c) => !!c.inventory)
+  }
+
+  /** The user's Review again: the review's PR as it is now gets another look, in the format it shows. */
   rereview(workId: string) {
     const work = this.store.task(workId)
     if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
-    return this.reviewPr(work.projectId, work.prReview.pr.url)
+    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, work.prReview.shown)
+  }
+
+  /**
+   * The user's Run v1 / Run v2 (review-v2-part-2-v1-2.1): a run of that format in its own topic, at the PR's head; its
+   * result joins the other one, which stays. At the head the other format has read, it reuses its inventory.
+   */
+  runReviewFormat(workId: string, format: ReviewFormat) {
+    const work = this.store.task(workId)
+    if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
+    if (!REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
+    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, format)
+  }
+
+  /** The user's v1 | v2 switch: the page and the lists show that result, and the conversation beside it is its topic. */
+  showReviewResult(workId: string, format: ReviewFormat) {
+    const work = this.store.task(workId)
+    const r = work.prReview
+    if (!isReview(work) || !r) throw new Error(`${work.key} is not a review of a PR`)
+    const result = r.results[format]
+    if (!result) throw new Error(`${work.key} has no ${format} result: run it first`)
+    const topic = this.store.data.sessions.some((s) => s.id === result.sessionId) ? { ownerSessionId: result.sessionId } : {}
+    this.store.updateTask(workId, { prReview: { ...r, shown: format }, ...topic })
   }
 
   /** The user closes a review: done; Review again brings it back. */
@@ -1287,9 +1338,9 @@ export class Orchestrator {
    * The changed files of a review's PR as the topic reads them: fetched into its repository's checkout, or from GitHub
    * outside the project. `since`: with new commits after the head reviewed last, what they changed.
    */
-  private async prFiles(project: Project, work: Task): Promise<{ files: string; since: string | null }> {
-    const r = work.prReview!
-    const pr = r.pr
+  private async prFiles(project: Project, work: Task, format: ReviewFormat): Promise<{ files: string; since: string | null }> {
+    const pr = work.prReview!.pr
+    const r = work.prReview!.results[format] ?? emptyResult(format, '')
     const source = reviewSource(work)
     const read = async (since?: string) => {
       const target = await reviewTarget(project, work, undefined, since)
@@ -1324,33 +1375,42 @@ export class Orchestrator {
     return [factReport(fact), hunkListing(changed)].filter(Boolean).join('\n\n')
   }
 
-  /** The topic's set_pr_review: the review of the PR at the head mag gave it. Nothing goes to GitHub. */
-  setPrReview(workId: string, r: Pick<PrReview, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string {
+  /**
+   * A topic's set_pr_review: its format's result of the review, at the head mag gave it (review-v2-part-2-v1-2.1: the
+   * other format's result stays). Nothing goes to GitHub.
+   */
+  setPrReview(workId: string, sessionId: string, r: Pick<ReviewResult, 'problem' | 'approach' | 'verdict' | 'findings' | 'report'>): string {
     const work = this.store.task(workId)
-    const prev = work.prReview
-    if (!isReview(work) || !prev) throw new Error(`${work.key} is not a review of a PR`)
-    // A review recorded without a report drops the one before: it is the older form. A new report of the same PR keeps
-    // the user's call on its direction and its draft (review-v2-questions-first-direction.2): deciding again replaces it.
-    const kept = prev.report?.decided ? { decided: prev.report.decided, ...(prev.report.draft ? { draft: prev.report.draft } : {}) } : {}
+    const review = work.prReview
+    if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    const format = formatOfTopic(review, this.store.data.sessions.find((s) => s.id === sessionId)) ?? review.shown
+    const prev = review.results[format]
+    // A new report of the same PR keeps the user's call on its direction and its draft
+    // (review-v2-questions-first-direction.2): deciding again replaces it.
+    const kept = prev?.report?.decided ? { decided: prev.report.decided, ...(prev.report.draft ? { draft: prev.report.draft } : {}) } : {}
     const report = r.report && { ...r.report, ...kept }
-    this.store.updateTask(workId, { prReview: { ...prev, ...r, report, head: prev.pr.head, at: Date.now() }, needsInput: null })
+    const result: ReviewResult = { ...(prev ?? emptyResult(format, sessionId)), ...r, report, head: review.pr.head, at: Date.now() }
+    if (!report) delete result.report
+    this.store.updateTask(workId, { prReview: { ...review, results: { ...review.results, [format]: result } }, needsInput: null })
     const n = r.findings.length
-    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
-    return 'Recorded: the user sees it on the review\'s pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.'
+    this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review ${format}: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
+    return `Recorded as the review's ${format} result: the user sees it on the review's pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.`
   }
 
   /**
    * The user's call on the direction of a review's PR (review-v2-questions-first-direction.2), by a button of its
    * direction card or the topic's decide_direction: recorded on the report (with the comment to the author it drafts:
    * the agent's, else mag's), in the project's direction decisions and as one line of its notes. A call made again
-   * replaces the earlier one in all three. Nothing goes to GitHub.
+   * replaces the earlier one in all three. It is the v2 result's: v1 has no direction (review-v2-part-2-v1-2.1). Nothing
+   * goes to GitHub.
    */
   decideDirection(workId: string, input: { choice: DirectionChoice; option?: string; principle?: string; draft?: string }): string {
     const work = this.store.task(workId)
-    const r = work.prReview
-    if (!isReview(work) || !r) throw new Error(`${work.key} is not a review of a PR`)
-    const report = r.report
-    if (!report) throw new Error(`${work.key} has no report to decide on: its review is of the older form; review it again`)
+    const review = work.prReview
+    if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    const r = review.results.v2
+    const report = r?.report
+    if (!r || !report) throw new Error(`${work.key} has no v2 report to decide on: run its v2 review`)
     if (!DIRECTION_CHOICES.includes(input.choice)) throw new Error(`choice must be one of ${DIRECTION_CHOICES.join(', ')}`)
     const option = input.option?.trim()
     if (input.choice === 'prefer') {
@@ -1361,7 +1421,7 @@ export class Orchestrator {
     const decided: DirectionDecision = {
       id: randomUUID().slice(0, 8),
       reviewId: work.id,
-      pr: r.pr.url,
+      pr: review.pr.url,
       decision: reportDecision(report),
       choice: input.choice,
       ...(input.choice === 'prefer' ? { option } : {}),
@@ -1377,7 +1437,7 @@ export class Orchestrator {
       notes: [notes.trimEnd(), decisionNote(decided)].filter(Boolean).join('\n'),
     })
     const { draft: _, ...rest } = report
-    this.store.updateTask(workId, { prReview: { ...r, report: { ...rest, decided, ...(draft ? { draft } : {}) } } })
+    this.store.updateTask(workId, { prReview: { ...review, results: { ...review.results, v2: { ...r, report: { ...rest, decided, ...(draft ? { draft } : {}) } } } } })
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `Direction: ${choiceLine(decided)}` })
     log.info('agent', `${work.key}: direction ${decided.choice}${option ? ` (${option})` : ''}`)
     return `Recorded: ${choiceLine(decided)}, on the review and in the project's decisions and notes.${draft ? ' The draft to the author shows on the direction card; nothing goes to GitHub until the user posts it.' : ''}`
@@ -1389,10 +1449,11 @@ export class Orchestrator {
    */
   async discussDirection(workId: string): Promise<{ sessionId: string }> {
     const work = this.store.task(workId)
-    const report = work.prReview?.report
-    if (!isReview(work) || !report) throw new Error(`${work.key} has no report to discuss`)
-    // The topic that owns the review: decide_direction is its.
-    const topic = this.ownerSession(work)
+    const result = work.prReview?.results.v2
+    const report = result?.report
+    if (!isReview(work) || !report) throw new Error(`${work.key} has no v2 report to discuss`)
+    // The topic that ran the v2 review: decide_direction is its.
+    const topic = this.store.data.sessions.find((s) => s.id === result.sessionId) ?? this.ownerSession(work)
     if (!topic) throw new Error(`${work.key} has no topic: review it again`)
     if (this.isRunning(topic.id)) throw new Error(`The topic of ${work.key} is still working; wait for it, then discuss`)
     const project = this.store.project(work.projectId)
@@ -1407,23 +1468,25 @@ export class Orchestrator {
    */
   async publishReview(workId: string, verdict: PrVerdict, picks: number[]): Promise<string> {
     const work = this.store.task(workId)
-    const r = work.prReview
-    if (!isReview(work) || !r) throw new Error(`${work.key} is not a review of a PR`)
-    if (!r.head) throw new Error(`${work.key} has no review yet`)
+    const review = work.prReview
+    if (!isReview(work) || !review) throw new Error(`${work.key} is not a review of a PR`)
+    // The result the user sees: its findings are the ones they picked.
+    const r = shownResult(review)
+    if (!r?.head) throw new Error(`${work.key} has no ${review.shown} review yet`)
     const findings = r.findings.map((f, i) => ({ ...f, post: picks.includes(i) }))
-    this.store.updateTask(workId, { prReview: { ...r, findings } })
+    this.store.updateTask(workId, { prReview: { ...review, results: { ...review.results, [review.shown]: { ...r, findings } } } })
     let url: string
     try {
-      url = await postReview(r.pr.url, r.head, reviewToPost(verdict, findings))
+      url = await postReview(review.pr.url, r.head, reviewToPost(verdict, findings))
     } catch (e) {
       if (!/\b422\b|line could not be resolved|pull_request_review_thread/i.test((e as Error).message) || !reviewToPost(verdict, findings).comments.length) throw e
       log.info('agent', `${work.key}: line comments refused, publishing them in the text: ${(e as Error).message.split('\n')[0]}`)
-      url = await postReview(r.pr.url, r.head, reviewToPost(verdict, findings, false))
+      url = await postReview(review.pr.url, r.head, reviewToPost(verdict, findings, false))
     }
     this.store.updateTask(workId, { prReview: { ...this.store.task(workId).prReview!, posted: { at: Date.now(), url } } })
     const n = picks.length
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `Published to GitHub: ${PR_VERDICT_LABELS[verdict]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
-    log.info('agent', `${work.key}: published ${PR_VERDICT_LABELS[verdict]} with ${n} finding(s) to ${r.pr.url}`)
+    log.info('agent', `${work.key}: published ${PR_VERDICT_LABELS[verdict]} with ${n} finding(s) to ${review.pr.url}`)
     return url
   }
 

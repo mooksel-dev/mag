@@ -18,7 +18,11 @@ import {
   type IntegrationMode,
   type PlaybookSection,
   type Project,
+  type ReviewFormat,
   type TaskType,
+  REVIEW_FORMATS,
+  REVIEW_FORMAT_LABELS,
+  projectReviewFormat,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
@@ -296,7 +300,8 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   plan: 'How the owner (the chat that started the work, or its groomer) plans it: problem, options with diagrams, checkpoint, steps.',
   step: 'How a developer does a step: tests, self-review, the PR (draft or not) and its description.',
   review: 'What the first reviewer checks a step\'s PRs against.',
-  prReview: 'How the agent reviews a teammate\'s PR (a PR link in the work list): PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
+  prReview: 'How the agent reviews a teammate\'s PR in the v2 format (a PR link in the work list): the fact first, the direction and its options before the author\'s description, then problem, conventions, risks and CI as a report; the direction is your call. It never writes to the PR.',
+  prReviewV1: 'How the agent reviews a teammate\'s PR in the v1 format: PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
   fact: 'How a reviewer draws the fact of a diff (a revision of a step\'s plan; a teammate\'s PR has none); every review that reads a diff follows it.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
   significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',
@@ -368,6 +373,13 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       <label className="check">
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />
         Enforce core architecture (lib / clients / services) for agents
+      </label>
+      <label className="field">
+        PR review format
+        <select value={projectReviewFormat(project)} style={{ width: 'max-content' }} onChange={(e) => update({ reviewFormat: e.target.value as ReviewFormat })}>
+          {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{REVIEW_FORMAT_LABELS[f]}</option>)}
+        </select>
+        <span className="muted small">The format a new review of a PR starts with; the work list asks each time with this one picked, and a review can run the other format too.</span>
       </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />

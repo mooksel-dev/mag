@@ -6,7 +6,10 @@ import {
   isLegacy,
   isReview,
   prRepoName,
+  projectReviewFormat,
   reviewLine,
+  REVIEW_FORMATS,
+  type ReviewFormat,
   subtasksOf,
   workList,
   type InboxKind,
@@ -94,7 +97,7 @@ function Row({ item, project, state, now, on, onSelect }: { item: WorkListItem; 
   const tasks = state.tasks.filter((x) => x.projectId === t.projectId)
   const pr = t.prReview?.pr
   const sub = (() => {
-    if (isReview(t)) return `${pr ? `${prRepoName(project, pr)}#${pr.number} · @${pr.author} · ` : ''}${reviewLine(t, state.sessions)}`
+    if (isReview(t)) return `${pr ? `${prRepoName(project, pr)}#${pr.number} · @${pr.author} · ` : ''}${t.prReview?.results.v1 && t.prReview.results.v2 ? `${t.prReview.shown} · ` : ''}${reviewLine(t, state.sessions)}`
     if (item.text) return item.text
     const step = isLegacy(t) ? null : currentStep(t.id, tasks)
     const steps = subtasksOf(t.id, tasks)
@@ -125,6 +128,9 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.
+  const [format, setFormat] = useState<ReviewFormat>(projectReviewFormat(project))
+  useEffect(() => setFormat(projectReviewFormat(project)), [project.reviewFormat])
   const t = text.trim()
   const what = PR_RE.test(t) ? 'Review PR' : URL_RE.test(t) ? 'From ticket' : 'New work'
   const submit = async (e: React.FormEvent) => {
@@ -134,7 +140,7 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
     setError(null)
     try {
       if (PR_RE.test(t)) {
-        const r = await mag.startReview(project.id, t)
+        const r = await mag.startReview(project.id, t, format)
         if ('error' in r) return setError(r.error)
         onSelect({ kind: 'work', id: r.taskId })
       } else if (URL_RE.test(t)) {
@@ -163,6 +169,11 @@ function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Select
         aria-invalid={!!error}
         title="Words open a topic whose agent plans the work with you; a ticket link starts a work from it; a GitHub PR link reviews the PR"
       />
+      {PR_RE.test(t) && (
+        <select className="small" value={format} aria-label="Review format" title="v1: findings by level and a verdict; v2: the questions and the direction for you to decide. The default is the project's setting." onChange={(e) => setFormat(e.target.value as ReviewFormat)}>
+          {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
+      )}
       {t && <button type="submit" className="primary small" disabled={busy}>{what}</button>}
       {error && <span className="err small" role="alert">{error}</span>}
     </form>

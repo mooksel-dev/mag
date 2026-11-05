@@ -313,7 +313,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 5, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 6, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -322,7 +322,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file)
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 5)
+      assert.equal(again.data.schemaVersion, 6)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -354,4 +354,25 @@ test('saveCanvas: root stays on one diagram of a set; a revision keeps root and 
   assert.deepEqual([store.data.canvases[root.id].root, store.data.canvases[other.id].root, store.data.canvases[root.id].version], [false, true, 1])
   store.saveCanvas({ id: root.id, projectId: 'p', taskId: 't', sessionId: null, title: 'fact', kind: 'diagram', diagram: component })
   assert.deepEqual(store.data.canvases[root.id].inventory, inventory)
+})
+
+test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a decided report as v2 with its decision; once', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const projects = [{ id: 'p', name: 'p', repos: [] }]
+  const base = { projectId: 'p', parentId: null, type: 'review', status: 'in_progress', description: '', needsInput: null, nextSubNo: 1, rank: 0, work: null, createdAt: 0, updatedAt: 0 }
+  const pr = { url: 'https://github.com/acme/api/pull/1', repo: '/r', number: 1, author: 'a', base: 'main', head: 'h' }
+  const report = { checks: 'request_changes', decided: { id: 'd1', choice: 'discuss' }, draft: 'Why?' }
+  const tasks = [
+    { ...base, id: 'v2', key: 'R-1', title: 'r', ownerSessionId: 's2', prReview: { pr, problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', posted: null, at: 5 } },
+    { ...base, id: 'v1', key: 'R-2', title: 'r', ownerSessionId: 's1', prReview: { pr, problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', posted: { at: 6, url: 'u' }, at: 5 } },
+    { ...base, id: 'new', key: 'R-3', title: 'r', ownerSessionId: 's3', prReview: { pr, problem: '', approach: '', verdict: null, findings: [], head: null, posted: null, at: null } },
+  ]
+  writeFileSync(file, JSON.stringify({ projects, tasks, sessions: [], schemaVersion: 5 }))
+  const store = new Store(file)
+  assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
+  assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
+  assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
+  assert.equal(store.data.schemaVersion, 6)
+  store.flush()
+  assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })

@@ -6,7 +6,7 @@ import type { CanvasRole } from './canvases.ts'
 import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
-import { isReview, reviewReadyText, reviewState, type FindingLevel, type PrReview } from './pr-review.ts'
+import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 
 export * from './arch.ts'
@@ -72,6 +72,8 @@ export interface Project {
    * appends one line to notes. Missing = none.
    */
   directionDecisions?: DirectionDecision[]
+  /** The format a new review of a PR starts with (review-v2-part-2-v1-2.1); missing = v2. */
+  reviewFormat?: ReviewFormat
   createdAt: number
 }
 
@@ -804,6 +806,8 @@ export interface AgentSession {
   branchOf?: string | null
   /** A project topic mag created for a review of a PR: that review's id. A topic that asked for it (review_pr) has none. */
   reviewOf?: string
+  /** mag's topic of a review: the format its run records (review-v2-part-2-v1-2.1), each format in its own topic. */
+  reviewFormat?: ReviewFormat
   /** Model the agent reported when its session started. */
   activeModel?: string
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
@@ -1193,7 +1197,7 @@ function reviewItem(task: Task, sessions: AgentSession[]): InboxItem | null {
   const state = reviewState(task, sessions)
   if (state === 'question') return { task, kind: 'question', text: task.needsInput! }
   if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!) }
-  if (state === 'failed') return { task, kind: 'agent_failed', text: 'Review failed', session: sessions.find((s) => s.id === task.ownerSessionId) }
+  if (state === 'failed') return { task, kind: 'agent_failed', text: 'Review failed', session: sessions.find((s) => s.id === (shownResult(task.prReview)?.sessionId || task.ownerSessionId)) }
   return null
 }
 
