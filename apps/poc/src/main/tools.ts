@@ -1,4 +1,4 @@
-import { MAG_MCP_ID, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -892,6 +892,16 @@ function sharedTool(
         null,
         2,
       )
+    }
+
+    case 'read_chat': {
+      const id = String(args.id ?? '').trim()
+      const sessions = store.data.sessions.filter((s) => s.projectId === project.id)
+      const item = sessions.find((s) => s.id === id) ?? tasks.find((t) => t.id === id) ?? taskByKey(tasks, id)
+      if (!id || !item) throw new Error(`No chat ${id} in this project: pass a topic id, a work key or a task id`)
+      const offset = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 0
+      const page = chatTranscript(item, sessions, 'key' in item ? store.data.docs[item.id] : '', offset)
+      return `${page.text}\n\n${page.next === null ? '(end of the chat)' : `(more: call read_chat with offset ${page.next})`}`
     }
 
     case 'read_task': {

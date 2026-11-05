@@ -569,6 +569,13 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .attachment { position: relative; display: inline-flex; align-items: center; }
 .attachment img { height: 64px; max-width: 160px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
 .attachment .x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 9px; font-size: 12px; line-height: 1; }
+.refchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.composerbox .refchips { margin: 4px 4px 0; }
+.refchip { position: relative; display: inline-flex; align-items: center; max-width: 100%; padding: 2px 10px; border-radius: var(--r-pill); background: var(--surface); border: 1px solid var(--line); font-size: var(--fs-sm); }
+.refchip > .link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.refchip > .link:disabled { cursor: default; }
+.refchip.gone { color: var(--muted); }
+.refchip .x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 9px; font-size: 12px; line-height: 1; }
 
 /* canvases */
 .canvascard { flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }

@@ -686,6 +686,21 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'read_chat',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      'The full history of another chat of this project, e.g. one the user references (its id is in <referenced-chats>): a topic\'s messages, a work\'s or review\'s title, doc and its owner topic\'s messages; tool calls on one line, with times. Archived chats too. Pages of ~40k characters: pass the answer\'s next as offset for the next one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'A topic id, a work\'s or review\'s key (e.g. ABC-12) or a task id.' },
+        offset: { type: 'number', description: 'Where the page starts, in characters; 0 by default.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'list_tasks',
     scope: 'any',
     description:

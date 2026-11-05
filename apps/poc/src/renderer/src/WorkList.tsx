@@ -14,6 +14,7 @@ import {
   toggleGroup,
   workCards,
   type CardFilter,
+  type ChatRef,
   type Project,
   type SidebarGroup,
   type SidebarNode,
@@ -23,6 +24,7 @@ import type { AppState, CrashReport, PickerMode } from '../../preload/api'
 import { crashMarkdown, threadTime } from './format'
 import { ProjectPicker, ProjectSquare } from './Picker'
 import { SearchPalette } from './SearchPalette'
+import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
 
 const mag = window.mag
@@ -348,6 +350,7 @@ type Asking = 'rename' | 'close' | null
  * The row menu: a discussion is renamed, branched, turned into a work, closed (history kept) or deleted; an open work
  * is closed by cancel (with a reason), a done work or a review closed with all it has; a closed row (not a canceled
  * work) is restored to where it was. Delete asks first. A work's or a discussion's header ⋯ opens the same menu.
+ * With a conversation open, any row is referenced in its composer (a chip: the agent gets its summary).
  */
 export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmenu' }: {
   card: MenuCard
@@ -371,6 +374,10 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
   const s = c.session
   const t = c.task
   const ask = (a: Asking, initial = '') => { setText(initial); setAsking(a) }
+  const ref: ChatRef | null = s ? { kind: 'topic', id: s.id } : t ? { kind: 'task', id: t.id } : null
+  const reference = ref && canReference(ref) && (
+    <button role="menuitem" title="A chip in the open conversation's composer: the agent gets this chat's summary and can read it whole" onClick={() => { onClose(); referenceInCurrentChat(ref) }}>Reference in current chat</button>
+  )
 
   let body
   if (asking === 'rename' && s) {
@@ -392,6 +399,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
     const running = s.status === 'running'
     body = (
       <>
+        {reference}
         <button role="menuitem" onClick={() => ask('rename', c.title)}>Rename</button>
         <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A new topic that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.branchChat(s.id).then((id) => onSelect({ kind: 'topic', id })))}>Branch</button>
         <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>
@@ -415,6 +423,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
         : <button role="menuitem" onClick={act(() => (review ? mag.closeReview(t.id) : mag.closeWork(t.id)))}>Close (keep history)</button>
     body = (
       <>
+        {reference}
         {close}
         <button role="menuitem" className="danger" onClick={() => {
           const q = review

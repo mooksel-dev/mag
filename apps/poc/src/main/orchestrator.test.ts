@@ -670,6 +670,46 @@ test('summarizeArchived: closed topics and works without a fresh summary get one
   assert.deepEqual([store.session(old.id).summaryAt, store.task(task.id).summary], [11, SUMMARY])
 })
 
+test('send with refs: the refs ride on the user item, their summaries go before the text; a stale one is made first', async () => {
+  const { store, orch, project, task } = setup()
+  const old = orch.newChat(project.id)
+  store.session(old).items.push({ kind: 'user', text: 'Why does login fail?', at: 10 }, { kind: 'assistant', text: 'The token expires early.', at: 12 })
+  Object.assign(store.session(old), { closedAt: 20, summary: SUMMARY, summaryAt: 12 })
+  store.updateTask(task.id, { ownerSessionId: old })
+  const chat = orch.newChat(project.id)
+  const refs = [{ kind: 'topic' as const, id: old }, { kind: 'task' as const, id: task.id }, { kind: 'topic' as const, id: old }]
+  const before = runs.length
+  const sent = orch.send(chat, 'Go on from these', [], undefined, refs)
+  await tick()
+  assert.deepEqual(store.session(chat).items.at(-1), { kind: 'user', text: 'Go on from these', attachments: undefined, refs: refs.slice(0, 2), at: (store.session(chat).items.at(-1) as { at: number }).at })
+  await assert.rejects(orch.send(chat, 'again'), /still working/, 'one message at a time while summaries are made')
+  assert.equal(runs.length, before + 1, 'the open work without a summary gets one; the fresh topic summary is reused')
+  assert.match(runs.at(-1)!.spec.prompt, /Work .*: Login/)
+  await answer(JSON.stringify({ ...SUMMARY, gist: ['Work gist'] }))
+  await sent
+  const prompt = opened.at(-1)!.sent.at(-1)!
+  assert.match(prompt, /^<referenced-chats>[\s\S]*## Topic: .* \(archived\)\nread_chat id: [\s\S]*The token expired early[\s\S]*## Work .*: Login\nread_chat id: .*\nWork gist[\s\S]*<\/referenced-chats>\n\nGo on from these$/)
+  assert.deepEqual(store.task(task.id).summary?.gist, ['Work gist'])
+})
+
+test('send with refs: a failed summary leaves the title only; a job takes no refs', async () => {
+  const { store, orch, project } = setup()
+  const old = orch.newChat(project.id)
+  store.session(old).items.push({ kind: 'user', text: 'Old question', at: 10 })
+  const chat = orch.newChat(project.id)
+  const sent = orch.send(chat, 'see that', [], undefined, [{ kind: 'topic', id: old }])
+  await tick()
+  await answer('', false)
+  await sent
+  assert.match(opened.at(-1)!.sent.at(-1)!, /read_chat id: .*\n\(no summary yet\)[\s\S]*\n\nsee that$/)
+  assert.equal(store.session(old).summary ?? null, null)
+
+  const other = orch.newChat(project.id)
+  const before = runs.length
+  await orch.send(other, 'do it', [], 'A job', [{ kind: 'topic', id: old }])
+  assert.deepEqual([opened.at(-1)!.sent.at(-1), runs.length, store.session(other).items.at(-1)?.kind], ['do it', before, 'job'])
+})
+
 test('reopen of a closed done work clears its closed mark', () => {
   const { store, orch, project, task } = setup()
   store.updateTask(task.id, { status: 'done' })

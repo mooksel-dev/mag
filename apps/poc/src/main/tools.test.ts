@@ -655,3 +655,22 @@ test('request_integration: one card per integration while it is off; an integrat
   assert.ok(toolsFor('task', 'reviewer').some((t) => t.name === 'request_integration'))
   assert.ok(toolsFor('project', 'chat').some((t) => t.name === 'request_integration'))
 })
+
+test('read_chat: a topic by id, a work by key with its doc and owner topic, paged; every role has it', async () => {
+  const { store, project, task, tools, call } = setup()
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Login' })
+  topic.items.push({ kind: 'user', text: 'Why does login fail?', at: 10 }, { kind: 'tool', id: 'x', name: 'Bash', summary: 'ls', at: 11 }, { kind: 'assistant', text: 'x'.repeat(50_000), at: 12 })
+  topic.closedAt = 20
+  store.updateTask(task.id, { ownerSessionId: topic.id })
+  store.data.docs[task.id] = '# Plan\nRotate tokens'
+  const first = await tools({ projectId: project.id, sessionId: topic.id }, 'read_chat', { id: topic.id })
+  assert.match(first, /^Topic: .* \(archived\)\n\n\[.*\] User: Why does login fail\?\n\n\[.*\] tool Bash ls\n\n\[.*\] Assistant: x+/)
+  const next = /call read_chat with offset (\d+)/.exec(first)?.[1]
+  assert.equal(next, '40000')
+  const second = await tools({ projectId: project.id, sessionId: topic.id }, 'read_chat', { id: topic.id, offset: Number(next) })
+  assert.match(second, /x+\n\n\(end of the chat\)$/)
+  const work = await call('read_chat', { id: task.key.toUpperCase() })
+  assert.match(work, /^Work .*: Big \(planning\)\n\nDocument:\n# Plan\nRotate tokens\n\nConversation:\n\[.*\] User: Why does login fail\?/)
+  await assert.rejects(call('read_chat', { id: 'nope' }), /No chat nope/)
+  for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) assert.ok(toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).some((t) => t.name === 'read_chat'), role)
+})

@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -338,6 +338,8 @@ const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
 
 /** A live process with no turn and no background task closes after this; the next message resumes the session. */
 const LIVE_IDLE_MS = 10 * 60_000
+/** Longest a send waits for the summaries of the chats it references. */
+const SUMMARY_WAIT_MS = 60_000
 
 function summarize(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
@@ -358,8 +360,10 @@ export class Orchestrator {
   private reviewTried = new Map<string, string>()
   /** Topics whose title is being generated. */
   private naming = new Set<string>()
-  /** `topic:<id>` | `task:<id>` with a summary run going on. */
-  private summarizing = new Set<string>()
+  /** `topic:<id>` | `task:<id>` with a summary run going on: the run, so a ref's send waits for the same one. */
+  private summarizing = new Map<string, Promise<void>>()
+  /** Sessions whose send waits for the summaries of its refs before the run starts. */
+  private preparing = new Set<string>()
   /** Review runs' scratch worktrees by session, while its run (or live process) lasts (see ensureScratch). */
   private scratches = new Map<string, Scratch[]>()
   /** Making and removing a session's scratch worktrees, one after another: a closing process's removal goes first. */
@@ -1629,22 +1633,38 @@ export class Orchestrator {
 
   /**
    * A live session takes a message during a turn too: the agent gets it in that turn. `job`: the message is mag's, not
-   * the user's (a review's job, the owner's ask…): the chat shows it as a card with this title.
+   * the user's (a review's job, the owner's ask…): the chat shows it as a card with this title. `refs`: chats the user's
+   * message references ("@"); their summaries (made first when missing or stale) go before the text.
    */
-  async send(sessionId: string, text: string, attachments: Attachment[] = [], job?: string) {
+  async send(sessionId: string, text: string, attachments: Attachment[] = [], job?: string, refs: ChatRef[] = []) {
     const session = this.store.session(sessionId)
-    if (this.runs.has(sessionId)) throw new Error('Agent is still working')
+    if (this.runs.has(sessionId) || this.preparing.has(sessionId)) throw new Error('Agent is still working')
     // Writing to a closed topic opens it again.
     this.store.reopenSession(sessionId)
-    session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, at: Date.now() })
+    // Only chats of the session's project: their summaries go into its prompt.
+    const tasks = this.store.data.tasks.filter((t) => t.projectId === session.projectId)
+    const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId)
+    refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
+    session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() })
     // A topic the user renamed keeps its title.
     if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
       session.title = (job || text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
     // A Claude Code slash command goes to the CLI as is; the composer doesn't attach files to one.
     const command = session.agent === 'claude-code' && text.startsWith('/')
-    const prompt = attachments.length && !command
+    let prompt = attachments.length && !command
       ? `${text}\n\nAttached files (open them with Read):\n${attachments.map((a) => `- ${a.path}`).join('\n')}`
       : text
+    if (refs.length && !command) {
+      this.store.changed()
+      this.preparing.add(sessionId)
+      try {
+        await Promise.all(refs.map((r) => this.ensureSummary(r)))
+      } finally {
+        this.preparing.delete(sessionId)
+      }
+      const block = referencesBlock(refs, tasks, sessions)
+      if (block) prompt = prompt ? `${block}\n\n${prompt}` : block
+    }
     if (!session.taskId) {
       this.store.changed()
       return this.run(session, prompt)
@@ -2185,19 +2205,27 @@ export class Orchestrator {
   /**
    * An archived topic, work or review gets a summary (cheap model, no tools, like nameChat) unless the one it has covers
    * its last item. A failed run or a reply that is not a summary keeps the old one and is logged; the next Close or
-   * start retries. Resolves when the run ends; never rejects.
+   * start retries. `referenced`: an open chat too (a ref's). A second call while one runs gets that run. Resolves when
+   * the run ends; never rejects.
    */
-  async summarize(kind: 'topic' | 'task', id: string): Promise<void> {
+  summarize(kind: 'topic' | 'task', id: string, referenced = false): Promise<void> {
     const key = `${kind}:${id}`
-    if (this.summarizing.has(key)) return
+    const going = this.summarizing.get(key)
+    if (going) return going
     const { sessions } = this.store.data
     const item = kind === 'topic' ? sessions.find((s) => s.id === id) : this.store.data.tasks.find((t) => t.id === id)
-    if (!item || !needsSummary(item, sessions)) return
+    if (!item || !(referenced ? summaryStale(item, sessions) : needsSummary(item, sessions))) return Promise.resolve()
+    const run = this.summaryRun(kind, id, item).finally(() => this.summarizing.delete(key))
+    this.summarizing.set(key, run)
+    return run
+  }
+
+  private async summaryRun(kind: 'topic' | 'task', id: string, item: AgentSession | Task): Promise<void> {
+    const { sessions } = this.store.data
     const at = summaryCovers(item, sessions)
     const prompt = summaryPrompt(summarySource(item, sessions, kind === 'task' ? this.store.data.docs[id] : ''))
     const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.choice(item.projectId, 'chat').agent)
     const adapter = adapters[agent]
-    this.summarizing.add(key)
     let text = ''
     let failed = false
     try {
@@ -2211,8 +2239,20 @@ export class Orchestrator {
       else log.warn('agent', 'summary failed; the old one stays', { [kind]: id, reply: failed ? '(run failed)' : text.slice(0, 200) })
     } catch (e) {
       log.warn('agent', 'summary failed; the old one stays', { [kind]: id, error: String(e) })
+    }
+  }
+
+  /**
+   * A referenced chat, archived or not, gets a summary covering its last item before the message goes (decision 6).
+   * Waits at most SUMMARY_WAIT_MS: a slow or failed run leaves the block with what there is (the title at least).
+   */
+  async ensureSummary(ref: ChatRef): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<void>((resolve) => { timer = setTimeout(resolve, SUMMARY_WAIT_MS) })
+    try {
+      await Promise.race([this.summarize(ref.kind, ref.id, true), late])
     } finally {
-      this.summarizing.delete(key)
+      clearTimeout(timer)
     }
   }
 
