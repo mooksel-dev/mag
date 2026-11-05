@@ -4,6 +4,7 @@ import {
   PR_VERDICTS,
   PR_VERDICT_LABELS,
   findingCounts,
+  findingsFolded,
   findingsByLevel,
   prRepoName,
   reviewRunning,
@@ -127,7 +128,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
     </>
   )
   // Preferring another option rejects the PR's direction: its detailed findings fold (review-v2-questions-first-direction.2).
-  const folded = r.report?.decided?.choice === 'prefer'
+  const folded = findingsFolded(r.report)
   const findingsBody = (
     <>
       <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}{r.report ? ' · from the report, to publish' : ''}</span>}</h2>

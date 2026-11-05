@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, inbox, type AgentEvent } from '@mag/core'
+import { DEFAULT_PLAYBOOK, PRECEDENCE, directionReferences, findingsFolded, inbox, type AgentEvent } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -988,8 +988,20 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites('nope') }), /no direction decision decision:nope/)
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: cites(ask.id) })
   const next = store.task(work.id).prReview!.report!
-  assert.equal(next.decided, undefined)
   assert.deepEqual(directionReferences(next, store.project(project.id).directionDecisions).map((r) => [r.claim.source, r.decisions.map((d) => d.choice)]), [['yours', ['discuss']]])
+  // A new report of the same PR keeps the user's call and its draft; deciding again still replaces it.
+  assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Ask the author'])
+  orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'request_changes' } })
+  const kept = store.task(work.id).prReview!.report!
+  assert.deepEqual([kept.decided?.choice, kept.decided?.option, kept.draft], ['prefer', 'config', "I'd rather go with config than constant: per tenant."])
+  assert.equal(findingsFolded(kept), true)
+  orch.decideDirection(work.id, { choice: 'ok' })
+  assert.equal(findingsFolded(store.task(work.id).prReview!.report), false)
+  const final = store.project(project.id)
+  assert.deepEqual(final.directionDecisions!.map((d) => d.choice), ['ok'])
+  assert.equal(final.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
   // The older form still records, and drops the report it replaces.
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] })
   assert.equal(store.task(work.id).prReview!.report, undefined)

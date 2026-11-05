@@ -1329,8 +1329,11 @@ export class Orchestrator {
     const work = this.store.task(workId)
     const prev = work.prReview
     if (!isReview(work) || !prev) throw new Error(`${work.key} is not a review of a PR`)
-    // A review recorded without a report drops the one before: it is the older form.
-    this.store.updateTask(workId, { prReview: { ...prev, ...r, report: r.report, head: prev.pr.head, at: Date.now() }, needsInput: null })
+    // A review recorded without a report drops the one before: it is the older form. A new report of the same PR keeps
+    // the user's call on its direction and its draft (review-v2-questions-first-direction.2): deciding again replaces it.
+    const kept = prev.report?.decided ? { decided: prev.report.decided, ...(prev.report.draft ? { draft: prev.report.draft } : {}) } : {}
+    const report = r.report && { ...r.report, ...kept }
+    this.store.updateTask(workId, { prReview: { ...prev, ...r, report, head: prev.pr.head, at: Date.now() }, needsInput: null })
     const n = r.findings.length
     this.store.logEvent({ projectId: work.projectId, taskId: workId, taskKey: work.key, kind: 'review', text: `PR review: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict!]}${n ? ` · ${n} finding${n > 1 ? 's' : ''}` : ''}` })
     return 'Recorded: the user sees it on the review\'s pane beside your conversation. Nothing goes to GitHub until they publish the findings they pick.'

@@ -402,6 +402,11 @@ export function reportDecision(report: Pick<ReviewReport, 'direction'>): string 
   return report.direction.decisions.map((c) => c.text.replace(/\.$/, '')).join('; ')
 }
 
+/** The user prefers another option than the PR's: its detailed findings fold on the page. */
+export function findingsFolded(report: Pick<ReviewReport, 'decided'> | undefined): boolean {
+  return report?.decided?.choice === 'prefer'
+}
+
 /** What the call says, in a few words: "Direction OK", "Prefer <option>", "Ask the author". */
 export function choiceLine(d: Pick<DirectionDecision, 'choice' | 'option'>): string {
   return d.choice === 'prefer' ? `Prefer ${d.option}` : DIRECTION_CHOICE_LABELS[d.choice]
