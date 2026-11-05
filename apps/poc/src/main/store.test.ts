@@ -283,6 +283,49 @@ test('closeSession keeps the history and persists; reopenSession opens it again'
   assert.throws(() => again.closeSession('nope'), /No session/)
 })
 
+test('closeTask keeps a done work\'s and a review\'s doc, sessions and history; reopenTask brings them back', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const store = new Store(file)
+  const p = store.createProject('p')
+  const work = store.createTask({ projectId: p.id, title: 'w', type: 'dev', description: '', status: 'done' })
+  const review = store.createTask({ projectId: p.id, title: 'app#1: x', type: 'review', description: '', status: 'done' })
+  assert.deepEqual([work.closedAt, review.closedAt], [null, null])
+  for (const t of [work, review]) {
+    const s = store.createSession({ projectId: p.id, taskId: t.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+    store.pushItem(s.id, { kind: 'user', text: 'hi', at: 1 })
+    store.data.docs[t.id] = '# Doc'
+    store.closeTask(t.id)
+  }
+  store.flush()
+  const again = new Store(file)
+  for (const t of [work, review]) {
+    const got = again.task(t.id)
+    assert.ok(got.closedAt)
+    assert.equal(got.status, 'done')
+    assert.equal(again.data.docs[t.id], '# Doc')
+    assert.deepEqual(again.data.sessions.filter((s) => s.taskId === t.id).map((s) => s.items.length), [1])
+    again.reopenTask(t.id)
+    assert.equal(again.task(t.id).closedAt, null)
+  }
+})
+
+test('closed-mark migration: every task gets closedAt; a review closed before it (done, not imported) is closed', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', description: '', needsInput: null, nextSubNo: 1, createdAt: 0, updatedAt: 7, parentId: null, rank: 0, work: null }
+  writeFileSync(file, JSON.stringify({
+    schemaVersion: 6,
+    projects: [{ id: 'p', name: 'p', repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: false, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: 0 }],
+    tasks: [
+      { ...base, id: 'r', key: 'R', title: 'app#1: x', type: 'review', status: 'done' },
+      { ...base, id: 'i', key: 'I', title: 'app#2: y', type: 'review', status: 'done', imported: { at: 1, from: 'x', diffPath: '/d' } },
+      { ...base, id: 'w', key: 'W', title: 'w', type: 'dev', status: 'done' },
+    ],
+    sessions: [], docs: {}, canvases: {}, events: [], ideas: [],
+  }))
+  const store = new Store(file)
+  assert.deepEqual(['r', 'i', 'w'].map((id) => store.task(id).closedAt), [7, null, null])
+})
+
 test('deleteTask removes the task with its sessions, doc and canvases; others stay', () => {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
   const p = store.createProject('p')
@@ -348,7 +391,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 6, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 7, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -357,7 +400,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file)
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 6)
+      assert.equal(again.data.schemaVersion, 7)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -407,7 +450,7 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 6)
+  assert.equal(store.data.schemaVersion, 7)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })

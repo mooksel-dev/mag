@@ -534,6 +534,26 @@ export class Orchestrator {
   }
 
   /**
+   * The user closes a done work: it stays done, with its doc, sessions and history, and goes to Closed. An open work is
+   * closed by cancel, a review by closeReview.
+   */
+  closeWork(taskId: string) {
+    const work = this.store.task(taskId)
+    if (work.parentId) throw new Error(`${work.key} is a step; close its work`)
+    if (isReview(work)) return this.closeReview(taskId)
+    if (work.status !== 'done') throw new Error(`${work.key} is ${work.status}; only a done work is closed this way (cancel the others)`)
+    this.store.closeTask(taskId)
+  }
+
+  /** Restore of a closed work or review (not a canceled one: cancel is final) or topic: back where it was in the list. */
+  restore(kind: 'work' | 'topic', id: string) {
+    if (kind === 'topic') return this.store.reopenSession(this.projectChat(id).id)
+    const work = this.store.task(id)
+    if (work.status === 'canceled') throw new Error(`${work.key} is canceled; a canceled work cannot be restored`)
+    this.store.reopenTask(id)
+  }
+
+  /**
    * The user's Turn into a work: the topic's agent gets a fixed request to create a work from what was discussed (it
    * becomes the work's owner, as with create_work from any topic).
    */
@@ -592,7 +612,7 @@ export class Orchestrator {
     if (!canReopen(task)) throw new Error(`${task.key} is ${task.status}${task.parentId ? ' (a step)' : isLegacy(task) ? ' (a legacy task)' : ''}; only a done work with steps is continued`)
     const need = what.replace(/\s+/g, ' ').trim()
     if (!need) throw new Error('Say what else is needed')
-    this.store.updateTask(taskId, { status: 'planning', needsInput: null, ...(by && { ownerSessionId: by }) })
+    this.store.updateTask(taskId, { status: 'planning', needsInput: null, closedAt: null, ...(by && { ownerSessionId: by }) })
     log.info('agent', `${task.key} reopened`, { by: by ?? 'app' })
     if (by) return `${task.key} is back in planning and this topic owns it.`
     const owner = this.ownerSession(task)
@@ -1330,7 +1350,7 @@ export class Orchestrator {
     const base: PrReview = prev?.prReview ?? { pr, results: {}, shown: f, posted: null }
     const prReview: PrReview = { ...base, pr, shown: f, results: { ...base.results, [f]: { ...(before ?? emptyResult(f, sessionId)), sessionId } } }
     const work = prev
-      ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, ownerSessionId: sessionId, prReview }), this.store.task(prev.id))
+      ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, closedAt: null, ownerSessionId: sessionId, prReview }), this.store.task(prev.id))
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
     if (!prev) this.store.updateTask(work.id, { prReview })
     // mag's own topic for the review's format: Delete review takes it along; the work list shows it as the review.
@@ -1388,11 +1408,11 @@ export class Orchestrator {
     this.store.updateTask(workId, { prReview: { ...r, shown: format }, ...topic })
   }
 
-  /** The user closes a review: done; Review again brings it back. */
+  /** The user closes a review: done and in Closed; Restore or Review again brings it back. */
   closeReview(workId: string) {
     const work = this.store.task(workId)
     if (!isReview(work)) throw new Error(`${work.key} is not a review of a PR`)
-    this.store.updateTask(workId, { status: 'done', needsInput: null })
+    this.store.updateTask(workId, { status: 'done', needsInput: null, closedAt: Date.now() })
   }
 
   /**

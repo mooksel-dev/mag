@@ -192,7 +192,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
             {canGroom && !owner && <button className="small" onClick={() => mag.groom(work.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review ⧉</button>}
             {!review && <ReopenButton task={work} />}
-            <HeadMenu card={{ kind: review ? 'review' : 'work', title: shortTitle(work), task: work }} onSelect={onSelect} onGone={onDeleted} />
+            <HeadMenu card={{ kind: review ? 'review' : 'work', title: shortTitle(work), task: work, closed: work.status === 'canceled' || !!work.closedAt }} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {steps.length > 0 && <StepChips steps={steps} />}
           {card?.move.who === 'you' && <WaitingBar move={card.move} work={work} state={state} onAnswer={focus} />}
@@ -271,7 +271,7 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
             <span className="kind">discussion</span>
             <div className="grow" />
             <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>
-            <HeadMenu card={{ kind: 'topic', title: shortTitle(topic), session: topic }} onSelect={onSelect} onGone={onDeleted} />
+            <HeadMenu card={{ kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt }} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {topic.branchOf && (
             <div className="muted small">

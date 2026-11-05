@@ -513,6 +513,41 @@ test('closeChat: the live process closes, the history stays; writing to it reope
   assert.equal(store.session(id).closedAt, null)
 })
 
+test('closeWork / closeReview / restore: a done work and a review close with all they have and come back; an open one is canceled instead, and a canceled one is not restored', async () => {
+  const { store, orch, project, task } = setup()
+  assert.throws(() => orch.closeWork(task.id), /only a done work/)
+  store.updateTask(task.id, { status: 'done' })
+  orch.closeWork(task.id)
+  assert.ok(store.task(task.id).closedAt)
+  assert.equal(store.task(task.id).status, 'done')
+  orch.restore('work', task.id)
+  assert.equal(store.task(task.id).closedAt, null)
+
+  const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
+  orch.closeWork(review.id)
+  assert.deepEqual([store.task(review.id).status, !!store.task(review.id).closedAt], ['done', true])
+  orch.restore('work', review.id)
+  assert.equal(store.task(review.id).closedAt, null)
+
+  const gone = store.createTask({ projectId: project.id, title: 'g', type: 'dev', description: '' })
+  await orch.cancel(gone.id, 'nope')
+  assert.throws(() => orch.restore('work', gone.id), /cannot be restored/)
+
+  const topic = orch.newChat(project.id)
+  store.closeSession(topic)
+  orch.restore('topic', topic)
+  assert.equal(store.session(topic).closedAt, null)
+})
+
+test('reopen of a closed done work clears its closed mark', () => {
+  const { store, orch, project, task } = setup()
+  store.updateTask(task.id, { status: 'done' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'done' })
+  store.closeTask(task.id)
+  orch.reopen(task.id, 'more', orch.newChat(project.id))
+  assert.equal(store.task(task.id).closedAt, null)
+})
+
 test('turnIntoWork: the topic\'s agent gets the fixed request; not while it works', async () => {
   const { store, orch, project } = setup()
   const id = orch.newChat(project.id)

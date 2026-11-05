@@ -162,6 +162,7 @@ export class Store {
     () => this.migrateToSteps(),
     () => this.migrateToWorkStates(),
     () => this.migrateToReviewResults(),
+    () => this.migrateToClosedMark(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -184,6 +185,14 @@ export class Store {
     // Through migrateToSteps.
     if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
     return 0
+  }
+
+  /**
+   * The closed mark (redesign-start-screen-big-composer.2): every task gets closedAt; a review closed before it (done,
+   * not imported) is closed since its last update.
+   */
+  private migrateToClosedMark() {
+    for (const t of this.data.tasks) t.closedAt ??= t.type === 'review' && t.status === 'done' && !t.imported ? t.updatedAt : null
   }
 
   /**
@@ -549,6 +558,7 @@ export class Store {
       rank: parent ? Math.max(0, ...subtasksOf(parent.id, mine).map((x) => x.rank)) + 1 : 0,
       needsInput: null,
       work: null,
+      closedAt: null,
       ...(parent && { startManually: n.startManually ?? false }),
       ...(parent && n.repos && { repos: n.repos }),
       ...(!parent && n.tickets?.length && { tickets: n.tickets }),
@@ -660,6 +670,16 @@ export class Store {
   closeSession(sid: string) {
     this.session(sid).closedAt = Date.now()
     this.changed()
+  }
+
+  /** Closes a done work or a review: it stays as it is (doc, sessions, history) and goes to Closed. */
+  closeTask(tid: string) {
+    this.updateTask(tid, { closedAt: Date.now() })
+  }
+
+  /** Restore of a closed work or review: back in the list, where it was. */
+  reopenTask(tid: string) {
+    if (this.task(tid).closedAt) this.updateTask(tid, { closedAt: null })
   }
 
   /** Opens a closed topic again (writing to it does). */

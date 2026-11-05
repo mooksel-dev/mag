@@ -69,7 +69,7 @@ export interface WorkCard {
   at: number
   /** When the work or topic was created: fixed, so it orders new rows stably. */
   createdAt: number
-  /** The user closed it: a topic with closedAt, a canceled work, a closed review. */
+  /** In Closed: a topic or task with closedAt, or a canceled work. */
   closed: boolean
   task?: Task
   session?: AgentSession
@@ -317,8 +317,7 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
     const ownsTopic = !!task.ownerSessionId && latestOwned.get(task.ownerSessionId) === task
     const item = finished ? undefined : items.find((i) => i.task?.id === task.id || (!i.task && ownsTopic && i.session?.id === task.ownerSessionId))
     const review = isReview(task)
-    // A review is closed by closeReview (done); an imported one is done from the start and stays like a done work.
-    const closed = task.status === 'canceled' || (review && task.status === 'done' && !task.imported)
+    const closed = task.status === 'canceled' || !!task.closedAt
     const move = cardMove(task, item, mine, tasks, now)
     const group: WorkGroup = finished ? 'done' : move.who === 'you' ? 'waiting' : 'working'
     out.push({

@@ -67,7 +67,7 @@ test('sidebarRows: Closed apart in layout order; a done work stays in place; fil
   const layout: SidebarNode[] = [{ kind: 'item', ref: 'topic:x' }, { kind: 'item', ref: 'work:done' }, { kind: 'group', id: 'g', name: 'G', collapsed: false, items: ['work:rev', 'work:c', 'work:w'] }]
   const tasks = [
     task('done', 1, { status: 'done' }),
-    task('rev', 2, { type: 'review', status: 'done', title: 'app#1: Fix' }),
+    task('rev', 2, { type: 'review', status: 'done', title: 'app#1: Fix', closedAt: NOW }),
     task('c', 3, { status: 'canceled' }),
     task('w', 4, { status: 'ready' }),
   ]
@@ -76,6 +76,15 @@ test('sidebarRows: Closed apart in layout order; a done work stays in place; fil
   const waiting = (c: Parameters<NonNullable<Parameters<typeof sidebarRows>[2]>>[0]) => cardFilter([c], 'waiting').length > 0
   assert.equal(text(rows(layout, tasks, sessions, waiting)), '[G: w]')
   assert.equal(text(rows(layout, tasks, sessions, (c) => c.id === 'done')), 'done')
+})
+
+test('sidebarRows: a closed done work goes to Closed and, restored, comes back to its slot; done without closedAt stays', () => {
+  const layout: SidebarNode[] = ['work:a', 'work:d', 'work:b'].map((ref) => ({ kind: 'item', ref }))
+  const tasks = (closedAt: number | null) => [task('a', 1), task('d', 2, { status: 'done', closedAt }), task('b', 3)]
+  assert.equal(text(rows(layout, tasks(null))), 'a d b')
+  const closed = rows(layout, tasks(NOW))
+  assert.equal(text(closed), 'a b – d')
+  assert.equal(text(rows(closed.layout, tasks(null))), 'a d b')
 })
 
 test('moveRef: reorder at the top level and into / out of a group; a group moves as one', () => {
