@@ -19,8 +19,14 @@ export type ClaimSource = 'checked' | 'agent' | 'yours' | 'question' | 'rule'
 
 export const CLAIM_SOURCES: ClaimSource[] = ['checked', 'agent', 'yours', 'question', 'rule']
 
-/** The sources a reviewer may give; checked is mag's. */
-const AGENT_SOURCES: ClaimSource[] = ['agent', 'yours', 'question', 'rule']
+/**
+ * The sources a reviewer gives (prompts-use-the-models-to.5, audit F9): user for the user's own words, stored as yours,
+ * since "yours" read from the agent's side as its own; yours itself is still taken. checked is mag's.
+ */
+export const AGENT_SOURCES = ['agent', 'user', 'question', 'rule'] as const
+
+/** A source as a reviewer gives it, as stored. */
+const storedSource = (given: string): ClaimSource => (given === 'user' ? 'yours' : (given as ClaimSource))
 
 export interface Claim {
   text: string
@@ -237,10 +243,10 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
   const r = (o && typeof o === 'object' ? o : {}) as Raw
   const claim = (c: Raw, what: string, source?: ClaimSource): Claim => {
     // Missing means the reviewer's own reading; checked is mag's to give.
-    const given = (text(c?.source) || 'agent') as ClaimSource
+    const given = storedSource(text(c?.source) || 'agent')
     const out: Claim = { text: text(c?.text), source: source ?? (given === 'checked' ? 'agent' : given), cites: strings(c?.cites) }
     if (!out.text) errors.push(`${what}: text is required`)
-    if (!source && !AGENT_SOURCES.includes(given) && given !== 'checked') errors.push(`${what}: source must be one of ${AGENT_SOURCES.join(', ')} (checked is mag's)`)
+    if (!source && !(CLAIM_SOURCES as string[]).includes(given)) errors.push(`${what}: source must be one of ${AGENT_SOURCES.join(', ')} (checked is mag's)`)
     if (text(c?.view)) out.view = text(c.view)
     return out
   }
@@ -502,7 +508,7 @@ export function decisionNote(d: DirectionDecision): string {
 export function decisionsBlock(decisions: DirectionDecision[] | undefined, max = 20): string {
   const list = [...(decisions ?? [])].sort((a, b) => b.at - a.at).slice(0, max)
   if (!list.length) return ''
-  return `The user's earlier direction decisions (newest first). Where one bears on this change's direction, put it in direction.references with source yours, citing decision:<id>:
+  return `The user's earlier direction decisions (newest first). Where one bears on this change's direction, put it in direction.references with source user, citing decision:<id>:
 ${list.map((d) => `- decision:${d.id}: ${d.pr}: ${d.decision} → ${choiceLine(d)}${d.principle ? `; principle: ${d.principle}` : ''}`).join('\n')}`
 }
 

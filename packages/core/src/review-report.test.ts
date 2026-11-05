@@ -104,7 +104,16 @@ test('normalizeReport refuses a verdict on the direction and wrong shapes', () =
   // The old form, a bare verdict, says what is missing.
   assert.ok(normalizeReport({ ...raw, checks: 'approve' }).errors.some((e) => /checks.verdict must be one of/.test(e)))
   assert.ok(normalizeReport('nope').errors.some((e) => /report must be an object/.test(e)))
-  assert.ok(normalizeReport({ ...raw, problem: [{ criterion: 'c', status: 'solved', text: 't', source: 'mine', cites: ['u1'] }] }).errors.some((e) => /source must be one of agent, yours, question, rule/.test(e)))
+  assert.ok(normalizeReport({ ...raw, problem: [{ criterion: 'c', status: 'solved', text: 't', source: 'mine', cites: ['u1'] }] }).errors.some((e) => /source must be one of agent, user, question, rule/.test(e)))
+})
+
+test('normalizeReport: user is the source a reviewer gives for the user\'s own words, stored as yours; yours itself still taken (prompts-use-the-models-to.5)', () => {
+  const ref = (source: string) => normalizeReport({ ...raw, direction: { ...raw.direction, references: [{ text: 'your note', source, cites: ['notes'] }] } })
+  for (const source of ['user', 'yours']) {
+    const { report, errors } = ref(source)
+    assert.deepEqual(errors, [], source)
+    assert.equal(report.direction.references[0].source, 'yours', source)
+  }
 })
 
 test('checkReport: the synthetic review passes against its inventory', () => {
@@ -278,7 +287,7 @@ test('a direction decision: its notes line, the strip and line show it, the earl
 
   assert.equal(decisionsBlock(undefined), '')
   const block = decisionsBlock([d, decision({ id: 'd2', choice: 'ok', option: undefined, principle: undefined, at: 20 })])
-  assert.match(block, /put it in direction\.references with source yours, citing decision:<id>/)
+  assert.match(block, /put it in direction\.references with source user, citing decision:<id>/)
   assert.ok(block.indexOf('decision:d2') < block.indexOf('decision:d1'))
   assert.match(block, /- decision:d1: https:\/\/github\.com\/acme\/api\/pull\/1: A tenant .* → Prefer Tenant id in the token; principle: identity comes from auth/)
 })

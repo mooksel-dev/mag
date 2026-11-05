@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PLAYBOOK_SECTIONS } from '@mag/core'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PLAYBOOK_SECTIONS, orientation } from '@mag/core'
 import { TOOL_DEFS } from './tool-defs.ts'
 
 /** Every description string of the tools, nested schema fields included. */
@@ -24,7 +24,7 @@ const phrases = (text: string, n = 7) => {
 
 test('each contract is said once: no sentence of the playbook or mag\'s bar repeats a tool description (prompts-use-the-models-to.4)', () => {
   const tools = phrases(descriptions(TOOL_DEFS).join(' | '))
-  const texts: [string, string][] = [...PLAYBOOK_SECTIONS.map((s): [string, string] => [s, DEFAULT_PLAYBOOK[s]]), ['CODE_CHECKS', CODE_CHECKS], ['DEVELOPER_BAR', DEVELOPER_BAR]]
+  const texts: [string, string][] = [...PLAYBOOK_SECTIONS.map((s): [string, string] => [s, DEFAULT_PLAYBOOK[s]]), ['CODE_CHECKS', CODE_CHECKS], ['DEVELOPER_BAR', DEVELOPER_BAR], ['orientation', orientation(2)]]
   for (const [name, text] of texts) {
     const twice = [...phrases(text)].filter((p) => tools.has(p))
     assert.deepEqual(twice, [], `${name} repeats a tool description`)
