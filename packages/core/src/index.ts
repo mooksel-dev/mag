@@ -12,6 +12,7 @@ import type { ImportedReview } from './review-bundle.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
+export * from './composer.ts'
 export * from './diagram.ts'
 export * from './diagram-rules.ts'
 export * from './inventory.ts'

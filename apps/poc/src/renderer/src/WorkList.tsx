@@ -2,15 +2,12 @@ import { useEffect, useState } from 'react'
 import {
   CARD_FILTERS,
   CARD_FILTER_LABELS,
-  REVIEW_FORMATS,
   WORK_GROUPS,
   WORK_GROUP_LABELS,
   cardFilter,
-  projectReviewFormat,
   workCards,
   type CardFilter,
   type Project,
-  type ReviewFormat,
   type WorkCard,
 } from '@mag/core'
 import type { AppState, CrashReport } from '../../preload/api'
@@ -40,14 +37,17 @@ function useFilter(projectId: string): [CardFilter, (f: CardFilter) => void] {
 }
 
 /**
- * The left column (work-list-the-left-column.1): one field that starts any work, filters with counts, then a card per
- * work and topic of core workCards() by group. Done is folded; Ideas is a link at the end.
+ * The left column (work-list-the-left-column.1): ＋ New opens Home (its composer starts any work), filters with counts,
+ * then a card per work and topic of core workCards() by group. Done is folded; Ideas is a link at the end.
  */
-export function WorkList({ project, state, selected, onSelect, onOpenIdeas }: {
+export function WorkList({ project, state, selected, home, onSelect, onNew, onOpenIdeas }: {
   project: Project
   state: AppState
   selected: Selection | null
+  /** Home is open: ＋ New is the current row. */
+  home: boolean
   onSelect: (s: Selection) => void
+  onNew: () => void
   onOpenIdeas: () => void
 }) {
   const now = useNow(15_000)
@@ -64,7 +64,11 @@ export function WorkList({ project, state, selected, onSelect, onOpenIdeas }: {
   const groups = WORK_GROUPS.map((g) => ({ g, list: cards.filter((c) => c.group === g) })).filter((x) => x.list.length)
   return (
     <nav className="worklist" aria-label="Works">
-      <NewWork project={project} onSelect={onSelect} />
+      <div className="wlnew">
+        <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
+          ＋ New <kbd>⌘N</kbd>
+        </button>
+      </div>
       {all.length > 0 && (
         <div className="wlfilters" role="tablist" aria-label="Filter works">
           {CARD_FILTERS.map((f) => (
@@ -76,7 +80,7 @@ export function WorkList({ project, state, selected, onSelect, onOpenIdeas }: {
       )}
       <div className="wlscroll">
         {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
-        {!all.length && <p className="muted small pad">No works yet. Describe a problem above: a topic opens, and its agent plans the work with you.</p>}
+        {!all.length && <p className="muted small pad">No works yet. Start one with ＋ New: a discussion opens, and its agent plans the work with you.</p>}
         {all.length > 0 && !cards.length && <p className="muted small pad">Nothing here.</p>}
         {groups.map(({ g, list }) => (
           <div key={g} className="wlgroup">
@@ -112,102 +116,6 @@ function Row({ card: c, now, on, onSelect }: { card: WorkCard; now: number; on: 
       <div className={`wlmove small ${tone}`}>{c.move.who === 'you' ? `→ ${c.move.text}` : c.move.text}</div>
       {c.last && <div className="wllast muted small">{c.last.text} · {threadTime(c.last.at, now)}</div>}
     </button>
-  )
-}
-
-const PR_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/
-const URL_RE = /^https?:\/\/\S+$/
-
-/**
- * Starts any work from one field: a PR link reviews the PR, any other link starts a work from that ticket, and words
- * open a new topic with them, whose agent plans the work with the user.
- */
-function NewWork({ project, onSelect }: { project: Project; onSelect: (s: Selection) => void }) {
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.
-  const [format, setFormat] = useState<ReviewFormat>(projectReviewFormat(project))
-  useEffect(() => setFormat(projectReviewFormat(project)), [project.reviewFormat])
-  // Import review (review-v2-part-2-v1-2.3): a review's .zip dropped on the field, or picked; it opens read only.
-  const [dropping, setDropping] = useState(false)
-  const importReview = async (zipPath?: string) => {
-    setBusy(true)
-    setError(null)
-    try {
-      const r = await mag.importReview(project.id, zipPath)
-      if (r && 'error' in r) return setError(r.error)
-      if (r) onSelect({ kind: 'work', id: r.taskId })
-    } catch (err) {
-      setError(String((err as Error).message ?? err))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const zipOf = (e: React.DragEvent) => [...e.dataTransfer.files].find((f) => f.name.toLowerCase().endsWith('.zip'))
-  const t = text.trim()
-  const what = PR_RE.test(t) ? 'Review PR' : URL_RE.test(t) ? 'From ticket' : 'New work'
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!t || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      if (PR_RE.test(t)) {
-        const r = await mag.startReview(project.id, t, format)
-        if ('error' in r) return setError(r.error)
-        onSelect({ kind: 'work', id: r.taskId })
-      } else if (URL_RE.test(t)) {
-        const r = await mag.workFromTicket(project.id, t)
-        if ('error' in r) return setError(r.error)
-        onSelect({ kind: 'work', id: r.taskId })
-      } else {
-        const id = await mag.newChat(project.id)
-        onSelect({ kind: 'topic', id })
-        await mag.send(id, t)
-      }
-      setText('')
-    } catch (err) {
-      setError(String((err as Error).message ?? err))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <form
-      className={`newwork${dropping ? ' dropping' : ''}`}
-      onSubmit={submit}
-      onDragOver={(e) => {
-        if (![...e.dataTransfer.items].some((i) => i.kind === 'file')) return
-        e.preventDefault()
-        setDropping(true)
-      }}
-      onDragLeave={() => setDropping(false)}
-      onDrop={(e) => {
-        setDropping(false)
-        const zip = zipOf(e)
-        if (!zip) return
-        e.preventDefault()
-        void importReview(mag.pathForFile(zip))
-      }}
-    >
-      <input
-        value={text}
-        onChange={(e) => { setText(e.target.value); setError(null) }}
-        placeholder="New work: a problem, a ticket or PR link…"
-        aria-label="New work"
-        aria-invalid={!!error}
-        title="Words open a topic whose agent plans the work with you; a ticket link starts a work from it; a GitHub PR link reviews the PR"
-      />
-      {PR_RE.test(t) && (
-        <select className="small" value={format} aria-label="Review format" title="v1: findings by level and a verdict; v2: the questions and the direction for you to decide. The default is the project's setting." onChange={(e) => setFormat(e.target.value as ReviewFormat)}>
-          {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
-        </select>
-      )}
-      {t ? <button type="submit" className="primary small" disabled={busy}>{what}</button>
-        : <button type="button" className="link small" disabled={busy} title="Open a review exported from another mag (.zip), read only; or drop the .zip on this field" onClick={() => void importReview()}>Import review…</button>}
-      {error && <span className="err small" role="alert">{error}</span>}
-    </form>
   )
 }
 
