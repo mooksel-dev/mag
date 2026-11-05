@@ -354,6 +354,51 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
   return out.sort((a, b) => order(a) - order(b) || b.at - a.at)
 }
 
+/**
+ * The card of one work (a review too), as workCards builds it for its row, so the selected work's header shows the same
+ * move. null for what the list leaves out: a canceled work, one done over 7 days ago, a step.
+ */
+export function workCard(task: Task, tasks: Task[], sessions: AgentSession[], now: number): WorkCard | null {
+  return workCards(task.projectId, tasks, sessions, now).find((c) => c.id === task.id && c.kind !== 'topic') ?? null
+}
+
+/** done = finished; merge = its PRs open; build = in progress; waiting = for another step; manual = waits for Start; todo = next. */
+export type StepState = 'done' | 'merge' | 'build' | 'waiting' | 'manual' | 'todo'
+
+export interface StepLine {
+  /** 1-based. */
+  no: number
+  key: string
+  title: string
+  /** "PR #85", "2 PRs": the step's PRs, merged ones included. */
+  pr?: string
+  state: StepState
+  /** waiting: the key of the step it waits for. */
+  waitsFor?: string
+}
+
+/** The selected work's steps for its header: number, title, PRs and where each stands. */
+export function stepsLine(work: Task, tasks: Task[]): StepLine[] {
+  return subtasksOf(work.id, tasks).map((s, i) => {
+    const prs = s.work?.repos.filter((r) => r.prUrl && r.prState !== 'closed') ?? []
+    const state: StepState =
+      s.status === 'done' ? 'done'
+      : prs.some((r) => r.prState === 'open') ? 'merge'
+      : s.waitingFor ? 'waiting'
+      : s.status === 'in_progress' ? 'build'
+      : s.startManually ? 'manual'
+      : 'todo'
+    return {
+      no: i + 1,
+      key: s.key,
+      title: s.title,
+      ...(prs.length ? { pr: prsText(prs) } : {}),
+      state,
+      ...(state === 'waiting' ? { waitsFor: s.waitingFor!.key } : {}),
+    }
+  })
+}
+
 /** The cards a filter shows: waiting = that group; working = an agent running (green dot); reviews = review rows, done included. */
 export function cardFilter(cards: WorkCard[], filter: CardFilter): WorkCard[] {
   switch (filter) {

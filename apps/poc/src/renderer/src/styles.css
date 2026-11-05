@@ -748,6 +748,11 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .stepper span { padding: 2px 8px; border-radius: 4px; background: var(--status); color: var(--muted); }
 .stepper span.past { background: var(--green-bg); color: var(--green-fg); }
 .stepper span.now { background: var(--accent); color: var(--on-accent); }
+.stepsline { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
+.stepsline .step.done { color: var(--green-fg); }
+.stepsline .step.now { color: var(--text); font-weight: 600; }
+.waitingbar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; background: var(--amber-bg); color: var(--amber-fg); }
+.waitingbar > span { flex: 1; min-width: 0; }
 .topictitle { border: none; background: none; padding: 0; font: inherit; font-weight: 600; font-size: 15px; min-width: 0; }
 input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
