@@ -3,7 +3,9 @@ import { isReview, prHeads, staleFact, type StepFact, type Task } from '@mag/cor
 import type { Change, FileChange } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 import { ComponentView } from './diagrams/Component'
-import { STATUS_ICON, STATUS_LABEL, fileKey, filesOf, hunksOf, mark, summary, what, type FactItem } from './factView'
+import { STATUS_ICON, fileKey, filesOf, hunksOf, mark, summary, what, type FactItem } from './factView'
+import { FACT_TAG, factCard } from './conversationCards'
+import { StructuredCard } from './Cards'
 
 const mag = window.mag
 
@@ -66,7 +68,7 @@ function Deviation({ item, view, hunks }: { item: FactItem; view: FactView; hunk
   const inner = item.folded ?? []
   return (
     <li>
-      <span className={`factstatus s-${item.status}`} title={STATUS_LABEL[item.status]}>{STATUS_ICON[item.status]}</span> {item.phrase}
+      <span className={`tag t-${FACT_TAG[item.status].replace(/ /g, '-')}`}>{FACT_TAG[item.status]}</span> {item.phrase}
       {item.note && <div className="muted small">{item.note}</div>}
       {item.fact && filesOf(item.fact, view.files).map((f) => <FileLink key={fileKey(f)} f={f} hunks={hunks} />)}
       {inner.length > 0 && <Folded line={`${inner.length} change${inner.length > 1 ? 's' : ''} in it`} changes={inner} view={view} hunks={hunks} />}
@@ -166,37 +168,16 @@ function Body({ step, view, merged }: { step: Task; view: FactView; merged: bool
   // A review of a teammate's PR has no plan to compare and no merge of ours to allow: only the fact against its diff
   // (reviews-prybraty-spysok-pr-i.1).
   const review = isReview(step)
-  const deviations = view.items.filter((i) => i.status !== 'match').length
-  // The deviations are listed under the plan: the threshold names only what the fact itself lacks.
-  const phrases = new Set(view.items.map((i) => i.phrase))
-  const own = view.blockers.filter((b) => !phrases.has(b))
+  // The threshold as a card (redesign-start-screen-big-composer.4): a verdict chip and tagged rows, no raw blocker text.
+  const card = factCard({ key: step.key, title: step.title, review }, view, merged)
   return (
     <>
       <div className="muted small">
         {view.repos.map((x) => `${x.name} ${short(x.baseSha)}..${short(x.headSha)}`).join(' · ')}
         {review ? '' : view.plans.length ? ` · plan: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : ' · no plan diagram: nothing it changes is planned'}
       </div>
-      {review ? (
-        <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
-          {view.blockers.length ? (
-            <>
-              The fact does not cover the PR yet:
-              <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
-            </>
-          ) : (
-            'The inventory accounts for every block of changed code and rests on its hunks.'
-          )}
-        </div>
-      ) : (
-        // A merged step has no merge left to allow.
-        !merged && (
-          <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
-            {!view.blockers.length ? 'As planned' : deviations ? `${deviations} deviation${deviations > 1 ? 's' : ''}: look before merge` : 'Look before merge'}
-            {own.length > 0 && <ul>{own.map((b, i) => <li key={i}>{b}</li>)}</ul>}
-          </div>
-        )
-      )}
-      {!review && <Comparison view={view} hunks={hunks} />}
+      <StructuredCard card={card} />
+      {!review && <Comparison view={view} hunks={hunks} foldDeviations />}
       <InventoryView view={view} hunks={hunks} />
     </>
   )
@@ -206,7 +187,12 @@ function Body({ step, view, merged }: { step: Task; view: FactView; merged: bool
  * Plan ↔ fact of a step at plan level (plan-fact-porivniannia-na-rivni.1): its plan Component diagram painted with the
  * comparison, the deviations in words, then what folds: additions per module, changes outside the plan, the matches.
  */
-export function Comparison({ view, hunks }: { view: FactView; hunks: Hunks }) {
+export function Comparison({ view, hunks, foldDeviations }: {
+  view: FactView
+  hunks: Hunks
+  /** The card above already says them: the list with their files folds. */
+  foldDeviations?: boolean
+}) {
   const deviations = view.items.filter((i) => i.status !== 'match')
   const matches = view.items.filter((i) => i.status === 'match')
   const plan = view.planDiagram
@@ -218,9 +204,14 @@ export function Comparison({ view, hunks }: { view: FactView; hunks: Hunks }) {
           <ComponentView key={plan.id} modules={plan.diagram.modules} diff summary={plan.diagram.summary} overlay={plan.overlay} />
         </div>
       )}
-      {deviations.length > 0 ? (
+      {deviations.length > 0 && foldDeviations ? (
+        <details className="factfolded small">
+          <summary>{deviations.length} deviation{deviations.length > 1 ? 's' : ''} with their files</summary>
+          <ul className="factdeviations">{deviations.map((i, n) => <Deviation key={n} item={i} view={view} hunks={hunks} />)}</ul>
+        </details>
+      ) : deviations.length > 0 ? (
         <ul className="factdeviations">{deviations.map((i, n) => <Deviation key={n} item={i} view={view} hunks={hunks} />)}</ul>
-      ) : (
+      ) : foldDeviations ? null : (
         <p className="small">{view.items.length || view.additions.length ? 'No deviations from the plan.' : 'Neither the plan nor the fact diagram draws a change.'}</p>
       )}
       {view.additions.map((a) => <Folded key={a.module} line={a.line} changes={a.changes} view={view} hunks={hunks} />)}

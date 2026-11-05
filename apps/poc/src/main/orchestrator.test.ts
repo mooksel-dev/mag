@@ -293,6 +293,34 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.match(spec.appendSystemPrompt ?? '', /create_work/)
 })
 
+test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {
+  const { store, orch, project } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }])
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'post it to Slack')
+  const spec = specs.at(-1)!
+  assert.match(spec.appendSystemPrompt ?? '', /claude\.ai Slack \(id claude_ai_Slack\) is turned off in mag for the chat role/)
+  assert.ok(spec.disallowedTools?.includes('mcp__claude_ai_Slack'))
+  const live = opened.at(-1)!
+  store.pushItem(chat.id, { kind: 'integration', id: 'i1', integrationId: 'claude_ai_Slack', server: 'claude.ai Slack', role: 'chat', why: 'post', status: 'off', at: 1 })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+
+  await orch.enableIntegration(chat.id, 'i1', 'auto')
+  assert.equal(store.project(project.id).integrations.chat?.claude_ai_Slack, 'auto')
+  assert.equal(store.session(chat.id).items.find((i) => i.kind === 'integration')?.status, 'auto')
+  assert.equal(live.closed, true, 'the old process had the old rules')
+  const next = opened.at(-1)!
+  assert.notEqual(next, live)
+  assert.deepEqual(next.sent, ['claude.ai Slack is now on (auto) for you in mag; repeat your last step.'])
+  assert.ok(specs.at(-1)!.allowedTools?.includes('mcp__claude_ai_Slack'))
+  assert.doesNotMatch(specs.at(-1)!.appendSystemPrompt ?? '', /turned off in mag/)
+
+  store.pushItem(chat.id, { kind: 'integration', id: 'i2', integrationId: 'claude_ai_Slack', server: 'claude.ai Slack', role: 'architect', why: '', status: 'off', at: 2 })
+  await assert.rejects(orch.enableIntegration(chat.id, 'i2', 'ask'), /Only Auto/)
+  await assert.rejects(orch.enableIntegration(chat.id, 'nope', 'auto'), /No such integration card/)
+})
+
 const DOC = `# Problem
 p
 

@@ -73,6 +73,7 @@ const api: MagApi = {
   stop: (sessionId) => ipcRenderer.invoke('session:stop', sessionId),
   stopBackground: (sessionId, taskId) => ipcRenderer.invoke('session:stopBackground', sessionId, taskId),
   decideApproval: (sessionId, approvalId, allow) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow),
+  enableIntegration: (sessionId, itemId, mode) => ipcRenderer.invoke('integration:enable', sessionId, itemId, mode),
   openWindow: (target) => ipcRenderer.invoke('window:open', target),
   windowProjectId: () => windowProject,
   openProject: (projectId) => ipcRenderer.invoke('window:openProject', projectId),

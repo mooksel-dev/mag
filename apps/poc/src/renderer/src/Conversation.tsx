@@ -210,7 +210,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
           <div className="screenmain">
             {tab === 'conversation' ? (
               owner ? (
-                <Chat session={owner} sessions={state.sessions} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
+                <Chat session={owner} name="owner" sessions={state.sessions} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
               ) : (
                 <div className="chatbox">
                   <div className="items">

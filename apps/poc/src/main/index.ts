@@ -390,6 +390,7 @@ app.whenReady().then(async () => {
   handle('session:stop', (_, sid: string) => orch.stop(sid))
   handle('session:stopBackground', (_, sid: string, taskId: string) => orch.stopBackground(sid, taskId))
   handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
+  handle('integration:enable', (_, sid: string, itemId: string, mode: 'ask' | 'auto') => orch.enableIntegration(sid, itemId, mode))
   handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
   handle('window:openProject', (e, projectId: string) => windows.openProjectFrom(e.sender, projectId))
   handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))

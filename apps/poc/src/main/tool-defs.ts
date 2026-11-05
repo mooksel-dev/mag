@@ -896,6 +896,21 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'request_integration',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      'Ask the user to turn on an integration that is turned off in mag for your role (your prompt lists them): the user gets a card with Enable: Ask / Auto. Then end your turn saying the integration is off in mag; once enabled, mag tells you to repeat your last step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The integration id from your prompt, e.g. claude_ai_Slack.' },
+        why: { type: 'string', description: 'One line: what you need it for.' },
+      },
+      required: ['id', 'why'],
+    },
+  },
+  {
     name: 'approve_tool',
     scope: 'any',
     reviewer: 'also',

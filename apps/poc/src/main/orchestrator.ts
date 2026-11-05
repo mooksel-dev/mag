@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -1648,6 +1648,32 @@ export class Orchestrator {
     return this.run(session, prompt)
   }
 
+  /**
+   * The integration card's Enable: Ask / Auto (decision 8): the project's mode of the integration for the card's role,
+   * the card enabled, and the same session told to repeat its last step. Its run and live process end first: their
+   * permission rules are the old ones. The architect has no chat to ask in, so only auto there.
+   */
+  async enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'auto') {
+    const session = this.store.session(sessionId)
+    const item = session.items.find((i): i is Extract<ChatItem, { kind: 'integration' }> => i.kind === 'integration' && i.id === itemId)
+    if (!item) throw new Error('No such integration card')
+    if (mode !== 'ask' && mode !== 'auto') throw new Error('mode must be ask or auto')
+    if (mode === 'ask' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
+    const project = this.store.project(session.projectId)
+    const integrations = project.integrations ?? {}
+    this.store.updateProject(project.id, { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } })
+    // Every card of this integration and role in the session is answered by it.
+    for (const i of session.items) if (i.kind === 'integration' && i.integrationId === item.integrationId && i.role === item.role) i.status = mode
+    this.store.changed()
+    log.info('agent', `${item.server} on (${mode}) for ${item.role}`, { session: sessionId })
+    const run = this.runs.get(sessionId)
+    run?.kill()
+    await Promise.all([run?.done, this.closeLive(sessionId)])
+    // The end of the killed run may have started another turn on its own; that one has the new rules already.
+    if (this.runs.has(sessionId)) return
+    await this.send(sessionId, `${item.server} is now on (${mode}) for you in mag; repeat your last step.`, [], `${item.server} is on`)
+  }
+
   /** Stops the current turn. A live process lives on with its background tasks. */
   async stop(sessionId: string) {
     const live = this.lives.get(sessionId)
@@ -1862,15 +1888,19 @@ export class Orchestrator {
 
   /**
    * Claude Code runs: integrations the role has on auto are allowed, off ones disallowed, ask ones go through the
-   * approve_tool prompt. Without a chat to ask in (`canAsk` false) ask counts as off. Codex has no integrations.
+   * approve_tool prompt. Without a chat to ask in (`canAsk` false) ask counts as off. The prompt names the ones off, so
+   * the agent says so and asks for them (offIntegrationsBlock). Codex has no integrations.
    */
   private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(projectId: string, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {
     if (agent !== 'claude-code') return spec
     const known = this.store.data.integrations.filter((i) => i.id !== MAG_MCP_ID)
-    const rules = integrationRules(this.store.project(projectId), role, known)
+    const project = this.store.project(projectId)
+    const rules = integrationRules(project, role, known)
     const ask = canAsk ? rules.ask : []
+    const off = offIntegrationsBlock(project, role, known, canAsk)
     return {
       ...spec,
+      ...(off && { appendSystemPrompt: `${spec.appendSystemPrompt ?? ''}${blocks(off)}` }),
       allowedTools: [...(spec.allowedTools ?? []), ...rules.allowed],
       disallowedTools: [...(spec.disallowedTools ?? []), ...rules.disallowed, ...(canAsk ? [] : rules.ask)],
       ...(ask.length && { permissionPromptTool: APPROVE_TOOL, env: { ...spec.env, MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS } }),
