@@ -147,14 +147,15 @@ const ready = { verdict: 'comment' as const, head: 'h2', at: NOW - 30 * MIN }
 
 test('workCards: a review: its stage and whose move in each state; its topic is not a topic of its own', () => {
   const rt = (patch: Partial<AgentSession> = {}) => session('rt', { reviewOf: 'rv', ...patch })
-  const cases: [string, Task, AgentSession, string, string][] = [
+  const cases: [string, Task, AgentSession, string | null, string][] = [
     ['running', reviewTask(), rt({ status: 'running', runStartedAt: NOW - 4 * MIN }), 'Running', 'working:rv:green agent: agent · 4 min'],
-    ['question', reviewTask({ needsInput: 'Which ticket?' }), rt(), 'Running', "waiting:rv:amber you: Answer the agent's question"],
+    ['question', reviewTask({ needsInput: 'Which ticket?' }), rt(), null, "waiting:rv:amber you: Answer the agent's question"],
     ['direction open', reviewTask({}, { ...ready, report: report() }), rt(), 'Report ready', 'waiting:rv:amber you: Your call on direction (2 options)'],
     ['decided, not posted', reviewTask({}, { ...ready, report: report({ decided: { id: 'd', reviewId: 'rv', pr: '', decision: '', choice: 'ok', at: NOW } }) }), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
     ['v1 ready', reviewTask({}, ready), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
     ['posted', reviewTask({}, { ...ready, posted: { at: NOW - 2 * 60 * MIN, url: 'u' } }), rt(), 'Waiting for author', 'working:rv:grey other: PR author · 2 h'],
-    ['failed', reviewTask(), rt({ status: 'error' }), 'Running', 'waiting:rv:amber you: Review again'],
+    ['failed, no verdict', reviewTask(), rt({ status: 'error' }), null, 'waiting:rv:amber you: Review again'],
+    ['not started, no verdict', reviewTask(), rt(), null, 'working:rv:grey other: Waits for the agent'],
     ['outdated', reviewTask({}, { ...ready, head: 'h1' }), rt(), 'Report ready', 'waiting:rv:amber you: Review the new commits'],
     ['closed', reviewTask({ status: 'done', updatedAt: NOW }), rt(), 'Done', 'done:rv:grey other: Closed'],
   ]

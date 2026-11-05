@@ -132,13 +132,14 @@ export function workStage(work: Task, tasks: Task[]): WorkStage | null {
 }
 
 /**
- * Where a review is: closed; its agent reviewing, or no report yet (asking, failed, yet to start); published and
- * waiting for the PR's author; else its report waits on the user.
+ * Where a review is: closed; its agent reviewing; published and waiting for the PR's author; its report waiting on the
+ * user. No stage without a report and nothing running (asking, failed, yet to start): the move line says what to do.
  */
-export function reviewStage(task: Task, sessions: AgentSession[]): ReviewStage {
+export function reviewStage(task: Task, sessions: AgentSession[]): ReviewStage | null {
   const state = reviewState(task, sessions)
   if (state === 'closed') return 'Done'
-  if (state === 'reviewing' || !shownResult(task.prReview)?.verdict) return 'Running'
+  if (state === 'reviewing') return 'Running'
+  if (!shownResult(task.prReview)?.verdict) return null
   return task.prReview!.posted ? 'Waiting for author' : 'Report ready'
 }
 
