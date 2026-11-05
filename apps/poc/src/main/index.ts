@@ -246,7 +246,10 @@ app.whenReady().then(async () => {
   handle('step:fact', (_, stepId: string) => {
     const step = store.task(stepId)
     const canvases = Object.values(store.data.canvases)
-    return isReview(step) ? reviewFactView(store.project(step.projectId), step, canvases) : factView(store.project(step.projectId), step, canvases)
+    // A step's fact recorded by an older compare (a merged one's too) is recorded again as it is read.
+    return isReview(step)
+      ? reviewFactView(store.project(step.projectId), step, canvases)
+      : factView(store.project(step.projectId), step, canvases, (fact) => store.updateTask(step.id, { fact }))
   })
   handle('step:hunk', (_, stepId: string, repo: string, base: string, head: string, hunk: HunkRef) => {
     const step = store.task(stepId)

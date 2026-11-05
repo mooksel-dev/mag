@@ -110,8 +110,9 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
     { text: 'load(id: string, fresh = false) - can skip the cache', diff: 'add', files: ['src/store.ts'], logic: true },
     { text: 'save(id: string)', diff: 'add', files: ['src/store.ts'] },
   ])
-  assert.deepEqual(fact.counts, { match: 0, differs: 1, missing: 1, unplanned: 4, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: differs, not blocking')
-  assert.deepEqual(fact.blockers, ['high: store remove(id): void is planned, not on the fact', 'high: store save(id: string) is on the fact, not on the plan', 'high: app extra() is on the fact, not on the plan'])
+  assert.deepEqual(fact.counts, { match: 1, differs: 0, missing: 1, unplanned: 0, additions: 1, outside: 1, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: as planned; save inside store, extra in app outside the plan')
+  assert.equal(fact.compareVersion, 2)
+  assert.deepEqual(fact.blockers, ['store: remove is planned, not done'])
 
   // A unit left out is a block in no unit; the inventory is written again whole and revises the same root.
   const again = await inventory({ ...INVENTORY, units: INVENTORY.units.slice(0, 2) })
@@ -192,9 +193,31 @@ test('factView: files without lines, plan ↔ fact, the threshold and the invent
   await assert.rejects(stepHunk(s, '/elsewhere', view.repos[0].baseSha, head, hunk), /does not change/)
   await assert.rejects(stepHunk(s, repo, 'HEAD', head, hunk), /commit shas/)
 
-  // Merged: the PR is no longer open, the recorded heads stand.
+  assert.deepEqual(view.items.map((i) => i.phrase), ['store: load is planned, not done', 'store: remove is planned, not done'])
+  assert.deepEqual([view.planDiagram?.title, view.planDiagram?.overlay.modules], ['Plan', { store: 'missing' }])
+
+  // Merged: the PR is no longer open, the recorded heads stand; its changes are still from where it left main.
   store.updateTask(step.id, { work: { ...s.work!, repos: s.work!.repos.map((r) => ({ ...r, prState: 'merged' as const })) } })
   assert.deepEqual(factHeads(store.task(step.id)), { [repo]: head })
+  git(repo, 'checkout', '-q', 'main')
+  writeFileSync(join(repo, 'later.ts'), 'export const later = 1\n')
+  git(repo, 'add', '.')
+  git(repo, 'commit', '-q', '-m', 'later on main')
+  git(repo, 'merge', '-q', '--no-ff', '-m', 'merge', 'mag/x-1')
+  const merged = (await factView(store.project(s.projectId), store.task(step.id), Object.values(store.data.canvases)))!
+  assert.deepEqual([merged.repos[0].baseSha, merged.files.length], [view.repos[0].baseSha, 3])
+
+  // A fact recorded by the compare before plan level is recorded again when read; a current one is left alone.
+  const recorded: unknown[] = []
+  const old = { ...store.task(step.id).fact!, compareVersion: undefined, blockers: ['high: store save(id: string) is on the fact, not on the plan'] }
+  store.updateTask(step.id, { fact: old })
+  await factView(store.project(s.projectId), store.task(step.id), Object.values(store.data.canvases), (f) => recorded.push(f))
+  assert.equal(recorded.length, 1)
+  assert.equal((recorded[0] as { compareVersion: number }).compareVersion, 2)
+  assert.ok(!(recorded[0] as { blockers: string[] }).blockers.some((b) => b.startsWith('high:')))
+  store.updateTask(step.id, { fact: recorded[0] as typeof old })
+  await factView(store.project(s.projectId), store.task(step.id), Object.values(store.data.canvases), (f) => recorded.push(f))
+  assert.equal(recorded.length, 1)
 })
 
 test('hunkLines: one hunk of one file with its context, renames by their new path, no-newline markers left out', () => {

@@ -304,7 +304,7 @@ const PLAYBOOK_HINTS: Record<PlaybookSection, string> = {
   prReviewV1: 'How the agent reviews a teammate\'s PR in the v1 format: PR and ticket, problem, fact, then the change against the problem and the project\'s agreements (decisions, conventions, architecture), bugs, CI; findings by level and a verdict. It never writes to the PR.',
   fact: 'How a reviewer draws the fact of a diff (a revision of a step\'s plan; a teammate\'s PR has none); every review that reads a diff follows it.',
   tracker: 'How agents read tickets and what they may do in a tracker (comments, "what is on me?"); mag knows a ticket only as its link.',
-  significance: 'Rules mag levels code changes by when it compares a PR with its plan; unplanned critical and high changes keep the review from merge.',
+  significance: 'Rules mag levels code changes by when it compares a PR with its plan. Every plan-level deviation keeps the review from merge; critical marks an external contract, a deviation even inside a planned module.',
 }
 
 /**

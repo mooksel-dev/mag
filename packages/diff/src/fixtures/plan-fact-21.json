@@ -1,0 +1,1374 @@
+{
+ "note": "review-v2-part-2-v1-2.1 (merged as #88): its plan and fact diagrams as mag recorded them, for plan ↔ fact at plan level (plan-fact-porivniannia-na-rivni.1)",
+ "plan": [
+  {
+   "type": "component",
+   "summary": "A review keeps one result per format (v1 findings, v2 report with its direction decision), each recorded by its own fresh topic; a run of the other format reuses the inventory at the same head. Start asks v1/v2 (default from the project), the page has Run v1 / Run v2 and a v1 | v2 switch; the v1 prompt is restored as playbook prReviewV1.",
+   "modules": [
+    {
+     "id": "core-pr-review",
+     "name": "PR review rules",
+     "layer": "lib",
+     "diff": "mod",
+     "links": [
+      {
+       "to": "53e2aa8f",
+       "kind": "data",
+       "node": "PrReview"
+      }
+     ],
+     "interface": [
+      {
+       "text": "shownResult(review): ReviewResult|null - the result the page and lists show",
+       "diff": "add"
+      },
+      {
+       "text": "reviewState(task, sessions): ReviewState",
+       "diff": "del"
+      },
+      {
+       "text": "reviewState(task, sessions): ReviewState - from the shown result; reviewing while any run is in a turn",
+       "diff": "add"
+      },
+      {
+       "text": "migratePrReview(raw): PrReview - old fields into results, a decided report keeps its decision",
+       "diff": "add"
+      }
+     ],
+     "uses": [],
+     "description": ""
+    },
+    {
+     "id": "core-playbook",
+     "name": "Playbook",
+     "layer": "lib",
+     "diff": "mod",
+     "interface": [
+      {
+       "text": "DEFAULT_PLAYBOOK.prReviewV1: string - the pre-#85 PR review text, findings and verdict",
+       "diff": "add"
+      }
+     ],
+     "uses": [],
+     "description": ""
+    },
+    {
+     "id": "store",
+     "name": "Store",
+     "layer": "client",
+     "diff": "mod",
+     "links": [
+      {
+       "to": "53e2aa8f",
+       "kind": "data",
+       "node": "projects"
+      }
+     ],
+     "uses": [],
+     "description": ""
+    },
+    {
+     "id": "orchestrator",
+     "name": "Orchestrator",
+     "layer": "service",
+     "diff": "mod",
+     "interface": [
+      {
+       "text": "reviewPr(projectId, url): Task",
+       "diff": "del"
+      },
+      {
+       "text": "reviewPr(projectId, url, format?): Task - format defaults to project.reviewFormat",
+       "diff": "add"
+      },
+      {
+       "text": "runReviewFormat(taskId, format): void - a fresh topic for that format, inventory reused at the same head",
+       "diff": "add"
+      },
+      {
+       "text": "prReviewPrompt(task, project, format): string - v1 or v2 text",
+       "diff": "mod"
+      },
+      {
+       "text": "setPrReview(taskId, result): void - into results[format of the calling topic]",
+       "diff": "mod"
+      },
+      {
+       "text": "decideDirection(workId, decision): string - on results.v2",
+       "diff": "mod"
+      }
+     ],
+     "uses": [
+      {
+       "to": "core-playbook",
+       "calls": [
+        {
+         "text": "playbookOf(project)"
+        }
+       ]
+      },
+      {
+       "to": "store",
+       "calls": [
+        {
+         "text": "updateTask(id, patch)"
+        }
+       ]
+      }
+     ],
+     "description": ""
+    },
+    {
+     "id": "agent-tools",
+     "name": "Agent tools",
+     "layer": "service",
+     "diff": "mod",
+     "uses": [
+      {
+       "to": "orchestrator",
+       "calls": [
+        {
+         "text": "setPrReview(taskId, result)",
+         "diff": "mod"
+        },
+        {
+         "text": "reviewPr(projectId, url, format?)",
+         "diff": "add"
+        }
+       ]
+      }
+     ],
+     "description": ""
+    },
+    {
+     "id": "tool-defs",
+     "name": "Tool definitions",
+     "layer": "lib",
+     "diff": "mod",
+     "interface": [
+      {
+       "text": "review_pr(url): text",
+       "diff": "del"
+      },
+      {
+       "text": "review_pr(url, format?): text",
+       "diff": "add"
+      },
+      {
+       "text": "set_pr_review(problem, approach, report?, verdict?, findings?): text - v1 topic: verdict and findings; v2 topic: report",
+       "diff": "mod"
+      }
+     ],
+     "uses": [],
+     "description": ""
+    },
+    {
+     "id": "preload-bridge",
+     "name": "Preload bridge",
+     "layer": "client",
+     "diff": "mod",
+     "interface": [
+      {
+       "text": "startReview(projectId, url): Promise<Task>",
+       "diff": "del"
+      },
+      {
+       "text": "startReview(projectId, url, format?): Promise<Task>",
+       "diff": "add"
+      },
+      {
+       "text": "runReviewFormat(taskId, format): Promise<void>",
+       "diff": "add"
+      },
+      {
+       "text": "showReviewResult(taskId, format): Promise<void>",
+       "diff": "add"
+      }
+     ],
+     "uses": [],
+     "description": ""
+    },
+    {
+     "id": "reviews-view",
+     "name": "Reviews view",
+     "layer": "app",
+     "diff": "mod",
+     "interface": [
+      {
+       "text": "FormatSwitch(review): JSX - v1 | v2 tabs, Run v1 / Run v2 for the missing or outdated one",
+       "diff": "add"
+      }
+     ],
+     "uses": [
+      {
+       "to": "preload-bridge",
+       "diff": "mod",
+       "calls": [
+        {
+         "text": "runReviewFormat(taskId, format)",
+         "diff": "add"
+        },
+        {
+         "text": "showReviewResult(taskId, format)",
+         "diff": "add"
+        }
+       ]
+      },
+      {
+       "to": "core-pr-review",
+       "calls": [
+        {
+         "text": "shownResult(review)",
+         "diff": "add"
+        }
+       ]
+      }
+     ],
+     "description": ""
+    }
+   ]
+  },
+  {
+   "type": "data",
+   "entities": [
+    {
+     "id": "projects",
+     "name": "projects (db.json)",
+     "module": "store",
+     "diff": "mod",
+     "fields": [
+      {
+       "name": "id",
+       "type": "string"
+      },
+      {
+       "name": "reviewFormat",
+       "type": "'v1'|'v2'?",
+       "diff": "add",
+       "note": "default for new reviews; missing = v2"
+      }
+     ],
+     "kind": "collection"
+    },
+    {
+     "id": "tasks",
+     "name": "tasks (db.json)",
+     "module": "store",
+     "fields": [
+      {
+       "name": "id",
+       "type": "string"
+      },
+      {
+       "name": "prReview",
+       "type": "PrReview?"
+      }
+     ],
+     "kind": "collection"
+    },
+    {
+     "id": "sessions",
+     "name": "sessions (db.json)",
+     "module": "store",
+     "fields": [
+      {
+       "name": "id",
+       "type": "string"
+      },
+      {
+       "name": "reviewOf",
+       "type": "string?",
+       "note": "task id"
+      },
+      {
+       "name": "reviewFormat",
+       "type": "'v1'|'v2'?",
+       "diff": "add",
+       "note": "the format this run records"
+      }
+     ],
+     "kind": "collection"
+    },
+    {
+     "id": "PrReview",
+     "name": "Task.prReview (embedded)",
+     "module": "core-pr-review",
+     "diff": "mod",
+     "fields": [
+      {
+       "name": "pr",
+       "type": "PrRef"
+      },
+      {
+       "name": "posted",
+       "type": "{at,url}|null"
+      },
+      {
+       "name": "problem",
+       "type": "string",
+       "diff": "del"
+      },
+      {
+       "name": "approach",
+       "type": "string",
+       "diff": "del"
+      },
+      {
+       "name": "verdict",
+       "type": "PrVerdict|null",
+       "diff": "del"
+      },
+      {
+       "name": "findings",
+       "type": "ReviewFinding[]",
+       "diff": "del"
+      },
+      {
+       "name": "report",
+       "type": "ReviewReport?",
+       "diff": "del"
+      },
+      {
+       "name": "head",
+       "type": "string|null",
+       "diff": "del"
+      },
+      {
+       "name": "at",
+       "type": "number|null",
+       "diff": "del"
+      },
+      {
+       "name": "results",
+       "type": "{v1?: ReviewResult, v2?: ReviewResult}",
+       "diff": "add",
+       "note": "migration: old fields → results.v2 if a report, else results.v1"
+      },
+      {
+       "name": "shown",
+       "type": "'v1'|'v2'",
+       "diff": "add",
+       "note": "which result the page and lists show"
+      }
+     ],
+     "kind": "collection"
+    },
+    {
+     "id": "ReviewResult",
+     "name": "prReview.results.<format> (embedded)",
+     "module": "core-pr-review",
+     "diff": "add",
+     "fields": [
+      {
+       "name": "format",
+       "type": "'v1'|'v2'",
+       "diff": "add"
+      },
+      {
+       "name": "sessionId",
+       "type": "string",
+       "diff": "add",
+       "note": "its own fresh topic"
+      },
+      {
+       "name": "problem",
+       "type": "string",
+       "diff": "move",
+       "from": "PrReview.problem"
+      },
+      {
+       "name": "approach",
+       "type": "string",
+       "diff": "move",
+       "from": "PrReview.approach"
+      },
+      {
+       "name": "verdict",
+       "type": "PrVerdict|null",
+       "diff": "move",
+       "from": "PrReview.verdict"
+      },
+      {
+       "name": "findings",
+       "type": "ReviewFinding[]",
+       "diff": "move",
+       "from": "PrReview.findings"
+      },
+      {
+       "name": "report",
+       "type": "ReviewReport?",
+       "diff": "move",
+       "from": "PrReview.report",
+       "note": "v2 only"
+      },
+      {
+       "name": "head",
+       "type": "string|null",
+       "diff": "move",
+       "from": "PrReview.head"
+      },
+      {
+       "name": "at",
+       "type": "number|null",
+       "diff": "move",
+       "from": "PrReview.at"
+      }
+     ],
+     "kind": "collection"
+    }
+   ],
+   "relations": [
+    {
+     "from": "PrReview",
+     "to": "tasks",
+     "kind": "1:1",
+     "label": "embedded in",
+     "cross": true
+    },
+    {
+     "from": "ReviewResult",
+     "to": "PrReview",
+     "kind": "N:1",
+     "label": "results",
+     "diff": "add"
+    },
+    {
+     "from": "ReviewResult",
+     "to": "sessions",
+     "field": "sessionId",
+     "kind": "1:1",
+     "diff": "add",
+     "cross": true
+    },
+    {
+     "from": "sessions",
+     "to": "tasks",
+     "field": "reviewOf",
+     "kind": "N:1"
+    }
+   ]
+  }
+ ],
+ "fact": [
+  {
+   "type": "data",
+   "entities": [
+    {
+     "id": "ReviewResult",
+     "name": "ReviewResult",
+     "kind": "table",
+     "module": "core-pr-review",
+     "fields": [
+      {
+       "name": "problem",
+       "type": "?",
+       "diff": "move",
+       "from": "ReviewResult.problem"
+      },
+      {
+       "name": "verdict",
+       "type": "?",
+       "diff": "move",
+       "from": "ReviewResult.verdict"
+      },
+      {
+       "name": "findings",
+       "type": "?",
+       "diff": "move",
+       "from": "ReviewResult.findings"
+      },
+      {
+       "name": "report",
+       "type": "?",
+       "diff": "move",
+       "from": "ReviewResult.report"
+      },
+      {
+       "name": "head",
+       "type": "?",
+       "diff": "move",
+       "from": "ReviewResult.head"
+      }
+     ],
+     "diff": "add",
+     "note": "one format's result: format, sessionId, problem, approach, verdict, findings, report?, head, at (moved from PrReview)"
+    },
+    {
+     "id": "PrReview",
+     "name": "PrReview",
+     "kind": "table",
+     "module": "core-pr-review",
+     "fields": [
+      {
+       "name": "results",
+       "type": "results: Partial<Record<ReviewFormat, ReviewResult>>",
+       "diff": "add"
+      },
+      {
+       "name": "shown",
+       "type": "shown: ReviewFormat",
+       "diff": "add"
+      }
+     ]
+    },
+    {
+     "id": "LegacyPrReview",
+     "name": "LegacyPrReview",
+     "kind": "table",
+     "module": "core-pr-review",
+     "fields": [],
+     "diff": "add",
+     "note": "a review as stored before one result per format"
+    },
+    {
+     "id": "Project",
+     "name": "Project",
+     "kind": "table",
+     "module": "core-model",
+     "fields": [
+      {
+       "name": "reviewFormat",
+       "type": "reviewFormat?: ReviewFormat",
+       "diff": "add"
+      }
+     ]
+    },
+    {
+     "id": "AgentSession",
+     "name": "AgentSession",
+     "kind": "table",
+     "module": "core-model",
+     "fields": [
+      {
+       "name": "reviewFormat",
+       "type": "reviewFormat?: ReviewFormat",
+       "diff": "add"
+      }
+     ]
+    }
+   ],
+   "relations": []
+  },
+  {
+   "type": "component",
+   "summary": "A PR review keeps one result per format (PrReview.results.v1 / v2 + shown); posted stays on the review; a one-time store migration moves old top-level fields to v2 (with a report) or v1. Each format runs in its own mag topic (session.reviewFormat); set_pr_review records into the calling topic's format and enforces its form (v1 verdict+findings, v2 report); decide_direction and discuss work on results.v2. Run v1 / Run v2, the v1|v2 switch (shown + ownerSessionId), a format picker at start and a project default (Project.reviewFormat, v2). The v1 prompt is restored as playbook section prReviewV1; prReviewPrompt picks the text per format; one inventory per head: any run at a head that has one reads it instead of writing it anew. Lists, ready text, state, poll and publish read the shown result; review_pr tells a topic to run one format only.",
+   "modules": [
+    {
+     "id": "core-pr-review",
+     "name": "PR review rules",
+     "description": "Review of a teammate's PR: PR ref and review types, finding levels and verdicts with labels, PR link and slug parsing, review works, their topic, status line and counts, the review to post, poll outcome on new commits or close.",
+     "layer": "lib",
+     "uses": [],
+     "interface": [
+      {
+       "text": "ReviewFormat - 'v1' | 'v2', with REVIEW_FORMATS and labels",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "projectReviewFormat(project): ReviewFormat - the project's setting, v2 without one",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "emptyResult(format, sessionId): ReviewResult - a result before its run recorded anything",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "shownResult(review): ReviewResult | null - the result the page and lists show",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "migratePrReview(raw, sessionId?): PrReview - old fields into results.v2 with a report, else v1; never reviewed: no result; today's form kept",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "formatOfTopic(review, session): ReviewFormat | null - the topic's own reviewFormat, else the result it runs, the shown one first",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "reviewTopicIds(task): string[] - owner plus each result's topic: who may record the review",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "resultOutdated(review, format): boolean - missing or older than the PR's head: the Run button shows",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewReady(task): boolean - from the shown result",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewReadyText(review): string - the shown result's line via resultLine",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "resultLine(r): string - report line, else verdict with finding counts, empty before a verdict",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewRunning(task: Pick<Task,'ownerSessionId'>, sessions): boolean",
+       "diff": "del",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewRunning(task: Pick<Task,'ownerSessionId'|'prReview'>, sessions): boolean - any topic of the review in a turn",
+       "diff": "add",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewState(task, sessions): ReviewState - reviewing while any run works; failed and outdated from the shown result and its topic",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "reviewLine(task, sessions): string - verdict text from the shown result",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      },
+      {
+       "text": "reviewPollOutcome(review, live): 'done'|'rereview'|null - rereview needs the shown result reviewed",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/pr-review.ts"
+       ]
+      }
+     ],
+     "diff": "mod",
+     "links": [
+      {
+       "to": "4274d55a",
+       "kind": "data"
+      }
+     ]
+    },
+    {
+     "id": "core-model",
+     "name": "Core domain model",
+     "description": "Shared types and pure rules: works and steps, statuses, repos and local checks, PR rollup, heads, open PRs, CI state and PR problems, review rounds, facts, tickets, ideas, questions, approve/reopen rules, sections, per-role agent choice, integrations, chat commands, inbox, pipeline, project color/state.",
+     "layer": "lib",
+     "uses": [],
+     "interface": [
+      {
+       "text": "reviewItem(task, sessions): InboxItem | null - a failed review links the shown result's topic",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/index.ts"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod",
+     "links": [
+      {
+       "to": "4274d55a",
+       "kind": "data"
+      }
+     ]
+    },
+    {
+     "id": "core-playbook",
+     "name": "Playbook",
+     "description": "Per-project playbook (stance, plan, step, review, PR review, fact, tracker, significance sections) with defaults incl. diff rules and review checks, and decision/context blocks for prompts.",
+     "layer": "lib",
+     "uses": [],
+     "interface": [
+      {
+       "text": "PlaybookSection - + prReviewV1",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/playbook.ts"
+       ]
+      },
+      {
+       "text": "PLAYBOOK_SECTIONS - + prReviewV1",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/playbook.ts"
+       ]
+      },
+      {
+       "text": "prReviewV1: string",
+       "diff": "add",
+       "files": [
+        "packages/core/src/playbook.ts"
+       ]
+      },
+      {
+       "text": "DEFAULT_PLAYBOOK.prReviewV1 - the pre-#85 PR review text: findings by level and a verdict",
+       "diff": "add",
+       "files": [
+        "packages/core/src/playbook.ts"
+       ]
+      },
+      {
+       "text": "playbookOf(project): Playbook - + prReviewV1 section",
+       "diff": "mod",
+       "files": [
+        "packages/core/src/playbook.ts"
+       ]
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "store",
+     "name": "JSON store + event log",
+     "description": "Persists projects, works/steps/reviews (with facts and PR reviews), ideas, sessions, docs, versioned canvases with placement, set roots and inventories, integrations, UI state and a capped event log in db.json (debounced writes); migrations; notifies listeners.",
+     "layer": "client",
+     "uses": [
+      {
+       "to": "core-pr-review",
+       "calls": [
+        {
+         "text": "migratePrReview(t.prReview as PrReviewOnDisk, t.ownerSessionId)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/store.ts"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/store.ts"
+       ]
+      }
+     ],
+     "interface": [
+      {
+       "text": "PrReviewOnDisk - today's PrReview or LegacyPrReview, for the migration",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/store.ts"
+       ]
+      },
+      {
+       "text": "migrateToReviewResults(): void - every task's prReview through migratePrReview, run by its owner topic",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/store.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "inferredVersion(): number - a planning-era file infers version 5 (not migrations.length), so the new migration still runs",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/store.ts"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "tool-defs",
+     "name": "Tool definitions",
+     "description": "JSON schemas and scopes of the mag MCP tools (task/project/any, role-only, owner, review, chat action tools, set_inventory schema) incl. internal approve_tool; roles a chat may message.",
+     "layer": "lib",
+     "uses": [],
+     "interface": [
+      {
+       "text": "set_pr_review - records into the calling topic's format; v1 verdict and findings, v2 report",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tool-defs.ts"
+       ]
+      },
+      {
+       "text": "review_pr - + format?: v1 | v2, the project's without one; run one format per topic",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tool-defs.ts"
+       ]
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "agent-tools",
+     "name": "Agent tool handlers",
+     "description": "Business logic behind the mag MCP tools: step-scoped (doc, diagrams, needs-input, developer ↔ owner, steps CRUD, complete_step, add_repo, set_pr, set_inventory, set_review, get_pr_changes, set_pr_review), project-scoped (works, tickets, ideas, review_pr, branch_topic, grooming, architect, notes, architecture with ownership checks, canvases and linked diagram sets) and chat actions that do what the buttons do, logged as events.",
+     "layer": "service",
+     "uses": [
+      {
+       "to": "core-pr-review",
+       "calls": [
+        {
+         "text": "reviewTopicIds(task).includes(ctx.sessionId)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/tools.ts"
+         ]
+        },
+        {
+         "text": "formatOfTopic(review, session) ?? review.shown",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/tools.ts"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ]
+      }
+     ],
+     "interface": [
+      {
+       "text": "reviewPr(projectId, url, by): Promise<{taskId, job}>",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ]
+      },
+      {
+       "text": "reviewPr(projectId, url, by, format?): Promise<{taskId, job}> - the format to run",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ]
+      },
+      {
+       "text": "setPrReview(workId, review): string",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ]
+      },
+      {
+       "text": "setPrReview(workId, sessionId, review: Pick<ReviewResult,...>): string - the calling topic picks the format",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ]
+      },
+      {
+       "text": "ownerContext(store, ctx, name, args) - a review's owner tools accept any of its topics",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "createTools(store, actions): ToolHandler - set_pr_review: any review topic, form enforced by its format (v2 report, v1 verdict+findings); decide_direction: any review topic",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "factPlace(store, ctx, task, role) - any review topic may draw the fact",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "sharedTool(...) - review_pr validates and passes format",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/tools.ts"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "orchestrator",
+     "name": "Orchestrator (agent runs, sessions, steps, reviews)",
+     "description": "Owns agent sessions for owner, developer, reviewer, architect and chat roles: prompts with playbook and decisions, per-run MCP config, chats, branched topics, idea topics; approves plans (and starts them), runs a work step by step with a branch per step, relays developer ↔ owner with queued questions and owner notices, sends CI failures and conflicts to the developer, runs the agent review of a step's PRs, completes steps, cancels; finds and stops a work's agents; runs, deletes and publishes reviews of teammates' PRs.",
+     "layer": "service",
+     "uses": [
+      {
+       "to": "core-pr-review",
+       "calls": [
+        {
+         "text": "projectReviewFormat(project)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/orchestrator.ts"
+         ]
+        },
+        {
+         "text": "emptyResult(f, sessionId)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/orchestrator.ts"
+         ]
+        },
+        {
+         "text": "formatOfTopic(review, session) ?? review.shown",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/orchestrator.ts"
+         ]
+        },
+        {
+         "text": "shownResult(review)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/orchestrator.ts"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      }
+     ],
+     "interface": [
+      {
+       "text": "prReviewPrompt(project, work, files, since)",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true,
+       "private": true
+      },
+      {
+       "text": "prReviewPrompt(project, work, files, since, format, shared) - v1 or v2 playbook text and closing; shared: read the head's one inventory instead of writing one, also on a look again",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true,
+       "private": true
+      },
+      {
+       "text": "discussPrompt(work, report, decisions) - says it is the v2 result",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "reviewPr(projectId, url, by?)",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "reviewPr(projectId, url, by?, format?) - runs one format: that format's earlier topic or a new one (reviewFormat set), result slot created, shown and owner switch to it; shared whenever the head has an inventory",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "inventoryAt(work): boolean - the fact is at the PR's head and has an inventory",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true,
+       "private": true
+      },
+      {
+       "text": "rereview(workId) - in the shown format",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      },
+      {
+       "text": "runReviewFormat(workId, format) - Run v1 / Run v2: reviewPr in that format",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      },
+      {
+       "text": "showReviewResult(workId, format): void - sets shown and the owner topic to that result's",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "prFiles(project, work)",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "prFiles(project, work, format) - since = after the head this format reviewed last",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "private": true
+      },
+      {
+       "text": "setPrReview(workId, r)",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "setPrReview(workId, sessionId, r) - into results[format of the topic]; keeps that result's decided and draft; the other result stays",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ],
+       "logic": true
+      },
+      {
+       "text": "decideDirection(workId, input): string - on results.v2's report",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      },
+      {
+       "text": "discussDirection(workId) - the v2 result's report and topic",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      },
+      {
+       "text": "publishReview(workId, verdict, picks) - publishes the shown result's findings; picks stored on it",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/orchestrator.ts"
+       ]
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "preload-bridge",
+     "name": "Preload IPC bridge",
+     "description": "Exposes window.mag (MagApi) to renderer windows over ipcRenderer.invoke, plus state, open-task and picker events.",
+     "layer": "client",
+     "uses": [],
+     "interface": [
+      {
+       "text": "startReview(projectId, url)",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/preload/api.ts",
+        "apps/poc/src/preload/index.ts"
+       ]
+      },
+      {
+       "text": "startReview(projectId, url, format?) - the format to run",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/preload/api.ts",
+        "apps/poc/src/preload/index.ts"
+       ]
+      },
+      {
+       "text": "runReviewFormat(taskId, format): Promise<void> - review:run",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/preload/api.ts",
+        "apps/poc/src/preload/index.ts"
+       ]
+      },
+      {
+       "text": "showReviewResult(taskId, format): Promise<void> - review:show",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/preload/api.ts",
+        "apps/poc/src/preload/index.ts"
+       ]
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "renderer-app",
+     "name": "Project window shell (React)",
+     "description": "Entry picks project window, Welcome or pop-out. Project window: title bar and three panes — work list, the selected work's or topic's conversation, artifact pane; project menu pages (Ideas, Architecture, Settings with playbook, agents, integrations) replace the panes; screens in error boundaries.",
+     "layer": "app",
+     "uses": [],
+     "interface": [
+      {
+       "text": "PLAYBOOK_HINTS - prReview hint for v2, + prReviewV1",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/App.tsx"
+       ]
+      },
+      {
+       "text": "Settings({project, integrations}) - + PR review format select",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/App.tsx"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "diff-set-view",
+     "name": "Diff window (diagram set)",
+     "description": "One window over a linked diagram set: levels (system → modules → data → scenarios → logic) with changes, breadcrumbs, click-through along links, node panel with links and, for a fact set, files, hunks and review findings. Used by Diff tab, review view and pop-outs.",
+     "layer": "app",
+     "uses": [],
+     "interface": [
+      {
+       "text": "setContext(set, tasks) - findings of the shown result",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/DiffSetView.tsx"
+       ]
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "reviews-view",
+     "name": "PR review view",
+     "description": "A teammate PR review: PR, problem, approach, the fact set in the diff window with the fact panel, CI checks and findings by level; the user publishes picked findings with a verdict, reruns, closes, deletes or connects an outside repo.",
+     "layer": "app",
+     "uses": [
+      {
+       "to": "preload-bridge",
+       "calls": [
+        {
+         "text": "runReviewFormat(work.id, f)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/renderer/src/Reviews.tsx"
+         ]
+        },
+        {
+         "text": "showReviewResult(work.id, f)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/renderer/src/Reviews.tsx"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ]
+      }
+     ],
+     "interface": [
+      {
+       "text": "ReviewView({work, project, state, now, onOpenKey, onDeleted}) - renders the shown result, with FormatSwitch",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ]
+      },
+      {
+       "text": "LegacyReviewView({review: PrReview, ...})",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ],
+       "private": true
+      },
+      {
+       "text": "LegacyReviewView({review: ReviewResult, ...}) - renders a v1 result",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ],
+       "private": true
+      },
+      {
+       "text": "FormatSwitch({work, review, running, onError}): JSX - v1 | v2 tabs, Run v1 / Run v2 for a missing or outdated other result",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ]
+      },
+      {
+       "text": "Publish({work, repo, picks, running, now, onError})",
+       "diff": "del",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ],
+       "private": true
+      },
+      {
+       "text": "Publish({work, result, repo, picks, running, now, onError}) - the shown result's verdict and findings",
+       "diff": "add",
+       "files": [
+        "apps/poc/src/renderer/src/Reviews.tsx"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "home-view",
+     "name": "Work list",
+     "description": "Left pane: works, reviews and topics grouped as waiting, working, open, topics, done with state lines; a field that starts a work from a ticket, a review from a PR link or a new topic from text; last crash card and logs.",
+     "layer": "app",
+     "uses": [
+      {
+       "to": "preload-bridge",
+       "calls": [
+        {
+         "text": "startReview(project.id, t)",
+         "diff": "del",
+         "files": [
+          "apps/poc/src/renderer/src/WorkList.tsx"
+         ]
+        },
+        {
+         "text": "startReview(project.id, t, format)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/renderer/src/WorkList.tsx"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/WorkList.tsx"
+       ]
+      }
+     ],
+     "interface": [
+      {
+       "text": "Row({item, project, state, now, on, onSelect}) - a review with both results says which is shown",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/WorkList.tsx"
+       ],
+       "private": true
+      },
+      {
+       "text": "NewWork({project, onSelect}) - a format select on a PR link, the project's preselected",
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/renderer/src/WorkList.tsx"
+       ],
+       "private": true
+      }
+     ],
+     "diff": "mod"
+    },
+    {
+     "id": "main-entry",
+     "name": "Electron main / IPC handlers",
+     "description": "Bootstraps logging, crash capture, store, windows, approvals, local API, orchestrator, scheduler, menu and attention; wires ToolActions for chat actions; IPC handlers for works, tickets, ideas, steps, chats, Approve & Start, fact (step or review), reviews, attachments and windows.",
+     "layer": "app",
+     "uses": [
+      {
+       "to": "orchestrator",
+       "calls": [
+        {
+         "text": "reviewPr(projectId, url)",
+         "diff": "del",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        },
+        {
+         "text": "reviewPr(projectId, url, undefined, format)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        },
+        {
+         "text": "setPrReview(id, review)",
+         "diff": "del",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        },
+        {
+         "text": "setPrReview(id, sessionId, review)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        },
+        {
+         "text": "runReviewFormat(id, format)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        },
+        {
+         "text": "showReviewResult(id, format)",
+         "diff": "add",
+         "files": [
+          "apps/poc/src/main/index.ts"
+         ]
+        }
+       ],
+       "diff": "mod",
+       "files": [
+        "apps/poc/src/main/index.ts"
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

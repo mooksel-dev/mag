@@ -526,13 +526,29 @@ export interface AgentReview {
  */
 export interface StepFact {
   heads: Record<string, string>
-  /** Plan ↔ fact by status; unaccounted: code blocks in no unit and not noise; ungrounded: units the hunks do not bear out. */
-  counts: { match: number; differs: number; missing: number; unplanned: number; unaccounted: number; ungrounded: number }
+  /**
+   * Plan ↔ fact by status; additions: changes inside the planned modules and entities no plan line names; outside:
+   * changes inside existing modules and entities the plan does not touch (neither is a deviation); unaccounted: code
+   * blocks in no unit and not noise; ungrounded: units the hunks do not bear out. additions and outside are missing on
+   * a fact of an older compare.
+   */
+  counts: { match: number; differs: number; missing: number; unplanned: number; additions?: number; outside?: number; unaccounted: number; ungrounded: number }
+  /** The compare it was recorded by (COMPARE_VERSION); none before plan-level compare. */
+  compareVersion?: number
   blockers: string[]
   /** The root of the fact set, the diagram with the inventory. */
   canvasId: string | null
   at: number
 }
+
+/**
+ * The version of plan ↔ fact a StepFact is recorded by: 2 is plan level (plan-fact-porivniannia-na-rivni.1). A fact of
+ * an older one is computed again when it is next read.
+ */
+export const COMPARE_VERSION = 2
+
+/** A step's recorded fact was compared by an older version of plan ↔ fact. */
+export const staleFact = (fact: Pick<StepFact, 'compareVersion'> | null | undefined) => !!fact && (fact.compareVersion ?? 1) < COMPARE_VERSION
 
 /** Heads of a step's open PRs: repository path → head commit. Open PRs whose head is not known yet are left out. */
 export function prHeads(work: TaskWork | null): Record<string, string> {

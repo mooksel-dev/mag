@@ -1,4 +1,5 @@
 // Models of the architecture diff (T-57, reworked in T-58). Types only.
+import type { ArchLayer } from '@mag/core'
 
 /** A repository: where git runs, and the name refs start with. */
 export interface Repo {
@@ -60,15 +61,18 @@ export type Level = 'critical' | 'high' | 'medium' | 'low' | 'noise'
 export interface Change {
   /**
    * module: its id; element (an interface line): `<module>#<name>`; edge (a dependency): `<from> -> <to>`; call:
-   * `<from> -> <to>#<name>`.
+   * `<from> -> <to>#<name>`; entity (stored data, of a Data diagram): `<module>/<entity>`; field: `<module>/<entity>.<field>`.
    */
   key: string
-  kind: 'module' | 'element' | 'edge' | 'call'
+  kind: 'module' | 'element' | 'edge' | 'call' | 'entity' | 'field'
   diff: DiffMark
   /** The module it is in; for an edge or call, `from`. */
   module: string
-  /** element / call: the method, field or type the line names; edge: `to`; module: its name. */
+  /** element / call: the method, field or type the line names; edge: `to`; module, entity: its name; field: its name. */
   name: string
+  /** field: the id of its entity, and the entity's name. */
+  entity?: string
+  entityName?: string
   /** The line as drawn; a changed signature is the del line (before) and the add line (after). */
   before?: string
   after?: string
@@ -86,7 +90,8 @@ export interface Change {
 
 /**
  * A plan change against the fact (T-57.4): match: done as planned; differs: done otherwise (another mark or line);
- * missing: planned, not on the fact; unplanned: on the fact, not on the plan.
+ * missing: planned, not on the fact; unplanned: on the fact, not on the plan (at plan level: a module, entity or
+ * dependency, or a critical change).
  */
 export type CompareStatus = 'match' | 'differs' | 'missing' | 'unplanned'
 
@@ -98,12 +103,51 @@ export interface CompareItem {
   fact?: Change
   /** The higher level of the two. */
   level: Level
-  /** differs: how. */
+  /** differs: by the mark (add, del, mod, move) or by the call signature of the line. */
+  how?: 'mark' | 'signature'
+  /** differs: how, in the plan's and the fact's words. */
   note?: string
+  /** unplanned module, entity or dependency: the fact's lines, fields and calls in it, folded under it. */
+  folded?: Change[]
 }
 
+/** What the fact changes inside the plan's scope that no plan line names: never a deviation, folded per module. */
+export interface Addition {
+  /** The module id; for fields, the entity's key `<module>/<entity>`. */
+  module: string
+  changes: Change[]
+}
+
+/**
+ * Plan ↔ fact at plan level (plan-fact-porivniannia-na-rivni.1): items are the plan's changes (match, differs, missing)
+ * and the fact's deviations outside the plan (unplanned: a new, removed or moved module, entity or dependency, its
+ * lines folded under it, or a critical change); additions are what the fact adds inside the planned modules and
+ * entities, outside what it changes inside existing modules and entities the plan does not touch.
+ */
 export interface Comparison {
   items: CompareItem[]
+  additions: Addition[]
+  /** What the fact changes inside existing modules and entities outside the plan's scope: also no deviation. */
+  outside: Addition[]
+}
+
+/** How a plan change came out, as the plan diagram paints it. */
+export type OverlayStatus = 'match' | 'differs' | 'missing'
+
+/**
+ * The comparison over the step's plan Component diagram: the status of its modules and dependencies (from the plan
+ * changes on them), and the fact's unplanned modules and dependencies, drawn dashed.
+ */
+export interface PlanOverlay {
+  /** Module id → status of the plan changes on it (the module and its lines). */
+  modules: Record<string, OverlayStatus>
+  /** `<from> -> <to>` → status of the plan changes on it (the dependency and its calls). */
+  edges: Record<string, OverlayStatus>
+  unplanned: {
+    /** within: the module's ancestors in the architecture, outermost first: where to draw it. */
+    modules: { id: string; name: string; layer?: ArchLayer; within: string[] }[]
+    edges: { from: string; to: string }[]
+  }
 }
 
 /**

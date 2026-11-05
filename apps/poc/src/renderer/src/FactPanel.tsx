@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
-import { isReview, prHeads, type Task } from '@mag/core'
-import type { Change, FileChange, Level } from '@mag/diff/types'
+import { isReview, prHeads, staleFact, type StepFact, type Task } from '@mag/core'
+import type { Change, FileChange } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
-import { STATUS_ICON, STATUS_LABEL, countLabel, fileKey, filesOf, hunksOf, mark, rows, statusCounts, what, type FactItem } from './factView'
+import { ComponentView } from './diagrams/Component'
+import { STATUS_ICON, STATUS_LABEL, fileKey, filesOf, hunksOf, mark, summary, what, type FactItem } from './factView'
 
 const mag = window.mag
 
 const short = (sha: string) => sha.slice(0, 7)
-
-const LevelBadge = ({ level }: { level: Level }) => <span className={`factlevel lv-${level}`}>{level}</span>
 
 /** The diffs of files the user opened, loaded from the step's PR on the first click. */
 export function useHunks(stepId: string, view: FactView | null | undefined) {
@@ -62,17 +61,26 @@ function FactLine({ c, view, hunks }: { c: Change; view: FactView; hunks: Hunks 
   )
 }
 
-function Row({ item, view, hunks }: { item: FactItem; view: FactView; hunks: Hunks }) {
+/** One deviation in words; the files of its fact and the changes folded under it below. */
+function Deviation({ item, view, hunks }: { item: FactItem; view: FactView; hunks: Hunks }) {
+  const inner = item.folded ?? []
   return (
-    <tr>
-      <td className={`factstatus s-${item.status}`} title={STATUS_LABEL[item.status]}>{STATUS_ICON[item.status]}</td>
-      <td><LevelBadge level={item.level} /></td>
-      <td>{item.plan ? <><span className={`d-${item.plan.diff}`}>{mark(item.plan)}</span> {what(item.plan)}</> : <span className="muted">—</span>}</td>
-      <td>
-        {item.fact ? <FactLine c={item.fact} view={view} hunks={hunks} /> : <span className="muted">not on the fact</span>}
-        {item.note && <div className="muted small">{item.note}</div>}
-      </td>
-    </tr>
+    <li>
+      <span className={`factstatus s-${item.status}`} title={STATUS_LABEL[item.status]}>{STATUS_ICON[item.status]}</span> {item.phrase}
+      {item.note && <div className="muted small">{item.note}</div>}
+      {item.fact && filesOf(item.fact, view.files).map((f) => <FileLink key={fileKey(f)} f={f} hunks={hunks} />)}
+      {inner.length > 0 && <Folded line={`${inner.length} change${inner.length > 1 ? 's' : ''} in it`} changes={inner} view={view} hunks={hunks} />}
+    </li>
+  )
+}
+
+/** Changes folded under one line: it opens to their names and files. */
+function Folded({ line, changes, view, hunks }: { line: string; changes: Change[]; view: FactView; hunks: Hunks }) {
+  return (
+    <details className="factfolded small">
+      <summary>{line}</summary>
+      {changes.map((c, i) => <FactLine key={i} c={c} view={view} hunks={hunks} />)}
+    </details>
   )
 }
 
@@ -153,92 +161,103 @@ export function InventoryView({ view, hunks }: { view: FactView; hunks: Hunks })
   )
 }
 
-function Body({ step, view }: { step: Task; view: FactView }) {
+function Body({ step, view, merged }: { step: Task; view: FactView; merged: boolean }) {
   const hunks = useHunks(step.id, view)
   // A review of a teammate's PR has no plan to compare and no merge of ours to allow: only the fact against its diff
   // (reviews-prybraty-spysok-pr-i.1).
   const review = isReview(step)
+  const deviations = view.items.filter((i) => i.status !== 'match').length
+  // The deviations are listed under the plan: the threshold names only what the fact itself lacks.
+  const phrases = new Set(view.items.map((i) => i.phrase))
+  const own = view.blockers.filter((b) => !phrases.has(b))
   return (
     <>
       <div className="muted small">
         {view.repos.map((x) => `${x.name} ${short(x.baseSha)}..${short(x.headSha)}`).join(' · ')}
         {review ? '' : view.plans.length ? ` · plan: ${view.plans.map((p) => `${p.title} v${p.version}`).join(', ')}` : ' · no plan diagram: nothing it changes is planned'}
       </div>
-      <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
-        {view.blockers.length ? (
-          <>
-            {review ? 'The fact does not cover the PR yet:' : 'Merge is not allowed, look at most:'}
-            <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
-          </>
-        ) : review ? (
-          'The inventory accounts for every block of changed code and rests on its hunks.'
-        ) : (
-          'Merge is allowed: the inventory accounts for every block of changed code, rests on its hunks and agrees with the plan.'
-        )}
-      </div>
+      {review ? (
+        <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
+          {view.blockers.length ? (
+            <>
+              The fact does not cover the PR yet:
+              <ul>{view.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul>
+            </>
+          ) : (
+            'The inventory accounts for every block of changed code and rests on its hunks.'
+          )}
+        </div>
+      ) : (
+        // A merged step has no merge left to allow.
+        !merged && (
+          <div className={view.blockers.length ? 'factthreshold warn' : 'factthreshold ok'}>
+            {!view.blockers.length ? 'As planned' : deviations ? `${deviations} deviation${deviations > 1 ? 's' : ''}: look before merge` : 'Look before merge'}
+            {own.length > 0 && <ul>{own.map((b, i) => <li key={i}>{b}</li>)}</ul>}
+          </div>
+        )
+      )}
       {!review && <Comparison view={view} hunks={hunks} />}
       <InventoryView view={view} hunks={hunks} />
     </>
   )
 }
 
-/** Plan ↔ fact of a step: the counts by status and the differences, the significant ones first. */
-export function Comparison({ view, hunks }: { view: FactView; hunks: ReturnType<typeof useHunks> }) {
-  const [all, setAll] = useState(false)
-  const [matches, setMatches] = useState(false)
-  const r = rows(view.items, all)
+/**
+ * Plan ↔ fact of a step at plan level (plan-fact-porivniannia-na-rivni.1): its plan Component diagram painted with the
+ * comparison, the deviations in words, then what folds: additions per module, changes outside the plan, the matches.
+ */
+export function Comparison({ view, hunks }: { view: FactView; hunks: Hunks }) {
+  const deviations = view.items.filter((i) => i.status !== 'match')
+  const matches = view.items.filter((i) => i.status === 'match')
+  const plan = view.planDiagram
   return (
     <>
-      <div className="factbar">
-        <div className="chips">
-          {statusCounts(view.items).map((s) => (
-            <span key={s.status} className={`diffchip s-${s.status}`}>{STATUS_ICON[s.status]} {STATUS_LABEL[s.status]} {s.count}</span>
-          ))}
+      {plan && (
+        <div className="factplan">
+          <div className="muted small">{plan.title} (v{plan.version}) against the fact</div>
+          <ComponentView key={plan.id} modules={plan.diagram.modules} diff summary={plan.diagram.summary} overlay={plan.overlay} />
         </div>
-        <div className="grow" />
-        <span className="small">
-          Show:{' '}
-          <button className={`link${all ? '' : ' on'}`} onClick={() => setAll(false)}>critical · high · medium</button>|
-          <button className={`link${all ? ' on' : ''}`} onClick={() => setAll(true)}>all</button>
-        </span>
-      </div>
-      {view.items.length === 0 ? (
-        <p className="muted small">Neither the plan nor the fact diagram draws a change.</p>
+      )}
+      {deviations.length > 0 ? (
+        <ul className="factdeviations">{deviations.map((i, n) => <Deviation key={n} item={i} view={view} hunks={hunks} />)}</ul>
       ) : (
-        <table className="facttable">
-          <thead>
-            <tr><th /><th>level</th><th>Plan</th><th>Fact</th></tr>
-          </thead>
-          <tbody>
-            {r.shown.map((i, n) => <Row key={n} item={i} view={view} hunks={hunks} />)}
-            {r.matches.length > 0 && !matches && (
-              <tr>
-                <td className="factstatus s-match">✓</td>
-                <td colSpan={3} className="muted">
-                  {r.matches.length} as planned: {r.matches.map((i) => what(i.plan!)).join('; ')}{' '}
-                  <button className="link small" onClick={() => setMatches(true)}>show</button>
-                </td>
-              </tr>
-            )}
-            {matches && r.matches.map((i, n) => <Row key={`m${n}`} item={i} view={view} hunks={hunks} />)}
-            {r.folded > 0 && (
-              <tr>
-                <td />
-                <td colSpan={3}>
-                  <button className="link small" onClick={() => setAll(true)}>▸ {r.folded} low / noise changes folded</button>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <p className="small">{view.items.length || view.additions.length ? 'No deviations from the plan.' : 'Neither the plan nor the fact diagram draws a change.'}</p>
+      )}
+      {view.additions.map((a) => <Folded key={a.module} line={a.line} changes={a.changes} view={view} hunks={hunks} />)}
+      {view.outsidePlan.modules.length > 0 && (
+        <details className="factfolded small">
+          <summary>{view.outsidePlan.line}</summary>
+          {view.outsidePlan.modules.map((a) => (
+            <div key={a.module}>
+              <b>{a.module}</b>
+              {a.changes.map((c, i) => <FactLine key={i} c={c} view={view} hunks={hunks} />)}
+            </div>
+          ))}
+        </details>
+      )}
+      {matches.length > 0 && (
+        <details className="factfolded small">
+          <summary>{STATUS_ICON.match} {matches.length} as planned</summary>
+          {matches.map((i, n) => (
+            <div key={n} className="factline">
+              <span className={`d-${i.plan!.diff}`}>{mark(i.plan!)}</span> {what(i.plan!)}
+              {i.note && <div className="muted small">{i.note}</div>}
+            </div>
+          ))}
+        </details>
       )}
     </>
   )
 }
 
+/** A review's recorded fact in one line: what its inventory leaves out, else that it covers the PR. */
+const reviewSummary = (f: StepFact) =>
+  [f.counts.unaccounted && `in no unit ${f.counts.unaccounted}`, f.counts.ungrounded && `ungrounded ${f.counts.ungrounded}`].filter(Boolean).join(' · ') ||
+  (f.blockers.length ? 'the fact does not cover the PR yet' : 'the fact covers the PR')
+
 /**
  * Plan ↔ fact of a step (T-57.5, T-58): its fact, generated from the reviewer's inventory, against its plan diagrams;
- * the threshold; the inventory against the hunks (diff-iak-inventar-zmin-ai.1); the diff behind each file. Open by default while a PR is open; computed when open. A review of a teammate's PR (`step` is
+ * the threshold from its deviations; the inventory against the hunks (diff-iak-inventar-zmin-ai.1); the diff behind each file. Open by default while a PR is open; computed when open. A review of a teammate's PR (`step` is
  * the review) shows the fact of its PR the same way, without a plan.
  */
 export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: string }) {
@@ -260,19 +279,18 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
     )
     return () => void (gone = true)
   }, [open, key, step.id])
-  const counts = step.fact?.counts
+  // A merged step keeps its fact folded to one line; one recorded by an older compare is recorded again in main.
+  const merged = !review && !live && !!step.work?.repos.some((r) => r.prState === 'merged')
+  useEffect(() => {
+    if (!open && !review && staleFact(step.fact)) mag.stepFact(step.id).catch(() => {})
+  }, [open, review, step.id, step.fact?.at])
   return (
     <div className="factpanel">
       <div className="factbar">
         <button className="link diffsub" onClick={() => setOpen(!open)}>
           {open ? '▾' : '▸'} {review ? 'Fact' : 'Plan ↔ fact'}
         </button>
-        {!open && counts && (
-          <span className="muted small">
-            {Object.entries(counts).filter(([, n]) => n > 0).map(([s, n]) => `${countLabel(s)} ${n}`).join(' · ')}
-            {step.fact!.blockers.length > 0 && !review && ' · merge not allowed'}
-          </span>
-        )}
+        {!open && step.fact && <span className="muted small">{review ? reviewSummary(step.fact) : summary(step.fact, merged)}</span>}
         <div className="grow" />
         {open && view && (
           <button className="link small" title="Check the fact again" onClick={() => setNonce(nonce + 1)}>↻</button>
@@ -282,7 +300,7 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
         error ? <p className="muted small">mag could not compare: {error}</p>
         : view === undefined ? <p className="muted small">Comparing…</p>
         : view === null ? <p className="muted small">{review ? 'No PR to compare.' : 'No PR yet: the fact is drawn in the review once the step has one.'}</p>
-        : <Body step={step} view={view} />
+        : <Body step={step} view={view} merged={merged} />
       )}
     </div>
   )

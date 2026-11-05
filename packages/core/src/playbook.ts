@@ -250,8 +250,12 @@ title, status and link, saying which already have a work in mag (list_tasks show
 noise. path: a file, a folder or a glob relative to the repository, matched against the files a line of the fact gives;
 empty for any. name: a glob over the name the line is about (a method, field, type or tool), any case. Without a
 matching rule: new and removed modules, dependencies between modules, new, removed, moved and re-signed interface lines
-are high; a line marked mod, a changed module and a call medium. Critical and high differences between plan and fact
-the review does not explain keep it from saying merge.
+are high; a line marked mod, a changed module and a call medium. Levels only order what the reviewer reads: every
+deviation from the plan keeps the review from merge, whatever its level. A deviation is at plan level: a planned change
+done otherwise or not done, a new, removed or moved module, entity or dependency the plan lacks. Lines, calls and fields
+the fact adds inside planned modules and entities, and changes inside existing modules the plan does not touch, are not.
+critical marks an external contract (a tool, an API, a stored format): a critical change off the plan is a deviation
+even inside a planned module, e.g. "critical: apps/poc/src/main/tool-defs.ts". mag's default has no critical rule.
 high: #*prompt*`,
   reviewRounds: 2,
 }

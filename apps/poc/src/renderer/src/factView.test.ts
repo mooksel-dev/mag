@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Change, FileChange } from '@mag/diff/types'
-import { countLabel, filesOf, mark, rows, statusCounts, what, type FactItem } from './factView.ts'
+import { filesOf, mark, summary, what } from './factView.ts'
 
 const change = (c: Partial<Change>): Change => ({ key: 'store#save', kind: 'element', diff: 'add', module: 'store', name: 'save', ...c })
 const file = (path: string, repo = 'app'): FileChange => ({ path, status: 'mod', hunks: [], repo, module: 'store', kind: 'code' })
@@ -16,21 +16,16 @@ test('mark, what: a change in a few words', () => {
   assert.equal(what(change({ kind: 'module', key: 'store' })), 'module store')
 })
 
-test('filesOf and countLabel: the files a line rests on; the counts a step records, named', () => {
+test('filesOf: the files a line rests on', () => {
   const files = [file('src/store.ts'), file('src/db.ts', 'web')]
   assert.deepEqual(filesOf(change({ files: ['web:src/db.ts', 'src/store.ts', 'nope.ts'] }), files).map((f) => f.path), ['src/db.ts', 'src/store.ts'])
-  assert.deepEqual(['match', 'unaccounted', 'ungrounded', 'unshown'].map(countLabel), ['as planned', 'in no unit', 'ungrounded', 'not shown'])
 })
 
-test('rows: matches apart, low and noise folded unless all; counts in order', () => {
-  const item = (status: FactItem['status'], level: FactItem['level']): FactItem => ({ status, level })
-  const items = [item('differs', 'high'), item('unplanned', 'low'), item('unplanned', 'noise'), item('missing', 'medium'), item('match', 'high')]
-  const folded = rows(items, false)
-  assert.deepEqual(folded.shown.map((i) => i.status), ['differs', 'missing'])
-  assert.equal(folded.folded, 2)
-  assert.equal(folded.matches.length, 1)
-  const all = rows(items, true)
-  assert.equal(all.shown.length, 4)
-  assert.equal(all.folded, 0)
-  assert.deepEqual(statusCounts(items), [{ status: 'differs', count: 1 }, { status: 'missing', count: 1 }, { status: 'unplanned', count: 2 }, { status: 'match', count: 1 }])
+test('summary: a recorded fact in one line; deviations, additions, outside the plan, the inventory; no threshold once merged', () => {
+  const counts = { match: 30, differs: 0, missing: 0, unplanned: 0, additions: 67, outside: 13, unaccounted: 0, ungrounded: 0 }
+  assert.equal(summary({ counts, blockers: [] }, false), 'As planned · +67 additions · 13 outside the plan')
+  const bad = { counts: { ...counts, differs: 2, missing: 1, additions: 1, outside: 0, unaccounted: 3 }, blockers: ['x'] }
+  assert.equal(summary(bad, false), '3 deviations · +1 addition · in no unit 3: look before merge')
+  assert.equal(summary(bad, true), '3 deviations · +1 addition · in no unit 3')
+  assert.equal(summary({ counts: { match: 1, differs: 0, missing: 0, unplanned: 0, unaccounted: 0, ungrounded: 0 }, blockers: [] }, true), 'As planned', 'a fact of an older compare has no additions')
 })
