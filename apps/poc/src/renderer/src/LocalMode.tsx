@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { localCheckText, localOptions, openLocalChecks, repoNames, taskRepos, type LocalCheck, type LocalChoice, type Project, type Task } from '@mag/core'
+import { popupPlace } from './popupPlace'
 
 const mag = window.mag
 
@@ -7,6 +8,8 @@ const mag = window.mag
  * Start of a ready work (T-50): a popup lists the repositories its steps change, each with a "worktree" checkbox; an
  * unticked one works right in its main checkout. The last Start's choice is the default (project.lastLocalRepos), Enter
  * starts. A task without repositories starts at once. `onStart`: what Start does (default: develop; Approve & Start).
+ * The popup is fixed to the window where it fits (popupPlace): it is rendered hidden, measured, then shown; it closes on
+ * any scroll or resize rather than following the button.
  */
 export function StartButton({ task, tasks, project, label = 'Start', className, disabled, title, onStart = (local) => mag.develop(task.id, local) }: {
   task: Task
@@ -21,10 +24,20 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
   const repos = project ? taskRepos(task.id, tasks, project) : []
   const [open, setOpen] = useState(false)
   const [local, setLocal] = useState<string[]>([])
+  const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
   const box = useRef<HTMLSpanElement>(null)
+  const btn = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!open || !btn.current || !list.current) return setPlace(null)
+    const b = btn.current.getBoundingClientRect()
+    setPlace(popupPlace(b, { width: list.current.offsetWidth, height: list.current.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }))
+  }, [open])
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    // Fixed to the window, the popup would stay put while its button moves: close instead. A scroll inside it is its own.
+    const onMove = (e: Event) => { if (!(e.target instanceof Node && list.current?.contains(e.target))) setOpen(false) }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
       else if (e.key === 'Enter') {
@@ -34,9 +47,13 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
+    document.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      document.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
     }
   }, [open, local])
   const names = project ? repoNames(project) : []
@@ -52,11 +69,11 @@ export function StartButton({ task, tasks, project, label = 'Start', className, 
   return (
     // Inside a clickable row: a click in here is not the row's.
     <span ref={box} className="startpop" onClick={(e) => e.stopPropagation()}>
-      <button className={className} disabled={disabled} title={title} aria-expanded={open} onClick={toggle}>
+      <button ref={btn} className={className} disabled={disabled} title={title} aria-expanded={open} onClick={toggle}>
         {label}
       </button>
       {open && project && (
-        <div className="startlist" role="dialog" aria-label={`Start ${task.key}`}>
+        <div ref={list} className="startlist" role="dialog" aria-label={`Start ${task.key}`} style={place ?? { top: 0, left: 0, visibility: 'hidden' }}>
           <div className="muted small">Where the steps work. Untick a repository to work right in its main checkout.</div>
           {repos.map((r) => (
             <label key={r} className="startrepo" title={r}>
