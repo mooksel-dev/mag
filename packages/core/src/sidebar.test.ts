@@ -56,11 +56,19 @@ test('sidebarRows: a change of state (waiting, working, done, new activity) neve
   assert.deepEqual((after.entries[2] as { card: { dot: string; move: { text: string } } }).card.move.text, 'Done')
 })
 
-test('sidebarRows: refs of removed items drop; a work takes the slot of the topic that came to own it', () => {
+test('sidebarRows: refs of removed items drop; a chat keeps its slot and its works are its children', () => {
   const layout: SidebarNode[] = ['work:gone', 'work:a', 'topic:t', 'work:b'].map((ref) => ({ kind: 'item', ref }))
   const r = rows(layout, [task('a', 1), task('b', 2), task('w', 9, { ownerSessionId: 't' })], [topic('t', 0)])
-  assert.equal(text(r), 'a w b')
-  assert.deepEqual(r.layout, ['work:a', 'work:w', 'work:b'].map((ref) => ({ kind: 'item', ref })))
+  assert.equal(text(r), 'a t b')
+  assert.deepEqual((r.entries[1] as { card: { children: { id: string }[] } }).card.children.map((c) => c.id), ['w'])
+  assert.deepEqual(r.layout, ['work:a', 'topic:t', 'work:b'].map((ref) => ({ kind: 'item', ref })))
+})
+
+test('sidebarRows: a layout that listed a child work in its chat\'s slot shows the chat there, once', () => {
+  const tasks = [task('a', 1), task('w', 9, { ownerSessionId: 't' }), task('v', 10, { ownerSessionId: 't' })]
+  const r = rows(['work:a', 'work:w', 'work:v'].map((ref): SidebarNode => ({ kind: 'item', ref })), tasks, [topic('t', 0)])
+  assert.equal(text(r), 'a t')
+  assert.deepEqual(r.layout, ['work:a', 'topic:t'].map((ref) => ({ kind: 'item', ref })))
 })
 
 test('sidebarRows: Closed apart in layout order; a done work stays in place; filters and search only hide', () => {

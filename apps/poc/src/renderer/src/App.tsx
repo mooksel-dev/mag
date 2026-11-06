@@ -4,12 +4,14 @@ import {
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
+  headerWork,
   integrationMode,
   playbookOf,
   placeNew,
   projectColor,
   storedPlaybook,
   resolveChoice,
+  reviewOfTopic,
   runningAgents,
   taskByKey,
   agentAllowed,
@@ -114,10 +116,10 @@ export function App({ projectId }: { projectId: string }) {
     const t = taskByKey(tasks, key)
     if (t) select({ kind: 'work', id: t.parentId ?? t.id })
   }
-  // The selection, while it still exists; else Home. A topic that has come to own an open work since shows as that work:
-  // the conversation goes on there.
+  // The selection, while it still exists; else Home. A chat that owns works opens on its header work (the one waiting on
+  // the user, else the newest); a topic a review shows through, on that review.
   const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && s.role === 'chat') ?? null : null
-  const owned = picked && tasks.filter((t) => !t.parentId && t.ownerSessionId === picked.id && t.status !== 'done' && t.status !== 'canceled').sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  const owned = picked && (headerWork(picked.id, tasks, state.sessions.filter((s) => s.projectId === project.id), Date.now()) ?? reviewOfTopic(tasks, picked.id))
   const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
   const topic = owned ? null : picked
   const shownWork = work

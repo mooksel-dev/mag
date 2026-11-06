@@ -6,6 +6,7 @@ import {
   isLegacy,
   isReview,
   openLocalChecks,
+  shortTitle,
   stepRepoNames,
   subtasksOf,
   taskPrs,
@@ -28,14 +29,16 @@ const mag = window.mag
 /**
  * What the work needs from the user, as cards at the end of its owner conversation (ux-odna-rozmova-na-robotu.2):
  * the questions with recommendations, the plan with Approve & Start, the merge, a failed agent or check, a step that
- * waits for Start, local checks, and approvals of its agents (their chats are logs).
+ * waits for Start, local checks, and approvals of its agents (their chats are logs). `label`: another work of the same
+ * chat (work-list-the-left-column.3): its cards under a thin divider with its key and title, none when nothing waits.
  */
-export function WorkCards({ work, owner, state, onAnswer }: {
+export function WorkCards({ work, owner, state, onAnswer, label = false }: {
   work: Task
   owner: AgentSession | null
   state: AppState
   /** Puts the cursor in the owner's composer: "Answer differently". */
   onAnswer: () => void
+  label?: boolean
 }) {
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
@@ -48,17 +51,26 @@ export function WorkCards({ work, owner, state, onAnswer }: {
   const approvals = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'approval' && i.status === 'pending' ? [{ s, i }] : [])))
   // An agent of the work asked for an integration that is off for its role (decision 8): its card waits here too.
   const integrations = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'integration' && i.status === 'off' ? [{ s, i }] : [])))
+  const checks = !!step && openLocalChecks(step).length > 0
+  const questions = !!work.needsInput && !checks
+  const plan = !ownerBusy && (work.status === 'planning' || work.status === 'ready') && !isReview(work) && subtasksOf(work.id, tasks).length > 0
+  const itemShown = !!item && ITEM_CARDS.includes(item.kind)
+  if (label && !approvals.length && !integrations.length && !checks && !questions && !plan && !itemShown) return null
   return (
     <>
+      {label && <div className="cardsof" title={work.title}>{work.key} · {shortTitle(work)}</div>}
       {approvals.map(({ s, i }) => <ApprovalCard key={i.id} sessionId={s.id} item={i} who={s.role} />)}
       {integrations.map(({ s, i }) => <IntegrationCard key={i.id} sessionId={s.id} item={i} />)}
-      {step && openLocalChecks(step).length > 0 && <div className="workcard"><LocalChecks step={step} project={project} /></div>}
-      {work.needsInput && !(step && openLocalChecks(step).length) && <QuestionsCard key={work.needsInput} work={work} owner={owner} busy={ownerBusy} onAnswer={onAnswer} />}
-      {!ownerBusy && (work.status === 'planning' || work.status === 'ready') && <PlanCard work={work} tasks={tasks} project={project} state={state} />}
-      {item && <ItemCard item={item} work={work} tasks={tasks} canvases={state.canvases} />}
+      {checks && <div className="workcard"><LocalChecks step={step} project={project} /></div>}
+      {questions && <QuestionsCard key={work.needsInput} work={work} owner={owner} busy={ownerBusy} onAnswer={onAnswer} />}
+      {plan && <PlanCard work={work} tasks={tasks} project={project} state={state} />}
+      {itemShown && <ItemCard item={item} work={work} tasks={tasks} canvases={state.canvases} />}
     </>
   )
 }
+
+/** The inbox items ItemCard draws a card for (a question has QuestionsCard). */
+const ITEM_CARDS: InboxItem['kind'][] = ['ready_to_merge', 'review_look', 'check_failed', 'agent_failed', 'ready_to_start', 'review_ready']
 
 /** The agent's questions with its recommendations: one click accepts them all; anything else is typed to the owner. */
 export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; owner: AgentSession | null; busy: boolean; onAnswer: () => void }) {

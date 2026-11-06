@@ -1,6 +1,6 @@
-// The work list (ux-odna-rozmova-na-robotu.2, work-list-the-left-column.1): the left column of the project window, one
-// card per work (reviews of teammates' PRs included) and per topic without a work: what it is, where it stands, whose
-// move it is and what happened last, from what mag already knows.
+// The work list (ux-odna-rozmova-na-robotu.2, work-list-the-left-column.1, .3): the left column of the project window,
+// one card per chat with the works it created as its children, and per work without a chat (reviews of teammates' PRs
+// included): what it is, where it stands, whose move it is and what happened last, from what mag already knows.
 
 import {
   currentStep,
@@ -74,6 +74,10 @@ export interface WorkCard {
   closed: boolean
   task?: Task
   session?: AgentSession
+  /** A chat: its own state, without its children's (what a filter matches it by). */
+  own?: { group: WorkGroup; dot: CardDot }
+  /** A chat: the works it owns, newest created first. */
+  children?: WorkCard[]
 }
 
 export type CardFilter = 'all' | 'waiting' | 'working' | 'reviews'
@@ -294,70 +298,141 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
   group === 'waiting' ? 'amber' : group !== 'done' && move.who === 'agent' ? 'green' : 'grey'
 
 /**
- * The topics of `mine` with a row of their own: a topic that owns an open work shows through it; a topic mag created for
- * a review is that review's. `works` are the project's top-level tasks.
+ * The project chat topics of `mine`: a user's discussion, not an agent's session, not the topic mag created for a review
+ * and not the user's topic that a review shows through (legacy). Each has a row; the works it owns are its children.
  */
-function rowTopics(mine: AgentSession[], works: Task[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
-  const owners = new Set(works.filter((t) => t.status !== 'done' && t.status !== 'canceled').map((t) => t.ownerSessionId))
+function chatTopics(mine: AgentSession[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
   return mine.filter((s) =>
-    s.role === 'chat' && !s.taskId && !s.reviewOf && !owners.has(s.id) && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+    s.role === 'chat' && !s.taskId && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+}
+
+const finished = (t: Task) => t.status === 'done' || t.status === 'canceled'
+
+/** The top-level works (not reviews) a chat owns (`tasks` are the project's): open ones first, then the newest created. */
+export function ownedWorks(sessionId: string, tasks: Task[]): Task[] {
+  return tasks
+    .filter((t) => !t.parentId && !isReview(t) && t.ownerSessionId === sessionId)
+    .sort((a, b) => Number(finished(a)) - Number(finished(b)) || b.createdAt - a.createdAt)
+}
+
+/** How urgent a group is for a chat row: the chat takes the most urgent of itself and its children. */
+const URGENCY: Record<WorkGroup, number> = { waiting: 3, working: 2, topics: 1, done: 0 }
+
+/** A work's card: its stage, progress, whose move (`item` its inbox item) and what happened last. */
+function taskCard(task: Task, item: InboxItem | undefined, mine: AgentSession[], tasks: Task[], now: number): WorkCard {
+  const review = isReview(task)
+  const move = cardMove(task, item, mine, tasks, now)
+  const group: WorkGroup = finished(task) ? 'done' : move.who === 'you' ? 'waiting' : 'working'
+  return {
+    id: task.id,
+    kind: review ? 'review' : 'work',
+    group,
+    dot: dotOf(group, move),
+    title: shortTitle(task),
+    stage: review ? reviewStage(task, mine) : workStage(task, tasks),
+    progress: progressOf(task, tasks),
+    move,
+    last: lastEvent(task, mine, tasks),
+    at: Math.max(task.updatedAt, ...sessionsOf(task, mine).map(sessionActivity)),
+    createdAt: task.createdAt,
+    closed: task.status === 'canceled' || !!task.closedAt,
+    task,
+  }
 }
 
 /**
- * The project's works and the topics that own no open work, as cards (`tasks` are the project's), newest created first;
- * done, canceled and closed ones included. A work's agents are its own sessions and, for a work owned by a topic (a
- * review too), that topic. The order means nothing to the sidebar (see sidebarRows): it never moves a row.
+ * A chat's card with the works it owns as `children` (newest created first). Its group is the most urgent of its own
+ * (an approval waits on you, a run is working, else a discussion) and its children's; done only when every child is
+ * finished and the chat neither asks nor runs. Its move: its own approval or run, else the move of a child waiting on
+ * the user "via <key>", else the newest open child's stage, else a discussion's line. Closed only when nothing is open.
+ */
+function chatCard(s: AgentSession, children: WorkCard[], approval: InboxItem | undefined, mine: AgentSession[], now: number): WorkCard {
+  const running = s.status === 'running'
+  const open = children.filter((c) => c.group !== 'done')
+  const ownGroup: WorkGroup = approval ? 'waiting' : running ? 'working' : 'topics'
+  const ownMove: CardMove = approval
+    ? approvalMove(approval)
+    : running ? agentMove(s, false, now) : { who: 'other', text: 'Discussion · no work yet' }
+  const idle = !approval && !running
+  // No child open: a discussion without works is done once closed; one with works, once they all are finished.
+  const done = idle && !open.length && (children.length > 0 || !!s.closedAt)
+  const closed = idle && !open.length && !!s.closedAt
+  const group: WorkGroup = done ? 'done' : [ownGroup, ...open.map((c) => c.group)].reduce((a, b) => (URGENCY[b] > URGENCY[a] ? b : a))
+  const waiting = open.find((c) => c.group === 'waiting')
+  const move: CardMove = !idle
+    ? ownMove
+    : waiting ? { ...waiting.move, text: `${waiting.move.text} via ${waiting.task!.key}` }
+    : open.length ? { who: open[0].move.who, text: `${open[0].stage} · ${open[0].task!.key}` }
+    : closed ? { who: 'other', text: 'Closed' }
+    : children.length ? { who: 'other', text: 'Done' }
+    : ownMove
+  // Green while the chat or any open child has an agent running.
+  const dot: CardDot = group === 'waiting' ? 'amber' : group !== 'done' && (running || open.some((c) => c.dot === 'green')) ? 'green' : 'grey'
+  const last = [lastEvent(s, mine), ...children.map((c) => c.last)].filter((l) => !!l).sort((a, b) => b.at - a.at)[0] ?? null
+  return {
+    id: s.id,
+    kind: 'topic',
+    group,
+    dot,
+    title: shortTitle(s),
+    stage: null,
+    progress: null,
+    move,
+    last,
+    at: Math.max(sessionActivity(s), ...children.map((c) => c.at)),
+    createdAt: s.createdAt,
+    closed,
+    session: s,
+    own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'green' : 'grey' },
+    ...(children.length ? { children } : {}),
+  }
+}
+
+/**
+ * The project's rows as cards (`tasks` are the project's), newest created first; done, canceled and closed ones
+ * included. Every chat topic is a row, and the works it owns (not reviews) are its `children`; works without a chat
+ * owner (groomer, ticket, a deleted topic) and reviews are rows of their own. A work's agents are its own sessions and
+ * its owner topic (a review's: its topics). The order means nothing to the sidebar (see sidebarRows): it never moves a row.
  */
 export function workCards(projectId: string, tasks: Task[], sessions: AgentSession[], now: number): WorkCard[] {
   const items = inbox(projectId, tasks, sessions)
   const mine = sessions.filter((s) => s.projectId === projectId)
   const works = tasks.filter((t) => !t.parentId && t.projectId === projectId)
+  const chats = chatTopics(mine, tasks, sessions)
+  const chatIds = new Set(chats.map((s) => s.id))
   const out: WorkCard[] = []
-  // A topic that owns several open works opens as the latest updated one (as App does): its approvals count for that one.
-  const latestOwned = new Map<string, Task>()
-  for (const t of works) {
-    if (t.status === 'done' || t.status === 'canceled' || !t.ownerSessionId) continue
-    const prev = latestOwned.get(t.ownerSessionId)
-    if (!prev || t.updatedAt > prev.updatedAt) latestOwned.set(t.ownerSessionId, t)
-  }
+  const children = new Map<string, WorkCard[]>()
   for (const task of works) {
-    const finished = task.status === 'done' || task.status === 'canceled'
-    const own = sessionsOf(task, mine)
-    const at = Math.max(task.updatedAt, ...own.map(sessionActivity))
-    // A pending approval in the owner topic counts for the work too.
-    const ownsTopic = !!task.ownerSessionId && latestOwned.get(task.ownerSessionId) === task
-    const item = finished ? undefined : items.find((i) => i.task?.id === task.id || (!i.task && ownsTopic && i.session?.id === task.ownerSessionId))
-    const review = isReview(task)
-    const closed = task.status === 'canceled' || !!task.closedAt
-    const move = cardMove(task, item, mine, tasks, now)
-    const group: WorkGroup = finished ? 'done' : move.who === 'you' ? 'waiting' : 'working'
-    out.push({
-      id: task.id,
-      kind: review ? 'review' : 'work',
-      group,
-      dot: dotOf(group, move),
-      title: shortTitle(task),
-      stage: review ? reviewStage(task, mine) : workStage(task, tasks),
-      progress: progressOf(task, tasks),
-      move,
-      last: lastEvent(task, mine, tasks),
-      at,
-      createdAt: task.createdAt,
-      closed,
-      task,
-    })
+    // A chat's approval is on the chat's row, not on a work's.
+    const item = finished(task) ? undefined : items.find((i) => i.task?.id === task.id)
+    const c = taskCard(task, item, mine, tasks, now)
+    const chat = !isReview(task) && task.ownerSessionId && chatIds.has(task.ownerSessionId) ? task.ownerSessionId : null
+    if (chat) children.set(chat, [...(children.get(chat) ?? []), c])
+    else out.push(c)
   }
-  for (const s of rowTopics(mine, works, tasks, sessions)) {
-    const approval = items.find((i) => i.kind === 'approval' && i.session?.id === s.id)
-    // A closed topic asking or running again shows as open.
-    const closed = !!s.closedAt && !approval && s.status !== 'running'
-    const move: CardMove = approval
-      ? approvalMove(approval)
-      : s.status === 'running' ? agentMove(s, false, now) : { who: 'other', text: closed ? 'Closed' : 'Discussion · no work yet' }
-    const group: WorkGroup = approval ? 'waiting' : closed ? 'done' : 'topics'
-    out.push({ id: s.id, kind: 'topic', group, dot: dotOf(group, move), title: shortTitle(s), stage: null, progress: null, move, last: lastEvent(s, mine), at: sessionActivity(s), createdAt: s.createdAt, closed, session: s })
+  for (const s of chats) {
+    const approval = items.find((i) => i.kind === 'approval' && !i.task && i.session?.id === s.id)
+    const kids = (children.get(s.id) ?? []).sort((a, b) => b.createdAt - a.createdAt)
+    out.push(chatCard(s, kids, approval, mine, now))
   }
   return out.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/** The rows and their children, as one list (Home, counts, a work's card). */
+export function flatCards(cards: WorkCard[]): WorkCard[] {
+  return cards.flatMap((c) => [c, ...(c.children ?? [])])
+}
+
+/**
+ * The work a chat opens on: the one it owns that waits on the user, else the first of ownedWorks (the newest open, else
+ * the newest); null when it owns none. `tasks` and `sessions` are the project's.
+ */
+export function headerWork(sessionId: string, tasks: Task[], sessions: AgentSession[], now: number): Task | null {
+  const owned = ownedWorks(sessionId, tasks)
+  if (!owned.length) return null
+  const kids = workCards(owned[0].projectId, tasks, sessions, now).find((c) => c.kind === 'topic' && c.id === sessionId)?.children ?? []
+  const waiting = owned.find((t) => kids.some((c) => c.id === t.id && c.group === 'waiting'))
+  return waiting ?? owned[0]
 }
 
 /** Home's order of a group's cards: the agent working before someone else's move, then the latest activity first. */
@@ -368,7 +443,7 @@ export function byActivity(cards: WorkCard[]): WorkCard[] {
 
 /** The card of one work (a review too), as workCards builds it for its row, so the selected work's header shows the same move. null for a step. */
 export function workCard(task: Task, tasks: Task[], sessions: AgentSession[], now: number): WorkCard | null {
-  return workCards(task.projectId, tasks, sessions, now).find((c) => c.id === task.id && c.kind !== 'topic') ?? null
+  return flatCards(workCards(task.projectId, tasks, sessions, now)).find((c) => c.id === task.id && c.kind !== 'topic') ?? null
 }
 
 /** done = finished; merge = its PRs open; build = in progress; waiting = for another step; manual = waits for Start; todo = next. */
@@ -443,6 +518,12 @@ function searchSessions(task: Task, tasks: Task[], sessions: AgentSession[]): Ag
   return sessions.filter((s) => (s.taskId && ids.has(s.taskId)) || s.id === task.ownerSessionId || topics.includes(s.id))
 }
 
+/** The topics search lists on their own: a chat that owns an open work searches as that work (as before chats had children). */
+function searchTopics(sessions: AgentSession[], works: Task[], tasks: Task[]): AgentSession[] {
+  const owners = new Set(works.filter((t) => !finished(t)).map((t) => t.ownerSessionId))
+  return chatTopics(sessions, tasks, sessions).filter((s) => !owners.has(s.id))
+}
+
 /** ~120 characters of `text` around `at`, on one line. */
 function snippetAt(text: string, at: number, length: number): string {
   const start = Math.max(0, at - 40)
@@ -465,7 +546,7 @@ export function searchAll(query: string, tasks: Task[], sessions: AgentSession[]
       const own = searchSessions(t, tasks, sessions)
       return { ref: { kind: 'task' as const, id: t.id }, item: t, key: t.key, own, at: Math.max(t.updatedAt, ...own.map(sessionActivity)) }
     }),
-    ...rowTopics(sessions, works, tasks, sessions).map((s) => ({ ref: { kind: 'topic' as const, id: s.id }, item: s, key: null, own: [s], at: sessionActivity(s) })),
+    ...searchTopics(sessions, works, tasks).map((s) => ({ ref: { kind: 'topic' as const, id: s.id }, item: s, key: null, own: [s], at: sessionActivity(s) })),
   ]
   const hits: SearchHit[] = []
   for (const { ref, item, key, own, at } of items) {
@@ -493,16 +574,30 @@ export function searchAll(query: string, tasks: Task[], sessions: AgentSession[]
   return hits.sort((a, b) => b.score - a.score || b.at - a.at).slice(0, SEARCH_MAX)
 }
 
-/** The cards a filter shows: waiting = that group; working = an agent running (green dot); reviews = review rows, done included. */
-export function cardFilter(cards: WorkCard[], filter: CardFilter): WorkCard[] {
+/**
+ * Whether a card matches a filter on its own: waiting = that group; working = an agent running (green dot); reviews =
+ * a review, done included. A chat by its own state, not its children's, so a count counts each thing once.
+ */
+export function cardMatches(c: WorkCard, filter: CardFilter): boolean {
+  const own = c.own ?? c
   switch (filter) {
     case 'all':
-      return cards
+      return true
     case 'waiting':
-      return cards.filter((c) => c.group === 'waiting')
+      return own.group === 'waiting'
     case 'working':
-      return cards.filter((c) => c.dot === 'green')
+      return own.dot === 'green'
     case 'reviews':
-      return cards.filter((c) => c.kind === 'review')
+      return c.kind === 'review'
   }
+}
+
+/** The cards that match a filter on their own (see cardMatches). */
+export function cardFilter(cards: WorkCard[], filter: CardFilter): WorkCard[] {
+  return cards.filter((c) => cardMatches(c, filter))
+}
+
+/** A row a filter shows: it matches, or one of its children does; under it, only the matching children show. */
+export function rowMatches(c: WorkCard, filter: CardFilter): boolean {
+  return cardMatches(c, filter) || !!c.children?.some((k) => cardMatches(k, filter))
 }

@@ -5,6 +5,7 @@ import {
   isLegacy,
   isReview,
   openPrs,
+  ownedWorks,
   prRepoName,
   reviewTopic,
   shortTitle,
@@ -148,7 +149,7 @@ function useDrawer() {
 /**
  * A work's screen (redesign-start-screen-big-composer.3): a compact header (title, kind and key, ⋯), its steps as
  * chips, the Waiting bar and the tabs; below, the tab open and, when a diagram is opened, the drawer at the right. The
- * conversation is its owner's chat, with the cards of what waits on you at its end.
+ * conversation is its owner's chat, with the cards of what waits on you at its end: of every work the chat owns.
  */
 export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }: {
   work: Task
@@ -182,7 +183,14 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
     setTab('conversation')
     requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
   }
-  const cards = <WorkCards work={work} owner={owner} state={state} onAnswer={focus} />
+  // One conversation per chat: the cards of every work it owns, this work's first, each other's under its key and title.
+  const siblings = owner?.role === 'chat' && !owner.taskId && !review ? ownedWorks(owner.id, tasks).filter((t) => t.id !== work.id) : []
+  const cards = (
+    <>
+      <WorkCards work={work} owner={owner} state={state} onAnswer={focus} />
+      {siblings.map((t) => <WorkCards key={t.id} work={t} owner={owner} state={state} onAnswer={focus} label />)}
+    </>
+  )
   return (
     <CanvasOpener.Provider value={drawer.show}>
       <section className="convo" ref={box}>
