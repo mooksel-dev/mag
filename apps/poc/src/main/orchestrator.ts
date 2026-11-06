@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,7 @@ import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
@@ -836,8 +836,12 @@ export class Orchestrator {
    * `message`, if given, is what the resumed session is told (shown in its chat). Legacy tasks run as one whole.
    * `localRepos` (the Start popup, T-50): repositories the task's steps work on in the main checkout; restarts and later
    * steps keep the task's. Before a step's first session its local repositories are checked (see prepareLocal).
+   * An explicit `localRepos` also applies to a repository the step already has as a worktree (e.g. a start that failed
+   * there): with nothing done in it (see worktreeWork) the worktree goes and the repository is checked and set up in its
+   * main checkout, even on a restart; otherwise develop throws and changes nothing.
+   * `setUpLocal` (resolveLocal): the step's local checks were answered, so its main checkouts are set up on a restart too.
    */
-  async develop(taskId: string, message?: string, localRepos?: string[]) {
+  async develop(taskId: string, message?: string, localRepos?: string[], setUpLocal = false) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; develop its task`)
     if (task.status !== 'ready' && task.status !== 'in_progress') throw new Error(`${task.key} is ${task.status}; only ready or in progress works are developed`)
@@ -861,13 +865,25 @@ export class Orchestrator {
     const last = this.lastStepSession(step.id)
     if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
     const local = localRepos ? project.repos.filter((r) => localRepos.includes(r)) : (task.localRepos ?? [])
+    // An explicit local_repos also moves a repository the step has as a worktree, if nothing is done there yet.
+    const switched = localRepos ? (step.work?.repos ?? []).filter((r) => !r.local && local.includes(r.repo) && r.worktree !== step.work!.dir) : []
+    for (const r of switched) {
+      const done = await this.worktreeWork(project, r)
+      if (done) throw new Error(`${repoNames(project)[project.repos.indexOf(r.repo)]} already has work in its worktree (${done}): restart without it in local_repos, or let ${step.key} finish there`)
+    }
     this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, ...(localRepos && { localRepos: local }) })
     // The Start popup's choice is its default next time.
     if (localRepos) this.store.updateProject(project.id, { lastLocalRepos: local })
     // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
     if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
-    const bases = await this.newBases(project, step.work, stepRepos(step, project))
+    for (const r of switched) {
+      await removeWorktree(r.repo, r.worktree)
+      rmSync(r.worktree, { recursive: true, force: true })
+      log.info('agent', `${step.key}: ${r.repo} moves from its worktree to the main checkout`)
+    }
+    const prev = step.work && switched.length ? { ...step.work, repos: step.work.repos.map((w) => (switched.includes(w) ? { ...w, worktree: w.repo, local: true } : w)) } : step.work
+    const bases = await this.newBases(project, prev, stepRepos(step, project))
     // A restart is told what to do: a question it asked the owner no longer holds the step, and mag's tries start over.
     this.store.updateTask(step.id, {
       status: 'in_progress',
@@ -875,12 +891,15 @@ export class Orchestrator {
       ownerQuestion: null,
       ownerQuestionQueued: false,
       autoFix: { ci: 0, conflict: 0, continue: 0 },
-      work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local, bases),
+      work: this.workFor(prev, project, dir, stepBranch(step.key), stepRepos(step, project), local, bases),
     })
-    // Once per step, before its first session: a restart leaves the main checkouts as they are.
-    const ready = last ? { discuss: [] } : await this.prepareLocal(step.id)
+    // Before the step's first session, and for a repository that moved to its main checkout now (or whose local checks
+    // were just answered): a restart otherwise leaves the main checkouts as they are.
+    const ready = last && !switched.length && !setUpLocal ? { discuss: [] } : await this.prepareLocal(step.id)
     if (!ready) return
     const session = last ?? this.newSession(taskId, 'developer', step.id)
+    // A live process keeps the dirs and prompt it opened with: the moved repository needs a new one (it resumes the session).
+    if (last && switched.length) await this.closeLive(last.id)
     if (!(await this.prepareWorktrees(session))) return
     this.ownerEvent(step.id, `${step.key} ${last ? 'restarted' : 'started'}: "${step.title}"`)
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
@@ -1007,7 +1026,21 @@ export class Orchestrator {
     this.askLocal(stepId, checks)
     const now = this.store.task(stepId)
     if (openLocalChecks(now).length || now.waitingFor) return
-    return this.develop(task.id)
+    return this.develop(task.id, undefined, undefined, true)
+  }
+
+  /**
+   * What the step has done in its worktree of `r`, null if nothing (it may switch to the main checkout): its PR, commits
+   * of its own on the branch, or uncommitted changes. Without the worktree dir (never made, or deleted) only the branch
+   * in the repository counts; a branch that does not exist has nothing.
+   */
+  private async worktreeWork(project: Project, r: RepoWork): Promise<string | null> {
+    if (r.prUrl) return `its PR ${r.prUrl}`
+    const base = baseOf(project, r)
+    if (!existsSync(r.worktree)) return (await hasOwnCommits(r.repo, base, `refs/heads/${r.branch}`)) ? `commits on ${r.branch}` : null
+    if (await hasOwnCommits(r.worktree, base)) return `commits on ${r.branch}`
+    const dirty = await dirtyFiles(r.worktree).catch(() => [])
+    return dirty.length ? `uncommitted changes: ${dirty.slice(0, 3).join(', ')}${dirty.length > 3 ? ', …' : ''}` : null
   }
 
   /** Steps that waited for the given steps (done or canceled now) try to start again; a problem is a new question. */
