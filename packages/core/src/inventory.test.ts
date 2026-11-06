@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { folderLayer, inventoryDiagrams, logicUnit, groupedName, normalizeInventory, parseCall, unitRuleProblems, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
+import { folderLayer, formatDraft, inventoryDiagrams, mergeDraft, type InventoryDraft, logicUnit, groupedName, normalizeInventory, parseCall, unitRuleProblems, validateDiagram, validateLinks, withScenarioLinks, type ArchNode, type ChangeInventory, type ComponentDiagram, type SequenceDiagram } from './index.ts'
 
 const node = (id: string, extra: Partial<ArchNode> = {}): ArchNode => ({ id, name: id, description: '', uses: [], ...extra })
 const architecture: ArchNode[] = [node('poc', { children: [node('orchestrator', { name: 'Orchestrator', layer: 'service' }), node('git', { layer: 'client' })] }), node('github', { kind: '3rd-party API' })]
@@ -238,4 +238,88 @@ test('normalizeInventory / unitRuleProblems: one name per unit; a call is "<targ
   assert.deepEqual(unitRuleProblems(mod({ after: 'Get()' })), ['a changed method needs before, note: its old and new signature and what changes in it'])
   assert.deepEqual(unitRuleProblems(mod({ kind: 'model' })), [], 'only methods')
   assert.deepEqual(unitRuleProblems(mod({ change: 'add', name: 'a, b' })), ['one name per unit: give each its own unit'])
+})
+
+const DRAFT: InventoryDraft = {
+  units: [
+    { id: 'd1', kind: 'method', module: 'core:repo', owner: 'Repo', name: 'Repo.save', change: 'mod', visibility: 'public', before: 'save(id: string): void', after: 'save(id: string, again: boolean): void', hunks: ['H1.1', 'H1.2'] },
+    { id: 'd2', kind: 'method', module: 'core:repo', owner: 'repo', name: 'oldName', change: 'del', visibility: 'private', before: 'oldName(): void', hunks: ['H2.1'] },
+    { id: 'd3', kind: 'method', module: 'core:repo', owner: 'repo', name: 'newName', change: 'add', visibility: 'private', after: 'newName(): void', hunks: ['H2.1'] },
+    { id: 'd4', kind: 'model', module: 'core:repo', owner: 'repo', name: 'Opts', change: 'mod', visibility: 'public', before: 'interface Opts', after: 'interface Opts', hunks: ['H3.1'] },
+  ],
+  noise: [{ hunks: ['H4.1'], reason: 'comments and blank lines only' }],
+}
+
+test('mergeDraft: the reviewer adds meaning to mag\'s units by id, drops or replaces them, and adds its own (prompts-use-the-models-to.6)', () => {
+  const { inventory, errors } = mergeDraft(DRAFT, {
+    summary: ['Saves twice'],
+    units: [
+      { id: 'd1', logic: 'nontrivial', note: 'saves again when asked' },
+      { id: 'd2', drop: true },
+      { id: 'd3', change: 'rename', from: 'oldName', logic: 'trivial', parsed: false },
+      { kind: 'dependency', module: 'core:repo', name: 'core:db', change: 'add', hunks: ['H5.1'] },
+    ],
+    noise: [{ hunks: ['H6.1'], reason: 'formatting' }],
+  })
+  assert.deepEqual(errors, [])
+  assert.deepEqual(inventory.units.map((u) => u.id), ['d1', 'd3', 'd4', 'u4'])
+  const [save, renamed, opts, dep] = inventory.units
+  assert.equal(save.before, 'save(id: string): void', 'the mechanical fields are the draft\'s')
+  assert.equal(save.logic, 'nontrivial')
+  assert.equal(save.note, 'saves again when asked')
+  assert.equal(save.parsed, true)
+  assert.equal(renamed.change, 'rename')
+  assert.equal(renamed.from, 'oldName')
+  assert.equal(renamed.parsed, undefined, 'a rename is the reviewer\'s: its hunks bear out both names')
+  assert.equal(opts.change, 'mod', 'a draft unit left out stays as drafted')
+  assert.equal(dep.parsed, undefined, 'a unit of the reviewer\'s own is never parsed')
+  assert.deepEqual(inventory.noise.map((n) => n.reason), ['comments and blank lines only', 'formatting'])
+})
+
+test('mergeDraft: a draft method left without logic asks for it; parsed is mag\'s, never the agent\'s', () => {
+  const { errors } = mergeDraft(DRAFT, { summary: ['x'], units: [], noise: [] })
+  assert.ok(errors.some((e) => e.includes('Unit d1 (Repo.save): a method needs logic')))
+  const out = mergeDraft(DRAFT, {
+    summary: ['x'],
+    units: [
+      { id: 'd1', logic: 'trivial', name: 'Repo.store', note: 'n' },
+      { id: 'd2', logic: 'trivial', hunks: ['H9.1'] },
+      { id: 'd3', logic: 'trivial' },
+      { id: 'u9', kind: 'method', module: 'core:repo', name: 'other', change: 'add', hunks: ['H1.1'], logic: 'trivial', parsed: true },
+    ],
+    noise: [],
+  })
+  assert.deepEqual(out.errors, [])
+  const by = (id: string) => out.inventory.units.find((u) => u.id === id)!
+  assert.equal(by('d1').parsed, undefined, 'a renamed unit is the reviewer\'s: its name needs its hunks')
+  assert.equal(by('d2').parsed, undefined, 'blocks outside the draft\'s are the reviewer\'s')
+  assert.equal(by('d3').parsed, true)
+  assert.equal(by('u9').parsed, undefined)
+})
+
+test('mergeDraft: a unit of the reviewer\'s own takes the place of the draft units it names, by name or from', () => {
+  const { inventory, errors } = mergeDraft(DRAFT, {
+    summary: ['x'],
+    units: [
+      { kind: 'method', module: 'core:repo', name: 'save', change: 'mod', before: 'a', after: 'b', note: 'n', logic: 'trivial', hunks: ['H1.1', 'H1.2'] },
+      { kind: 'method', module: 'core:repo', name: 'newName', from: 'oldName', change: 'rename', logic: 'trivial', hunks: ['H2.1'] },
+      { kind: 'field', module: 'core:repo', name: 'Opts.depth', change: 'mod', hunks: ['H3.1'] },
+    ],
+    noise: [],
+  })
+  assert.deepEqual(errors, [])
+  assert.deepEqual(inventory.units.map((u) => u.id), ['d4', 'u2', 'u3', 'u4'], 'Opts stays: a field is no model unit')
+  assert.ok(inventory.units.every((u) => !u.parsed || u.id === 'd4'))
+})
+
+test('mergeDraft without a draft is normalizeInventory; formatDraft lists each unit with what it needs', () => {
+  const raw = { summary: ['x'], units: [{ kind: 'config', module: 'm', name: 'X', change: 'mod', hunks: ['H1'] }], noise: [] }
+  assert.deepEqual(mergeDraft({ units: [], noise: [] }, raw), normalizeInventory(raw))
+  assert.deepEqual(mergeDraft({ units: [], noise: [] }, { summary: ['x'], noise: [] }).errors, ['units must be a list'])
+  assert.equal(formatDraft({ units: [], noise: [] }), '')
+  const text = formatDraft(DRAFT)
+  assert.match(text, /^### Draft units/)
+  assert.match(text, /- d1 method mod Repo\.save \[core:repo, owner Repo, public\] before "save\(id: string\): void" after "save\(id: string, again: boolean\): void" hunks H1\.1,H1\.2 — needs logic, note/)
+  assert.match(text, /- d3 method add newName .* after "newName\(\): void" hunks H2\.1 — needs logic$/m)
+  assert.match(text, /comments and blank lines only\): H4\.1\./)
 })

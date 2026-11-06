@@ -10,7 +10,7 @@ import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
-import { ROUND_HUNKS_CHARS, changes, check, factReport, hunkListing } from './core/services/fact/index.ts'
+import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 
@@ -232,7 +232,7 @@ ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
 ${CODE_CHECKS}
-You write the fact, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
+You write the fact, from the draft units and the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
 ${playbookOf(project).fact}
 Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
 ${fact}
@@ -1278,11 +1278,11 @@ export class Orchestrator {
     const project = this.store.project(step.projectId)
     const canvases = Object.values(this.store.data.canvases)
     const plans = stepSet(canvases, stepId, 'plan')
-    const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans)
+    const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans, { draft: true })
     const fact = check(project, changed, stepSet(canvases, stepId, 'fact'), plans)
     this.store.updateTask(stepId, { fact: factRecord(fact, heads) })
-    // A large PR's hunks go through get_pr_changes: the message carries the first ones.
-    return [factReport(fact), hunkListing(changed, ROUND_HUNKS_CHARS)].filter(Boolean).join('\n\n')
+    // A large PR's hunks go through get_pr_changes: the message carries the first ones, and the whole draft.
+    return [factReport(fact), draftListing(changed), hunkListing(changed, ROUND_HUNKS_CHARS)].filter(Boolean).join('\n\n')
   }
 
   /** The user's Restart of a failed review: the current step's PRs are reviewed again, unless the last review covers them. */
@@ -1514,10 +1514,10 @@ export class Orchestrator {
     if (!isReview(work) || !pr) throw new Error(`${work.key} is not a review of a PR`)
     assertNotImported(work, 'read its PR again')
     const project = this.store.project(work.projectId)
-    const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work))
+    const changed = await changes(project, [await reviewTarget(project, work)], reviewSource(work), [], { draft: true })
     const fact = check(project, changed, reviewFacts(Object.values(this.store.data.canvases), workId), null)
     this.store.updateTask(workId, { fact: factRecord(fact, { [pr.repo]: pr.head }) })
-    return [factReport(fact), hunkListing(changed)].filter(Boolean).join('\n\n')
+    return [factReport(fact), draftListing(changed), hunkListing(changed)].filter(Boolean).join('\n\n')
   }
 
   /**

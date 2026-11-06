@@ -3,9 +3,10 @@
 // mag's check of it against the hunks, the Component and Data diagrams mag generates from it and, when there is one, the
 // plan (compare). It knows no step: a step's PRs (against its plan) and a teammate's PR (no plan:
 // reviews-prybraty-spysok-pr-i.1) are two callers of the same diff.
+import { changedUnits, draftable } from '@mag/arch'
 import {
-  diagramWarnings, inventoryDiagrams, logicUnit, parseFlowRef, playbookOf, setRoot, validateLinks, walkArch,
-  type ArchNode, type Canvas, type ChangeInventory, type ComponentDiagram, type DataDiagram, type Diagram, type Project, type SequenceDiagram,
+  EMPTY_DRAFT, diagramWarnings, formatDraft, inventoryDiagrams, logicUnit, parseFlowRef, playbookOf, setRoot, validateLinks, walkArch,
+  type ArchNode, type Canvas, type ChangeInventory, type InventoryDraft, type ComponentDiagram, type DataDiagram, type Diagram, type Project, type SequenceDiagram,
 } from '@mag/core'
 import {
   checkInventory, compare, createDiff, diagramChanges, folderVocabulary, formatComparison, formatFiles, formatHunks, formatInventoryCheck, inventoryBlockers, mergeBlockers, numberHunks, parseSignificance, planOverlay, planVocabulary, withLevels,
@@ -18,6 +19,8 @@ export interface ChangeSource {
   diffHunks(at: string, base: string, head: string): Promise<FileDiff[]>
   /** The lines of one hunk of a file between two commits. */
   hunkLines(at: string, base: string, head: string, hunk: HunkRef): Promise<string[]>
+  /** A file's text at a commit; null when it is not there. Without it there is no draft of the inventory. */
+  fileAt?(at: string, sha: string, path: string): Promise<string | null>
 }
 
 /** One repository's changes: from `base` to `head`, read by the source at `at`. */
@@ -50,6 +53,13 @@ export interface Changes {
   files: FileChange[]
   /** Read without the project's architecture: modules by folder (a target outside the project). */
   outside: boolean
+  /** The inventory's mechanical part mag's parser drafts from the TS/JS files; asked for with `draft`, else empty. */
+  draft: InventoryDraft
+}
+
+export interface ChangesOptions {
+  /** Draft the inventory (changedUnits): it reads the TS/JS files at base and head, so only who writes or reads it asks. */
+  draft?: boolean
 }
 
 export interface Fact extends Changes {
@@ -86,18 +96,46 @@ function outsideVocabulary(plan: Diagram[], diffs: FileDiff[]): Vocabulary {
  * the modules the plan adds, their hunks numbered across the targets. A target outside the project: the plan's
  * modules, then its folders.
  */
-export async function changes(project: Project, targets: ChangeTarget[], source: ChangeSource, plan: Canvas[] = []): Promise<Changes> {
+export async function changes(project: Project, targets: ChangeTarget[], source: ChangeSource, plan: Canvas[] = [], options: ChangesOptions = {}): Promise<Changes> {
   const diagrams = plan.map((c) => c.diagram!)
   const vocabulary = planVocabulary(project.architecture?.modules ?? [], diagrams)
   const repos: FactRepo[] = []
   const files: FileChange[] = []
+  const targetOf: ChangeTarget[] = []
   for (const t of targets) {
     repos.push({ repo: t.repo, name: t.name, baseSha: t.base, headSha: t.head })
     const diffs = await source.diffHunks(t.at, t.base, t.head)
     const words = t.outside ? outsideVocabulary(diagrams, diffs) : vocabulary
-    files.push(...(await createDiff({ diffHunks: async () => diffs }).changedFiles({ path: t.at, name: t.name }, t.base, t.head, words)))
+    const changed = await createDiff({ diffHunks: async () => diffs }).changedFiles({ path: t.at, name: t.name }, t.base, t.head, words)
+    files.push(...changed)
+    targetOf.push(...changed.map(() => t))
   }
-  return { repos, files: numberHunks(files), outside: targets.some((t) => t.outside) }
+  const numbered = numberHunks(files)
+  const draft = options.draft ? await draftOf(numbered, targetOf, source) : EMPTY_DRAFT
+  return { repos, files: numbered, outside: targets.some((t) => t.outside), draft }
+}
+
+/** The draft of the inventory over the TS/JS code files of a module, each read at its target's base and head. */
+async function draftOf(files: FileChange[], targetOf: ChangeTarget[], source: ChangeSource): Promise<InventoryDraft> {
+  const fileAt = source.fileAt?.bind(source)
+  if (!fileAt) return EMPTY_DRAFT
+  const read = (t: ChangeTarget, sha: string, path: string) => fileAt(t.at, sha, path).catch(() => null)
+  // A few reads at a time: a large PR on GitHub is two gh calls per file.
+  const drafted = await inBatches(files, 8, async (f, i) => {
+    if (f.kind !== 'code' || !f.module || !draftable(f.path)) return null
+    const t = targetOf[i]
+    const [before, after] = await Promise.all([f.status === 'add' ? null : read(t, t.base, f.oldPath ?? f.path), f.status === 'del' ? null : read(t, t.head, f.path)])
+    // A file mag could not read on a side it has is left to the reviewer, never drafted as added or removed.
+    if ((f.status !== 'add' && before == null) || (f.status !== 'del' && after == null)) return null
+    return { path: f.path, module: f.module, before, after, hunks: f.hunks }
+  })
+  return changedUnits(drafted.filter((d) => !!d))
+}
+
+async function inBatches<T, R>(items: T[], size: number, f: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < items.length; i += size) out.push(...(await Promise.all(items.slice(i, i + size).map((x, k) => f(x, i + k)))))
+  return out
 }
 
 /** The files without the lines of their hunks: what leaves the main process. */
@@ -166,7 +204,7 @@ export function check(project: Project, changed: Changes, set: Canvas[], plan: C
   const drawn = set.filter((c) => !inventory || !generated(c))
   const flows = inventory ? drawn.flatMap((c) => (flowchartRefusal(inventory, c.diagram!) ? [`"${c.title}" (${c.id}): its of ${(c.diagram as { of?: string }).of ?? '(none)'} is no method of the inventory with logic nontrivial.`] : [])) : []
   return {
-    repos, files, outside: changed.outside, plan, set, canvas, inventory, inventoryCheck, comparison, overlay: plan ? planOverlay(comparison, architecture) : null,
+    repos, files, outside: changed.outside, draft: changed.draft, plan, set, canvas, inventory, inventoryCheck, comparison, overlay: plan ? planOverlay(comparison, architecture) : null,
     warnings: set.length ? [...validateLinks(set), ...drawn.flatMap((c) => diagramWarnings(c.diagram!).map((w) => `"${c.title}" (${c.id}): ${w}`)), ...flows] : [],
     blockers: mergeBlockers(comparison, own),
   }
@@ -218,6 +256,9 @@ export function hunkListing(changed: Pick<Changes, 'files'>, maxChars = Infinity
   const text = formatHunks(changed.files, maxChars)
   return text ? `### Hunks (cite their blocks in the inventory)\n${text}` : ''
 }
+
+/** The draft units of the changes, for whoever writes the inventory; '' without a draft. */
+export const draftListing = (changed: Pick<Changes, 'draft'>) => formatDraft(changed.draft)
 
 const SHA = /^[0-9a-f]{7,64}$/
 

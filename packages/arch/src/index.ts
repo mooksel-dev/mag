@@ -14,6 +14,7 @@ import { collectExports, importsOf } from './parse.ts'
 import { layerRule } from '@mag/core'
 
 export type { ArchModule, ArchReport, ExportedApi, Layer, Violation } from './types.ts'
+export { changedUnits, draftable, type DraftFile } from './units.ts'
 
 export const ARCH_RULES = `Architecture (enforced in this project):
 - Each app has core/lib, core/clients, core/services; everything else in the app is the app layer

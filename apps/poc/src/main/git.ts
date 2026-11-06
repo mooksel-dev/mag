@@ -228,6 +228,18 @@ export async function githubDiffText(repo: string, base: string, head: string): 
   return run('gh', ['api', '-H', 'Accept: application/vnd.github.diff', `repos/${repo}/compare/${base}...${head}`])
 }
 
+/** A file's text at a commit of a GitHub repository (owner/repo), as it is: no trimming, so its lines keep their numbers. */
+export async function githubFileAt(repo: string, sha: string, path: string): Promise<string> {
+  const { stdout } = await exec('gh', ['api', '-H', 'Accept: application/vnd.github.raw', `repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`], { maxBuffer: 64 * 1024 * 1024 })
+  return stdout
+}
+
+/** A file's text at a commit of a local repository, as it is: no trimming, so its lines keep their numbers. */
+export async function fileAt(repo: string, sha: string, path: string): Promise<string> {
+  const { stdout } = await exec('git', ['show', `${sha}:${path}`], { cwd: repo, maxBuffer: 64 * 1024 * 1024 })
+  return stdout
+}
+
 /** The changed files between two commits of a GitHub repository, with its hunks as GitHub gives them (with context). */
 export async function githubDiffHunks(repo: string, base: string, head: string): Promise<FileDiff[]> {
   return parseDiff(await githubDiffText(repo, base, head))

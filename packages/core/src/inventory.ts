@@ -43,6 +43,11 @@ export interface InventoryUnit {
   /** The ids of the blocks of changed lines it rests on (`H3.1`; `H3` for every block of the hunk). */
   hunks: string[]
   note?: string
+  /**
+   * Set by mag only (mergeDraft): the unit is as mag's parser drafted it (its name, module and blocks), so the parse,
+   * not the hunks' text, bears its name out. Never read from what an agent passes.
+   */
+  parsed?: boolean
 }
 
 /** Blocks of changed lines that are no change of the design, with why: formatting, comments, tests, generated code. */
@@ -121,6 +126,80 @@ export function normalizeInventory(raw: unknown): { inventory: ChangeInventory; 
     return out
   })
   return { inventory: { summary, units, noise }, errors }
+}
+
+/**
+ * The mechanical part of an inventory, which mag's parser fills (prompts-use-the-models-to.6): a unit per changed
+ * function, method and type of the TS/JS files (id d1…, kind, module, owner, name, change, visibility, signatures,
+ * blocks) and the blocks that change only comments. The reviewer adds the meaning: logic, note, stored, the units no
+ * parser sees (dependencies, calls, fields, config, renames), and fixes what is wrong.
+ */
+export interface InventoryDraft {
+  units: InventoryUnit[]
+  noise: InventoryNoise[]
+}
+
+export const EMPTY_DRAFT: InventoryDraft = { units: [], noise: [] }
+
+/**
+ * The reviewer's inventory over mag's draft. A unit whose id is a draft unit's builds on it: the fields it gives win,
+ * the rest are the draft's; `drop: true` leaves it out (it is not a change, or a rename unit takes its place). A unit
+ * of its own (an id no draft unit has: a whole unit, as without a draft) takes the place of the draft units of its
+ * module and kind it names, by its name or a rename's from: a reviewer who writes every unit itself gets no doubles.
+ * The other draft units stay as drafted, so each still asks for its meaning (a method its logic). The draft's noise joins the reviewer's. Units left as drafted (name, module, change, blocks
+ * among the draft's) are `parsed`: a rename's old name is the reviewer's, so its hunks still bear it out.
+ */
+export function mergeDraft(draft: InventoryDraft, raw: unknown): { inventory: ChangeInventory; errors: string[] } {
+  let o = raw
+  if (typeof o === 'string') {
+    try {
+      o = JSON.parse(o)
+    } catch {
+      return normalizeInventory(o)
+    }
+  }
+  const r = (o && typeof o === 'object' ? o : {}) as Raw
+  const given = Array.isArray(r.units) ? (r.units as Raw[]) : null
+  const byId = new Map(draft.units.map((u) => [u.id, u]))
+  const named = new Map((given ?? []).filter((u) => byId.has(text(u?.id))).map((u) => [text(u.id), u]))
+  const defined = (u: Raw) => Object.fromEntries(Object.entries(u).filter(([k, v]) => v !== undefined && v !== null && k !== 'drop' && k !== 'parsed'))
+  const own = (given ?? []).filter((u) => !byId.has(text(u?.id)))
+  const names = (u: Raw) => [text(u?.name), text(u?.from)].filter(Boolean).map(unitLeaf)
+  const covered = (d: InventoryUnit) => own.some((u) => text(u?.module) === d.module && text(u?.kind) === d.kind && names(u).includes(unitLeaf(d.name)))
+  const units = [
+    ...draft.units.flatMap((d) => {
+      const u = named.get(d.id)
+      if (u?.drop === true || (!u && covered(d))) return []
+      const { parsed: _, ...base } = d
+      return [u ? { ...base, ...defined(u) } : base]
+    }),
+    ...own.map(defined),
+  ]
+  const noise = [...draft.noise, ...(Array.isArray(r.noise) ? r.noise : [])]
+  const out = normalizeInventory({ ...r, units: given || draft.units.length ? units : r.units, noise })
+  for (const u of out.inventory.units) {
+    const d = byId.get(u.id)
+    if (d && d.name === u.name && d.module === u.module && d.change === u.change && u.hunks.every((h) => d.hunks.includes(h))) u.parsed = true
+  }
+  return out
+}
+
+/** A draft as the reviewer reads it: a line per unit, with what it still needs; '' without one. */
+export function formatDraft(draft: InventoryDraft): string {
+  if (!draft.units.length && !draft.noise.length) return ''
+  const sig = (s: string | undefined) => (s ? JSON.stringify(s) : '-')
+  const lines = draft.units.map((u) => {
+    const sigs = u.change === 'add' ? `after ${sig(u.after)}` : u.change === 'del' ? `before ${sig(u.before)}` : `before ${sig(u.before)} after ${sig(u.after)}`
+    const needs = u.kind === 'method' ? (u.change === 'mod' ? 'logic, note' : 'logic') : u.kind === 'model' ? 'stored when persisted' : ''
+    return `- ${u.id} ${u.kind} ${u.change} ${u.name} [${u.module}${u.owner ? `, owner ${u.owner}` : ''}${u.visibility ? `, ${u.visibility}` : ''}] ${sigs} hunks ${u.hunks.join(',')}${needs ? ` — needs ${needs}` : ''}`
+  })
+  const noise = draft.noise.length ? [`Noise mag drafted (comments and blank lines only): ${draft.noise.flatMap((n) => n.hunks).join(', ')}.`] : []
+  return [
+    `### Draft units (mag parsed the TS/JS files: ${draft.units.length} unit(s); the meaning is yours to add)`,
+    'Pass a draft unit to set_inventory by its id with only what you add or change, e.g. {"id": "d2", "logic": "nontrivial", "note": "…"}; drop: true leaves out one that is no change; the others stay as drafted. Add the units no parser sees as new units.',
+    ...lines,
+    ...noise,
+  ].join('\n')
 }
 
 /** The last segment of a dotted, slashed or `#` name: `save` of `dar_jobs.Repository.save`. */
