@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, turnMeta, interimReplies, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem } from '@mag/core'
+import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
@@ -10,6 +11,7 @@ import { mdSegments } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 import { foldEvents, type EventItem } from './conversationCards'
 import { IntegrationCard } from './Cards'
+import { SearchPalette } from './SearchPalette'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -164,8 +166,10 @@ const AGENT_NAMES: Record<string, string> = { chat: 'agent', groomer: 'owner', d
  * under a small name, runs of events (tools, mag's notices and jobs) folded into one thin line, cards for the rest.
  * `readOnly`: an agent's log, without a composer (ux-odna-rozmova-na-robotu.2): the user talks to the work's owner only.
  * `cards`: what the work needs from the user, after the last item. `name`: over the agent's replies (default by role).
+ * `tasks`: the project's; with them the composer references chats ("@") and a bubble's ref chips open with `onOpenRef`.
+ * `self`: the chat this is, which it does not reference.
  */
-export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards, name }: {
+export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self }: {
   session: AgentSession
   sessions: AgentSession[]
   onOpenTask?: (key: string) => void
@@ -174,6 +178,9 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
   readOnly?: boolean
   cards?: ReactNode
   name?: string
+  tasks?: Task[]
+  onOpenRef?: (ref: ChatRef) => void
+  self?: ChatRef
 }) {
   const busy = session.status === 'running'
   const end = useRef<HTMLDivElement>(null)
@@ -215,6 +222,7 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
                 <div key={n} className="msg user">
                   {i.text && <div className="plain">{i.text}</div>}
                   {i.attachments && <Attachments items={i.attachments} />}
+                  {i.refs && <RefChips refs={i.refs} tasks={tasks ?? []} sessions={sessions} onOpen={onOpenRef} />}
                 </div>
               )
             case 'assistant': {
@@ -255,9 +263,10 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
         queue={liveSession(session)}
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
         commands={chatCommands(session, sessions)}
-        onSend={(text, att) => mag.send(session.id, text, att)}
+        onSend={(text, att, refs) => mag.send(session.id, text, att, refs)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
+        refsFrom={tasks && { tasks, sessions: sessions.filter((s) => s.projectId === session.projectId), self: self ?? { kind: 'topic', id: session.id } }}
       />}
     </div>
   )
@@ -387,6 +396,43 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
   )
 }
 
+/**
+ * Referenced chats as chips: the title, an Archived mark; a click opens the chat (`onOpen`), × removes it (`onRemove`).
+ * A ref to a deleted chat shows as one.
+ */
+function RefChips({ refs, tasks, sessions, onOpen, onRemove }: { refs: ChatRef[]; tasks: Task[]; sessions: AgentSession[]; onOpen?: (ref: ChatRef) => void; onRemove?: (ref: ChatRef) => void }) {
+  return (
+    <div className="refchips">
+      {refs.map((r) => {
+        const t = resolveRef(r, tasks, sessions)
+        const label = t ? `${t.key ? `${t.key} · ` : ''}${t.title}` : 'Deleted chat'
+        return (
+          <span key={`${r.kind}:${r.id}`} className={`refchip${t ? '' : ' gone'}`}>
+            <button type="button" className="link" disabled={!t || !onOpen} title={t ? `Open ${label}` : undefined} onClick={() => onOpen?.(r)}>
+              @ {label}{t?.archived && <span className="sparch">Archived</span>}
+            </button>
+            {onRemove && <button type="button" className="x" aria-label={`Remove ${label}`} onClick={() => onRemove(r)}>×</button>}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Composers that take refs, the open conversation's last: the row menu's "Reference in current chat" adds to it. */
+const refTargets: { self: ChatRef | undefined; add: (ref: ChatRef) => void }[] = []
+
+/** Whether "Reference in current chat" can add `ref`: a conversation's composer is open and it is another chat. */
+export function canReference(ref: ChatRef): boolean {
+  const target = refTargets.at(-1)
+  return !!target && !(target.self?.kind === ref.kind && target.self.id === ref.id)
+}
+
+/** The row menu's "Reference in current chat": a chip in the open conversation's composer. */
+export function referenceInCurrentChat(ref: ChatRef) {
+  if (canReference(ref)) refTargets.at(-1)!.add(ref)
+}
+
 export function Composer({
   busy,
   queue = false,
@@ -398,6 +444,7 @@ export function Composer({
   intent,
   onFiles,
   autoFocus,
+  refsFrom,
 }: {
   busy: boolean
   /** Messages may be sent while busy: the agent gets them in its current turn (live sessions). */
@@ -405,7 +452,8 @@ export function Composer({
   placeholder: string
   /** Slash commands to offer after "/", without the slash; empty = text starting with "/" is plain text. */
   commands?: string[]
-  onSend: (text: string, attachments: Attachment[]) => Promise<void>
+  /** `refs`: the chats referenced ("@"), only with refsFrom. */
+  onSend: (text: string, attachments: Attachment[], refs: ChatRef[]) => Promise<void>
   onStop?: () => void
   /** Shown next to the attach button, e.g. the model chip. */
   chip?: ReactNode
@@ -414,9 +462,14 @@ export function Composer({
   /** Files dropped or picked go here first; true = taken (Home: a review's .zip imports), else they are attached. */
   onFiles?: (files: File[]) => boolean
   autoFocus?: boolean
+  /** The project's chats to reference: "@" or the @ button pick one (SearchPalette) as a chip; `self` is this chat. */
+  refsFrom?: { tasks: Task[]; sessions: AgentSession[]; self?: ChatRef }
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
+  const [refs, setRefs] = useState<ChatRef[]>([])
+  /** The palette is open; `at`: where the "@" that opened it is in the text (null: the button). */
+  const [picking, setPicking] = useState<{ at: number | null } | null>(null)
   const [drag, setDrag] = useState(false)
   const [sel, setSel] = useState(0)
   const [menuClosed, setMenuClosed] = useState(false)
@@ -449,6 +502,30 @@ export function Composer({
     el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px` // + borders (box-sizing: border-box)
   }, [text])
 
+  const canRef = !!refsFrom
+  const selfKey = refsFrom?.self && `${refsFrom.self.kind}:${refsFrom.self.id}`
+  useEffect(() => {
+    if (!canRef) return
+    const target = { self: refsFrom?.self, add: (ref: ChatRef) => { setRefs((x) => uniqueRefs([...x, ref])); ta.current?.focus() } }
+    refTargets.push(target)
+    return () => { refTargets.splice(refTargets.indexOf(target), 1) }
+    // The target changes only with the chat it is; add uses setters and a ref.
+  }, [canRef, selfKey])
+  const pickRef = (ref: ChatRef) => {
+    const at = picking?.at
+    // The "@" that opened the palette gives way to the chip.
+    if (at != null && text[at] === '@') setText(text.slice(0, at) + text.slice(at + 1))
+    if (!(refsFrom?.self?.kind === ref.kind && refsFrom.self.id === ref.id)) setRefs((x) => uniqueRefs([...x, ref]))
+    ta.current?.focus()
+  }
+  const onText = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    const at = e.target.selectionStart - 1
+    // "@" typed at the start or after a space opens the palette.
+    if (canRef && value.length === text.length + 1 && value[at] === '@' && (at === 0 || /\s/.test(value[at - 1]))) setPicking({ at })
+    setText(value)
+  }
+
   const add = async (list: FileList | File[]) => {
     if (onFiles?.(Array.from(list))) return
     for (const f of Array.from(list)) {
@@ -460,16 +537,19 @@ export function Composer({
     }
   }
   const submit = async () => {
-    if ((busy && !queue) || (!text.trim() && !files.length)) return
-    // Files never go with a command; they stay for the next message. A failed send keeps both; the caller shows why.
+    if ((busy && !queue) || (!text.trim() && !files.length && !refs.length)) return
+    // Files and refs never go with a command; they stay for the next message. A failed send keeps all; the caller shows why.
     try {
-      await onSend(text.trim(), isCommand ? [] : files)
+      await onSend(text.trim(), isCommand ? [] : files, isCommand ? [] : refs)
     } catch (err) {
       console.error(err)
       return
     }
     setText('')
-    if (!isCommand) setFiles([])
+    if (!isCommand) {
+      setFiles([])
+      setRefs([])
+    }
   }
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return
@@ -497,7 +577,7 @@ export function Composer({
     }
   }
 
-  const keys = `↵ to send, ⇧↵ for a new line, paste or drop screenshots${commands.length ? ', / for commands' : ''}`
+  const keys = `↵ to send, ⇧↵ for a new line, paste or drop screenshots${commands.length ? ', / for commands' : ''}${refsFrom ? ', @ to reference a chat' : ''}`
   return (
     <form
       className="composer"
@@ -524,11 +604,12 @@ export function Composer({
         </div>
       )}
       <div className={`composerbox ${drag ? 'drag' : ''}`}>
+        {refsFrom && refs.length > 0 && <RefChips refs={refs} tasks={refsFrom.tasks} sessions={refsFrom.sessions} onRemove={(r) => setRefs((x) => x.filter((y) => y !== r))} />}
         {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
         <textarea
           ref={ta}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={onText}
           onPaste={(e) => {
             const imgs = Array.from(e.clipboardData.files)
             if (imgs.length) { e.preventDefault(); void add(imgs) }
@@ -542,6 +623,7 @@ export function Composer({
         <div className="composerbar">
           <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>＋</button>
           <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
+          {refsFrom && <button type="button" className="iconbtn" title={isCommand ? 'Commands take no references' : 'Reference another chat: its summary goes with the message (or type @)'} aria-label="Reference a chat" disabled={isCommand} onClick={() => setPicking({ at: null })}>@</button>}
           {chip}
           <div className="grow" />
           {commands.length > 0 && <span className="muted small nowrap">/ commands</span>}
@@ -552,6 +634,11 @@ export function Composer({
           )}
         </div>
       </div>
+      {/* Out of the form: the palette's rows are buttons. */}
+      {picking && refsFrom && createPortal(
+        <SearchPalette tasks={refsFrom.tasks} sessions={refsFrom.sessions} placeholder="Reference a chat or a work, archive included" onPick={pickRef} onClose={() => { setPicking(null); ta.current?.focus() }} />,
+        document.body,
+      )}
     </form>
   )
 }

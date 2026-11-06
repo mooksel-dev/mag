@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -183,7 +183,8 @@ export interface MagApi {
   /** Agent providers with detection state and their models. */
   listAgents(): Promise<AgentInfo[]>
   repoInfo(path: string): Promise<{ git: boolean; origin: string | null }>
-  send(sessionId: string, text: string, attachments?: Attachment[]): Promise<void>
+  /** refs: chats the message references ("@"); the agent gets their summaries with it. */
+  send(sessionId: string, text: string, attachments?: Attachment[], refs?: ChatRef[]): Promise<void>
   /** New project chat; returns its session id. */
   newChat(projectId: string): Promise<string>
   /** Branch: a new topic forking the topic's agent session (all its context); returns the new topic's id. */

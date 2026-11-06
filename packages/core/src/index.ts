@@ -11,6 +11,7 @@ import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
 import type { SidebarNode } from './sidebar.ts'
 import type { ChatSummary } from './summary.ts'
+import type { ChatRef } from './work-list.ts'
 
 export * from './arch.ts'
 export * from './canvases.ts'
@@ -23,6 +24,7 @@ export * from './sidebar.ts'
 export * from './summary.ts'
 export * from './playbook.ts'
 export * from './pr-review.ts'
+export * from './references.ts'
 export * from './review-report.ts'
 export * from './review-bundle.ts'
 export * from './work-list.ts'
@@ -836,7 +838,8 @@ export interface CanvasRef {
 }
 
 export type ChatItem =
-  | { kind: 'user'; text: string; attachments?: Attachment[]; at: number }
+  /** refs: chats the message references ("@"); the agent gets their summaries with it. */
+  | { kind: 'user'; text: string; attachments?: Attachment[]; refs?: ChatRef[]; at: number }
   /**
    * mag's instructions to an agent (a review's job, a review round, a developer's job): the agent gets `text` as its
    * prompt; the chat shows `title` as a card that expands to the text.

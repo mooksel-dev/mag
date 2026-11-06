@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type ChatRef, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -278,7 +278,7 @@ app.whenReady().then(async () => {
   handle('arch:run', (_, projectId: string) => orch.architect(projectId))
   handle('agents:list', () => orch.agents())
   handle('repo:info', (_, path: string) => repoInfo(path))
-  handle('session:send', (_, sid: string, text: string, attachments?: Attachment[]) => orch.send(sid, text, attachments))
+  handle('session:send', (_, sid: string, text: string, attachments?: Attachment[], refs?: ChatRef[]) => orch.send(sid, text, attachments, undefined, refs))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
   handle('chat:branch', (_, sessionId: string) => orch.branchChat(sessionId))
   handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))

@@ -35,11 +35,15 @@ export function isArchived(item: AgentSession | Task): boolean {
   return !item.parentId && (!!item.closedAt || item.status === 'canceled')
 }
 
-/** Archived, with something to summarize, and without a summary covering its last item. */
-export function needsSummary(item: AgentSession | Task, sessions: AgentSession[]): boolean {
-  if (!isArchived(item)) return false
+/** Something to summarize and no summary covering its last item, archived or not (a referenced chat). */
+export function summaryStale(item: AgentSession | Task, sessions: AgentSession[]): boolean {
   if (!isTask(item) && said(item.items).length === 0) return false
   return item.summaryAt == null || !item.summary || item.summaryAt < summaryCovers(item, sessions)
+}
+
+/** Archived, with something to summarize, and without a summary covering its last item. */
+export function needsSummary(item: AgentSession | Task, sessions: AgentSession[]): boolean {
+  return isArchived(item) && summaryStale(item, sessions)
 }
 
 function transcript(items: ChatItem[]): string {

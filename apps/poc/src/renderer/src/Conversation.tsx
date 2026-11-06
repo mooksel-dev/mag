@@ -16,6 +16,7 @@ import {
   type Attachment,
   type CanvasRef,
   type CardMove,
+  type ChatRef,
   type ReviewStage,
   type StepLine,
   type Task,
@@ -123,6 +124,9 @@ export function WorkTabs({ work, state, tab, onTab }: { work: Task; state: AppSt
 }
 
 /** The header's ⋯: the same menu as the row's in the sidebar. */
+/** What opens a referenced chat: its topic, or its work or review. */
+const refSelection = (ref: ChatRef): Selection => ({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })
+
 function HeadMenu({ card, onSelect, onGone }: { card: MenuCard; onSelect: (s: Selection) => void; onGone: () => void }) {
   const [open, setOpen] = useState(false)
   return (
@@ -210,7 +214,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
           <div className="screenmain">
             {tab === 'conversation' ? (
               owner ? (
-                <Chat session={owner} name="owner" sessions={state.sessions} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
+                <Chat session={owner} name="owner" sessions={state.sessions} tasks={tasks} self={{ kind: 'task', id: work.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
               ) : (
                 <div className="chatbox">
                   <div className="items">
@@ -258,6 +262,8 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
   onDeleted: () => void
 }) {
   const project = state.projects.find((p) => p.id === topic.projectId)
+  const tasks = state.tasks.filter((t) => t.projectId === topic.projectId)
+  const refsFrom = { tasks, sessions: state.sessions.filter((s) => s.projectId === topic.projectId), self: { kind: 'topic' as const, id: topic.id } }
   const parent = topic.branchOf ? state.sessions.find((s) => s.id === topic.branchOf) : undefined
   const running = topic.status === 'running'
   const drawer = useDrawer()
@@ -283,7 +289,7 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
         <div className="screenbody">
           <div className="screenmain">
             {topic.items.length ? (
-              <Chat session={topic} sessions={state.sessions} onOpenTask={onOpenKey} placeholder="Reply…" chip={chip} />
+              <Chat session={topic} sessions={state.sessions} tasks={tasks} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Reply…" chip={chip} />
             ) : (
               <div className="chatbox">
                 <div className="items">
@@ -292,7 +298,7 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
                     plans a work with you; it never edits code itself.
                   </p>
                 </div>
-                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[]) => mag.send(topic.id, t, a)} chip={chip} />
+                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom} />
               </div>
             )}
           </div>
