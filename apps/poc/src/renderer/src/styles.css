@@ -616,7 +616,7 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 
 /* Local mode (T-50): the Start popup and the cards of local checks. */
 .startpop { position: relative; display: inline-block; }
-.startlist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 6; width: 280px; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); text-align: left; }
+.startlist { position: fixed; z-index: 6; width: 280px; max-width: calc(100vw - 16px); overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); text-align: left; }
 .startrepo { display: flex; gap: 8px; align-items: center; padding: 3px 2px; cursor: pointer; }
 .startlist > button { align-self: flex-end; margin-top: 4px; }
 .localchecks { display: flex; flex-direction: column; gap: 6px; }
