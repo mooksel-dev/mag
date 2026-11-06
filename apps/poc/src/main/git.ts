@@ -21,6 +21,16 @@ export async function repoInfo(repo: string): Promise<{ git: boolean; origin: st
   return { git, origin }
 }
 
+/**
+ * The repository's own base branch: the branch origin/HEAD points at (e.g. master). Without a local origin/HEAD it asks
+ * the remote once (git remote set-head --auto); `fallback` (the project's base branch) if that fails too, e.g. no remote.
+ */
+export async function defaultBranch(repo: string, fallback: string): Promise<string> {
+  const head = () => run('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repo)
+  const ref = await head().catch(async () => ((await ok(run('git', ['remote', 'set-head', 'origin', '--auto'], repo))) ? head().catch(() => '') : ''))
+  return ref.replace(/^origin\//, '') || fallback
+}
+
 /** Create (or reuse) a worktree for the task branch, starting from the freshest base. */
 export async function prepareWorktree(repo: string, base: string, branch: string, dir: string) {
   if (existsSync(dir)) return
@@ -104,11 +114,12 @@ export async function hasOwnCommits(worktree: string, base: string, ref = 'HEAD'
 }
 
 /**
- * Repositories (RepoWork.repo) of a task whose branch has commits of its own. Merged ones count as changed. A local
- * repository counts by its branch: the user may have switched the checkout since.
+ * Repositories (RepoWork.repo) of a task whose branch has commits of its own, each against its base (`fallback`, the
+ * project's, for a repository without one). Merged ones count as changed. A local repository counts by its branch: the
+ * user may have switched the checkout since.
  */
-export async function changedRepos(work: TaskWork, base: string): Promise<string[]> {
-  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, base, r.local ? r.branch : 'HEAD'))))
+export async function changedRepos(work: TaskWork, fallback: string): Promise<string[]> {
+  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, r.base ?? fallback, r.local ? r.branch : 'HEAD'))))
   return work.repos.filter((_, i) => flags[i]).map((r) => r.repo)
 }
 

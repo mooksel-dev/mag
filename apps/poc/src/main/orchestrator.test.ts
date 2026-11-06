@@ -836,6 +836,32 @@ test('develop: worktrees only for the step\'s repos; add_repo adds one mid-step 
   assert.equal(store.task(step.id).work!.repos.length, 2)
 })
 
+test('develop: a repository on master gets its worktree from master; the base is recorded, named and protected', async () => {
+  const { dir, store, orch, project, task } = setup()
+  const origin = join(dir, 'origin', 'lisa')
+  mkdirSync(origin, { recursive: true })
+  execFileSync('git', ['init', '-q', '-b', 'master'], { cwd: origin })
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: origin })
+  const lisa = join(dir, 'repos', 'lisa')
+  execFileSync('git', ['clone', '-q', origin, lisa])
+  const app = gitRepo(join(dir, 'repos', 'app'))
+  store.updateProject(project.id, { repos: [lisa, app] })
+  store.updateTask(task.id, { status: 'ready' })
+  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [lisa] })
+  await orch.develop(task.id)
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.base]), [[lisa, 'master']])
+  assert.equal(git(work.repos[0].worktree, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'master'))
+  const spec = specs.at(-1)!
+  assert.match(spec.appendSystemPrompt!, /- lisa: .* \(branch mag\/login-1, base master\)/)
+  assert.match(spec.appendSystemPrompt!, /pushes to main, master\./)
+  for (const rule of ['Bash(git push * master)', 'Bash(git push *:master)', 'Bash(git push * main)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
+
+  // A repository added mid-step without a remote: the project's base.
+  await orch.addRepo(step.id, 'app')
+  assert.deepEqual(store.task(step.id).work!.repos.map((r) => r.base), ['master', 'main'])
+})
+
 test('develop: a step without repos gets its dir and no worktree', async () => {
   const { store, orch, project, task, dir } = setup()
   store.updateTask(task.id, { status: 'ready' })
@@ -873,7 +899,7 @@ test('develop: a local repository works in the main checkout on the step branch 
   assert.equal(sessions().length, 1)
   const spec = specs.at(-1)!
   assert.ok(spec.addDirs?.includes(app), 'the agent may change the main checkout')
-  assert.match(spec.appendSystemPrompt!, /- app: .*app \(local: the user's main checkout, not a worktree; branch mag\/login-1\)/)
+  assert.match(spec.appendSystemPrompt!, /- app: .*app \(local: the user's main checkout, not a worktree; branch mag\/login-1, base main\)/)
 
   // The step is done: the checkout stays on its branch, the worktree goes. (The first stop is continued once.)
   opened.at(-1)!.emit({ type: 'turn.done', ok: true })

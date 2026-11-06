@@ -96,7 +96,8 @@ function question(check: LocalCheck, base: string): string {
 export function LocalChecks({ step, project, compact }: { step: Task; project?: Project; compact?: boolean }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const base = project?.baseBranch ?? 'main'
+  // Each repository's own base (RepoWork.base), else the project's.
+  const baseOf = (repo: string) => step.work?.repos.find((r) => r.repo === repo)?.base ?? project?.baseBranch ?? 'main'
   const checks = openLocalChecks(step)
   if (!checks.length && !step.waitingFor) return null
   const choose = (repo: string, choice: LocalChoice) => (e: React.MouseEvent) => {
@@ -109,7 +110,7 @@ export function LocalChecks({ step, project, compact }: { step: Task; project?: 
     <div className={`localchecks ${compact ? 'compact' : ''}`}>
       {checks.map((c) => (
         <div key={c.repo} className="banner localcheck">
-          <span className="grow">{question(c, base)}</span>
+          <span className="grow">{question(c, baseOf(c.repo))}</span>
           {c.error && <span className="localerror">{c.error}</span>}
           <span className="localbtns">
             {localOptions(c).map((o, i) => (

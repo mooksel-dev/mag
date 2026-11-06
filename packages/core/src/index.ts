@@ -165,6 +165,8 @@ export interface RepoWork {
   checkError?: string | null
   /** Head commit of the open PR at the last check: a new one asks for another agent review (T-55.1). */
   prHead?: string | null
+  /** The repository's base branch (its origin/HEAD), found when it joined the step; missing (older works): the project's. */
+  base?: string
   /** Local mode (T-50): the step works in the repository's main checkout (worktree === repo), on its branch. */
   local?: boolean
   /** Local mode: the user's uncommitted files the step works on top of (their Ignore); never the agent's to commit. */
