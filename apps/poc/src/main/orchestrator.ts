@@ -8,7 +8,7 @@ import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
@@ -45,8 +45,17 @@ in this chat; the user approves the plan (the work goes to ready) and cancels it
 never edit it, because developers change it in their own worktrees.
 Keep chat replies short, with your position in them; the doc carries the detail.`
 
-const workLines = (work: TaskWork) =>
-  work.repos.map((r) => `- ${repoWorkName(work, r)}: ${r.worktree} (${r.local ? "local: the user's main checkout, not a worktree; " : ''}branch ${r.branch}${r.prUrl ? `, PR ${r.prUrl}` : ''})`)
+/** A repository's base branch: its own (RepoWork.base), else the project's, for works from before it was recorded. */
+const baseOf = (project: Project, r: RepoWork) => r.base ?? project.baseBranch
+
+/** Every base branch of a work's repositories and the project's, once each: what developers never push to. */
+const basesOf = (project: Project, work: TaskWork | null) => [...new Set([project.baseBranch, ...(work?.repos ?? []).map((r) => baseOf(project, r))])]
+
+const workLines = (project: Project, work: TaskWork) =>
+  work.repos.map(
+    (r) =>
+      `- ${repoWorkName(work, r)}: ${r.worktree} (${r.local ? "local: the user's main checkout, not a worktree; " : ''}branch ${r.branch}, base ${baseOf(project, r)}${r.prUrl ? `, PR ${r.prUrl}` : ''})`,
+  )
 
 /** Local repositories where the user's uncommitted files stayed (their Ignore, T-50). */
 const foreignLines = (work: TaskWork) =>
@@ -57,27 +66,26 @@ const foreignLines = (work: TaskWork) =>
   )
 
 /** The developer's first message when the user chose Discuss on local checks (T-50). */
-const discussText = (checks: LocalCheck[], base: string) =>
-  `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
+const discussText = (checks: LocalCheck[], baseFor: (repo: string) => string) =>
+  `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, baseFor(c.repo))}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
 
 /** What a developer is told about PRs and GitHub, with why: the same for a step and a legacy task. */
-const developerRules = (base: string) =>
-  `After opening a PR, call set_pr with its URL and the repo: that is how mag follows its CI, review and merge. A repo without changes gets no PR.
-Only the user merges, after the review: mag blocks merges and pushes to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}", so the team can tell an agent wrote it.`
+const developerRules = (bases: string[]) =>
+  `Open each PR against its repo's base branch. After opening a PR, call set_pr with its URL and the repo: that is how mag follows its CI, review and merge. A repo without changes gets no PR.
+Only the user merges, after the review: mag blocks merges and pushes to ${bases.join(', ')}. Anything you post on GitHub starts with "${AGENT_MARK}", so the team can tell an agent wrote it.`
 
 /** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
-  const base = project.baseBranch
   const playbook = playbookOf(project)
   const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
   const repos = work.repos.length
-    ? `The step changes these repositories, each on its own branch ${work.repos.some((r) => r.local) ? 'in a git worktree there or (local) right in the main checkout' : 'in its own git worktree there'}:\n${workLines(work).join('\n')}${foreignLines(work).join('')}`
+    ? `The step changes these repositories, each on its own branch ${work.repos.some((r) => r.local) ? 'in a git worktree there or (local) right in the main checkout' : 'in its own git worktree there'}:\n${workLines(project, work).join('\n')}${foreignLines(work).join('')}`
     : 'The plan gives this step no repository to change.'
   const rest = others.length
     ? `\nRead the other project repositories in their main checkout, never change them there: ${others.join(', ')}. To change one, call add_repo(repo) first; it gets a worktree (or the main checkout, if the task works there locally) in this step.`
     : ''
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
-Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
+Your cwd and worktrees are for this step only; each repository starts from its fresh base branch. ${repos}${rest}
 
 ${orientation(playbook.reviewRounds)}
 
@@ -87,7 +95,7 @@ The target picture is the task's diagrams (get_diagrams); your part is get_diagr
 Then work following the project's playbook:
 ${playbook.step}
 ${DEVELOPER_BAR}
-${developerRules(base)} If the step has no code changes, close it with complete_step.
+${developerRules(basesOf(project, work))} If the step has no code changes, close it with complete_step.
 If the plan no longer fits reality, don't rewrite it on your own, because the user approved it: call set_needs_input with a one-line reason,
 explain it in this chat and stop. The same for a decision you cannot make. The work's owner, who planned it, gets the
 question first and answers here or asks the user. When the answer has come here (the owner's or the user's),
@@ -98,11 +106,10 @@ ${stanceLine(playbook)}`
 
 /** Developer of a legacy task (started before T-28): the whole task in one session. */
 const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean) => {
-  const repos = workLines(work)
-  const base = project.baseBranch
+  const repos = workLines(project, work)
   const playbook = playbookOf(project)
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
-Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
+Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on its base branch:
 ${repos.join('\n')}
 
 ${orientation(playbook.reviewRounds)}
@@ -112,7 +119,7 @@ First call get_task and get_doc. The doc is the agreed plan; follow it.${checkli
 Then work following the project's playbook:
 ${playbook.step}
 ${DEVELOPER_BAR}
-${developerRules(base)} One PR per changed repo.
+${developerRules(basesOf(project, work))} One PR per changed repo.
 If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
 Keep chat replies short.
 ${stanceLine(playbook)}`
@@ -360,7 +367,8 @@ const NO_PR_WRITES = [
   ...['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input'].flatMap((flag) => [`Bash(gh api ${flag} *)`, `Bash(gh api * ${flag} *)`]),
   'Bash(git push:*)',
 ]
-const noPushTo = (base: string) => [`Bash(git push * ${base})`, `Bash(git push * ${base} *)`, `Bash(git push *:${base})`, `Bash(git push *:${base} *)`, `Bash(git push *refs/heads/${base}*)`]
+const noPushTo = (bases: string[]) =>
+  bases.flatMap((base) => [`Bash(git push * ${base})`, `Bash(git push * ${base} *)`, `Bash(git push *:${base})`, `Bash(git push *:${base} *)`, `Bash(git push *refs/heads/${base}*)`])
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
@@ -842,7 +850,8 @@ export class Orchestrator {
       const last = this.lastSession(taskId, 'developer')
       if (last && this.isRunning(last.id)) throw new Error('Developer is still working')
       const dir = task.work?.dir ?? join(this.paths.worktreesDir, project.id, task.key)
-      this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`, project.repos) })
+      const bases = await this.newBases(project, task.work, project.repos)
+      this.store.updateTask(taskId, { status: 'in_progress', needsInput: null, work: this.workFor(task.work, project, dir, `mag/${task.key.toLowerCase()}-${slug(task.title)}`, project.repos, [], bases) })
       const session = last ?? this.newSession(taskId, 'developer')
       if (!(await this.prepareWorktrees(session))) return
       return this.run(session, `Implement task ${task.key}. Start with get_task and get_doc.`)
@@ -858,6 +867,7 @@ export class Orchestrator {
     // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
     if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
     const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
+    const bases = await this.newBases(project, step.work, stepRepos(step, project))
     // A restart is told what to do: a question it asked the owner no longer holds the step, and mag's tries start over.
     this.store.updateTask(step.id, {
       status: 'in_progress',
@@ -865,7 +875,7 @@ export class Orchestrator {
       ownerQuestion: null,
       ownerQuestionQueued: false,
       autoFix: { ci: 0, conflict: 0, continue: 0 },
-      work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local),
+      work: this.workFor(step.work, project, dir, stepBranch(step.key), stepRepos(step, project), local, bases),
     })
     // Once per step, before its first session: a restart leaves the main checkouts as they are.
     const ready = last ? { discuss: [] } : await this.prepareLocal(step.id)
@@ -874,7 +884,11 @@ export class Orchestrator {
     if (!(await this.prepareWorktrees(session))) return
     this.ownerEvent(step.id, `${step.key} ${last ? 'restarted' : 'started'}: "${step.title}"`)
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
-    const talk = ready.discuss.length ? [intro, discussText(ready.discuss, project.baseBranch)].join('\n\n') : undefined
+    const repoBase = (repo: string) => {
+      const r = this.store.task(step.id).work?.repos.find((w) => w.repo === repo)
+      return r ? baseOf(project, r) : project.baseBranch
+    }
+    const talk = ready.discuss.length ? [intro, discussText(ready.discuss, repoBase)].join('\n\n') : undefined
     // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
     if (talk) session.items.push({ kind: 'job', title: `Implement ${step.key}`, text: talk, at: Date.now() })
     if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
@@ -888,15 +902,15 @@ export class Orchestrator {
 
   /**
    * What keeps the step from working in `repo`'s main checkout (T-50), null if nothing: another step holds it, or it
-   * has uncommitted changes or is on a branch other than base, unless it is on the step's branch already.
+   * has uncommitted changes or is on a branch other than `base` (the repository's), unless it is on the step's branch already.
    */
-  async checkLocal(step: Task, repo: string): Promise<LocalCheck | null> {
+  async checkLocal(step: Task, repo: string, base: string): Promise<LocalCheck | null> {
     const holder = localHolder(repo, this.others(step.id))
     if (holder) return { repo, busyBy: holder.key, dirty: [], branch: null }
     const branch = await currentBranch(repo)
     if (branch === stepBranch(step.key)) return null
     const dirty = await dirtyFiles(repo)
-    const other = branch === this.store.project(step.projectId).baseBranch ? null : branch || 'a detached HEAD'
+    const other = branch === base ? null : branch || 'a detached HEAD'
     return dirty.length || other ? { repo, busyBy: null, dirty, branch: other } : null
   }
 
@@ -914,14 +928,14 @@ export class Orchestrator {
     let r: RepoWork | undefined
     try {
       for (r of local) {
-        const check = await this.checkLocal(step, r.repo)
+        const check = await this.checkLocal(step, r.repo, baseOf(project, r))
         if (check) checks.push(check)
       }
       if (checks.length) {
         this.askLocal(stepId, [...discuss, ...checks])
         return null
       }
-      for (r of local) await checkoutLocal(r.repo, project.baseBranch, r.branch)
+      for (r of local) await checkoutLocal(r.repo, baseOf(project, r), r.branch)
     } catch (e) {
       log.error('agent', `local checkout for ${step.key} in ${r?.repo} failed`, e)
       this.store.updateTask(step.parentId!, { needsInput: `Could not check out ${r?.branch} in ${r?.repo}: ${(e as Error).message}` })
@@ -955,9 +969,9 @@ export class Orchestrator {
     const check = openLocalChecks(step).find((c) => c.repo === repo)
     const waiting = step.waitingFor?.repo === repo
     if (!check && !(waiting && choice === 'worktree')) throw new Error(`${step.key} has no question about ${repo}`)
-    if (check && !localOptions(check).includes(choice)) throw new Error(`${choice} is not an answer to ${localCheckText(check, project.baseBranch)}`)
     const r = step.work.repos.find((w) => w.repo === repo)
     if (!r) throw new Error(`${step.key} does not work in ${repo}`)
+    if (check && !localOptions(check).includes(choice)) throw new Error(`${choice} is not an answer to ${localCheckText(check, baseOf(project, r))}`)
     const repoPatch = (patch: Partial<RepoWork>) => {
       const work = this.store.task(stepId).work!
       return { ...work, repos: work.repos.map((w) => (w.repo === repo ? { ...w, ...patch } : w)) }
@@ -968,7 +982,8 @@ export class Orchestrator {
       this.store.updateTask(task.id, { localRepos: local })
       const work = this.store.task(stepId).work!
       const rest = { ...work, repos: work.repos.filter((w) => w.repo !== repo) }
-      patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local), ...(waiting && { waitingFor: null }) }
+      const bases = r.base ? { [repo]: r.base } : r.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
+      patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local, bases), ...(waiting && { waitingFor: null }) }
     } else if (choice === 'wait') patch = { waitingFor: { key: check!.busyBy!, repo } }
     else if (choice !== 'discuss') {
       // Another step may have taken the checkout since the card came up.
@@ -977,7 +992,7 @@ export class Orchestrator {
       if (holder) return failed({ repo, busyBy: holder.key, dirty: [], branch: null })
       try {
         if (choice === 'stash') await stash(repo, `mag: before ${step.key}`)
-        await checkoutLocal(repo, project.baseBranch, r.branch)
+        await checkoutLocal(repo, baseOf(project, r), r.branch)
       } catch (e) {
         log.warn('agent', `${step.key}: ${choice} in ${repo} failed: ${(e as Error).message}`)
         return failed({ ...check!, error: (e as Error).message })
@@ -1051,20 +1066,37 @@ export class Orchestrator {
 
   /**
    * A workspace in `dir`: the existing work, plus a worktree on `branch` for every repository of `repos` it does not
-   * cover yet; one of `localRepos` works in its main checkout instead (T-50).
+   * cover yet; one of `localRepos` works in its main checkout instead (T-50). `bases` (repository → base branch, see
+   * newBases) is recorded on the repositories added and on known ones without a base yet; one missing there falls back
+   * to the project's.
    */
-  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[], localRepos: string[] = []): TaskWork {
+  private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[], localRepos: string[] = [], bases: Record<string, string> = {}): TaskWork {
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
-    const known = prev?.repos ?? []
+    const known = (prev?.repos ?? []).map((w) => (!w.base && bases[w.repo] ? { ...w, base: bases[w.repo] } : w))
     const fresh = repos.filter((r) => project.repos.includes(r) && !known.some((w) => w.repo === r))
     const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
-    const added = fresh.map((repo, i): RepoWork =>
-      localRepos.includes(repo)
+    const added = fresh.map((repo, i): RepoWork => ({
+      ...(localRepos.includes(repo)
         ? { repo, branch, worktree: repo, local: true, prUrl: null, prState: null, checkError: null }
-        : { repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null },
-    )
+        : { repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null }),
+      ...(bases[repo] && { base: bases[repo] }),
+    }))
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
+  }
+
+  /**
+   * The base branch (see defaultBranch) of every repository of `repos` that `prev` does not have yet, and of every one it
+   * has without a base and without a PR (a work from before RepoWork.base, e.g. a start that failed on a master repo):
+   * what workFor records. A repository with a PR keeps the project's base its PR was opened against.
+   */
+  private async newBases(project: Project, prev: TaskWork | null, repos: string[]): Promise<Record<string, string>> {
+    const unknown = (r: string) => {
+      const w = prev?.repos.find((x) => x.repo === r)
+      return !w || (!w.base && !w.prUrl)
+    }
+    const todo = [...new Set([...repos, ...(prev?.repos ?? []).map((w) => w.repo)])].filter((r) => project.repos.includes(r) && unknown(r))
+    return Object.fromEntries(await Promise.all(todo.map(async (r) => [r, await defaultBranch(r, project.baseBranch)] as const)))
   }
 
   /**
@@ -1083,18 +1115,22 @@ export class Orchestrator {
     const local = worktree ? [] : (this.store.task(step.parentId).localRepos ?? [])
     // worktree: a repository the step had in its main checkout (not set up, e.g. after Discuss) moves to a worktree.
     const kept = (work: TaskWork) => (worktree ? { ...work, repos: work.repos.filter((w) => !(w.repo === repo && w.local)) } : work)
-    const planned = (work: TaskWork) => this.workFor(kept(work), project, work.dir, stepBranch(step.key), [repo], local)
+    // A repository leaving its main checkout for a worktree keeps the base it had.
+    const had = step.work.repos.find((w) => w.repo === repo)
+    const bases = had?.base ? { [repo]: had.base } : had?.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
+    const planned = (work: TaskWork) => this.workFor(kept(work), project, work.dir, stepBranch(step.key), [repo], local, bases)
     const r = planned(step.work).repos.find((w) => w.repo === repo)
     if (!r) throw new Error(`${step.key} has no room for another worktree`)
-    if (!r.local) await prepareWorktree(repo, project.baseBranch, r.branch, r.worktree)
+    const base = baseOf(project, r)
+    if (!r.local) await prepareWorktree(repo, base, r.branch, r.worktree)
     else {
       // Also a local repository the step has already: after Discuss, it goes on the step's branch once the user agrees.
-      const check = await this.checkLocal(step, repo)
+      const check = await this.checkLocal(step, repo, base)
       if (check)
         throw new Error(
-          `${localCheckText(check, project.baseBranch)}. The task works on it in the main checkout: ask the user what to do (e.g. they commit or stash, or you call add_repo with worktree: true) and don't touch it before they decide.`,
+          `${localCheckText(check, base)}. The task works on it in the main checkout: ask the user what to do (e.g. they commit or stash, or you call add_repo with worktree: true) and don't touch it before they decide.`,
         )
-      await checkoutLocal(repo, project.baseBranch, r.branch)
+      await checkoutLocal(repo, base, r.branch)
     }
     // The work may have changed during the git calls (a PR recorded); add to what it is now.
     const now = this.store.task(stepId)
@@ -1121,7 +1157,7 @@ export class Orchestrator {
       // A main checkout (local) is set up once, before the step's first session (see prepareLocal).
       if (r.local || !project.repos.includes(r.repo) || r.prState === 'merged') continue
       try {
-        await prepareWorktree(r.repo, project.baseBranch, r.branch, r.worktree)
+        await prepareWorktree(r.repo, baseOf(project, r), r.branch, r.worktree)
       } catch (e) {
         log.error('agent', `worktree for ${task.key} in ${r.repo} failed`, e)
         session.items.push({ kind: 'error', text: `Worktree for ${r.repo} failed: ${(e as Error).message}`, at: Date.now() })
@@ -1172,11 +1208,20 @@ export class Orchestrator {
       if (!this.toOwner(stepId, question, 'mag')) this.store.updateTask(task.id, { needsInput: `${step.key}: PR ${what}, not fixed after ${AUTO_FIX_TRIES} tries` })
       return true
     }
-    const base = this.store.project(step.projectId).baseBranch
+    // The base of the conflicting repositories; with several different ones, the commands per repository.
+    const project = this.store.project(step.projectId)
+    const work = step.work
+    const conflicting = (work?.repos ?? []).filter((r) => r.prState === 'open' && r.mergeable === 'conflict')
+    const bases = [...new Set(conflicting.map((r) => baseOf(project, r)))]
+    const rebase = (base: string) => `git fetch origin ${base}, git rebase origin/${base}`
+    const policy =
+      bases.length > 1
+        ? `rebased on the fresh base of its repo (${conflicting.map((r) => `in ${repoWorkName(work!, r)}: ${rebase(baseOf(project, r))}`).join('; ')})`
+        : `rebased on fresh origin/${bases[0] ?? project.baseBranch} (${rebase(bases[0] ?? project.baseBranch)})`
     const text =
       problem === 'ci'
         ? `CI fails on your PR:\n${detail}\nRead the failing logs (gh pr checks, gh run view --log-failed), fix the cause, run the tests, push. If it is not caused by your change, say why here and call set_needs_input.`
-        : `Your PR has conflicts with ${base}:\n${detail}\nThe branch policy: the step's branch is rebased on fresh origin/${base} (git fetch origin ${base}, git rebase origin/${base}) rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
+        : `Your PR has conflicts with ${bases.length > 1 ? `their bases (${bases.join(', ')})` : (bases[0] ?? project.baseBranch)}:\n${detail}\nThe branch policy: the step's branch is ${policy} rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
     if (!this.resumeDeveloper(step, text, problem === 'ci' ? `CI failed · try ${n + 1}/${AUTO_FIX_TRIES}` : `Conflict · try ${n + 1}/${AUTO_FIX_TRIES}`)) return false
     this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
     this.ownerEvent(stepId, `${step.key}: ${what}, the developer fixes it (try ${n + 1}/${AUTO_FIX_TRIES})`)
@@ -1854,7 +1899,7 @@ export class Orchestrator {
             : '') +
           context(owner.parentId ? owner.key : undefined),
         allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-        disallowedTools: [NEVER_MERGE, ...noPushTo(project.baseBranch)],
+        disallowedTools: [NEVER_MERGE, ...noPushTo(basesOf(project, work))],
       }
     }
     return {

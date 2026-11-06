@@ -361,7 +361,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
         <span className="muted small">The first repository is the agent's working directory; the rest are added with --add-dir.</span>
       </div>
       <div className="row2">
-        <label className="field">Base branch<input defaultValue={project.baseBranch} onChange={(e) => update({ baseBranch: e.target.value.trim() || 'main' })} /></label>
+        <label className="field" title="Used for a repository without origin/HEAD; others use their own default branch">Default base branch<input defaultValue={project.baseBranch} onChange={(e) => update({ baseBranch: e.target.value.trim() || 'main' })} /></label>
       </div>
       <label className="check">
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />

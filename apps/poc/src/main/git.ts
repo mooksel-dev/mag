@@ -8,8 +8,10 @@ import type { PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
 
-async function run(cmd: string, args: string[], cwd?: string) {
-  const { stdout } = await exec(cmd, args, { cwd, maxBuffer: 10 * 1024 * 1024 })
+async function run(cmd: string, args: string[], cwd?: string, timeout?: number) {
+  // timeout: a call to the remote must not hold a start forever; no prompt for credentials either.
+  const env = timeout ? { ...process.env, GIT_TERMINAL_PROMPT: '0' } : undefined
+  const { stdout } = await exec(cmd, args, { cwd, maxBuffer: 10 * 1024 * 1024, timeout, env })
   return stdout.trim()
 }
 
@@ -19,6 +21,16 @@ export async function repoInfo(repo: string): Promise<{ git: boolean; origin: st
   const git = await ok(run('git', ['rev-parse', '--git-dir'], repo))
   const origin = git ? await run('git', ['remote', 'get-url', 'origin'], repo).catch(() => null) : null
   return { git, origin }
+}
+
+/**
+ * The repository's own base branch: the branch origin/HEAD points at (e.g. master). Without a local origin/HEAD it asks
+ * the remote once (git remote set-head --auto, at most 15 s; it writes origin/HEAD as git clone does); `fallback` (the project's base branch) if that fails too, e.g. no remote.
+ */
+export async function defaultBranch(repo: string, fallback: string): Promise<string> {
+  const head = () => run('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repo)
+  const ref = await head().catch(async () => ((await ok(run('git', ['remote', 'set-head', 'origin', '--auto'], repo, 15_000))) ? head().catch(() => '') : ''))
+  return ref.replace(/^origin\//, '') || fallback
 }
 
 /** Create (or reuse) a worktree for the task branch, starting from the freshest base. */
@@ -104,11 +116,12 @@ export async function hasOwnCommits(worktree: string, base: string, ref = 'HEAD'
 }
 
 /**
- * Repositories (RepoWork.repo) of a task whose branch has commits of its own. Merged ones count as changed. A local
- * repository counts by its branch: the user may have switched the checkout since.
+ * Repositories (RepoWork.repo) of a task whose branch has commits of its own, each against its base (`fallback`, the
+ * project's, for a repository without one). Merged ones count as changed. A local repository counts by its branch: the
+ * user may have switched the checkout since.
  */
-export async function changedRepos(work: TaskWork, base: string): Promise<string[]> {
-  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, base, r.local ? r.branch : 'HEAD'))))
+export async function changedRepos(work: TaskWork, fallback: string): Promise<string[]> {
+  const flags = await Promise.all(work.repos.map((r) => (r.prState === 'merged' ? true : hasOwnCommits(r.worktree, r.base ?? fallback, r.local ? r.branch : 'HEAD'))))
   return work.repos.filter((_, i) => flags[i]).map((r) => r.repo)
 }
 

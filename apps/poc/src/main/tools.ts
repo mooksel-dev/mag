@@ -292,7 +292,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
             project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
             work: work && {
               dir: work.dir,
-              repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, prUrl: r.prUrl, prState: r.prState })),
+              repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, base: r.base ?? project.baseBranch, prUrl: r.prUrl, prState: r.prState })),
             },
             diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c), ...placementOut(store, project, task.id, c) })),
             docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
@@ -564,7 +564,7 @@ async function prChanges(project: Project, work: TaskWork, repos: RepoWork[]): P
     const inWorktree = !r.local && existsSync(r.worktree)
     const dir = inWorktree ? r.worktree : r.repo
     try {
-      const target = await branchTarget(project, r.repo, name, dir, await revParse(dir, inWorktree ? 'HEAD' : r.branch))
+      const target = await branchTarget(project, r, name, dir, await revParse(dir, inWorktree ? 'HEAD' : r.branch))
       if (target.base === target.head) notes.push(`${name}: no commits of its own on ${r.branch}.`)
       else targets.push(target)
     } catch (e) {

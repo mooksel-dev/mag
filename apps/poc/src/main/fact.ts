@@ -5,7 +5,7 @@
 // (reviews-prybraty-spysok-pr-i.1); read from GitHub when the project has no checkout of its repository
 // (reviews-ahent-reviuit-pr-timeitiv.3).
 import { existsSync, readFileSync } from 'node:fs'
-import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type Task, type TaskWork } from '@mag/core'
+import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import { additionCount, additionLine, outsideLine, phrase, type HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type ChangesOptions, type Fact } from './core/services/fact/index.ts'
@@ -77,10 +77,14 @@ export const stepSet = (canvases: Canvas[], stepId: string, role: 'plan' | 'fact
 /** Where git runs for a repository of a step: a worktree is removed once merged; the main checkout shares its objects. */
 const repoDir = (r: TaskWork['repos'][number]) => (!r.local && existsSync(r.worktree) ? r.worktree : r.repo)
 
-/** A repository's changes from where `head` left the project's base branch, also once merged into it (a merged step's). */
-export async function branchTarget(project: Project, repo: string, name: string, at: string, head: string): Promise<ChangeTarget> {
-  const from = await revParse(at, `origin/${project.baseBranch}`).catch(() => revParse(at, project.baseBranch))
-  return { repo, name, at, base: await forkPoint(at, from, head), head }
+/**
+ * A repository's changes from where `head` left its base branch (RepoWork.base, else the project's), also once merged
+ * into it (a merged step's).
+ */
+export async function branchTarget(project: Project, r: RepoWork, name: string, at: string, head: string): Promise<ChangeTarget> {
+  const base = r.base ?? project.baseBranch
+  const from = await revParse(at, `origin/${base}`).catch(() => revParse(at, base))
+  return { repo: r.repo, name, at, base: await forkPoint(at, from, head), head }
 }
 
 /** The changes of a step's PRs at `heads` (repository path → head commit), in the step's order of repositories. */
@@ -88,7 +92,7 @@ export async function stepTargets(project: Project, step: Task, heads: Record<st
   const work = step.work
   if (!work) throw new Error(`${step.key} has no work`)
   const out: ChangeTarget[] = []
-  for (const r of work.repos) if (heads[r.repo]) out.push(await branchTarget(project, r.repo, repoWorkName(work, r), repoDir(r), heads[r.repo]))
+  for (const r of work.repos) if (heads[r.repo]) out.push(await branchTarget(project, r, repoWorkName(work, r), repoDir(r), heads[r.repo]))
   return out
 }
 
