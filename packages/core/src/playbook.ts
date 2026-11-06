@@ -226,10 +226,12 @@ have done it: no diagram of your own design and no list of differences from it.
 Read only: nothing goes to the PR or the tracker, because the PR is a teammate's and what reaches them is the user's
 call. The user publishes the findings they pick.`,
   fact: `The fact is the change inventory of the PR: write it with set_inventory from the hunk listing (get_pr_changes,
-or the review's message) and the diff. It is what the user reads instead of the diff and what mag compares with the
-plan, so it covers every change at the level the code is designed at, named as the code names it. set_inventory's
-schema says what a unit is and how mag checks it; mag draws the component and data diagrams of the fact from it, so you
-never draw those.
+or the review's message) and the diff. It exists because the user reads it instead of the diff: mag draws the fact
+diagrams from it and compares it with the plan, so a missed or wrong unit is a change nobody sees.
+It covers every change at the level the code is designed at, named as the code names it. For TS and JS files mag
+has already parsed the bookkeeping into draft units (signatures, blocks): spend your effort on meaning, what each change
+does, how much logic it changes, and on the units no parser sees, and fix a draft unit that is wrong. set_inventory's
+schema says what a unit is and how mag checks it; you never draw the component and data diagrams.
 Then draw with show_diagram (no role, so it joins the fact set) only what the inventory cannot give and the review
 needs: a scenario, or the logic of a method whose logic is nontrivial. mag answers each save with its check: fix the
 blockers, and answer each warning with a fix or a reason.`,

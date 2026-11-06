@@ -1069,7 +1069,7 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /You write the fact, from the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds\. If you would lean another way than the plan on direction, say so in direction\.view/)
+  assert.match(run.spec.prompt, /You write the fact, from the draft units and the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds\. If you would lean another way than the plan on direction, say so in direction\.view/)
   // Each contract once (prompts-use-the-models-to.4): the code checks in mag's frame, the verdict mapping in set_review.
   assert.ok(run.spec.prompt.includes(CODE_CHECKS))
   assert.equal(run.spec.prompt.split(CODE_CHECKS).length, 2, 'the code checks once')

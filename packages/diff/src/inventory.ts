@@ -112,7 +112,8 @@ export interface InventoryCheckOptions {
  * the hunks of its blocks, nor, for a config unit, its constant in a hunk of its file; a unit on a module that owns none of its blocks. Dependencies are
  * checked for their blocks only: the module they use is often not named there. A call is borne out by its method; its
  * target must be a module (`options.modules` or of the hunks) unless the unit says it is external. A unit that breaks
- * a rule of the inventory (several names, a changed method without before, after and note) is ungrounded too.
+ * a rule of the inventory (several names, a changed method without before, after and note) is ungrounded too. A unit
+ * mag's parser drafted (parsed) needs no name in its hunks.
  */
 export function checkInventory(inventory: ChangeInventory, files: FileChange[], options: InventoryCheckOptions = {}): InventoryCheck {
   const blocks = hunkBlocks(files)
@@ -162,7 +163,8 @@ export function checkInventory(inventory: ChangeInventory, files: FileChange[], 
       ...(u.change === 'rename' && u.from && !borneOut(u.from, oldPaths) ? [keyName(u.from, allPaths)!] : []),
     ]
     const inFile = () => words(around.flatMap(({ file }) => file.hunks.flatMap((h) => [h.header ?? '', ...(h.lines ?? [])])).join('\n'))
-    if (missing.length && !(ownerNames(u).length && ownerNames(u).some((n) => inFile().has(n))))
+    // A unit as mag's parser drafted it is borne out by the parse: a method's body changes far below its name.
+    if (missing.length && !u.parsed && !(ownerNames(u).length && ownerNames(u).some((n) => inFile().has(n))))
       ungrounded.push({ unit: u.id, name: u.name, why: `${missing.join(', ')} is not in its hunks` })
     const modules = [...new Set(of.map((b) => b.module ?? ''))]
     if (of.every((b) => b.module !== null && b.module !== u.module)) otherModule.push({ unit: u.id, name: u.name, module: u.module, hunkModules: modules })

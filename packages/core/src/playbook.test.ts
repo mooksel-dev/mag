@@ -64,7 +64,11 @@ test('DEFAULT_PLAYBOOK keeps process and intent; the contracts are the tools\' (
     assert.doesNotMatch(s, /2–4|2–6|request_changes with a failed rule/)
   }
   assert.match(DEFAULT_PLAYBOOK.fact, /set_inventory's\s+schema says what a unit is/)
-  assert.match(DEFAULT_PLAYBOOK.fact, /never draw those/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /never draw the component and data diagrams/)
+  // Why the inventory exists, and that mag did the bookkeeping (prompts-use-the-models-to.6).
+  assert.match(DEFAULT_PLAYBOOK.fact, /It exists because the user reads it instead of the diff/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /compares it with the plan/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /draft units/)
   assert.match(DEFAULT_PLAYBOOK.plan, /show_diagram's description holds the grammar/)
   assert.doesNotMatch(DEFAULT_PLAYBOOK.plan, /each entity with module, its owner/)
 })

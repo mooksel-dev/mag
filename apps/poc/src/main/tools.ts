@@ -1,4 +1,4 @@
-import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, normalizeInventory, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -7,7 +7,7 @@ import type { Store } from './store'
 import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
-import { changes as factChanges, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
+import { changes as factChanges, draftListing, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepFact, stepSet } from './fact.ts'
 import { MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
@@ -473,7 +473,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         // The reviewer cites the hunks of the heads under review, numbered as mag checks them; others the branches as they are.
         const step = role === 'reviewer' ? runStep(store, ctx) : null
         if (step?.fact && Object.keys(step.fact.heads).length) {
-          const changed = await stepChanges(project, step, step.fact.heads, Object.values(store.data.canvases))
+          const changed = await stepChanges(project, step, step.fact.heads, Object.values(store.data.canvases), { draft: true })
           return note + prChangesText(changed, target ? repoWorkName(work, target) : null)
         }
         return note + (await prChanges(project, work, target ? [target] : work.repos))
@@ -569,7 +569,14 @@ async function prChanges(project: Project, work: TaskWork, repos: RepoWork[]): P
 function prChangesText(changed: Changes, only: string | null): string {
   const repos = changed.repos.filter((r) => !only || r.name === only)
   const files = changed.files.filter((f) => repos.some((r) => r.name === f.repo))
-  return [...repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, files.filter((f) => f.repo === r.name))), hunkListing({ files })].filter(Boolean).join('\n\n')
+  // The draft of the repos shown, by the hunks its units and noise cite.
+  const shown = new Set(files.flatMap((f) => f.hunks.map((h) => h.id)))
+  const ofShown = (hunks: string[]) => hunks.filter((h) => shown.has(h.split('.')[0]))
+  const draft = {
+    units: changed.draft.units.filter((u) => ofShown(u.hunks).length),
+    noise: changed.draft.noise.map((n) => ({ ...n, hunks: ofShown(n.hunks) })).filter((n) => n.hunks.length),
+  }
+  return [...repos.map((r) => formatFiles(r.name, r.baseSha, r.headSha, files.filter((f) => f.repo === r.name))), draftListing({ draft }), hunkListing({ files })].filter(Boolean).join('\n\n')
 }
 
 /** Diagrams of a task: its own in the order they were drawn, then those of other tasks its doc links. */
@@ -672,10 +679,12 @@ async function setInventory(store: Store, project: Project, ctx: ToolContext, ta
   const place = factPlace(store, ctx, task, role)
   if (!place) throw new Error("set_inventory is for the reviewer of a step and for the topic that owns a review of a teammate's PR")
   if (!Object.keys(place.heads).length) throw new Error(place.step ? `${place.step.key} has no PR heads under review yet` : 'Call get_pr_changes first: it reads the PR at its head')
-  const { inventory, errors } = normalizeInventory(raw)
-  if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
   const canvases = Object.values(store.data.canvases)
-  const changed = place.step ? await stepChanges(project, place.step, place.heads, canvases) : await reviewChanges(project, place.work, place.heads[place.work.prReview!.pr.repo])
+  const options = { draft: true }
+  const changed = place.step ? await stepChanges(project, place.step, place.heads, canvases, options) : await reviewChanges(project, place.work, place.heads[place.work.prReview!.pr.repo], options)
+  // The reviewer's units over mag's draft of the same heads: what it left out stays as mag drafted it.
+  const { inventory, errors } = mergeDraft(changed.draft, raw)
+  if (errors.length) throw new Error(`Not saved. Fix and call again:\n- ${errors.join('\n- ')}`)
   const set = placeSet(store, place)
   const prevRoot = factRoot(set)
   const root = prevRoot?.diagram!.type === 'component' ? prevRoot : undefined

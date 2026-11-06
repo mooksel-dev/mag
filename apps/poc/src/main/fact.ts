@@ -8,8 +8,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type Task, type TaskWork } from '@mag/core'
 import { additionCount, additionLine, outsideLine, phrase, type HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
-import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type Fact } from './core/services/fact/index.ts'
-import { diffHunks, diffText, forkPoint, githubDiffHunks, githubDiffText, githubMergeBase, hunkLines, mergeBase, parseDiff, revParse } from './git.ts'
+import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type ChangesOptions, type Fact } from './core/services/fact/index.ts'
+import { diffHunks, diffText, fileAt, forkPoint, githubDiffHunks, githubDiffText, githubFileAt, githubMergeBase, hunkLines, mergeBase, parseDiff, revParse } from './git.ts'
 
 type DiffText = (at: string, base: string, head: string) => Promise<string>
 
@@ -43,12 +43,14 @@ const githubText = cachedDiffText(githubDiffText)
 export const localGit: ChangeSource = {
   diffHunks,
   hunkLines: async (at, base, head, ref) => hunkLines(await localDiffText(at, base, head), ref.path, ref),
+  fileAt,
 }
 
 /** Changes as GitHub has them, for a repository without a local checkout: `at` is its owner/repo. */
 export const github: ChangeSource = {
   diffHunks: githubDiffHunks,
   hunkLines: async (at, base, head, ref) => hunkLines(await githubText(at, base, head), ref.path, ref),
+  fileAt: githubFileAt,
 }
 
 /** Changes as the diff bundled with an imported review has them (review-v2-part-2-v1-2.3): `at` is the diff's file. */
@@ -91,8 +93,8 @@ export async function stepTargets(project: Project, step: Task, heads: Record<st
 }
 
 /** The changes of a step's PRs at `heads`, in the vocabulary of its plan. */
-export async function stepChanges(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[]): Promise<Changes> {
-  return changes(project, await stepTargets(project, step, heads), localGit, stepSet(canvases, step.id, 'plan'))
+export async function stepChanges(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[], options?: ChangesOptions): Promise<Changes> {
+  return changes(project, await stepTargets(project, step, heads), localGit, stepSet(canvases, step.id, 'plan'), options)
 }
 
 /** The fact of a step's PRs at `heads`: their changes against the step's fact set and plan set. */
@@ -196,8 +198,8 @@ export async function reviewTarget(project: Project, work: Task, head?: string, 
 }
 
 /** The changes of a reviewed PR at `head`. */
-export async function reviewChanges(project: Project, work: Task, head?: string): Promise<Changes> {
-  return changes(project, [await reviewTarget(project, work, head)], reviewSource(work))
+export async function reviewChanges(project: Project, work: Task, head?: string, options?: ChangesOptions): Promise<Changes> {
+  return changes(project, [await reviewTarget(project, work, head)], reviewSource(work), [], options)
 }
 
 /** The fact of a reviewed PR at `head`: its changes against the review's fact set; no plan to compare. */

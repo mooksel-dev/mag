@@ -63,7 +63,7 @@ function setup() {
   const tools = createTools(store, {} as ToolActions)
   const show = (diagram: unknown, id?: string) => tools({ taskId: task.id, sessionId: reviewer.id }, 'show_diagram', { title: 'Fact', diagram, ...(id && { id }) })
   const inventory = (inv: unknown) => tools({ taskId: task.id, sessionId: reviewer.id }, 'set_inventory', { inventory: inv })
-  return { repo, head, store, project, task, step, plan, orch, show, inventory }
+  return { repo, head, store, project, task, step, plan, orch, show, inventory, tools, reviewer }
 }
 
 /** What the step did, as its reviewer lists it from the hunks: README is docs (H1), extra.ts H2, store.ts one block H3.1. */
@@ -114,8 +114,10 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
   assert.equal(fact.compareVersion, 2)
   assert.deepEqual(fact.blockers, ['store: remove is planned, not done'])
 
-  // A unit left out is a block in no unit; the inventory is written again whole and revises the same root.
-  const again = await inventory({ ...INVENTORY, units: INVENTORY.units.slice(0, 2) })
+  // A unit left out is a draft unit still without its meaning: mag parsed extra() (prompts-use-the-models-to.6).
+  await assert.rejects(inventory({ ...INVENTORY, units: INVENTORY.units.slice(0, 2) }), /Unit d1 \(extra\): a method needs logic/)
+  // Dropped, its block is in no unit; the inventory is written again whole and revises the same root.
+  const again = await inventory({ ...INVENTORY, units: [...INVENTORY.units.slice(0, 2), { id: 'd1', drop: true }] })
   assert.match(again, /- H2\.1 \(app:src\/extra\.ts, app\) is changed code in no unit and not in noise/)
   assert.equal(store.task(step.id).fact!.canvasId, root.id)
   assert.equal(store.data.canvases[root.id].version, 2)
@@ -171,7 +173,7 @@ test('factView: files without lines, plan ↔ fact, the threshold and the invent
   assert.equal(await factView(store.project(store.task(step.id).projectId), store.task(step.id), Object.values(store.data.canvases)), null)
   store.updateTask(step.id, { work: { ...store.task(step.id).work!, repos: store.task(step.id).work!.repos.map((r) => ({ ...r, prHead: head })) } })
   await orch.factOf(step.id, { [repo]: head })
-  await inventory({ ...INVENTORY, units: INVENTORY.units.slice(2) })
+  await inventory({ ...INVENTORY, units: [...INVENTORY.units.slice(2), { id: 'd2', drop: true }, { id: 'd3', drop: true }] })
   const s = store.task(step.id)
   const view = (await factView(store.project(s.projectId), s, Object.values(store.data.canvases)))!
   assert.deepEqual(view.heads, { [repo]: head })
@@ -270,4 +272,29 @@ test('cachedDiffText: the hunks of one PR cost one diff; a failure is not kept; 
   calls.length = 0
   await text('r', 'a', 'b')
   assert.equal(calls.length, 1, 'past max the oldest is fetched anew')
+})
+
+test('factOf and set_inventory over the draft: the reviewer gets mag\'s units and gives only their meaning (prompts-use-the-models-to.6)', async () => {
+  const { store, step, repo, head, orch, inventory, tools, reviewer, task } = setup()
+  const text = await orch.factOf(step.id, { [repo]: head })
+  assert.match(text, /### Draft units \(mag parsed the TS\/JS files: 3 unit\(s\)/)
+  assert.match(text, /- d2 method mod load \[store, owner store, public\] before "load\(id: string\)" after "load\(id: string, fresh = false\)" hunks H3\.1 — needs logic, note/)
+  assert.ok(text.indexOf('### Draft units') < text.indexOf('### Hunks'), 'the draft before the hunks it rests on')
+  // get_pr_changes gives the reviewer the same draft at the heads under review.
+  const listed = await tools({ taskId: task.id, sessionId: reviewer.id }, 'get_pr_changes', {})
+  assert.match(listed, /- d3 method add save \[store, owner store, public\] after "save\(id: string\)" hunks H3\.1 — needs logic/)
+
+  const answer = await inventory({
+    summary: ['load takes fresh'],
+    units: [{ id: 'd1', logic: 'trivial' }, { id: 'd2', logic: 'nontrivial', note: 'can skip the cache' }, { id: 'd3', logic: 'trivial' }],
+    noise: [],
+  })
+  assert.match(answer, /^Inventory saved: 3 units/)
+  assert.match(answer, /Every block of changed code is in a unit or noise, and every unit rests on its hunks\./)
+  const saved = store.data.canvases[store.task(step.id).fact!.canvasId!].inventory!
+  assert.deepEqual(saved.units.map((u) => [u.id, u.name, u.change, u.after, u.logic, u.parsed]), [
+    ['d1', 'extra', 'add', 'extra()', 'trivial', true],
+    ['d2', 'load', 'mod', 'load(id: string, fresh = false)', 'nontrivial', true],
+    ['d3', 'save', 'add', 'save(id: string)', 'trivial', true],
+  ])
 })

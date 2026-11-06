@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Canvas, ChangeInventory, ComponentDiagram, Diagram, Project } from '@mag/core'
 import type { FileDiff } from '@mag/diff'
-import { changes, check, factDiagrams, factReport, filesOfHunks, flowchartRefusal, hunk, hunkListing, withoutLines, type ChangeSource } from './index.ts'
+import { changes, check, draftListing, factDiagrams, factReport, filesOfHunks, flowchartRefusal, hunk, hunkListing, withoutLines, type ChangeSource } from './index.ts'
 
 const project = {
   baseBranch: 'main',
@@ -142,4 +142,26 @@ test('changes: a repository outside the project reads by its folders, not the pr
   assert.equal(fact.outside, true)
   assert.match(factReport(fact), /Without the project architecture: the repository is outside the project/)
   assert.equal((await changes(project, [target], source)).outside, false)
+})
+
+test('changes with draft: the TS/JS files of a module read at base and head become draft units; without fileAt or asked, none (prompts-use-the-models-to.6)', async () => {
+  const texts: Record<string, string> = {
+    'aaaaaaa:src/api/users.ts': `export class Users {\n${'  // pad\n'.repeat(7)}  list(limit: number): User[] {\n    return all\n  }\n}\n`,
+    'bbbbbbb:src/api/users.ts': `export class Users {\n${'  // pad\n'.repeat(7)}  list(limit: number): User[] {\n    if (!limit) return []\n    return all.slice(0, limit)\n  }\n}\n`,
+    'bbbbbbb:src/jobs/sync.ts': 'export function sync(): void {\n}\n',
+  }
+  const read: string[] = []
+  const withFiles: ChangeSource = { ...source, fileAt: async (_at, sha, path) => (read.push(`${sha}:${path}`), texts[`${sha}:${path}`] ?? null) }
+  const changed = await changes(project, [target], withFiles, [canvas('plan', PLAN)], { draft: true })
+  assert.deepEqual(changed.draft.units.map((u) => [u.id, u.module, u.name, u.change, u.before ?? null, u.after ?? null, u.hunks.join()]), [
+    ['d1', 'api', 'Users.list', 'mod', 'list(limit: number): User[]', 'list(limit: number): User[]', 'H1.1'],
+    ['d2', 'jobs', 'sync', 'add', null, 'sync(): void', 'H2.1'],
+  ])
+  assert.ok(!read.some((r) => r.includes('test')), 'tests are never read')
+  assert.match(draftListing(changed), /^### Draft units[\s\S]*\n- d1 method mod Users\.list \[api, owner Users, public\][\s\S]*— needs logic, note\n- d2 method add sync \[jobs, owner sync, public\]/)
+  assert.deepEqual((await changes(project, [target], withFiles, [canvas('plan', PLAN)])).draft, { units: [], noise: [] }, 'not asked: no draft')
+  assert.deepEqual((await changes(project, [target], source, [], { draft: true })).draft, { units: [], noise: [] }, 'no fileAt: no draft')
+  // A file mag cannot read on a side it has is left to the reviewer, never drafted as added.
+  const noBase: ChangeSource = { ...source, fileAt: async (_at, sha, path) => (sha === 'aaaaaaa' ? null : texts[`${sha}:${path}`] ?? null) }
+  assert.deepEqual((await changes(project, [target], noBase, [canvas('plan', PLAN)], { draft: true })).draft.units.map((u) => u.name), ['sync'])
 })

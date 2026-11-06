@@ -189,3 +189,13 @@ test('checkInventory: a changed method without before, after or note and a unit 
     'unit u2 (seedless, factOf): one name per unit: give each its own unit',
   ], 'a config needs no signature')
 })
+
+test('checkInventory: a unit mag parsed needs no name in its hunks; the same unit of the reviewer does (prompts-use-the-models-to.6)', () => {
+  // A method body deep below its name: git's header names the class, the context no line of the method's head.
+  const files = numberHunks([file('src/repo.ts', 'repo', [hunk('export class Repo {', ['     const x = 1', '-    return x', '+    return x + 1', ' '])])])
+  const own = unit({ id: 'd1', module: 'repo', name: 'Repo.save', hunks: ['H1.1'] })
+  assert.deepEqual(inventoryBlockers(checkInventory(inv([own]), files)), ['unit d1 (Repo.save): save is not in its hunks'])
+  assert.deepEqual(inventoryBlockers(checkInventory(inv([{ ...own, parsed: true }]), files)), [])
+  // The rest of the check still holds for it.
+  assert.deepEqual(inventoryBlockers(checkInventory(inv([{ ...own, parsed: true, module: 'other' }]), files)), ['unit d1 (Repo.save) is on other, its hunks are of repo'])
+})
