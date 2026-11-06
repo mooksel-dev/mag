@@ -76,3 +76,26 @@ test('a pending approval nobody polls expires; a hang-up stops the wait', async 
   assert.equal(approval()?.kind === 'approval' && approval()?.status, 'expired')
   assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, args)).behavior, 'deny')
 })
+
+test('a Bash call (a GitHub write that matched an ask rule) asks in chat and groomer sessions, with its command and no server; other roles stay denied (chat-publishes-to-github-prs.2)', async () => {
+  const bash = { tool_name: 'Bash', input: { command: 'gh pr comment 4 -b "[mag] ok"', description: 'Comment' }, tool_use_id: 'tb1' }
+  for (const role of ['chat', 'groomer'] as const) {
+    const { store, session, approvals, approval } = setup()
+    session.role = role
+    const pending = approvals.request({ sessionId: session.id }, bash)
+    await sleep(5)
+    assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tb1', tool: 'Bash', input: bash.input, status: 'pending', at: 0 }, role)
+    approvals.decide(session.id, 'tb1', true)
+    assert.deepEqual(JSON.parse(await pending), { behavior: 'allow', updatedInput: bash.input })
+    assert.equal(store.data.events.at(-1)?.text, 'Bash: gh pr comment 4 -b "[mag] ok" allowed')
+  }
+  for (const role of ['developer', 'reviewer', 'architect'] as const) {
+    const { session, approvals } = setup()
+    session.role = role
+    assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, bash)).behavior, 'deny', role)
+    assert.equal(session.items.length, 0, role)
+  }
+  // Only Bash: another built-in tool from a chat is not asked about.
+  const { session, approvals } = setup()
+  assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, { ...bash, tool_name: 'Edit' })).behavior, 'deny')
+})

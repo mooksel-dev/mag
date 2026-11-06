@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, backgroundLabel, canvasDocument, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
+import { TASK_KEY_RE, approvalCommand, backgroundLabel, canvasDocument, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
@@ -317,12 +317,26 @@ type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
 const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }
 
-/** An ask-mode integration call: Allow / Deny while pending, then its outcome. `who`: the agent, when not this chat's. */
+/**
+ * A tool call that waits for the user (an ask-mode integration's, or a GitHub write as a Bash command): Allow / Deny
+ * while pending, then its outcome. `who`: the agent, when not this chat's.
+ */
 export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item: ApprovalItem; who?: string }) {
+  // A Bash call (a GitHub write, chat-publishes-to-github-prs.2) shows its whole command: that is what runs on Allow.
+  const command = approvalCommand(item)
   return (
     <div className="approval">
-      <div>{who ? `The ${who}` : 'Agent'} wants <b>{item.server}</b> · {item.tool}</div>
-      <div className="input muted">{inputPreview(item.input, 400)}</div>
+      {command !== null ? (
+        <>
+          <div>{who ? `The ${who}` : 'Agent'} wants to run</div>
+          <pre className="input command">{command}</pre>
+        </>
+      ) : (
+        <>
+          <div>{who ? `The ${who}` : 'Agent'} wants {item.server ? <><b>{item.server}</b> · {item.tool}</> : <b>{item.tool}</b>}</div>
+          <div className="input muted">{inputPreview(item.input, 400)}</div>
+        </>
+      )}
       {item.status === 'pending' ? (
         <div className="actions">
           <button onClick={() => mag.decideApproval(sessionId, item.id, false)}>Deny</button>

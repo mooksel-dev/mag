@@ -109,3 +109,8 @@ test('buildArgs ignores permissionMode, which is Claude Code only', () => {
   const spec = { cwd: '/wt', prompt: 'go', allowedTools: ['Bash'] }
   assert.deepEqual(buildArgs({ ...spec, permissionMode: 'auto' }), buildArgs(spec))
 })
+
+test('buildArgs ignores askTools, which is Claude Code only', () => {
+  const spec = { cwd: '/wt', prompt: 'go', allowedTools: ['Bash'] }
+  assert.deepEqual(buildArgs({ ...spec, askTools: ['Bash(git push:*)'] }), buildArgs(spec))
+})

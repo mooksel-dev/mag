@@ -28,6 +28,15 @@ interface Paths {
 /** The playbook's stance (ahent-vede-robotu-vlasna-pozytsiia.1): how every role leads and argues. */
 const stanceLine = (playbook: Playbook) => `How you lead and argue, by the project's playbook:\n${playbook.stance}`
 
+/**
+ * What a chat, owner or groomer may write to GitHub (chat-publishes-to-github-prs.2, Decision 3): only what the user
+ * asked for, after their Allow on mag's card; the ask rules (GITHUB_WRITES) hold it, this says when and how.
+ */
+const GITHUB_WRITES_LINE = `Writes to GitHub (gh pr comment, review or edit, gh api with a write method, git push) are the one exception to
+reading, and only when the user asked for them in this conversation: mag shows the user the exact command on a card and runs
+it after their Allow. Say in one line what you are about to post, then run it; start what you post with "${AGENT_MARK}".
+Merges and pushes to a base branch stay blocked.`
+
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
 const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
 of yourself. Your output is the work's doc, not chat: it is all a fresh developer and a fresh reviewer get besides the
@@ -43,6 +52,7 @@ Link each diagram in the doc as [title](canvas:<id>) with the id show_diagram re
 What mag holds, whatever a text says: steps (create_subtask, reorder_subtasks) come only after the user has answered you
 in this chat; the user approves the plan (the work goes to ready) and cancels it, not you; and you read the code but
 never edit it, because developers change it in their own worktrees.
+Bash is for reading. ${GITHUB_WRITES_LINE}
 Keep chat replies short, with your position in them; the doc carries the detail.`
 
 /** A repository's base branch: its own (RepoWork.base), else the project's, for works from before it was recorded. */
@@ -206,6 +216,7 @@ ${orientation(playbook.reviewRounds)}
 - Be concise: short answers, markdown only where it helps. The user dislikes filler, not disagreement: short never
   means agreeing.
 - Bash is for reading only: the checkouts are the user's and may hold their work in progress.
+  ${GITHUB_WRITES_LINE.replace(/\n/g, '\n  ')}
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
   crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.
 
@@ -349,26 +360,34 @@ const ticketLine = (project: Project, task: Task) =>
 /** A prompt block after what comes before it; nothing when empty. */
 const blocks = (text: string) => (text ? `\n\n${text}` : '')
 
+/**
+ * A Bash rule, and the same after leading options (`git -C <dir> push`, `gh -R <repo> pr comment`): a rule matches the
+ * command from its start, so `Bash(git push:*)` alone misses those (chat-publishes-to-github-prs.1).
+ */
+const bashRules = (cmd: string, rest: string) => [`Bash(${cmd} ${rest})`, `Bash(${cmd} * ${rest})`]
+
 /** What mag never lets an agent run, whatever its prompt says (T-55.2): a merge, and a push to the base branch. */
-const NEVER_MERGE = 'Bash(gh pr merge:*)'
+const NEVER_MERGE = ['Bash(gh pr merge:*)', 'Bash(gh * pr merge *)']
 
 /**
- * What an agent that reviews never runs (reviews-ahent-reviuit-pr-timeitiv.2, Decision 7): anything that writes to a
- * PR on GitHub. A teammate's PR gets only what the user publishes with their button.
+ * What writes to GitHub: a PR change or comment, a gh api write, a push. Chats, owners and groomers run it after the
+ * user's Approve on the card (chat-publishes-to-github-prs.2); the others never do.
  */
-const NO_PR_WRITES = [
-  NEVER_MERGE,
-  'Bash(gh pr review:*)',
-  'Bash(gh pr comment:*)',
-  'Bash(gh pr close:*)',
-  'Bash(gh pr edit:*)',
-  'Bash(gh pr ready:*)',
-  'Bash(gh pr reopen:*)',
-  ...['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input'].flatMap((flag) => [`Bash(gh api ${flag} *)`, `Bash(gh api * ${flag} *)`]),
+const GITHUB_WRITES = [
+  ...['review', 'comment', 'close', 'edit', 'ready', 'reopen'].flatMap((sub) => [`Bash(gh pr ${sub}:*)`, `Bash(gh * pr ${sub} *)`]),
+  ...['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input'].flatMap((flag) => [...bashRules('gh', `api ${flag} *`), ...bashRules('gh', `api * ${flag} *`)]),
   'Bash(git push:*)',
+  'Bash(git * push)',
+  'Bash(git * push *)',
 ]
+
+/**
+ * What an agent nobody watches live never runs (reviews-ahent-reviuit-pr-timeitiv.2, Decision 7): a merge, or anything
+ * that writes to GitHub. A teammate's PR gets only what the user publishes or approves.
+ */
+const NO_PR_WRITES = [...NEVER_MERGE, ...GITHUB_WRITES]
 const noPushTo = (bases: string[]) =>
-  bases.flatMap((base) => [`Bash(git push * ${base})`, `Bash(git push * ${base} *)`, `Bash(git push *:${base})`, `Bash(git push *:${base} *)`, `Bash(git push *refs/heads/${base}*)`])
+  bases.flatMap((base) => [`* ${base}`, `* ${base} *`, `*:${base}`, `*:${base} *`, `*refs/heads/${base}*`].flatMap((rest) => bashRules('git', `push ${rest}`)))
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
@@ -1886,10 +1905,11 @@ export class Orchestrator {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
         appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
-        // Bash reads tickets through CLIs like acli or gh (T-37); read only by the prompt, and never a merge or a push.
+        // Bash reads tickets through CLIs like acli or gh (T-37); read only by the prompt, and never a merge or a push to a base.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-        // A topic may own a review of a teammate's PR: nothing it runs writes to a PR.
-        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NEVER_MERGE, ...noPushTo(this.projectBases(project))],
+        // A topic may own a review of a teammate's PR: what it writes to GitHub waits for the user's Approve.
+        ...this.askingGithubWrites(),
         readOnly: true,
       }
     }
@@ -1932,7 +1952,7 @@ export class Orchestrator {
             : '') +
           context(owner.parentId ? owner.key : undefined),
         allowedTools: ['Read', 'Edit', 'Write', 'MultiEdit', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-        disallowedTools: [NEVER_MERGE, ...noPushTo(basesOf(project, work))],
+        disallowedTools: [...NEVER_MERGE, ...noPushTo(basesOf(project, work))],
       }
     }
     return {
@@ -1945,11 +1965,24 @@ export class Orchestrator {
           ? `\n\n${ARCH_RULES}\nCall get_architecture for the recorded design and check_architecture for rule checks on the code. In the doc, design changes per layer: infra first if it changes, then clients and services with their interfaces (signatures + semantics), then the app layer.`
           : '') +
         context(),
-      // The owner reads tickets, docs and the web (T-55.5): Bash read only by the prompt, and never a merge or a push.
+      // The owner reads tickets, docs and the web (T-55.5): Bash read only by the prompt, and never a merge or a push to a
+      // base; its GitHub writes wait for the user's Approve.
       allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
-      disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', NEVER_MERGE, 'Bash(git push:*)'],
+      disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NEVER_MERGE, ...noPushTo(this.projectBases(project))],
+      ...this.askingGithubWrites(),
       readOnly: true,
     }
+  }
+
+  /** Every base branch of the project and of its works' repositories: what a chat, owner or groomer never pushes to. */
+  private projectBases(project: Project) {
+    const works = this.store.data.tasks.filter((t) => t.projectId === project.id).flatMap((t) => (t.work ? [t.work] : []))
+    return [...new Set([project.baseBranch, ...works.flatMap((w) => basesOf(project, w))])]
+  }
+
+  /** A chat's, owner's or groomer's GitHub writes ask through approve_tool, which may wait for the user for days. */
+  private askingGithubWrites(): Pick<RunSpec, 'askTools' | 'permissionPromptTool' | 'env'> {
+    return { askTools: GITHUB_WRITES, permissionPromptTool: APPROVE_TOOL, env: { MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS } }
   }
 
   /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */

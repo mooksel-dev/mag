@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { approvalCommand, approvalName, workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -170,6 +170,20 @@ test('agentState: working, waiting, or nothing', () => {
 test('agentState: a pending approval waits even while the agent runs', () => {
   const dev = { ...session('t', 'developer', 'running'), items: [{ kind: 'approval', id: 'a', tool: 'execute', server: 'Cloudflare', input: {}, status: 'pending', at: 0 } as const] }
   assert.deepEqual(agentState(task('t', 'in_progress'), [dev], []), { kind: 'waiting', reason: 'Approval: Cloudflare · execute' })
+})
+
+test('approvalName / approvalCommand: an integration by its server, a Bash call by its command, shortened (chat-publishes-to-github-prs.2)', () => {
+  assert.equal(approvalName({ tool: 'execute', server: 'Cloudflare', input: {} }), 'Cloudflare · execute')
+  assert.equal(approvalCommand({ tool: 'execute', server: 'Cloudflare', input: { command: 'x' } }), null)
+  const bash = { tool: 'Bash', input: { command: 'gh pr comment 4\n  -b "ok"' } }
+  assert.equal(approvalCommand(bash), 'gh pr comment 4\n  -b "ok"')
+  assert.equal(approvalName(bash), 'Bash: gh pr comment 4 -b "ok"')
+  const long = approvalName({ tool: 'Bash', input: { command: `gh api -X POST ${'x'.repeat(100)}` } })
+  assert.equal(long.length, 'Bash: '.length + 60)
+  assert.ok(long.endsWith('…'))
+  assert.equal(approvalName({ tool: 'Bash', input: {} }), 'Bash')
+  const dev = { ...session('t', 'chat', 'running'), items: [{ kind: 'approval', id: 'a', tool: 'Bash', input: { command: 'git push origin x' }, status: 'pending', at: 0 } as const] }
+  assert.deepEqual(agentState(task('t', 'in_progress'), [dev], []), { kind: 'waiting', reason: 'Approval: Bash: git push origin x' })
 })
 
 test('workSections: works by state, no backlog, priority or archive (T-55.7)', () => {

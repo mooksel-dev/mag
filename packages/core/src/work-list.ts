@@ -3,6 +3,7 @@
 // included): what it is, where it stands, whose move it is and what happened last, from what mag already knows.
 
 import {
+  approvalName,
   currentStep,
   inbox,
   isArchived,
@@ -169,7 +170,7 @@ function agentMove(s: AgentSession, owner: boolean, now: number): CardMove {
 /** A pending approval: the tool call to allow. */
 function approvalMove(item: InboxItem): CardMove {
   const a = item.session?.items.find((i) => i.kind === 'approval' && i.id === item.approvalId)
-  return { who: 'you', text: a?.kind === 'approval' ? `Allow ${a.server} · ${a.tool}` : 'Allow a tool call', action: { kind: 'open' } }
+  return { who: 'you', text: a?.kind === 'approval' ? `Allow ${approvalName(a)}` : 'Allow a tool call', action: { kind: 'open' } }
 }
 
 /** Opens the first PR (GitHub shows the rest from there), else the work. */

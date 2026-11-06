@@ -856,8 +856,12 @@ export type ChatItem =
   | { kind: 'error'; text: string; at: number }
   /** Service line from mag itself, e.g. "context compacted". */
   | { kind: 'notice'; text: string; at: number }
-  /** An integration call in ask mode waiting for (or answered by) the user. id = the CLI's tool_use_id. */
-  | { kind: 'approval'; id: string; tool: string; server: string; input: unknown; status: ApprovalStatus; at: number }
+  /**
+   * A tool call waiting for (or answered by) the user: an integration's in ask mode (`server` its name), or a Bash call
+   * that matched an ask rule (chat-publishes-to-github-prs.2: a GitHub write; no `server`, `input.command` the command).
+   * id = the CLI's tool_use_id.
+   */
+  | { kind: 'approval'; id: string; tool: string; server?: string; input: unknown; status: ApprovalStatus; at: number }
   /**
    * An agent's request_integration: `integrationId` (Integration.id) is off for `role`; the card's Enable: Ask / Auto
    * sets the project's mode and repeats the turn. `server`: its name as the CLI reported it. status off until enabled.
@@ -866,6 +870,19 @@ export type ChatItem =
 
 /** expired = the run ended before the user answered. */
 export type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'expired'
+
+/** The command of an approval of a Bash call, else null. */
+export function approvalCommand(a: { tool: string; server?: string; input: unknown }): string | null {
+  const command = !a.server && a.tool === 'Bash' && a.input && typeof a.input === 'object' ? (a.input as { command?: unknown }).command : undefined
+  return typeof command === 'string' ? command : null
+}
+
+/** What an approval asks for, in one line: "Atlassian · createJiraIssue", or "Bash: gh pr comment 12 -b …". */
+export function approvalName(a: { tool: string; server?: string; input: unknown }): string {
+  if (a.server) return `${a.server} · ${a.tool}`
+  const command = approvalCommand(a)?.replace(/\s+/g, ' ').trim()
+  return command ? `${a.tool}: ${command.length > 60 ? `${command.slice(0, 59)}…` : command}` : a.tool
+}
 
 export interface AgentSession {
   id: string
@@ -1212,7 +1229,7 @@ function stepWait(task: Task, tasks: Task[]): { kind: 'start' | 'merge'; step: T
 export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]): AgentState {
   const mine = sessions.filter((s) => s.taskId === task.id)
   const approval = mine.flatMap((s) => s.items).find((i) => i.kind === 'approval' && i.status === 'pending')
-  if (approval?.kind === 'approval') return { kind: 'waiting', reason: `Approval: ${approval.server} · ${approval.tool}` }
+  if (approval?.kind === 'approval') return { kind: 'waiting', reason: `Approval: ${approvalName(approval)}` }
   if (task.needsInput) return { kind: 'waiting', reason: task.needsInput }
   const running = mine.filter((s) => s.status === 'running').at(-1)
   if (running) return { kind: 'working', role: running.role, since: running.runStartedAt ?? running.createdAt }
@@ -1299,7 +1316,7 @@ function approvalItems(projectId: string, tasks: Task[], sessions: AgentSession[
     .flatMap((s) =>
       s.items.flatMap((i): InboxItem[] =>
         i.kind === 'approval' && i.status === 'pending'
-          ? [{ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${i.server} · ${i.tool}`, session: s, approvalId: i.id }]
+          ? [{ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${approvalName(i)}`, session: s, approvalId: i.id }]
           : [],
       ),
     )

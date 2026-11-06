@@ -52,6 +52,17 @@ test('buildArgs passes --permission-mode when set, to one-off and live runs', ()
   assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--permission-mode'))
 })
 
+test('buildArgs passes askTools as --settings permissions.ask, to one-off and live runs', () => {
+  const ask = ['Bash(gh pr comment:*)', 'Bash(git * push *)']
+  for (const args of [buildArgs({ cwd: '/tmp', prompt: 'hi', askTools: ask }), buildLiveArgs({ cwd: '/tmp', askTools: ask })]) {
+    const i = args.indexOf('--settings')
+    assert.ok(i > 0)
+    assert.deepEqual(JSON.parse(args[i + 1]), { permissions: { ask } })
+  }
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--settings'))
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi', askTools: [] }).includes('--settings'))
+})
+
 test('parseClaudeLine lists MCP integrations on init, without mag', () => {
   const [e] = parseClaudeLine(
     JSON.stringify({
