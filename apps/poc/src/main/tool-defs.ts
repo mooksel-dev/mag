@@ -275,7 +275,7 @@ const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => 
   required: ['text', 'cites', ...required],
   properties: {
     text: { type: 'string' },
-    source: { type: 'string', enum: ['agent', 'yours', 'question', 'rule'], description: "agent: your reading, with code refs; yours: the user's own words (PR comments, notes, decisions); question; rule: a project rule fails. mag itself gives checked to a mechanical fact of the direction whose cites are all units it verified; never give it." },
+    source: { type: 'string', enum: ['agent', 'user', 'question', 'rule'], description: "agent: your reading, with code refs; user: the user's own words (PR comments, notes, decisions); question; rule: a project rule fails. mag itself gives checked to a mechanical fact of the direction whose cites are all units it verified; never give it." },
     cites: { type: 'array', items: { type: 'string' }, description: 'Inventory unit ids or file:line; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
     view: { type: 'string', description: 'The diagram of the review\'s set that shows it: canvas:<id>#<node>.' },
     ...extra,

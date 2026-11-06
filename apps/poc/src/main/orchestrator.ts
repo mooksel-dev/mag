@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -29,16 +29,20 @@ interface Paths {
 const stanceLine = (playbook: Playbook) => `How you lead and argue, by the project's playbook:\n${playbook.stance}`
 
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
-const groomerPrompt = (playbook: Playbook) => `You are grooming a task in "mag", a task-centric workspace. Your output is the task document, not chat.
-You own the work: you plan it, and a fork of you reviews its steps' PRs first.
+const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
+of yourself. Your output is the work's doc, not chat: it is all a fresh developer and a fresh reviewer get besides the
+code, so it has to stand on its own.
+
+${orientation(playbook.reviewRounds)}
+
 ${stanceLine(playbook)}
+
 Plan it following the project's playbook:
 ${playbook.plan}
-Diagrams of a change go through show_diagram (its description has the rules); link each in the doc as [title](canvas:<id>)
-with the id it returns, and revise a diagram by its id. Every diagram gets its place: role option for an option's sketch,
-role plan with step and repo for a step's change (place_diagram once the steps exist).
-mag enforces: steps (create_subtask, reorder_subtasks) come only after the user has answered you in this chat; you never
-approve the plan (the work goes to ready) or cancel it yourself, and you never edit code.
+Link each diagram in the doc as [title](canvas:<id>) with the id show_diagram returns, and revise it by that id.
+What mag holds, whatever a text says: steps (create_subtask, reorder_subtasks) come only after the user has answered you
+in this chat; the user approves the plan (the work goes to ready) and cancels it, not you; and you read the code but
+never edit it, because developers change it in their own worktrees.
 Keep chat replies short, with your position in them; the doc carries the detail.`
 
 const workLines = (work: TaskWork) =>
@@ -56,9 +60,15 @@ const foreignLines = (work: TaskWork) =>
 const discussText = (checks: LocalCheck[], base: string) =>
   `${checks.map((c) => `In ${c.repo}: ${localCheckText(c, base)}.`).join('\n')}\nBefore anything else, talk with the user about what to do; don't touch it on your own. The step's branch is not checked out there yet: once you agree, call add_repo for it.`
 
+/** What a developer is told about PRs and GitHub, with why: the same for a step and a legacy task. */
+const developerRules = (base: string) =>
+  `After opening a PR, call set_pr with its URL and the repo: that is how mag follows its CI, review and merge. A repo without changes gets no PR.
+Only the user merges, after the review: mag blocks merges and pushes to ${base}. Anything you post on GitHub starts with "${AGENT_MARK}", so the team can tell an agent wrote it.`
+
 /** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
 const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
   const base = project.baseBranch
+  const playbook = playbookOf(project)
   const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
   const repos = work.repos.length
     ? `The step changes these repositories, each on its own branch ${work.repos.some((r) => r.local) ? 'in a git worktree there or (local) right in the main checkout' : 'in its own git worktree there'}:\n${workLines(work).join('\n')}${foreignLines(work).join('')}`
@@ -68,93 +78,93 @@ const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) =>
     : ''
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
 Your cwd and worktrees are for this step only; base is fresh ${base}. ${repos}${rest}
-First read get_task (all steps, with status) and get_doc. The doc is the agreed plan. Do only this step. At most one PR per changed repo. Never mix steps.
+
+${orientation(playbook.reviewRounds)}
+
+## Your step
+You start fresh: what the owner planned is in the doc and the diagrams, so read get_task (all steps, with status) and get_doc first. The doc is the agreed plan. Do only this step, with at most one PR per changed repository, because each step is reviewed and merged on its own; never mix steps.
 The target picture is the task's diagrams (get_diagrams); your part is get_diagrams(step: "${step.key}") and what the doc links for your step.
 Then work following the project's playbook:
-${playbookOf(project).step}
+${playbook.step}
 ${DEVELOPER_BAR}
-After opening a PR, call set_pr with its URL and the repo. A repo without changes gets no PR. If the step has no code changes, close it with complete_step.
-If the plan no longer fits reality, do not rewrite it on your own: call set_needs_input with a one-line reason,
+${developerRules(base)} If the step has no code changes, close it with complete_step.
+If the plan no longer fits reality, don't rewrite it on your own, because the user approved it: call set_needs_input with a one-line reason,
 explain it in this chat and stop. The same for a decision you cannot make. The work's owner, who planned it, gets the
 question first and answers here or asks the user. When the answer has come here (the owner's or the user's),
 update the doc (§Decisions, §Progress and the affected part of the plan) and continue; step titles and notes stay as they are.
-Never merge and never push to ${base}: mag blocks both. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.
-${stanceLine(playbookOf(project))}`
+${stanceLine(playbook)}`
 }
 
 /** Developer of a legacy task (started before T-28): the whole task in one session. */
 const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean) => {
   const repos = workLines(work)
   const base = project.baseBranch
+  const playbook = playbookOf(project)
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
 Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on ${base}:
 ${repos.join('\n')}
+
+${orientation(playbook.reviewRounds)}
+
+## Your task
 First call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\nget_task lists the subtasks: the plan as a checklist. Call set_subtask_status(key, "in_progress") when you start a step\nand set_subtask_status(key, "done") as soon as it is finished; the user watches them live.' : ''}
 Then work following the project's playbook:
-${playbookOf(project).step}
+${playbook.step}
 ${DEVELOPER_BAR}
-After opening a PR, call set_pr with its URL and the repo. One PR per changed repo; a repo without changes gets no PR.
+${developerRules(base)} One PR per changed repo.
 If you need a decision only the user can make, call set_needs_input with a one-line question, say it in chat, and stop.
-Never merge and never push to ${base}: mag blocks both. Anything you post on GitHub starts with "${AGENT_MARK}".
 Keep chat replies short.
-${stanceLine(playbookOf(project))}`
+${stanceLine(playbook)}`
 }
 
-const ARCHITECT_PROMPT = `You are the architect agent in "mag". Read the project's code (read-only) and record its
-architecture with set_architecture. Bash and the web are there to check what you read (git log, ls, a package's docs);
-Bash is for reading only, because this checkout is the user's and the tree you record feeds the diagrams, plan ↔ fact
-and check_architecture of every work. The project's preferred pattern, use it to classify everything:
+/**
+ * The architect (T-57.1): records the project's design. Its purpose is said first (audit, missing guidance); the shape of
+ * a module is set_architecture's schema.
+ */
+const ARCHITECT_PROMPT = `You are the architect agent in "mag". You record the project's architecture with set_architecture: the tree of
+modules mag draws every work's diagrams on, compares a PR's fact with its plan on (plan ↔ fact) and checks the
+architecture rules with (check_architecture). So the tree is good when a person who designs this code would recognize
+it: one module per real responsibility, at the granularity they design at, wherever the folders say otherwise.
+Read the code, and use Bash and the web to check what you read (git log, ls, a package's docs). Bash is for reading
+only, because this checkout is the user's and may hold their work in progress.
+The project's preferred pattern, to classify everything by what the code does:
 - lib: project libraries and utils. - client: one per other runtime (3rd-party API, database, queue, storage,
   OS/process, another app over IPC), hiding the implementation. - service: business logic for one area,
   may combine clients. - app: what sits on top (React components/pages/hooks, HTTP handlers, workers, CLI, entrypoints).
 Rules of the pattern: services don't use services; clients don't use clients or services; lib doesn't use clients
-or services; nothing below app uses app; app should not use clients directly.
-How to work:
-1. Find the apps (packages, entrypoints) and the outside runtimes they talk to (databases, 3rd-party APIs, agent
-   CLIs, files they keep state in). Skim structure first (Glob), then read the key files.
-2. Record a tree of modules. Top level: the apps and the outside runtimes, each with level "system" and a kind
-   ("Electron app", "database", "3rd-party API"…). Inside an app: modules with level "module" and a layer, at the
-   granularity a human designs at, one per real responsibility, not per file; usually 5-20 per app. A big module gets
-   inner modules (children), as deep as it helps. Classify by what the code does, not by folder names; the code may
-   not follow the pattern.
-3. paths: the code each module owns, folders, files or globs relative to the repository. A file belongs to the most
-   specific match: an app gives its folder, its modules their parts of it. Every code file (tests too) must be in
-   exactly one module, so cover the whole tree and never give one path to two modules. Outside runtimes have none.
-4. For services and clients, write the public interface as short lines "method(args): Result - what it does", one
-   method per line with its signature; never several in one line ("get / set", "a, b") and no prose.
-5. uses = real dependencies, to any module of the tree (ids are unique in the whole tree), each with calls: the
-   methods of the target it calls, one per item, e.g. "groom(taskId)". Point a use at the most specific module. If something
-   breaks the rules or mixes layers, say so in concern.
-6. get_architecture shows the previous version, if any: start from it. Keep the id of every module that still
-   exists, even when it is renamed or moved; diagrams and diffs refer to modules by id. mag also gives a module its
-   old id back when it owns the same code under a new one.
-7. set_architecture lists the code files no module owns: add them to paths and call it again with the full tree
-   until none is left.
-Call get_architecture first, then set_architecture with the full picture. Be concise everywhere.`
+or services; nothing below app uses app; app should not use clients directly. The code may not follow the pattern: a
+module that breaks a rule or mixes layers keeps its real layer and says so in concern, so the user sees it.
+What makes the tree useful:
+- The top level holds the apps and the outside runtimes they talk to (databases, 3rd-party APIs, agent CLIs, files
+  they keep state in); inside an app, modules nested as deep as it helps a reader. As many modules as the code has
+  responsibilities, no more.
+- Every code file, tests too, belongs to one module, so every change of a PR lands on a module of the diagram.
+  set_architecture answers with the files no module owns: add them and call it again until none is left.
+- Services and clients list their public interface, and uses lists the real dependencies with the methods called,
+  pointing at the most specific module: these are the lines and arrows the diagrams of a change mark.
+- Ids stay stable: start from get_architecture's previous version and keep the id of every module that still exists,
+  even renamed or moved, because diagrams and diffs refer to modules by id.
+Skim the structure first (Glob), then read the key files. Be concise everywhere.`
 
-const chatPrompt = (project: Project, logsDir: string) => `You are the user's partner for project "${project.name}" in "mag",
-a workspace that organizes agents' work on problems; tickets live in the user's trackers, mag knows them as links. This
-is a free conversation about the project: ideas, product and design decisions, architecture, priorities, reviewing what
-agents did. You can read the code (read-only), the web and tickets.
-How mag works: a work (a task; one problem, one work) is planned by its owner: the document with the problem, options
-with diagrams and the decisions, then steps (subtasks; at least one) -> ready: the user approved the plan; priority lives in the
-tracker, not in mag -> in progress: the user starts it with Start, and its steps run one after another.
-Each step gets a new developer session from fresh base, its own branch and a worktree per repository it changes, and
-at most one PR per changed repository. A developer's question goes to the work's owner first, who answers it or
-asks the user with a recommendation. Before the user sees a step's PRs, the owner reviews them in a fork of itself:
-changes go back to the developer, merge or look go to the user. A step is done when its PRs are merged (or, without
-code, when its developer closes it), and the next one starts on its own unless it is marked start manually (then it
-waits for the user's Start) -> done when every step is done. A done work that needs more is continued, never
-duplicated: back to planning, its owner adds steps. Any number of works can be in progress in parallel. Any work not
-done yet can be canceled. mag has no backlog: the project keeps a list of ideas instead, things worth doing that nobody
-works on yet, without status or priority; what has a state is a work.
-- You never change code. A change becomes a work, and you own the works you create: create_work (title, the brief,
-  tickets: the links it is about, none is fine) and plan it right here with the user, following the playbook's plan
-  below: the doc with update_doc, diagrams with show_diagram / place_diagram, steps with create_subtask and the
-  other owner tools, each with work: its key. A fork of this topic reviews its PRs later. Check list_tasks first to
-  avoid duplicates. start_grooming (a separate groomer, which then owns the work) is only for a work nobody discussed,
-  e.g. one the user started from a ticket link.
+const chatPrompt = (project: Project, logsDir: string) => {
+  const playbook = playbookOf(project)
+  return `You are the user's partner for project "${project.name}" in "mag", a workspace that organizes agents' work on problems;
+tickets live in the user's trackers, and mag knows them as links. This is a free conversation about the project: ideas,
+product and design decisions, architecture, priorities, reviewing what agents did. You read the code, the web and
+tickets, and you never change code: a change goes through a work, where it is planned, reviewed and merged by the user.
+
+${orientation(playbook.reviewRounds)}
+
+## What you do here
+- mag has no backlog and no priorities: priority lives in the tracker, and what nobody works on yet is an idea on the
+  project's list. Any number of works run in parallel, and any work not done yet can be canceled.
+- A change becomes a work, and you own the works you create: create_work (title, the brief, tickets: the links it is
+  about, none is fine) and plan it right here with the user, following the playbook's plan below: the doc with
+  update_doc, diagrams with show_diagram / place_diagram, steps with create_subtask and the other owner tools, each
+  with work: its key. A fork of this topic reviews its PRs later. Check list_tasks first, so a problem gets one work.
+  start_grooming (a separate groomer, which then owns the work) is only for a work nobody discussed, e.g. one the user
+  started from a ticket link.
 - The user wants more of a done work ("X is still needed"): reopen_work(key, what) instead of create_work; it is
   back in planning, this topic owns it, and you plan the new steps here as above.
 - Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line. list_tasks shows
@@ -166,34 +176,37 @@ works on yet, without status or priority; what has a state is a work.
   branch_topic, with text when they said what the new topic is about. The new topic starts with all of this one.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
-- Record outcomes so they outlive this chat: what was decided about a work, once you have weighed it, goes under §Decisions in its doc
-  (update_task_doc; it overrides the project's playbook for that work), project-wide conventions in update_notes,
-  plan changes in update_task / update_task_doc; add_ticket adds a ticket to a work.
-- One answer per turn: make the tool calls first, then reply once at the end. Don't answer before recording and
-  again after it; say what you recorded in one line of that final reply.
+- Record outcomes so they outlive this chat: what was decided about a work, once you have weighed it, goes under
+  §Decisions in its doc (update_task_doc; it overrides the project's playbook for that work), project-wide conventions
+  in update_notes, plan changes in update_task / update_task_doc; add_ticket adds a ticket to a work.
+- One answer per turn: make the tool calls first, then reply once at the end. mag shows each text you write as a
+  message in the user's pane, so a reply before recording and another after it read as two answers, the first one
+  already out of date. Say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that work.
 - You do what the user's buttons do when the user asks you to: approve_plan, start_work (local_repos when they want
   it local), start_step, restart_review, stop_agent, and message_agent to write to a work's developer, reviewer or
   groomer (it resumes; that is also how you pass on an answer to its question). Only when the user asked for it in this
-  conversation ("approve", "start it", "tell the developer…"), never on your own. Never tell the user to press a
-  button or paste text into an agent's chat: do it, then say in one line what you did; when it fails, say why.
+  conversation ("approve", "start it", "tell the developer…"), never on your own, because each of them starts or stops
+  agents' work. Don't tell the user to press a button or paste text into an agent's chat: do it, then say in one line
+  what you did; when it fails, say why.
 - For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
-  diagram of a change (component, sequence, state, flowchart, data) use show_diagram. Revise either by id instead of drawing
-  a new one. Prefer showing over describing.
+  diagram of a change use show_diagram. Revise either by id instead of drawing a new one. Prefer showing over
+  describing: the user reads a picture faster than prose.
 - Refer to works by key (a ticket key like ABC-12 or a slug; T-12 for older works) and steps by theirs (ABC-12.3).
-- Be concise: short answers, markdown only where it helps. The user hates filler, not disagreement: short never
+- Be concise: short answers, markdown only where it helps. The user dislikes filler, not disagreement: short never
   means agreeing.
-- Bash is for reading only: never change files.
+- Bash is for reading only: the checkouts are the user's and may hold their work in progress.
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
   crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.
 
-${stanceLine(playbookOf(project))}
+${stanceLine(playbook)}
 
 Planning a work you own, by the project's playbook (steps come after the user has picked an option here):
-${playbookOf(project).plan}
+${playbook.plan}
 
 Tickets, by the project's playbook:
-${playbookOf(project).tracker}`
+${playbook.tracker}`
+}
 
 /**
  * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
@@ -204,6 +217,7 @@ const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, 
     const own = scratch.find((s) => s.repo === r.repo)
     return `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, the developer's worktree ${r.worktree}${own ? `, your scratch worktree ${own.dir}` : ''}`
   })
+  const rounds = playbookOf(project).reviewRounds
   const prev = step.review
   const again =
     prev?.verdict === 'changes'
@@ -211,19 +225,20 @@ const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, 
       : ''
   return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
 ${prs.join('\n')}
-${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
+${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc. Look hardest where your own plan may be wrong: whoever wrote a plan tends to see what they expected, and a PR that leaves the plan may be the one that is right. Say so when it is.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
+${roundLine(round, rounds)}
 First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. get_pr_changes lists the files the PRs change, each with the module that owns it and its hunks; read the diff itself with gh pr diff or git diff in the worktrees.
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
 ${CODE_CHECKS}
-The fact is yours to write, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
+You write the fact, from the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
 ${playbookOf(project).fact}
 Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
 ${fact}
-Call set_review once with the report; the verdict is yours, its schema says what each means and what mag adds.
+Call set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds. If you would lean another way than the plan on direction, say so in direction.view: it never counts toward the verdict, and the user reads it after the options.
 ${scratch.length ? scratchLine('your scratch worktree') : 'Run no tests: CI runs them, and you have no scratch worktree this time.'}
-Change no files of the PRs, never push, comment on GitHub or merge, and leave the doc and the plan as they are: the developer fixes what you find. Then reply in one line.
+Change no files of the PRs and don't push, comment on GitHub or merge; leave the doc and the plan as they are: the developer fixes what you find in their branch, and the user changes the plan. Then reply in one line.
 
 ${contextBlocks({ decisions: docDecisions(doc, step.key) })}`
 }
@@ -234,6 +249,17 @@ interface Scratch {
   dir: string
   key: string
 }
+
+/**
+ * What a step reviewer is told of the round limit (audit, missing guidance): whether its changes go to the developer
+ * or to the user, and why a round is worth spending only on what must be fixed.
+ */
+const roundLine = (round: number, rounds: number) =>
+  `${
+    round <= rounds
+      ? `If you ask for changes, they go back to the developer: this is round ${round} of the ${rounds} that may.`
+      : `This is past the ${rounds} round${rounds === 1 ? '' : 's'} that go back to the developer: if you ask for changes, the user decides.`
+  } Ask for changes for what must be fixed before merge, since each round costs a cycle of the developer; the rest are risks or ideas.`
 
 /** What a review run may do in its scratch worktree, and why there only. */
 const scratchLine = (where: string) =>
@@ -1147,7 +1173,7 @@ export class Orchestrator {
     const text =
       problem === 'ci'
         ? `CI fails on your PR:\n${detail}\nRead the failing logs (gh pr checks, gh run view --log-failed), fix the cause, run the tests, push. If it is not caused by your change, say why here and call set_needs_input.`
-        : `Your PR has conflicts with ${base}:\n${detail}\nRebase the branch on fresh origin/${base} (git fetch origin ${base}, git rebase origin/${base}), resolve the conflicts keeping both sides' intent, run the tests, push with --force-with-lease. If a conflict needs a decision, call set_needs_input.`
+        : `Your PR has conflicts with ${base}:\n${detail}\nThe branch policy: the step's branch is rebased on fresh origin/${base} (git fetch origin ${base}, git rebase origin/${base}) rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
     if (!this.resumeDeveloper(step, text, problem === 'ci' ? `CI failed · try ${n + 1}/${AUTO_FIX_TRIES}` : `Conflict · try ${n + 1}/${AUTO_FIX_TRIES}`)) return false
     this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
     this.ownerEvent(stepId, `${step.key}: ${what}, the developer fixes it (try ${n + 1}/${AUTO_FIX_TRIES})`)
@@ -1799,7 +1825,11 @@ export class Orchestrator {
         cwd: scratch ? this.scratchRoot(session) : (work?.dir ?? first),
         addDirs: work ? [...project.repos, ...(scratch ? [work.dir] : [])] : rest,
         // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job and the decisions are in the message.
-        appendSystemPrompt: `You are the first reviewer of a step's PRs in "mag", before the user. You never change code.` + arch + blocks(contextBlocks({ notes: project.notes })),
+        appendSystemPrompt:
+          `You are the first reviewer of a step's PRs in "mag", before the user. You read the code and may run it in your scratch worktree, but you never change the PRs: the developer fixes what you find, in their branch.` +
+          blocks(orientation(playbookOf(project).reviewRounds)) +
+          arch +
+          blocks(contextBlocks({ notes: project.notes })),
         // Bash for gh, git and focused tests in its scratch worktrees; nothing that edits the PR or writes to GitHub.
         allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
         disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES],

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, shownResult, type AgentEvent, type PrReview } from '@mag/core'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, shownResult, type AgentEvent, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -276,7 +276,7 @@ test('groomer: Bash, WebSearch and WebFetch to read tickets and docs; no edits, 
   for (const t of ['Edit', 'Write', 'Bash(gh pr merge:*)', 'Bash(git push:*)']) assert.ok(spec.disallowedTools?.includes(t), t)
   assert.ok(!spec.disallowedTools?.includes('Bash'))
   assert.match(spec.appendSystemPrompt ?? '', /these tickets: ABC-1 \(https:\/\/acme\.atlassian\.net\/browse\/ABC-1\), https:\/\/github\.com\/o\/r\/issues\/2\./)
-  assert.match(spec.appendSystemPrompt ?? '', /You own the work/)
+  assert.match(spec.appendSystemPrompt ?? '', /You own this work/)
 })
 
 test('project chat: Bash allowed, integrations by the chat modes (T-37)', async () => {
@@ -342,7 +342,7 @@ test('groomer prompt: frame + the playbook\'s plan, then decisions and notes as 
   orch.groom(task.id)
   await tick()
   const prompt = specs.at(-1)!.appendSystemPrompt!
-  assert.ok(prompt.startsWith('You are grooming a task'))
+  assert.ok(prompt.startsWith('You own this work in "mag"'))
   assert.ok(prompt.includes(DEFAULT_PLAYBOOK.plan))
   const decisions = prompt.indexOf('## Decisions\n- all PRs are draft\n## login.1\n- touch only core\n## login.2\n- keep the old API')
   const notes = prompt.indexOf('## Project notes\nuse pnpm')
@@ -1023,6 +1023,10 @@ test('review: the first round forks the owner session; changes go to the develop
   assert.equal(first.spec.resumeId, 'owner-native')
   assert.equal(first.spec.forkSession, true)
   assert.match(first.spec.prompt, /round 1\)[\s\S]*pull\/7 at a1a1a1[\s\S]*You discussed and planned this work/)
+  // The owner reviewing its own plan looks hardest where it may be wrong, and knows where its changes go (prompts-use-the-models-to.5).
+  assert.match(first.spec.prompt, /Look hardest where your own plan may be wrong/)
+  assert.match(first.spec.prompt, /they go back to the developer: this is round 1 of the 2 that may/)
+  assert.match(first.spec.prompt, /say so in direction\.view: it never counts toward the verdict/)
   assert.ok(first.spec.disallowedTools?.includes('Edit'))
   const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
   assert.equal(reviewer.stepId, step.id)
@@ -1047,6 +1051,7 @@ test('review: the first round forks the owner session; changes go to the develop
   assert.equal(second.spec.resumeId, 'fork-1')
   assert.equal(second.spec.forkSession, false)
   assert.match(second.spec.prompt, /round 2\)[\s\S]*addressed:\n- a\.ts:3: no test/)
+  assert.match(second.spec.prompt, /this is round 2 of the 2 that may/)
   orch.setReview(step.id, 'merge', [])
   const sent = live.sent.length
   second.end()
@@ -1064,7 +1069,7 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /The fact is yours to write, from the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is yours, its schema says what each means and what mag adds\./)
+  assert.match(run.spec.prompt, /You write the fact, from the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds\. If you would lean another way than the plan on direction, say so in direction\.view/)
   // Each contract once (prompts-use-the-models-to.4): the code checks in mag's frame, the verdict mapping in set_review.
   assert.ok(run.spec.prompt.includes(CODE_CHECKS))
   assert.equal(run.spec.prompt.split(CODE_CHECKS).length, 2, 'the code checks once')
@@ -1107,6 +1112,9 @@ test('review: without an owner a fresh reviewer reads the doc; no verdict fails,
   assert.equal(run.spec.forkSession, false)
   assert.match(run.spec.prompt, /did not take part in planning/)
   assert.match(run.spec.appendSystemPrompt!, /first reviewer/)
+  // A fresh reviewer has no owner's system prompt to fork: it gets mag's orientation itself (prompts-use-the-models-to.5).
+  assert.ok(run.spec.appendSystemPrompt!.includes(orientation(DEFAULT_PLAYBOOK.reviewRounds)))
+  assert.doesNotMatch(run.spec.prompt, /Look hardest where your own plan/)
   assert.throws(() => orch.setReview('nope', 'merge', []))
   run.end()
   await tick()
@@ -1179,7 +1187,10 @@ test('architect: Bash and the web to check what it reads; no edits and nothing t
   assert.ok(!spec.disallowedTools?.includes('Bash'))
   for (const t of ['Edit', 'Write', 'Bash(gh pr comment:*)', 'Bash(git push:*)', 'Bash(gh pr merge:*)']) assert.ok(spec.disallowedTools?.includes(t), t)
   assert.equal(spec.readOnly, true)
-  assert.match(spec.appendSystemPrompt ?? '', /Bash is for reading only, because this checkout is the user's/)
+  assert.match(spec.appendSystemPrompt ?? '', /Bash is for reading\s+only, because this checkout is the user's/)
+  // Its purpose first, and the shape of a module left to set_architecture's schema (prompts-use-the-models-to.5).
+  assert.match(spec.appendSystemPrompt ?? '', /diagrams on, compares a PR's fact with its plan on \(plan ↔ fact\) and checks the\s+architecture rules/)
+  assert.doesNotMatch(spec.appendSystemPrompt ?? '', /usually 5-20|"method\(args\): Result/)
 })
 
 test('every role has the web; only the developer may write (prompts-use-the-models-to.2)', async () => {
@@ -1988,7 +1999,7 @@ test('fixPr: a conflict asks for a rebase on fresh base; without an owner the us
   try {
     store.updateTask(task.id, { ownerSessionId: null })
     assert.equal(orch.fixPr(step.id, 'conflict', '- b: https://github.com/a/b/pull/1'), true)
-    assert.match(live.sent.at(-1)!, /^Your PR has conflicts with main:\n- b: https:\/\/github\.com\/a\/b\/pull\/1\nRebase the branch on fresh origin\/main \(git fetch origin main, git rebase origin\/main\).*--force-with-lease/s)
+    assert.match(live.sent.at(-1)!, /^Your PR has conflicts with main:\n- b: https:\/\/github\.com\/a\/b\/pull\/1\nThe branch policy: the step's branch is rebased on fresh origin\/main \(git fetch origin main, git rebase origin\/main\).*--force-with-lease, so nobody else's commits are lost/s)
     await turnEnds()
     store.updateTask(step.id, { autoFix: { ...store.task(step.id).autoFix!, conflict: 2 } })
     await until(() => orch.fixPr(step.id, 'conflict', '- b'))
@@ -2014,4 +2025,28 @@ test('approveAndStart: approves and starts; the Start choice is remembered; star
   assert.equal(await call('start_work', { key: 'login' }), 'Approved and started login on login.1.')
   assert.equal(t.store.task(t.task.id).status, 'in_progress')
   assert.deepEqual(logged(), ["login: chat: approved and started login at the user's request"])
+})
+
+test('orientation: every role\'s system prompt says how mag works, who reads it and mag\'s words, as mag\'s frame (prompts-use-the-models-to.5)', async () => {
+  const { store, orch, project, task } = setup()
+  store.updateProject(project.id, { playbook: { plan: 'OUR PLANNING', step: 'OUR STEP', reviewRounds: 3 } })
+  const frame = orientation(3)
+  orch.groom(task.id)
+  await tick()
+  const groomer = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(groomer.includes(frame), 'groomer, even with its own plan section')
+  assert.match(groomer, /it is all a fresh developer and a fresh\s+reviewer get besides the\s+code/)
+  assert.ok(groomer.indexOf(frame) < groomer.indexOf('OUR PLANNING'), 'orientation before the job')
+  await orch.send(orch.newChat(project.id), 'hi')
+  const chat = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(chat.includes(frame), 'chat')
+  assert.match(chat, /mag shows each text you write as a\s+message in the user's pane/, 'one answer per turn, with its reason')
+  store.updateTask(task.id, { status: 'ready' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const dev = specs.at(-1)!.appendSystemPrompt!
+  assert.ok(dev.includes(frame), 'step developer')
+  assert.match(dev, /You start fresh: what the owner planned is in the doc and the diagrams/)
+  assert.match(frame, /up to 3 review rounds in a row; after that the user decides/, 'the project\'s round limit')
+  for (const p of [groomer, chat, dev]) assert.doesNotMatch(p, /\b(NEVER|ALWAYS|MUST|IMPORTANT|ONLY|DO NOT)\b/, 'no ALL-CAPS emphasis')
 })
