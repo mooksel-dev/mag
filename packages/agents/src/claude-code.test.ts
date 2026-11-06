@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildArgs, parseClaudeLine } from './claude-code.ts'
+import { buildArgs, buildLiveArgs, parseClaudeLine } from './claude-code.ts'
 
 test('buildArgs passes --model when set', () => {
   const args = buildArgs({ cwd: '/tmp', prompt: 'hi', model: 'sonnet', resumeId: 'abc' })
@@ -42,6 +42,14 @@ test('buildArgs passes --permission-prompt-tool when set', () => {
   const args = buildArgs({ cwd: '/tmp', prompt: 'hi', permissionPromptTool: 'mcp__mag__approve_tool' })
   assert.deepEqual(args.slice(args.indexOf('--permission-prompt-tool'), args.indexOf('--permission-prompt-tool') + 2), ['--permission-prompt-tool', 'mcp__mag__approve_tool'])
   assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--permission-prompt-tool'))
+})
+
+test('buildArgs passes --permission-mode when set, to one-off and live runs', () => {
+  const args = buildArgs({ cwd: '/tmp', prompt: 'hi', permissionMode: 'auto', permissionPromptTool: 'mcp__mag__approve_tool' })
+  assert.deepEqual(args.slice(args.indexOf('--permission-mode'), args.indexOf('--permission-mode') + 2), ['--permission-mode', 'auto'])
+  const live = buildLiveArgs({ cwd: '/tmp', permissionMode: 'default' })
+  assert.deepEqual(live.slice(live.indexOf('--permission-mode'), live.indexOf('--permission-mode') + 2), ['--permission-mode', 'default'])
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi' }).includes('--permission-mode'))
 })
 
 test('parseClaudeLine lists MCP integrations on init, without mag', () => {

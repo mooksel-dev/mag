@@ -18,6 +18,12 @@ export interface RunSpec {
   disallowedTools?: string[]
   /** MCP tool the CLI asks for permission on tools that are neither allowed nor disallowed. Claude Code only. */
   permissionPromptTool?: string
+  /**
+   * Claude Code's permission mode (`--permission-mode`); omitted = the CLI's default. Under `-p` in `auto`
+   * (chat-publishes-to-github-prs.1): a classifier runs or denies each call, even Bash in allowedTools, and never sends
+   * it to permissionPromptTool; only calls matching an `ask` rule reach it. disallowedTools still win. Claude Code only.
+   */
+  permissionMode?: 'auto' | 'default'
   addDirs?: string[]
   env?: Record<string, string>
   /** Plain completion: no tools and no MCP servers. Codex runs read-only anyway. */

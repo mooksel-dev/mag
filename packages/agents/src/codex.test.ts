@@ -104,3 +104,8 @@ test('buildArgs: a read-only run gets the read-only sandbox without network, eve
   assert.ok(resumed.includes('sandbox_mode="read-only"'))
   assert.ok(!resumed.includes('sandbox_workspace_write.network_access=true'))
 })
+
+test('buildArgs ignores permissionMode, which is Claude Code only', () => {
+  const spec = { cwd: '/wt', prompt: 'go', allowedTools: ['Bash'] }
+  assert.deepEqual(buildArgs({ ...spec, permissionMode: 'auto' }), buildArgs(spec))
+})
