@@ -867,6 +867,40 @@ export const TOOL_DEFS = [
     description: `Stop the agents of a work (its steps' too) or of a step that are in a turn, as the user's Stop. ${ASKED}`,
     inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'The work or a step.' } }, required: ['key'] },
   },
+  // The sidebar's Close, Delete and Restore for a project chat (chat-archives-and-deletes-topics.1).
+  {
+    name: 'list_chats',
+    scope: 'project',
+    description:
+      'The topics and works (reviews too) of this project, one compact row each: id (a topic) or key (a work), kind (topic, work, review), title, state (a topic: idle or running; a work: its status), closed, owns (a topic: the keys of the works it owns), lastAt (day of the last item), items (count); this: true on the topic you are in. Newest first. No docs or steps: read_chat and read_task give those. Use it to find what close_chats, delete_chats or restore_chat should get.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'close_chats',
+    scope: 'project',
+    description: `Close (archive) topics and works, as the user's Close: a topic goes to Done with its history (refused while it owns an open work: cancel or finish that), a done work or a review goes to Closed. The topic of an open work or of a review is refused: close that work instead. Each target on its own, in order; one line each: closed, already closed, refused: <why>, or no such…. This topic is never closed. ${ASKED}`,
+    inputSchema: {
+      type: 'object',
+      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
+      required: ['targets'],
+    },
+  },
+  {
+    name: 'delete_chats',
+    scope: 'project',
+    description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, and its owner topic unless that owns another work (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. The topic of an open work or of a review is refused: delete that work instead, never its topic alone. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… (also for an owner topic that went with its work earlier in the batch). This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
+    inputSchema: {
+      type: 'object',
+      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
+      required: ['targets'],
+    },
+  },
+  {
+    name: 'restore_chat',
+    scope: 'project',
+    description: `Restore a closed topic, work or review, as the user's Restore: back where it was in the list. A canceled work cannot be restored. One line: restored, not closed, refused: <why>, or no such…. ${ASKED}`,
+    inputSchema: { type: 'object', properties: { target: { type: 'string', description: 'A topic id or the key of a work or review, from list_chats.' } }, required: ['target'] },
+  },
   {
     name: 'update_notes',
     scope: 'project',

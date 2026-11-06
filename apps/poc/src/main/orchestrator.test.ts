@@ -1699,6 +1699,11 @@ function chatControls(s: ReturnType<typeof setup>) {
     agentOf: (id: string, role?: MessagedRole) => s.orch.agentOf(id, role),
     send: (id: string, text: string) => s.orch.send(id, text),
     stopAgents: (id: string) => s.orch.stopAgents(id),
+    closeChat: (id: string) => s.orch.closeChat(id),
+    closeWork: (id: string) => s.orch.closeWork(id),
+    deleteChat: (id: string) => s.orch.deleteChat(id),
+    deleteWork: (id: string) => s.orch.deleteWork(id),
+    restore: (kind: 'work' | 'topic', id: string) => s.orch.restore(kind, id),
   } as ToolActions
   const tools = createTools(s.store, actions)
   const topic = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
@@ -1800,6 +1805,100 @@ test('stop_agent: stops the agents of a work in a turn, as Stop (chat-keruie-rob
   assert.notEqual(s.session.status, 'running')
   await assert.rejects(call('stop_agent', { key: 'login' }), /No agent of login is working/)
   assert.deepEqual(logged(), ["login.1: chat: stopped login.1 at the user's request"])
+})
+
+test('list_chats: every topic and top-level work and review, compact, with closed, owns and this (chat-archives-and-deletes-topics.1)', async () => {
+  const s = setup()
+  const { store, orch, project, task } = s
+  const { call, topic } = chatControls(s)
+  const owner = orch.newChat(project.id)
+  store.updateTask(task.id, { ownerSessionId: owner })
+  store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo' })
+  const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
+  const mags = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Review app#7', reviewOf: review.id })
+  mags.items.push({ kind: 'user', text: 'Review it', at: new Date(2026, 10, 5, 23, 30).getTime() })
+  const gone = store.createTask({ projectId: project.id, title: 'Gone', type: 'dev', description: '' })
+  await orch.cancel(gone.id, null)
+  store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
+  const other = store.createProject('q')
+  store.createSession({ projectId: other.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+
+  const rows = JSON.parse(await call('list_chats', {})) as Record<string, unknown>[]
+  const row = (id: string) => rows.find((r) => r.id === id || r.key === id)!
+  assert.equal(rows.length, 6, 'three topics of this project and three works: no steps, groomers or other projects')
+  assert.deepEqual(row(topic.id), { id: topic.id, kind: 'topic', title: 'New topic', state: 'idle', closed: false, owns: [], lastAt: row(topic.id).lastAt, items: 0, this: true })
+  assert.deepEqual(row(owner).owns, ['login'])
+  assert.deepEqual([row(mags.id).owns, row(mags.id).lastAt, row(mags.id).items], [[review.key], '2026-11-05', 1])
+  assert.deepEqual([row(review.key).kind, row(review.key).items, row(review.key).closed], ['review', 1, false])
+  assert.deepEqual([row('login').kind, row('login').state, row('login').closed, 'doc' in row('login')], ['work', 'planning', false, false])
+  assert.deepEqual([row(store.task(gone.id).key).state, row(store.task(gone.id).key).closed], ['canceled', true])
+  assert.match(String(row('login').lastAt), /^\d{4}-\d{2}-\d{2}$/)
+})
+
+test('close_chats / delete_chats / restore_chat: each target on its own with its line; the calling topic and steps are refused (chat-archives-and-deletes-topics.1)', async () => {
+  const s = setup()
+  const { store, orch, project, task } = s
+  const { call, topic } = chatControls(s)
+  const architect = store.createSession({ projectId: project.id, taskId: null, role: 'architect', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(call('close_chats', { targets: ['x'] }, architect.id), /close_chats is for a project chat/)
+  await assert.rejects(call('delete_chats', { targets: [] }), /targets is required/)
+
+  const idle = orch.newChat(project.id)
+  const owner = orch.newChat(project.id)
+  store.updateTask(task.id, { ownerSessionId: owner })
+  const step = store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo' })
+  const doneOwner = orch.newChat(project.id)
+  const done = store.createTask({ projectId: project.id, title: 'Old fix', type: 'dev', description: '', status: 'done', ownerSessionId: doneOwner })
+  const gone = store.createTask({ projectId: project.id, title: 'Gone', type: 'dev', description: '' })
+  await orch.cancel(gone.id, null)
+  const foreign = store.createSession({ projectId: store.createProject('q').id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+
+  const closed = await call('close_chats', { targets: [idle, owner, 'login', done.key, topic.id, step.key, foreign.id, idle, gone.key] })
+  assert.deepEqual(closed.split('\n'), [
+    `${idle}: closed`,
+    `${owner}: refused: it is the topic of login; close login instead`,
+    'login: refused: login is planning; only a done work is closed this way (cancel the others)',
+    `${done.key}: closed`,
+    `${topic.id}: refused: this is the topic you are in; the user does it with the button`,
+    `${step.key}: no such topic or work (${step.key} is a step: pass its work)`,
+    `${foreign.id}: no such topic or work in this project`,
+    `${idle}: already closed`,
+    `${gone.key}: already closed`,
+  ])
+  assert.ok(store.session(idle).closedAt && store.task(done.id).closedAt)
+  assert.equal(store.session(owner).closedAt ?? null, null)
+
+  assert.equal(await call('restore_chat', { target: idle }), `${idle}: restored`)
+  assert.equal(store.session(idle).closedAt, null)
+  assert.equal(await call('restore_chat', { target: idle }), `${idle}: not closed`)
+  assert.equal(await call('restore_chat', { target: gone.key }), `${gone.key}: refused: ${gone.key} is canceled; a canceled work cannot be restored`)
+
+  // The calling topic owns a work: deleting that work would delete this topic with it.
+  const mine = store.createTask({ projectId: project.id, title: 'Mine', type: 'dev', description: '', status: 'done', ownerSessionId: topic.id })
+  const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
+  const mags = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', reviewOf: review.id })
+  const deleted = await call('delete_chats', { targets: [owner, mags.id, done.key, doneOwner, review.key, mine.key, topic.id] })
+  assert.deepEqual(deleted.split('\n'), [
+    `${owner}: refused: it is the topic of login; delete login instead`,
+    `${mags.id}: refused: it is the topic of ${review.key}; delete ${review.key} instead`,
+    `${done.key}: deleted`,
+    `${doneOwner}: no such topic or work in this project`,
+    `${review.key}: deleted`,
+    `${mine.key}: refused: deleting it deletes this topic too; the user does it with the button`,
+    `${topic.id}: refused: this is the topic you are in; the user does it with the button`,
+  ])
+  assert.ok(!store.data.tasks.some((t) => t.id === done.id || t.id === review.id))
+  assert.ok(!store.data.sessions.some((x) => x.id === doneOwner || x.id === mags.id))
+  assert.ok(store.data.tasks.some((t) => t.id === mine.id) && store.data.sessions.some((x) => x.id === topic.id || x.id === owner))
+  assert.ok(store.data.sessions.some((x) => x.id === owner), 'the owner of an open work stays')
+})
+
+test('delete_chats: a work whose agent is in a turn is refused, the next target goes on (chat-archives-and-deletes-topics.1)', async () => {
+  const s = await developing()
+  const { call } = chatControls(s)
+  const idle = s.orch.newChat(s.project.id)
+  assert.deepEqual((await call('delete_chats', { targets: ['login', idle] })).split('\n'), ['login: refused: An agent of login is still working; stop it first, then delete the work', `${idle}: deleted`])
+  assert.ok(s.store.data.tasks.some((t) => t.id === s.task.id))
 })
 
 test("branchChat: the new topic forks the parent's session on its first live turn; the parent stays (branch-this-topic-novyi-topik.1)", async () => {
