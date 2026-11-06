@@ -1274,7 +1274,11 @@ function targetsArg(v: unknown): string[] {
   return targets
 }
 
-const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+/** The local day of a time, YYYY-MM-DD: the day the user saw it. */
+const day = (at: number) => {
+  const d = new Date(at)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 /**
  * A project chat closes, deletes and restores topics and works, as the sidebar's buttons do
@@ -1303,6 +1307,12 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
     isReview(t)
       ? reviewTopic(t, sessions())?.id === self || sessions().some((s) => s.reviewOf === t.id && s.id === self)
       : t.ownerSessionId === self && !store.data.tasks.some((x) => x.id !== t.id && x.ownerSessionId === self)
+  /**
+   * The work a topic is part of, as the sidebar hides it (rowTopics): the owner of an open work or review, or a review's
+   * topic. It goes with that work's Close or Delete, never on its own: deleting it would leave the work without its owner.
+   */
+  const partOf = (s: AgentSession) =>
+    works().find((t) => (t.ownerSessionId === s.id && t.status !== 'done' && t.status !== 'canceled') || t.id === s.reviewOf || (isReview(t) && reviewTopic(t, sessions())?.id === s.id))
   const said = (e: unknown) => `refused: ${(e as Error).message}`
 
   if (name === 'list_chats') {
@@ -1360,6 +1370,8 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
       if ('none' in r) return r.none
       if ('topic' in r ? r.topic.id === self : !close && deletesSelf(r.work))
         return `refused: ${'topic' in r ? 'this is the topic you are in' : `deleting it deletes this topic too`}; the user does it with the button`
+      const of = 'topic' in r ? partOf(r.topic) : undefined
+      if (of) return `refused: it is the topic of ${of.key}; ${close ? 'close' : 'delete'} ${of.key} instead`
       if (close && ('topic' in r ? r.topic.closedAt : r.work.closedAt || r.work.status === 'canceled')) return 'already closed'
       try {
         if ('topic' in r) await (close ? actions.closeChat(r.topic.id) : actions.deleteChat(r.topic.id))

@@ -1816,7 +1816,7 @@ test('list_chats: every topic and top-level work and review, compact, with close
   store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo' })
   const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
   const mags = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Review app#7', reviewOf: review.id })
-  mags.items.push({ kind: 'user', text: 'Review it', at: Date.UTC(2026, 10, 5) })
+  mags.items.push({ kind: 'user', text: 'Review it', at: new Date(2026, 10, 5, 23, 30).getTime() })
   const gone = store.createTask({ projectId: project.id, title: 'Gone', type: 'dev', description: '' })
   await orch.cancel(gone.id, null)
   store.createSession({ projectId: project.id, taskId: task.id, role: 'groomer', agent: 'claude-code', status: 'idle' })
@@ -1856,7 +1856,7 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
   const closed = await call('close_chats', { targets: [idle, owner, 'login', done.key, topic.id, step.key, foreign.id, idle, gone.key] })
   assert.deepEqual(closed.split('\n'), [
     `${idle}: closed`,
-    `${owner}: refused: This topic owns login: close the work instead`,
+    `${owner}: refused: it is the topic of login; close login instead`,
     'login: refused: login is planning; only a done work is closed this way (cancel the others)',
     `${done.key}: closed`,
     `${topic.id}: refused: this is the topic you are in; the user does it with the button`,
@@ -1877,8 +1877,10 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
   const mine = store.createTask({ projectId: project.id, title: 'Mine', type: 'dev', description: '', status: 'done', ownerSessionId: topic.id })
   const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
   const mags = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', reviewOf: review.id })
-  const deleted = await call('delete_chats', { targets: [done.key, doneOwner, review.key, mine.key, topic.id] })
+  const deleted = await call('delete_chats', { targets: [owner, mags.id, done.key, doneOwner, review.key, mine.key, topic.id] })
   assert.deepEqual(deleted.split('\n'), [
+    `${owner}: refused: it is the topic of login; delete login instead`,
+    `${mags.id}: refused: it is the topic of ${review.key}; delete ${review.key} instead`,
     `${done.key}: deleted`,
     `${doneOwner}: no such topic or work in this project`,
     `${review.key}: deleted`,
@@ -1887,7 +1889,8 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
   ])
   assert.ok(!store.data.tasks.some((t) => t.id === done.id || t.id === review.id))
   assert.ok(!store.data.sessions.some((x) => x.id === doneOwner || x.id === mags.id))
-  assert.ok(store.data.tasks.some((t) => t.id === mine.id) && store.data.sessions.some((x) => x.id === topic.id))
+  assert.ok(store.data.tasks.some((t) => t.id === mine.id) && store.data.sessions.some((x) => x.id === topic.id || x.id === owner))
+  assert.ok(store.data.sessions.some((x) => x.id === owner), 'the owner of an open work stays')
 })
 
 test('delete_chats: a work whose agent is in a turn is refused, the next target goes on (chat-archives-and-deletes-topics.1)', async () => {

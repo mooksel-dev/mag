@@ -878,7 +878,7 @@ export const TOOL_DEFS = [
   {
     name: 'close_chats',
     scope: 'project',
-    description: `Close (archive) topics and works, as the user's Close: a topic goes to Done with its history (refused while it owns an open work: cancel or finish that), a done work or a review goes to Closed. Each target on its own, in order; one line each: closed, already closed, refused: <why>, or no such…. This topic is never closed. ${ASKED}`,
+    description: `Close (archive) topics and works, as the user's Close: a topic goes to Done with its history (refused while it owns an open work: cancel or finish that), a done work or a review goes to Closed. The topic of an open work or of a review is refused: close that work instead. Each target on its own, in order; one line each: closed, already closed, refused: <why>, or no such…. This topic is never closed. ${ASKED}`,
     inputSchema: {
       type: 'object',
       properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
@@ -888,7 +888,7 @@ export const TOOL_DEFS = [
   {
     name: 'delete_chats',
     scope: 'project',
-    description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, and its owner topic unless that owns another work (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… (also for an owner topic that went with its work earlier in the batch). This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
+    description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, and its owner topic unless that owns another work (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. The topic of an open work or of a review is refused: delete that work instead, never its topic alone. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… (also for an owner topic that went with its work earlier in the batch). This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
     inputSchema: {
       type: 'object',
       properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
