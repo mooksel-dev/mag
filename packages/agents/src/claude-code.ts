@@ -166,6 +166,7 @@ function specArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   if (spec.allowedTools?.length) args.push('--allowedTools', spec.allowedTools.join(','))
   if (spec.disallowedTools?.length) args.push('--disallowedTools', spec.disallowedTools.join(','))
   if (spec.permissionPromptTool) args.push('--permission-prompt-tool', spec.permissionPromptTool)
+  if (spec.permissionMode) args.push('--permission-mode', spec.permissionMode)
   for (const d of spec.addDirs ?? []) args.push('--add-dir', d)
   if (spec.noTools) args.push('--tools', '', '--strict-mcp-config')
   return args
