@@ -3,6 +3,8 @@
 // reviewer: it sees only tools marked 'only' (its own) or 'also' for it; the other roles all but 'only'.
 // OWNER_TOOLS: a project chat plans the works it owns with them too, passing work (see toolsFor).
 
+import { CANVAS_CLASSES } from '@mag/core'
+
 /** One module of set_architecture. `children` items are described in words, not by $ref: not every agent follows it. */
 const ARCH_MODULE = {
   type: 'object',
@@ -881,7 +883,10 @@ export const TOOL_DEFS = [
     name: 'show_canvas',
     scope: 'any',
     description:
-      'Show the user a visual: UI mockup, comparison, anything without a type of its own (diff diagrams go through show_diagram). Pass one self-contained HTML document (inline CSS/SVG/JS; CDN scripts from cdn.jsdelivr.net or unpkg.com are allowed). It renders in the chat and is kept with the project (and the task, in a task run). To revise, pass the id you got back: a new version replaces the old one.',
+      'Show the user a visual: UI mockup, comparison, anything without a type of its own (diff diagrams go through show_diagram). Pass one self-contained HTML page or fragment (inline SVG/JS; CDN scripts from cdn.jsdelivr.net or unpkg.com are allowed). ' +
+      `mag puts its own stylesheet in every canvas, on the app's tokens and in the user's light or dark theme, so the user sees one product. Build on its classes: ${CANVAS_CLASSES} ` +
+      "Bring no palette, fonts or background of your own; add CSS only for layout, using mag's var(--…) tokens for any colour or size (a page with colours of its own is shown on light). " +
+      'It renders in the chat and is kept with the project (and the task, in a task run). To revise, pass the id you got back: a new version replaces the old one.',
     inputSchema: {
       type: 'object',
       properties: {

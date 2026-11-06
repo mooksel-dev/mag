@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PLAYBOOK_SECTIONS, orientation } from '@mag/core'
+import { CANVAS_CLASSES, CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PLAYBOOK_SECTIONS, orientation } from '@mag/core'
 import { TOOL_DEFS } from './tool-defs.ts'
 
 /** Every description string of the tools, nested schema fields included. */
@@ -45,4 +45,12 @@ test('the contracts the playbook used to state live in the tool schemas (prompts
   assert.match(inventory, /not imports inside a module/)
   assert.match(all('set_pr_review'), /v1 only: request_changes with any blocker/)
   assert.match(all('show_diagram'), /each in the module that owns it/)
+})
+
+test('show_canvas tells agents to build on mag\'s classes and bring no palette or fonts, with the reason (prompts-use-the-models-to.7)', () => {
+  const d = TOOL_DEFS.find((t) => t.name === 'show_canvas')!.description
+  assert.ok(d.includes(CANVAS_CLASSES))
+  assert.match(d, /so the user sees one product/)
+  assert.match(d, /Bring no palette, fonts or background of your own/)
+  assert.doesNotMatch(d, /inline CSS/)
 })
