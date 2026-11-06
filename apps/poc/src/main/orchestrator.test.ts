@@ -1045,6 +1045,74 @@ test('addRepo: a local repository goes on the step branch in its main checkout, 
   assert.ok(existsSync(w.worktree))
 })
 
+test('develop: a restart with local_repos moves an untouched worktree to the main checkout and sets it up', async () => {
+  const { store, orch, task, step, app, api, sessions } = localSetup()
+  await orch.develop(task.id)
+  const first = store.task(step.id).work!
+  assert.ok(existsSync(first.repos[0].worktree))
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+
+  await orch.develop(task.id, undefined, [app])
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local, r.base]), [[app, app, true, 'main'], [api, join(work.dir, 'api'), false, 'main']])
+  assert.equal(existsSync(first.repos[0].worktree), false, 'the worktree is gone')
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/login-1', 'the local check ran on a restart')
+  assert.equal(sessions().length, 1, 'the same session resumes')
+  assert.match(specs.at(-1)!.appendSystemPrompt!, /- app: .*app \(local: the user's main checkout/)
+})
+
+test('develop: local_repos on a step whose worktree start failed (no worktree made) works locally; a dirty checkout asks', async () => {
+  const { store, orch, project, task, step, app, api, sessions, dir: root } = localSetup()
+  const dir = join(root, 'w', 'login.1')
+  const session = store.createSession({ projectId: project.id, taskId: task.id, stepId: step.id, role: 'developer', agent: 'claude-code', status: 'error' })
+  store.updateTask(step.id, { status: 'in_progress', work: { dir, feedbackSeenAt: 0, repos: [{ repo: app, branch: 'mag/login-1', worktree: join(dir, 'app'), prUrl: null, prState: null, base: 'main' }] } })
+  store.updateTask(task.id, { status: 'in_progress' })
+  execFileSync('touch', [join(app, 'mine')])
+  await orch.develop(task.id, undefined, [app])
+  assert.deepEqual(store.task(step.id).work!.repos.map((r) => [r.repo, r.worktree, !!r.local]), [[app, app, true], [api, join(dir, 'api'), false]])
+  assert.deepEqual(store.task(step.id).localChecks, [{ repo: app, busyBy: null, dirty: ['mine'], branch: null }])
+  assert.equal(git(app, 'branch', '--show-current'), 'main', 'nothing touched before the user decides')
+
+  // The answer sets the checkout up and resumes the session the failed start made.
+  await orch.resolveLocal(step.id, app, 'ignore')
+  assert.equal(git(app, 'branch', '--show-current'), 'mag/login-1')
+  assert.deepEqual(sessions().map((x) => x.id), [session.id])
+  assert.equal(store.task(task.id).needsInput, null)
+})
+
+test('develop: local_repos on a step with work in its worktree throws and changes nothing', async () => {
+  const { store, orch, task, step, app } = localSetup()
+  await orch.develop(task.id)
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  const before = store.task(step.id).work!
+  const tree = before.repos[0].worktree
+
+  execFileSync('touch', [join(tree, 'draft.ts')])
+  await assert.rejects(orch.develop(task.id, undefined, [app]), /app already has work in its worktree \(uncommitted changes: draft\.ts\): restart without it in local_repos, or let login\.1 finish there/)
+  git(tree, 'add', '.')
+  git(tree, 'commit', '-q', '-m', 'wip')
+  await assert.rejects(orch.develop(task.id, undefined, [app]), /app already has work in its worktree \(commits on mag\/login-1\)/)
+  store.updateTask(step.id, { work: { ...before, repos: before.repos.map((r, i) => (i ? r : { ...r, prUrl: 'https://github.com/o/app/pull/3', prState: 'open' as const })) } })
+  git(tree, 'reset', '-q', '--hard', 'HEAD~1')
+  await assert.rejects(orch.develop(task.id, undefined, [app]), /app already has work in its worktree \(its PR https:\/\/github\.com\/o\/app\/pull\/3\)/)
+  assert.equal(store.task(step.id).work!.repos[0].local, undefined)
+  assert.ok(existsSync(tree))
+  assert.equal(store.task(task.id).localRepos, undefined)
+  assert.equal(git(app, 'branch', '--show-current'), 'main')
+
+  // The worktree dir is gone, its branch has a commit: that counts too.
+  store.updateTask(step.id, { work: before })
+  git(tree, 'commit', '-q', '--allow-empty', '-m', 'wip')
+  git(app, 'worktree', 'remove', '--force', tree)
+  await assert.rejects(orch.develop(task.id, undefined, [app]), /app already has work in its worktree \(commits on mag\/login-1\)/)
+})
+
 function localHolderKey(store: Store, repo: string) {
   return store.data.tasks.find((t) => t.parentId && t.work?.repos.some((r) => r.local && r.repo === repo))?.key
 }
@@ -1815,6 +1883,22 @@ test('start_work: local_repos by name work in the main checkout (chat-keruie-rob
   const { call } = chatControls(s)
   assert.equal(await call('start_work', { key: 'login', local_repos: ['app'] }), 'Started login on login.1, locally in app.')
   assert.deepEqual(s.store.task(s.task.id).localRepos, [s.app])
+})
+
+test('start_work: says "locally" only for repos the step works on in the main checkout; a touched worktree fails the call', async () => {
+  const s = localSetup()
+  const { call } = chatControls(s)
+  s.store.updateTask(s.step.id, { repos: [s.api] })
+  assert.equal(await call('start_work', { key: 'login', local_repos: ['app'] }), 'Started login on login.1.', 'app is no repo of the step')
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  const tree = s.store.task(s.step.id).work!.repos[0].worktree
+  git(tree, 'commit', '-q', '--allow-empty', '-m', 'wip')
+  await assert.rejects(call('start_work', { key: 'login', local_repos: ['api'] }), /api already has work in its worktree \(commits on mag\/login-1\)/)
+  git(tree, 'reset', '-q', '--hard', 'HEAD~1')
+  assert.equal(await call('start_work', { key: 'login', local_repos: ['api'] }), 'Started login on login.1, locally in api.')
 })
 
 test('restart_review: the button\'s check (chat-keruie-robotamy-i-ahentamy.1)', async () => {

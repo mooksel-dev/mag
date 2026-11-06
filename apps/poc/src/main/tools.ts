@@ -1219,7 +1219,9 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
       logged(approving ? 'approved and started' : 'started')
       const now = store.task(t.id)
       const step = currentStep(t.id, store.data.tasks)
-      return `${approving ? 'Approved and started' : 'Started'} ${t.key}${step ? ` on ${step.key}` : ''}${local?.length ? `, locally in ${local.map((r) => repoName(project, r)).join(', ')}` : ''}.${now.needsInput ? ` It needs the user: ${now.needsInput}` : ''}`
+      // What the work really has in a main checkout now, not what was asked for.
+      const inMain = ((step ?? now).work?.repos ?? []).filter((r) => r.local).map((r) => repoName(project, r.repo))
+      return `${approving ? 'Approved and started' : 'Started'} ${t.key}${step ? ` on ${step.key}` : ''}${inMain.length ? `, locally in ${inMain.join(', ')}` : ''}.${now.needsInput ? ` It needs the user: ${now.needsInput}` : ''}`
     }
 
     case 'start_step': {

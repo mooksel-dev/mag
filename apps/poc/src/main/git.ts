@@ -47,8 +47,10 @@ export async function prepareWorktree(repo: string, base: string, branch: string
   else await run('git', ['worktree', 'add', '-b', branch, dir, start], repo)
 }
 
+/** Removes the worktree in `dir`, and git's record of any worktree whose dir is gone (else its branch stays taken). */
 export async function removeWorktree(repo: string, dir: string) {
   await ok(run('git', ['worktree', 'remove', '--force', dir], repo))
+  await ok(run('git', ['worktree', 'prune'], repo))
 }
 
 /**
