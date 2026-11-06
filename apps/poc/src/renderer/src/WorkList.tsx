@@ -5,11 +5,14 @@ import {
   addGroup,
   canCancel,
   cardFilter,
+  cardMatches,
   cardRef,
+  flatCards,
   groupKey,
   moveRef,
   removeGroup,
   renameGroup,
+  rowMatches,
   sidebarRows,
   toggleGroup,
   workCards,
@@ -85,9 +88,10 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const all = workCards(project.id, tasks, state.sessions, now)
   const [filter, setFilter] = useFilter(project.id)
   const [searching, setSearching] = useState(false)
-  const shown = new Set(cardFilter(all, filter))
-  const sidebar = sidebarRows(project.sidebar ?? [], all, (c) => shown.has(c))
+  const sidebar = sidebarRows(project.sidebar ?? [], all, (c) => rowMatches(c, filter))
   const open = all.filter((c) => !c.closed)
+  // Counts count each row that matches on its own, a chat's works included: "Waiting on you 2" is two things to act on.
+  const counted = flatCards(open)
   const ideas = state.ideas.filter((i) => i.projectId === project.id).length
   const [showClosed, setShowClosed] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
@@ -139,21 +143,32 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
     onDragStart: (e: DragEvent) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', key); setMenu(null); setDrag(key) },
     onDragEnd: () => { setDrag(null); setOver(null) },
   })
+  /** A row; a chat's with its works under it (a child moves with its chat, it is not dragged on its own). */
   const row = (c: WorkCard, groupId: string | null) => {
     const ref = cardRef(c)
-    return (
+    const one = (k: WorkCard, child: boolean) => (
       <Row
-        key={ref}
-        card={c}
+        key={cardRef(k)}
+        card={k}
         now={now}
-        on={selected?.id === c.id}
-        menu={menu === ref}
-        over={over === ref}
-        drag={c.closed ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
-        onMenu={(o) => setMenu(o ? ref : null)}
+        child={child}
+        on={selected?.id === k.id}
+        menu={menu === cardRef(k)}
+        over={!child && over === ref}
+        drag={child || c.closed ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
+        onMenu={(o) => setMenu(o ? cardRef(k) : null)}
         onSelect={onSelect}
-        onGone={() => gone(c)}
+        onGone={() => gone(k)}
       />
+    )
+    if (!c.children) return one(c, false)
+    // Under a filter only the matching works show; done works fold under their chat.
+    const kids = hiding ? c.children.filter((k) => cardMatches(k, filter)) : c.children
+    return (
+      <div key={ref} className="wlchat">
+        {one(c, false)}
+        <ChildRows chat={c} kids={kids} folded={c.group === 'done'} render={(k) => one(k, true)} />
+      </div>
     )
   }
   const newGroup = () => {
@@ -193,7 +208,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           <div className="wlfilters" role="tablist" aria-label="Filter works">
             {CARD_FILTERS.map((f) => (
               <button key={f} role="tab" aria-selected={filter === f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>
-                {CARD_FILTER_LABELS[f]} <span className="count">{cardFilter(open, f).length}</span>
+                {CARD_FILTER_LABELS[f]} <span className="count">{cardFilter(counted, f).length}</span>
               </button>
             ))}
           </div>
@@ -240,6 +255,24 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         <button className={`link wlgear${page === 'settings' ? ' on' : ''}`} title="Settings" aria-label="Settings" onClick={() => onOpenPage('settings')}>⚙</button>
       </div>
     </nav>
+  )
+}
+
+/** A chat's works under its row: the open ones, then the done ones behind a fold (all of them when the chat is done). */
+function ChildRows({ chat, kids, folded, render }: { chat: WorkCard; kids: WorkCard[]; folded: boolean; render: (k: WorkCard) => ReactNode }) {
+  const [unfolded, setUnfolded] = useState(false)
+  const open = folded ? [] : kids.filter((k) => k.group !== 'done')
+  const done = kids.filter((k) => !open.includes(k))
+  return (
+    <div className="wlkids" aria-label={`Works of ${chat.title}`}>
+      {open.map(render)}
+      {done.length > 0 && (
+        <button className="wlfold wlkidfold" aria-expanded={unfolded} onClick={() => setUnfolded((u) => !u)}>
+          {unfolded ? '▾' : '▸'} {done.length} done
+        </button>
+      )}
+      {unfolded && done.map(render)}
+    </div>
   )
 }
 
@@ -308,9 +341,11 @@ function badge(c: WorkCard): { tone: string; text: string } | null {
  * A row: title and time, then the state badge and whose move (a discussion without one: its last message). ⋯ on hover
  * and a right-click open its menu; it is dragged to move it.
  */
-function Row({ card: c, now, on, menu, over, drag, onMenu, onSelect, onGone }: {
+function Row({ card: c, now, child, on, menu, over, drag, onMenu, onSelect, onGone }: {
   card: WorkCard
   now: number
+  /** A work under its chat's row: indented, its key before its title. */
+  child: boolean
   on: boolean
   menu: boolean
   over: boolean
@@ -321,16 +356,16 @@ function Row({ card: c, now, on, menu, over, drag, onMenu, onSelect, onGone }: {
 }) {
   const tone = c.move.who === 'you' ? 'you' : c.move.who === 'agent' ? 'agent' : 'other'
   const b = badge(c)
-  // A discussion without a move shows its last message; a done work its last event (the badge says done).
-  const line = (c.kind === 'topic' && c.move.who === 'other') || b?.tone === 'grey' ? c.last?.text ?? (b ? '' : c.move.text) : c.move.text
+  // A discussion without a move or works shows its last message; a done row its last event (the badge says done).
+  const line = (c.kind === 'topic' && !c.children && c.move.who === 'other') || b?.tone === 'grey' ? c.last?.text ?? (b ? '' : c.move.text) : c.move.text
   return (
     <div
-      className={`wlrow${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
+      className={`wlrow${child ? ' wlchild' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
       onContextMenu={(e) => { e.preventDefault(); onMenu(true) }}
       {...drag}
     >
       <button className="wlmain" title={c.task?.key} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
-        <span className="title">{c.title}</span>
+        <span className="title">{child && c.task && <span className="wlkey">{c.task.key}</span>}{c.title}</span>
         <span className="wltime">{threadTime(c.at, now)}</span>
         <span className={`wlmove ${tone}`}>{b && <span className={`wlbadge ${b.tone}`}>{b.text}</span>}{line}</span>
       </button>

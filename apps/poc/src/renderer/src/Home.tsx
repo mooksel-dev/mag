@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import {
   REVIEW_FORMATS,
   byActivity,
+  cardFilter,
   chatCommands,
   composerRoute,
+  flatCards,
   projectReviewFormat,
   resolveChoice,
   workCards,
@@ -35,9 +37,10 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
 }) {
   const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
-  const cards = workCards(project.id, tasks, state.sessions, now)
-  const waiting = byActivity(cards.filter((c) => c.group === 'waiting'))
-  const working = byActivity(cards.filter((c) => c.group === 'working'))
+  // A chat's works are cards of their own here; a chat counts by its own state (its approval, its run).
+  const cards = flatCards(workCards(project.id, tasks, state.sessions, now))
+  const waiting = byActivity(cardFilter(cards, 'waiting'))
+  const working = byActivity(cards.filter((c) => (c.own ?? c).group === 'working'))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.

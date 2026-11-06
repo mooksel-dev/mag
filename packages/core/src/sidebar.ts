@@ -37,13 +37,15 @@ export const cardRef = (c: Pick<WorkCard, 'kind' | 'id'>) => `${c.kind === 'topi
 export const groupKey = (id: string) => `group:${id}`
 
 /**
- * The sidebar from the stored layout and the project's cards. Refs whose item is gone drop; a work the layout does not
- * list whose owner topic it does takes the topic's slot (a discussion that turned into a work stays where it was);
+ * The sidebar from the stored layout and the project's cards (rows; a chat's children move with it). Refs whose item is
+ * gone drop; the ref of a chat's child work is its chat's; a work the layout does not list whose owner topic it does
+ * (and that has no row of its own) takes the topic's slot;
  * items not listed yet go on top, newest created first; closed items go to `closed`. `filter` hides rows (a group with
  * rows, all hidden, too) and never reorders.
  */
 export function sidebarRows(layout: SidebarNode[], cards: WorkCard[], filter: (c: WorkCard) => boolean = () => true): SidebarRows {
-  const byRef = new Map(cards.map((c) => [cardRef(c), c]))
+  // A chat's child work stands for its chat: a layout from before chats had children listed the work in the chat's slot.
+  const byRef = new Map(cards.flatMap((c) => [...(c.children ?? []).map((k): [string, WorkCard] => [cardRef(k), c]), [cardRef(c), c]]))
   const listed = new Set(layout.flatMap((n) => (n.kind === 'item' ? [n.ref] : n.items)))
   // The topic slot each work not listed yet takes: the newest such work of that owner.
   const slots = new Map<string, WorkCard>()
