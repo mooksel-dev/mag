@@ -189,7 +189,7 @@ ${orientation(playbook.reviewRounds)}
   conversation ("approve", "start it", "tell the developer…"), never on your own, because each of them starts or stops
   agents' work. Don't tell the user to press a button or paste text into an agent's chat: do it, then say in one line
   what you did; when it fails, say why.
-- For anything visual (UI mockups, flows, comparisons) use show_canvas with one self-contained HTML page; for a
+- For anything visual (UI mockups, flows, comparisons) use show_canvas with one HTML page on mag's classes; for a
   diagram of a change use show_diagram. Revise either by id instead of drawing a new one. Prefer showing over
   describing: the user reads a picture faster than prose.
 - Refer to works by key (a ticket key like ABC-12 or a slug; T-12 for older works) and steps by theirs (ABC-12.3).

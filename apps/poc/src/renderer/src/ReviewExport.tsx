@@ -13,6 +13,7 @@ import type { DiagramCanvas } from './DiffSetView'
 import { ago } from './format'
 import { ReviewWindow, hunkKey } from './ReviewWindow'
 import { reviewWindowModel, type HunkLines } from './reviewWindowModel'
+import { appStyles, reviewPage } from './reviewPage'
 
 const mag = window.mag
 
@@ -26,8 +27,6 @@ html, body { height: auto; overflow: auto; }
 .staticsvg { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .staticsvg > svg { display: block; }
 `
-
-const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** Resolves once the diagram in `host` has laid out: nothing changed for `quiet` ms and no "Laying out…" left. */
 function settled(host: HTMLElement, quiet = 250, max = 10_000): Promise<void> {
@@ -67,7 +66,7 @@ async function drawSvg(c: DiagramCanvas, set: DiagramCanvas[]): Promise<{ inline
     const h = Math.max(1, Math.ceil(el.scrollHeight))
     const body = `<foreignObject x="0" y="0" width="${w}" height="${h}">${new XMLSerializer().serializeToString(el)}</foreignObject>`
     const svg = (style: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${style}${body}</svg>`
-    return { inline: svg(''), file: `<?xml version="1.0" encoding="UTF-8"?>\n${svg(`<style><![CDATA[${css.replace(/]]>/g, ']]]]><![CDATA[>')}]]></style>`)}` }
+    return { inline: svg(''), file: `<?xml version="1.0" encoding="UTF-8"?>\n${svg(`<style><![CDATA[${appStyles(css).replace(/]]>/g, ']]]]><![CDATA[>')}]]></style>`)}` }
   } finally {
     root.unmount()
     host.remove()
@@ -105,18 +104,7 @@ export async function renderReviewExport(state: AppState, taskId: string): Promi
     }
   }
   const body = renderToStaticMarkup(<ReviewWindow state={state} taskId={taskId} still={{ view, lines, svgs: inline }} />)
-  const html = `<!doctype html>
-<html lang="en" data-theme="light">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(`Review · ${task.key} ${task.title}`)}</title>
-<style>${css}</style>
-<style>${STATIC_CSS}</style>
-</head>
-<body><div id="root">${body}</div></body>
-</html>
-`
+  const html = reviewPage({ title: `Review · ${task.key} ${task.title}`, css, extra: STATIC_CSS, body })
   return { html, svgs: files }
 }
 

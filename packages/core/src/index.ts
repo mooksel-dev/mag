@@ -14,6 +14,7 @@ import type { ChatSummary } from './summary.ts'
 import type { ChatRef } from './work-list.ts'
 
 export * from './arch.ts'
+export * from './canvas.ts'
 export * from './canvases.ts'
 export * from './composer.ts'
 export * from './diagram.ts'

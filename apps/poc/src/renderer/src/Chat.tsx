@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, backgroundLabel, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
+import { TASK_KEY_RE, backgroundLabel, canvasDocument, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
@@ -92,6 +92,7 @@ const fileUrl = (a: Attachment) => `mag-file://att/${encodeURIComponent(a.path.s
  */
 export function CanvasFrame({ canvas, height = 340, focus, siblings }: { canvas: CanvasRef; height?: number | string; focus?: string; siblings?: DiagramItem[] }) {
   const [content, setContent] = useState<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null | undefined>(undefined)
+  const theme = useAppliedTheme()
   useEffect(() => {
     mag.getCanvas(canvas.id).then(setContent)
   }, [canvas.id, canvas.version])
@@ -102,8 +103,10 @@ export function CanvasFrame({ canvas, height = 340, focus, siblings }: { canvas:
         <DiagramView diagram={content.diagram} focus={focus} siblings={siblings} />
       </div>
     )
-  // No allow-same-origin: the page can run scripts but cannot reach window.mag.
-  return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={content?.html ?? ''} style={{ height }} />
+  // No allow-same-origin: the page can run scripts but cannot reach window.mag. mag's tokens and canvas.css, in the
+  // app's theme, so the page looks like the app (prompts-use-the-models-to.7).
+  const doc = content?.html ? canvasDocument(content.html, theme) : ''
+  return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={doc} style={{ height }} />
 }
 
 /**
