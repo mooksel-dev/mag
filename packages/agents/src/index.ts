@@ -24,6 +24,12 @@ export interface RunSpec {
    * it to permissionPromptTool; only calls matching an `ask` rule reach it. disallowedTools still win. Claude Code only.
    */
   permissionMode?: 'auto' | 'default'
+  /**
+   * Permission rules (`Bash(gh pr comment:*)` syntax) that ask through permissionPromptTool instead of running, even
+   * when allowedTools allows the tool as a whole; disallowedTools still win (chat-publishes-to-github-prs.2). Passed as
+   * `--settings` permissions.ask. Claude Code only.
+   */
+  askTools?: string[]
   addDirs?: string[]
   env?: Record<string, string>
   /** Plain completion: no tools and no MCP servers. Codex runs read-only anyway. */
