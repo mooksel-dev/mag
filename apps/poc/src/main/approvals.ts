@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { approvalName, integrationMode, integrationOf, type AgentSession, type ChatItem } from '@mag/core'
+import { approvalName, integrationMode, integrationOf, type AgentRole, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
-import { ASKING_ROLES } from './tool-defs.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
@@ -27,11 +26,18 @@ export interface ApprovalTimings {
 
 const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
 
+/**
+ * The roles whose PR writes (gh pr comment, gh api writes…) ask on the card instead of being denied
+ * (chat-publishes-to-github-prs.2, Decision 4): project chats and work owners, and groomers. The user watches them live;
+ * the orchestrator gives only their runs those ask rules.
+ */
+const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
+
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 
 /**
  * Tool calls that wait for the user: ask-mode integration calls, and the Bash calls of a chat, owner or groomer that
- * matched an ask rule (their GitHub writes, chat-publishes-to-github-prs.2). The permission prompt tool parks each call
+ * matched an ask rule (their PR writes, chat-publishes-to-github-prs.2). The permission prompt tool parks each call
  * as an approval chat item until the user allows or denies it on its card in the work's conversation or the chat.
  * Requests long-poll; the MCP server repeats them while pending.
  */

@@ -273,10 +273,10 @@ test('groomer: Bash, WebSearch and WebFetch to read tickets and docs; no edits, 
   await tick()
   const spec = specs.at(-1)!
   for (const t of ['Bash', 'WebSearch', 'WebFetch']) assert.ok(spec.allowedTools?.includes(t), t)
-  for (const t of ['Edit', 'Write', 'Bash(gh pr merge:*)', 'Bash(git push * main)', 'Bash(git * push * main)']) assert.ok(spec.disallowedTools?.includes(t), t)
+  for (const t of ['Edit', 'Write', 'Bash(gh pr merge:*)', 'Bash(git push:*)']) assert.ok(spec.disallowedTools?.includes(t), t)
   assert.ok(!spec.disallowedTools?.includes('Bash'))
-  // Its other pushes and GitHub writes ask on the card (chat-publishes-to-github-prs.2).
-  assert.ok(spec.askTools?.includes('Bash(git push:*)'))
+  // Its PR writes ask on the card (chat-publishes-to-github-prs.2).
+  assert.ok(spec.askTools?.includes('Bash(gh pr comment:*)'))
   assert.match(spec.appendSystemPrompt ?? '', /these tickets: ABC-1 \(https:\/\/acme\.atlassian\.net\/browse\/ABC-1\), https:\/\/github\.com\/o\/r\/issues\/2\./)
   assert.match(spec.appendSystemPrompt ?? '', /You own this work/)
 })
@@ -411,7 +411,7 @@ test('step developer: the playbook\'s step, the decisions of the work and its ow
   for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push * dev)', 'Bash(git push *:dev)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
 })
 
-test('project chat: the playbook\'s plan (it owns the works it creates) and tracker sections, the notes block; no merge or push to base (T-55.2, T-55.5)', async () => {
+test('project chat: the playbook\'s plan (it owns the works it creates) and tracker sections, the notes block; no merge or push (T-55.2, T-55.5)', async () => {
   const { store, orch, project } = setup()
   store.updateProject(project.id, { notes: 'use pnpm', playbook: { tracker: 'COMMENT WITH A LINK', plan: 'OUR PLANNING' } })
   await orch.send(orch.newChat(project.id), 'hi')
@@ -421,8 +421,7 @@ test('project chat: the playbook\'s plan (it owns the works it creates) and trac
   assert.ok(spec.appendSystemPrompt!.endsWith('## Project notes\nuse pnpm'))
   assert.ok(!spec.appendSystemPrompt!.includes('## Decisions'), 'a topic has no work')
   assert.ok(spec.disallowedTools?.includes('Bash(gh pr merge:*)'))
-  assert.ok(spec.disallowedTools?.includes('Bash(git push * main)'))
-  assert.ok(spec.askTools?.includes('Bash(git push:*)'), 'other pushes ask (chat-publishes-to-github-prs.2)')
+  assert.ok(spec.disallowedTools?.includes('Bash(git push:*)'))
 })
 
 test('renameChat: project topics only, a non-empty title, kept over the first message and the generated title', async () => {
@@ -1436,49 +1435,41 @@ const ruleMatches = (rule: string, command: string) => {
 }
 const anyMatches = (rules: string[] | undefined, command: string) => (rules ?? []).some((r) => ruleMatches(r, command))
 
-test('a topic asks before it writes to a PR: review, comment, close, edit, gh api writes and push are ask rules on approve_tool; merge and push to base stay denied (chat-publishes-to-github-prs.2)', async () => {
+test('a topic asks before it writes to a PR: review, comment, close, edit and gh api writes are ask rules on approve_tool; merge and every push stay denied (chat-publishes-to-github-prs.2)', async () => {
   const { store, orch, project } = setup()
   const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   await orch.send(chat.id, 'review https://github.com/acme/api/pull/4')
   const spec = specs.at(-1)!
-  const writes = ['Bash(gh pr review:*)', 'Bash(gh pr comment:*)', 'Bash(gh pr close:*)', 'Bash(gh pr edit:*)', 'Bash(gh api * -X *)', 'Bash(gh api --method *)', 'Bash(gh api * -f *)', 'Bash(git push:*)']
+  const writes = ['Bash(gh pr review:*)', 'Bash(gh pr comment:*)', 'Bash(gh pr close:*)', 'Bash(gh pr edit:*)', 'Bash(gh api * -X *)', 'Bash(gh api --method *)', 'Bash(gh api * -f *)']
   for (const rule of writes) {
     assert.ok(spec.askTools?.includes(rule), rule)
     assert.ok(!spec.disallowedTools?.includes(rule), rule)
   }
-  assert.ok(spec.disallowedTools?.includes('Bash(gh pr merge:*)'))
+  for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push:*)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
   assert.ok(!spec.disallowedTools?.includes('Bash'))
   assert.ok(spec.allowedTools?.includes('Bash'))
   assert.equal(spec.permissionPromptTool, 'mcp__mag__approve_tool')
   assert.equal(spec.env?.MCP_TOOL_TIMEOUT, String(7 * 24 * 60 * 60 * 1000))
   assert.equal(spec.permissionMode, undefined, 'no auto mode: it never asks under -p (step 1)')
-  assert.match(spec.appendSystemPrompt ?? '', /Writes to GitHub[\s\S]*only when the user asked for them in this conversation: mag shows the user the exact command on a card/)
-  // With leading options too: `git push:*` alone matches a prefix only.
-  for (const c of ['gh pr comment 4 -b "[mag] ok"', 'gh -R acme/api pr comment 4 -b x', 'gh api -X POST repos/acme/api/pulls/4/comments', 'gh api repos/acme/api/pulls/4/comments -f body=x', 'git push origin feature', 'git -C /r push origin feature', 'git -C /r push'])
+  assert.match(spec.appendSystemPrompt ?? '', /Writes to a PR on GitHub[\s\S]*only when the user asked for them in this conversation: mag shows the user the exact command on a card[\s\S]*Merges and pushes stay blocked/)
+  // With leading options too: `gh pr comment:*` alone matches a prefix only.
+  for (const c of ['gh pr comment 4 -b "[mag] ok"', 'gh -R acme/api pr comment 4 -b x', 'gh api -X POST repos/acme/api/pulls/4/comments', 'gh api repos/acme/api/pulls/4/comments -f body=x', 'gh -R acme/api api repos/a/b/issues/1/comments -f body=x'])
     assert.ok(anyMatches(spec.askTools, c), c)
-  for (const c of ['git push origin main', 'git -C /r push origin main', 'git -C /r push origin HEAD:main', 'git -C /r push origin refs/heads/main', 'gh -R acme/api pr merge 4'])
-    assert.ok(anyMatches(spec.disallowedTools, c), c)
-  for (const c of ['gh pr view 4 --comments', 'gh api repos/acme/api/pulls/4', 'git -C /r log --oneline', 'git status'])
+  // The checkout is the user's, often on the base branch: a bare push would land there, so no push is even asked about.
+  for (const c of ['git push', 'git push origin HEAD', 'git push origin feature', 'git -C /r push', 'git -C /r push origin feature', 'git -c a=b push', 'git --no-pager push', 'gh -R acme/api pr merge 4'])
+    assert.ok(anyMatches(spec.disallowedTools, c) && !anyMatches(spec.askTools, c), c)
+  for (const c of ['gh pr view 4 --comments', 'gh api repos/acme/api/pulls/4', 'git -C /r log --oneline', 'git log --grep push x', 'git status'])
     assert.ok(!anyMatches(spec.askTools, c) && !anyMatches(spec.disallowedTools, c), c)
 })
 
-test('chat, owner and groomer never push to a base of the project\'s works; developer, reviewer and architect still deny every GitHub write and ask about none (chat-publishes-to-github-prs.2)', async () => {
-  const { store, orch, project, task } = setup()
-  // Another work's step whose repository has a base of its own.
-  const other = store.createTask({ projectId: project.id, title: 'o', type: 'dev', description: '', status: 'in_progress' })
-  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: other.id, status: 'in_progress' })
-  store.updateTask(step.id, { work: { dir: '/w', feedbackSeenAt: 0, repos: [{ repo: project.repos[0]!, worktree: '/w/app', branch: 'b', prUrl: null, prState: null, base: 'develop' }] } })
-  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
-  await orch.send(chat.id, 'hi')
-  const chatSpec = specs.at(-1)!
+test('groomer denies every push like a chat; developer, reviewer and architect ask about nothing, and only the developer pushes, never to a base (chat-publishes-to-github-prs.2)', async () => {
+  const { orch, project, task } = setup()
   orch.groom(task.id)
   await tick()
   const groomer = specs.at(-1)!
-  for (const spec of [chatSpec, groomer]) {
-    assert.ok(anyMatches(spec.disallowedTools, 'git -C /r push origin develop'))
-    assert.ok(anyMatches(spec.disallowedTools, 'git push origin main'))
-    assert.equal(spec.permissionPromptTool, 'mcp__mag__approve_tool')
-  }
+  assert.equal(groomer.permissionPromptTool, 'mcp__mag__approve_tool')
+  for (const c of ['git push', 'git -C /r push origin feature']) assert.ok(anyMatches(groomer.disallowedTools, c), c)
+  assert.ok(anyMatches(groomer.askTools, 'gh -R a/b pr comment 4 -b x'))
   orch.architect(project.id)
   const architect = runs.at(-1)!.spec
   assert.equal(architect.askTools, undefined)
@@ -1487,7 +1478,7 @@ test('chat, owner and groomer never push to a base of the project\'s works; deve
   await developing()
   const dev = specs.at(-1)!
   assert.equal(dev.askTools, undefined)
-  assert.ok(anyMatches(dev.disallowedTools, 'git -C /r push origin main'))
+  for (const c of ['git -C /r push origin main', 'git -C /r push origin HEAD:main', 'git --no-pager push origin main']) assert.ok(anyMatches(dev.disallowedTools, c), c)
   assert.ok(!anyMatches(dev.disallowedTools, 'git -C /r push origin mag/login-1'))
 })
 
