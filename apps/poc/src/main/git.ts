@@ -8,8 +8,10 @@ import type { PrCheck } from '../preload/api'
 
 const exec = promisify(execFile)
 
-async function run(cmd: string, args: string[], cwd?: string) {
-  const { stdout } = await exec(cmd, args, { cwd, maxBuffer: 10 * 1024 * 1024 })
+async function run(cmd: string, args: string[], cwd?: string, timeout?: number) {
+  // timeout: a call to the remote must not hold a start forever; no prompt for credentials either.
+  const env = timeout ? { ...process.env, GIT_TERMINAL_PROMPT: '0' } : undefined
+  const { stdout } = await exec(cmd, args, { cwd, maxBuffer: 10 * 1024 * 1024, timeout, env })
   return stdout.trim()
 }
 
@@ -23,11 +25,11 @@ export async function repoInfo(repo: string): Promise<{ git: boolean; origin: st
 
 /**
  * The repository's own base branch: the branch origin/HEAD points at (e.g. master). Without a local origin/HEAD it asks
- * the remote once (git remote set-head --auto); `fallback` (the project's base branch) if that fails too, e.g. no remote.
+ * the remote once (git remote set-head --auto, at most 15 s; it writes origin/HEAD as git clone does); `fallback` (the project's base branch) if that fails too, e.g. no remote.
  */
 export async function defaultBranch(repo: string, fallback: string): Promise<string> {
   const head = () => run('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repo)
-  const ref = await head().catch(async () => ((await ok(run('git', ['remote', 'set-head', 'origin', '--auto'], repo))) ? head().catch(() => '') : ''))
+  const ref = await head().catch(async () => ((await ok(run('git', ['remote', 'set-head', 'origin', '--auto'], repo, 15_000))) ? head().catch(() => '') : ''))
   return ref.replace(/^origin\//, '') || fallback
 }
 

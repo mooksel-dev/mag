@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, shownResult, type AgentEvent, type PrReview } from '@mag/core'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -860,6 +860,32 @@ test('develop: a repository on master gets its worktree from master; the base is
   // A repository added mid-step without a remote: the project's base.
   await orch.addRepo(step.id, 'app')
   assert.deepEqual(store.task(step.id).work!.repos.map((r) => r.base), ['master', 'main'])
+})
+
+test('develop: a work from before RepoWork.base gets the base of a repo without a PR on restart; one with a PR keeps the project\'s', async () => {
+  const { dir, store, orch, project, task } = setup()
+  const origin = join(dir, 'origin', 'lisa')
+  mkdirSync(origin, { recursive: true })
+  execFileSync('git', ['init', '-q', '-b', 'master'], { cwd: origin })
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: origin })
+  const lisa = join(dir, 'repos', 'lisa')
+  execFileSync('git', ['clone', '-q', origin, lisa])
+  const app = join(dir, 'repos', 'app')
+  execFileSync('git', ['clone', '-q', origin, app])
+  store.updateProject(project.id, { repos: [lisa, app] })
+  store.updateTask(task.id, { status: 'ready' })
+  const stepDir = join(dir, 'w', 'login.1')
+  // A start that failed on lisa (no worktree made) and a repo with a PR, both recorded without a base.
+  const repos = [
+    { repo: lisa, branch: 'mag/login-1', worktree: join(stepDir, 'lisa'), prUrl: null, prState: null },
+    { repo: app, branch: 'mag/login-1', worktree: join(stepDir, 'app'), prUrl: 'https://github.com/o/app/pull/1', prState: 'open' as const },
+  ]
+  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [lisa, app] })
+  store.updateTask(step.id, { work: { dir: stepDir, feedbackSeenAt: 0, repos } })
+  await orch.develop(task.id)
+  const work = store.task(step.id).work!
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.base]), [[lisa, 'master'], [app, undefined]])
+  assert.equal(git(work.repos[0].worktree, 'rev-parse', 'HEAD'), git(origin, 'rev-parse', 'master'), 'the worktree starts from master')
 })
 
 test('develop: a step without repos gets its dir and no worktree', async () => {
@@ -1973,6 +1999,27 @@ async function withPr() {
   }
   return { ...s, gh, groomer, turnEnds }
 }
+
+test('fixPr: conflicts in repos on different bases name the rebase commands of each repo', async () => {
+  const s = await withPr()
+  const { store, orch, step, live } = s
+  try {
+    const work = store.task(step.id).work!
+    const conflict = { prState: 'open' as const, mergeable: 'conflict' as const }
+    const repos = [
+      { ...work.repos[0], ...conflict, base: 'master' },
+      { ...work.repos[0], ...conflict, repo: '/r/web', worktree: join(work.dir, 'web'), prUrl: 'https://github.com/a/web/pull/2', base: 'main' },
+    ]
+    store.updateTask(step.id, { work: { ...work, repos } })
+    assert.equal(orch.fixPr(step.id, 'conflict', '- b\n- web'), true)
+    const sent = live.sent.at(-1)!
+    assert.match(sent, /^Your PR has conflicts with their bases \(master, main\):/)
+    assert.ok(sent.includes(`in ${repoWorkName(store.task(step.id).work!, repos[0])}: git fetch origin master, git rebase origin/master; in web: git fetch origin main, git rebase origin/main`), sent)
+    assert.ok(!sent.includes('<base>'))
+  } finally {
+    s.gh.restore()
+  }
+})
 
 test('fixPr: a failed CI goes back to the developer twice, then to the owner; cleared, it starts over (ux-odna-rozmova-na-robotu.1)', async () => {
   const s = await withPr()

@@ -979,7 +979,8 @@ export class Orchestrator {
       this.store.updateTask(task.id, { localRepos: local })
       const work = this.store.task(stepId).work!
       const rest = { ...work, repos: work.repos.filter((w) => w.repo !== repo) }
-      patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local, r.base ? { [repo]: r.base } : {}), ...(waiting && { waitingFor: null }) }
+      const bases = r.base ? { [repo]: r.base } : r.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
+      patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local, bases), ...(waiting && { waitingFor: null }) }
     } else if (choice === 'wait') patch = { waitingFor: { key: check!.busyBy!, repo } }
     else if (choice !== 'discuss') {
       // Another step may have taken the checkout since the card came up.
@@ -1063,12 +1064,13 @@ export class Orchestrator {
   /**
    * A workspace in `dir`: the existing work, plus a worktree on `branch` for every repository of `repos` it does not
    * cover yet; one of `localRepos` works in its main checkout instead (T-50). `bases` (repository → base branch, see
-   * newBases) is recorded on the repositories added; one missing there falls back to the project's.
+   * newBases) is recorded on the repositories added and on known ones without a base yet; one missing there falls back
+   * to the project's.
    */
   private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[], localRepos: string[] = [], bases: Record<string, string> = {}): TaskWork {
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
-    const known = prev?.repos ?? []
+    const known = (prev?.repos ?? []).map((w) => (!w.base && bases[w.repo] ? { ...w, base: bases[w.repo] } : w))
     const fresh = repos.filter((r) => project.repos.includes(r) && !known.some((w) => w.repo === r))
     const names = repoDirNames([...known.map((w) => w.repo), ...fresh]).slice(known.length)
     const added = fresh.map((repo, i): RepoWork => ({
@@ -1080,10 +1082,18 @@ export class Orchestrator {
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
   }
 
-  /** The base branch (see defaultBranch) of every repository of `repos` that `prev` does not have yet: what workFor records. */
+  /**
+   * The base branch (see defaultBranch) of every repository of `repos` that `prev` does not have yet, and of every one it
+   * has without a base and without a PR (a work from before RepoWork.base, e.g. a start that failed on a master repo):
+   * what workFor records. A repository with a PR keeps the project's base its PR was opened against.
+   */
   private async newBases(project: Project, prev: TaskWork | null, repos: string[]): Promise<Record<string, string>> {
-    const fresh = repos.filter((r) => project.repos.includes(r) && !prev?.repos.some((w) => w.repo === r))
-    return Object.fromEntries(await Promise.all(fresh.map(async (r) => [r, await defaultBranch(r, project.baseBranch)] as const)))
+    const unknown = (r: string) => {
+      const w = prev?.repos.find((x) => x.repo === r)
+      return !w || (!w.base && !w.prUrl)
+    }
+    const todo = [...new Set([...repos, ...(prev?.repos ?? []).map((w) => w.repo)])].filter((r) => project.repos.includes(r) && unknown(r))
+    return Object.fromEntries(await Promise.all(todo.map(async (r) => [r, await defaultBranch(r, project.baseBranch)] as const)))
   }
 
   /**
@@ -1104,7 +1114,7 @@ export class Orchestrator {
     const kept = (work: TaskWork) => (worktree ? { ...work, repos: work.repos.filter((w) => !(w.repo === repo && w.local)) } : work)
     // A repository leaving its main checkout for a worktree keeps the base it had.
     const had = step.work.repos.find((w) => w.repo === repo)
-    const bases = had?.base ? { [repo]: had.base } : await this.newBases(project, kept(step.work), [repo])
+    const bases = had?.base ? { [repo]: had.base } : had?.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
     const planned = (work: TaskWork) => this.workFor(kept(work), project, work.dir, stepBranch(step.key), [repo], local, bases)
     const r = planned(step.work).repos.find((w) => w.repo === repo)
     if (!r) throw new Error(`${step.key} has no room for another worktree`)
@@ -1195,14 +1205,20 @@ export class Orchestrator {
       if (!this.toOwner(stepId, question, 'mag')) this.store.updateTask(task.id, { needsInput: `${step.key}: PR ${what}, not fixed after ${AUTO_FIX_TRIES} tries` })
       return true
     }
-    // The base of the conflicting repositories; with several different ones, each repository's own.
+    // The base of the conflicting repositories; with several different ones, the commands per repository.
     const project = this.store.project(step.projectId)
-    const bases = [...new Set((step.work?.repos ?? []).filter((r) => r.prState === 'open' && r.mergeable === 'conflict').map((r) => baseOf(project, r)))]
-    const base = bases.length > 1 ? '<base>' : (bases[0] ?? project.baseBranch)
+    const work = step.work
+    const conflicting = (work?.repos ?? []).filter((r) => r.prState === 'open' && r.mergeable === 'conflict')
+    const bases = [...new Set(conflicting.map((r) => baseOf(project, r)))]
+    const rebase = (base: string) => `git fetch origin ${base}, git rebase origin/${base}`
+    const policy =
+      bases.length > 1
+        ? `rebased on the fresh base of its repo (${conflicting.map((r) => `in ${repoWorkName(work!, r)}: ${rebase(baseOf(project, r))}`).join('; ')})`
+        : `rebased on fresh origin/${bases[0] ?? project.baseBranch} (${rebase(bases[0] ?? project.baseBranch)})`
     const text =
       problem === 'ci'
         ? `CI fails on your PR:\n${detail}\nRead the failing logs (gh pr checks, gh run view --log-failed), fix the cause, run the tests, push. If it is not caused by your change, say why here and call set_needs_input.`
-        : `Your PR has conflicts with ${bases.length > 1 ? `their bases (${bases.join(', ')}: each repo's own)` : base}:\n${detail}\nThe branch policy: the step's branch is rebased on fresh origin/${base} (git fetch origin ${base}, git rebase origin/${base}) rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
+        : `Your PR has conflicts with ${bases.length > 1 ? `their bases (${bases.join(', ')})` : (bases[0] ?? project.baseBranch)}:\n${detail}\nThe branch policy: the step's branch is ${policy} rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
     if (!this.resumeDeveloper(step, text, problem === 'ci' ? `CI failed · try ${n + 1}/${AUTO_FIX_TRIES}` : `Conflict · try ${n + 1}/${AUTO_FIX_TRIES}`)) return false
     this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
     this.ownerEvent(stepId, `${step.key}: ${what}, the developer fixes it (try ${n + 1}/${AUTO_FIX_TRIES})`)
