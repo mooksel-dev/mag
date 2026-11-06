@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { integrationMode, integrationOf, type AgentSession, type ChatItem } from '@mag/core'
+import { approvalName, integrationMode, integrationOf, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
+import { ASKING_ROLES } from './tool-defs.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
@@ -29,8 +30,10 @@ const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 
 /**
- * Ask-mode integration calls: the permission prompt tool parks each call as an approval chat item until the user
- * allows or denies it on its card in the work's conversation or the chat. Requests long-poll; the MCP server repeats them while pending.
+ * Tool calls that wait for the user: ask-mode integration calls, and the Bash calls of a chat, owner or groomer that
+ * matched an ask rule (their GitHub writes, chat-publishes-to-github-prs.2). The permission prompt tool parks each call
+ * as an approval chat item until the user allows or denies it on its card in the work's conversation or the chat.
+ * Requests long-poll; the MCP server repeats them while pending.
  */
 export class Approvals {
   /** Wake-ups of the polls waiting per approval id. */
@@ -49,16 +52,13 @@ export class Approvals {
   async request(ctx: ApprovalContext, args: ApprovalArgs): Promise<string> {
     const toolName = String(args.tool_name ?? '')
     const session = ctx.sessionId ? this.store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-    const found = integrationOf(toolName, this.store.data.integrations)
-    // Anything that isn't an ask-mode integration stays denied, as it was before the prompt tool existed.
-    if (!session || !found || integrationMode(this.store.project(session.projectId), session.role, found.integration.id) !== 'ask')
-      return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
+    const asked = session && this.asked(session, toolName)
+    // Anything else stays denied, as it was before the prompt tool existed.
+    if (!session || !asked) return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
 
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined
-    const item =
-      this.item(session, useId) ??
-      this.add(session, { id: useId ?? randomUUID(), tool: found.tool, server: found.integration.name, input: args.input ?? {} })
+    const item = this.item(session, useId) ?? this.add(session, { id: useId ?? randomUUID(), ...asked, input: args.input ?? {} })
     clearTimeout(this.expiry.get(item.id))
     if (item.status === 'pending') await this.wait(item.id, ctx.signal)
     if (item.status === 'pending') {
@@ -67,6 +67,16 @@ export class Approvals {
     }
     if (item.status === 'allowed') return JSON.stringify({ behavior: 'allow', updatedInput: item.input })
     return deny(item.status === 'denied' ? 'User denied' : 'The request expired before the user answered')
+  }
+
+  /**
+   * What the session may ask the user for: an integration in ask mode for its role, or Bash in a role that asks
+   * (Claude Code sends Bash here only when it matched one of the run's ask rules); else null.
+   */
+  private asked(session: AgentSession, toolName: string): Pick<ApprovalItem, 'tool' | 'server'> | null {
+    const found = integrationOf(toolName, this.store.data.integrations)
+    if (found) return integrationMode(this.store.project(session.projectId), session.role, found.integration.id) === 'ask' ? { tool: found.tool, server: found.integration.name } : null
+    return toolName === 'Bash' && ASKING_ROLES.includes(session.role) ? { tool: toolName } : null
   }
 
   /** The user's answer; wakes the waiting poll and logs it. */
@@ -85,7 +95,7 @@ export class Approvals {
       taskId: session.taskId,
       taskKey: task?.key ?? null,
       kind: 'approval',
-      text: `${item.server} · ${item.tool} ${item.status}`,
+      text: `${approvalName(item)} ${item.status}`,
     })
     for (const wake of this.waiting.get(item.id) ?? []) wake()
   }

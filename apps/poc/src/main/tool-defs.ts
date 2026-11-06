@@ -3,7 +3,7 @@
 // reviewer: it sees only tools marked 'only' (its own) or 'also' for it; the other roles all but 'only'.
 // OWNER_TOOLS: a project chat plans the works it owns with them too, passing work (see toolsFor).
 
-import { CANVAS_CLASSES } from '@mag/core'
+import { CANVAS_CLASSES, type AgentRole } from '@mag/core'
 
 /** One module of set_architecture. `children` items are described in words, not by $ref: not every agent follows it. */
 const ARCH_MODULE = {
@@ -969,7 +969,7 @@ export const TOOL_DEFS = [
     name: 'approve_tool',
     scope: 'any',
     reviewer: 'also',
-    description: 'Internal: mag uses this to ask the user before an integration call. Do not call it yourself.',
+    description: 'Internal: mag uses this to ask the user before an integration call or a GitHub write. Do not call it yourself.',
     inputSchema: {
       type: 'object',
       properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } },
@@ -980,6 +980,12 @@ export const TOOL_DEFS = [
 
 /** The --permission-prompt-tool, as Claude Code names it. */
 export const APPROVE_TOOL = 'mcp__mag__approve_tool'
+
+/**
+ * The roles whose GitHub writes (gh pr comment, git push…) ask on the card instead of being denied
+ * (chat-publishes-to-github-prs.2, Decision 4): project chats and work owners, and groomers. The user watches them live.
+ */
+export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
 
 /**
  * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer, and
