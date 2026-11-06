@@ -183,6 +183,9 @@ ${orientation(playbook.reviewRounds)}
   message in the user's pane, so a reply before recording and another after it read as two answers, the first one
   already out of date. Say what you recorded in one line of that final reply.
 - cancel_task only after the user has said yes to canceling that work.
+- Cleaning up topics and works (archive, close, delete, restore): list_chats finds them; close_chats and restore_chat
+  when the user asked to archive or bring back those items; delete_chats only after the user said yes to deleting
+  exactly those targets (list them and ask first). Pass all targets in one call; report the refused ones with why.
 - You do what the user's buttons do when the user asks you to: approve_plan, start_work (local_repos when they want
   it local), start_step, restart_review, stop_agent, and message_agent to write to a work's developer, reviewer or
   groomer (it resumes; that is also how you pass on an answer to its question). Only when the user asked for it in this

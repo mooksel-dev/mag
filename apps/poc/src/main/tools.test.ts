@@ -10,8 +10,13 @@ import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
 
 /** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
-const NO_CONTROL: Pick<ToolActions, 'branchChat' | 'approve' | 'approveAndStart' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents'> = {
+const NO_CONTROL: Pick<ToolActions, 'branchChat' | 'approve' | 'approveAndStart' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents' | 'closeChat' | 'closeWork' | 'deleteChat' | 'deleteWork' | 'restore'> = {
   approve: () => {},
+  closeChat: async () => {},
+  closeWork: () => {},
+  deleteChat: async () => {},
+  deleteWork: async () => {},
+  restore: () => {},
   develop: async () => {},
   approveAndStart: async () => {},
   startStep: async () => {},
@@ -640,6 +645,16 @@ test("a project chat gets the buttons' tools, each only on the user's word (chat
   assert.deepEqual(chat.map((t) => t.name), names)
   for (const t of chat) assert.match(t.description, /Only when the user has asked for exactly this in this conversation/)
   assert.ok(!toolsFor('task', 'developer').some((t) => names.includes(t.name)))
+})
+
+test('a project chat gets list_chats, close_chats, delete_chats and restore_chat; delete only on the user\'s yes; task runs do not (chat-archives-and-deletes-topics.1)', () => {
+  const names = ['list_chats', 'close_chats', 'delete_chats', 'restore_chat']
+  const chat = toolsFor('project', 'chat').filter((t) => names.includes(t.name))
+  assert.deepEqual(chat.map((t) => t.name), names)
+  const by = (n: string) => chat.find((t) => t.name === n)!.description
+  for (const n of ['close_chats', 'restore_chat']) assert.match(by(n), /Only when the user has asked for exactly this in this conversation/)
+  assert.match(by('delete_chats'), /Only for targets the user said yes to deleting in this conversation/)
+  for (const role of ['developer', 'groomer', 'reviewer']) assert.ok(!toolsFor('task', role).some((t) => names.includes(t.name)), role)
 })
 
 test('request_integration: one card per integration while it is off; an integration that is on or unknown says so (redesign-start-screen-big-composer.4)', async () => {

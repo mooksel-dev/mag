@@ -100,7 +100,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [] }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -121,6 +121,11 @@ app.whenReady().then(async () => {
   actions.groom = (id) => orch.groom(id)
   actions.architect = (id) => orch.architect(id)
   actions.cancel = (id, reason) => orch.cancel(id, reason)
+  actions.closeChat = (id) => orch.closeChat(id)
+  actions.closeWork = (id) => orch.closeWork(id)
+  actions.deleteChat = (id) => orch.deleteChat(id)
+  actions.deleteWork = (id) => orch.deleteWork(id)
+  actions.restore = (kind, id) => orch.restore(kind, id)
   actions.completeStep = (id) => orch.completeStep(id)
   actions.addRepo = (id, ref, worktree) => orch.addRepo(id, ref, worktree)
   actions.setReview = (id, verdict, findings, report) => orch.setReview(id, verdict, findings, report)

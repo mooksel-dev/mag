@@ -1,4 +1,4 @@
-import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -66,6 +66,16 @@ export interface ToolActions {
   send(sessionId: string, text: string): Promise<void>
   /** Stops the agents of a work or a step in a turn; returns those stopped. */
   stopAgents(taskId: string): Promise<AgentSession[]>
+  /** The user's Close of a topic; refused while it owns an open work. */
+  closeChat(sessionId: string): Promise<void>
+  /** The user's Close of a done work or a review. */
+  closeWork(taskId: string): void
+  /** The user's Delete of a topic. */
+  deleteChat(sessionId: string): Promise<void>
+  /** The user's Delete of a work or a review (with its owner topic unless it owns another work); refused while its agents run. */
+  deleteWork(taskId: string): Promise<void>
+  /** The user's Restore of a closed topic, work or review; refused for a canceled work. */
+  restore(kind: 'work' | 'topic', id: string): void
   /** The failed CI checks of a PR, by name (with link), for mag's review floor; without it, CI sets no floor. */
   failedChecks?(url: string): Promise<string[]>
 }
@@ -1042,6 +1052,13 @@ function sharedTool(
     case 'stop_agent':
       return controlTool(store, actions, project, ctx, name, args, byKey)
 
+    // The sidebar's Close, Delete and Restore of topics and works, for a project chat (chat-archives-and-deletes-topics.1).
+    case 'list_chats':
+    case 'close_chats':
+    case 'delete_chats':
+    case 'restore_chat':
+      return chatsTool(store, actions, project, ctx, name, args)
+
     case 'update_notes':
       store.updateProject(project.id, { notes: String(args.notes ?? '') })
       return 'Notes updated.'
@@ -1241,3 +1258,119 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
   throw new Error(`Unknown tool ${name}`)
 }
 
+/** Targets from a tool argument: topic ids or work keys; some agent CLIs pass the array as a JSON string. */
+function targetsArg(v: unknown): string[] {
+  let raw = v ?? []
+  if (typeof raw === 'string') {
+    try {
+      raw = raw.trim().startsWith('[') ? JSON.parse(raw) : [raw]
+    } catch {
+      throw new Error('targets must be an array of topic ids or work keys')
+    }
+  }
+  if (!Array.isArray(raw)) throw new Error('targets must be an array of topic ids or work keys')
+  const targets = raw.map((x) => String(x ?? '').trim()).filter(Boolean)
+  if (!targets.length) throw new Error('targets is required: topic ids or work keys from list_chats')
+  return targets
+}
+
+const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+
+/**
+ * A project chat closes, deletes and restores topics and works, as the sidebar's buttons do
+ * (chat-archives-and-deletes-topics.1): each target through the orchestrator method its button calls, so the checks are
+ * the same. A target is a topic id or the key of a top-level work or review of this project; each is handled on its own,
+ * in order, and gets one line. The calling topic is never closed or deleted: that would end this very turn.
+ */
+async function chatsTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<string> {
+  const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+  if (session?.role !== 'chat') throw new Error(`${name} is for a project chat`)
+  const self = session.id
+  const sessions = () => store.data.sessions.filter((s) => s.projectId === project.id)
+  const topics = () => sessions().filter((s) => s.role === 'chat' && !s.taskId)
+  const works = () => store.data.tasks.filter((t) => t.projectId === project.id && !t.parentId)
+  /** The sessions whose items make up a work's conversation: its own, and mag's topics of a review. */
+  const conversation = (t: Task) => sessions().filter((s) => s.taskId === t.id || s.reviewOf === t.id)
+  const resolve = (target: string): { topic: AgentSession } | { work: Task } | { none: string } => {
+    const topic = topics().find((s) => s.id === target)
+    if (topic) return { topic }
+    const t = taskByKey(store.data.tasks.filter((x) => x.projectId === project.id), target)
+    if (t?.parentId) return { none: `no such topic or work (${t.key} is a step: pass its work)` }
+    return t ? { work: t } : { none: 'no such topic or work in this project' }
+  }
+  /** Deleting a work deletes its owner topic (deleteWork) or mag's topics of a review (deleteReview) too. */
+  const deletesSelf = (t: Task) =>
+    isReview(t)
+      ? reviewTopic(t, sessions())?.id === self || sessions().some((s) => s.reviewOf === t.id && s.id === self)
+      : t.ownerSessionId === self && !store.data.tasks.some((x) => x.id !== t.id && x.ownerSessionId === self)
+  const said = (e: unknown) => `refused: ${(e as Error).message}`
+
+  if (name === 'list_chats') {
+    const rows = [
+      ...topics().map((s) => ({
+        id: s.id,
+        kind: 'topic',
+        title: s.title ?? 'New topic',
+        state: s.status,
+        closed: !!s.closedAt,
+        owns: [...new Set(works().filter((t) => t.ownerSessionId === s.id || t.id === s.reviewOf).map((t) => t.key))],
+        lastAt: s.items.at(-1)?.at ?? s.createdAt,
+        items: s.items.length,
+        ...(s.id === self && { this: true }),
+      })),
+      ...works().map((t) => {
+        const conv = conversation(t)
+        return {
+          key: t.key,
+          kind: isReview(t) ? 'review' : 'work',
+          title: t.title,
+          state: t.status,
+          closed: !!t.closedAt || t.status === 'canceled',
+          lastAt: Math.max(t.updatedAt, ...conv.map((s) => s.items.at(-1)?.at ?? 0)),
+          items: conv.reduce((n, s) => n + s.items.length, 0),
+        }
+      }),
+    ].sort((a, b) => b.lastAt - a.lastAt)
+    if (!rows.length) return 'No topics or works in this project.'
+    return `[\n${rows.map((r) => JSON.stringify({ ...r, lastAt: day(r.lastAt) })).join(',\n')}\n]`
+  }
+
+  if (name === 'restore_chat') {
+    const target = String(args.target ?? '').trim()
+    if (!target) throw new Error('target is required: a topic id or a work key from list_chats')
+    const r = resolve(target)
+    if ('none' in r) return `${target}: ${r.none}`
+    const closed = 'topic' in r ? !!r.topic.closedAt : !!r.work.closedAt || r.work.status === 'canceled'
+    if (!closed) return `${target}: not closed`
+    try {
+      if ('topic' in r) actions.restore('topic', r.topic.id)
+      else actions.restore('work', r.work.id)
+    } catch (e) {
+      return `${target}: ${said(e)}`
+    }
+    log.info('tools', `chat ${self}: restored ${target}`)
+    return `${target}: restored`
+  }
+
+  const close = name === 'close_chats'
+  const lines: string[] = []
+  for (const target of targetsArg(args.targets)) {
+    const r = resolve(target)
+    const line = async (): Promise<string> => {
+      if ('none' in r) return r.none
+      if ('topic' in r ? r.topic.id === self : !close && deletesSelf(r.work))
+        return `refused: ${'topic' in r ? 'this is the topic you are in' : `deleting it deletes this topic too`}; the user does it with the button`
+      if (close && ('topic' in r ? r.topic.closedAt : r.work.closedAt || r.work.status === 'canceled')) return 'already closed'
+      try {
+        if ('topic' in r) await (close ? actions.closeChat(r.topic.id) : actions.deleteChat(r.topic.id))
+        else await (close ? actions.closeWork(r.work.id) : actions.deleteWork(r.work.id))
+      } catch (e) {
+        return said(e)
+      }
+      log.info('tools', `chat ${self}: ${close ? 'closed' : 'deleted'} ${target}`)
+      return close ? 'closed' : 'deleted'
+    }
+    lines.push(`${target}: ${await line()}`)
+  }
+  return lines.join('\n')
+}
