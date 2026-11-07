@@ -4,7 +4,6 @@ import {
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
-  headerWork,
   integrationMode,
   playbookOf,
   placeNew,
@@ -30,7 +29,8 @@ import {
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
 import { Architecture } from './Architecture'
-import { TopicConversation, WorkConversation } from './Conversation'
+import { workTarget } from './artifacts'
+import { ownerSession, TopicConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
 import { IdeasPage } from './Ideas'
@@ -47,8 +47,8 @@ const PAGE_NAMES: Record<Page, string> = { ideas: 'Ideas', architecture: 'Archit
 
 /**
  * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
- * the left, the open work's or discussion's screen (or Home) in the rest; what a work made is in its tabs, a diagram
- * opens in a drawer (redesign-start-screen-big-composer.3). Ideas, Architecture and Settings open from the list's footer.
+ * the left, the open topic's screen (or Home) in the rest; what a topic made is in its artifacts list and opens in a
+ * drawer (topics-a-tree-of-agent.3). Ideas, Architecture and Settings open from the list's footer.
  */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
@@ -116,17 +116,19 @@ export function App({ projectId }: { projectId: string }) {
     const t = taskByKey(tasks, key)
     if (t) select({ kind: 'work', id: t.parentId ?? t.id })
   }
-  // The selection, while it still exists; else Home. A chat that owns works opens on its header work (the one waiting on
-  // the user, else the newest); a topic a review shows through, on that review.
-  // A session under a topic opens on its own page, as a topic does (topics-a-tree-of-agent.2).
-  const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && !s.taskId && (s.role === 'chat' || !!s.parentId)) ?? null : null
-  const owned = picked && (headerWork(picked.id, tasks, state.sessions.filter((s) => s.projectId === project.id), Date.now()) ?? reviewOfTopic(tasks, picked.id))
-  const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
-  const topic = owned ? null : picked
-  const shownWork = work
-  const shownTopic = topic
-  const current: Selection | null = shownWork ? { kind: 'work', id: shownWork.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
-  const screen = page ? PAGE_NAMES[page] : shownWork ? `Work ${shownWork.key}` : shownTopic ? 'Topic' : 'Home'
+  // The selection, while it still exists; else Home. A work opens through its owner topic, with its card in the drawer;
+  // a work whose owner is its groomer (or nobody) on a screen of its own (topics-a-tree-of-agent.3). A topic a review
+  // shows through opens with the review. A session under a topic opens on its own page, as a topic does.
+  const sessions = state.sessions.filter((s) => s.projectId === project.id)
+  const isTopic = (s: AgentSession) => !s.taskId && (s.role === 'chat' || !!s.parentId)
+  const pickedTopic = selected?.kind === 'topic' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
+  const work = selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null
+  const owner = work && ownerSession(work, sessions)
+  const shownTopic = pickedTopic ?? (owner && isTopic(owner) ? owner : null)
+  const shownReview = pickedTopic && reviewOfTopic(tasks, pickedTopic.id)
+  const initial = work ? workTarget(work) : shownReview ? workTarget(shownReview) : null
+  const current: Selection | null = work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
+  const screen = page ? PAGE_NAMES[page] : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
 
   return (
     <div className="app">
@@ -157,10 +159,8 @@ export function App({ projectId }: { projectId: string }) {
                 <Settings project={project} integrations={state.integrations} />
               )}
             </main>
-          ) : shownWork ? (
-            <WorkConversation key={shownWork.id} work={shownWork} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
-          ) : shownTopic ? (
-            <TopicConversation key={shownTopic.id} topic={shownTopic} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
+          ) : shownTopic || work ? (
+            <TopicConversation key={`${shownTopic?.id ?? ''}:${work?.id ?? ''}`} topic={shownTopic} work={work} initial={initial} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
           ) : (
             <HomeScreen
               key={homeGroup?.id ?? ''}

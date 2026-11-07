@@ -1,37 +1,29 @@
-import { Fragment, useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   agentState,
   chatCommands,
-  isLegacy,
   isReview,
-  openPrs,
   ownedWorks,
   prRepoName,
   reviewTopic,
+  runRole,
   sessionRole,
   shortTitle,
-  stepsLine,
-  subtaskProgress,
   workCard,
-  workStage,
   type AgentSession,
   type Attachment,
   type CanvasRef,
-  type CardMove,
   type ChatRef,
-  type ReviewStage,
-  type StepLine,
   type Task,
-  type WorkStage,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { AgentsTab, DiagramsTab, DocTab, PlanTab, ReviewTab, useWorkCanvases, workSessions } from './ArtifactPane'
-import { MoveButton, WorkCards } from './Cards'
+import { ArtifactsList, HeadMenu, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
+import { topicArtifacts, type ArtifactTarget } from './artifacts'
+import { WorkCards } from './Cards'
 import { CanvasOpener, Chat, Composer, ModelChip } from './Chat'
-import { DiagramDrawer, type DrawerCanvas } from './Drawer'
-import { prLabel } from './format'
-import { ReopenButton, TicketLinks, AgentDot, useNow } from './Tasks'
-import { RowMenu, type MenuCard, type Selection } from './WorkList'
+import { ArtifactDrawer } from './Drawer'
+import { TicketLinks, AgentDot, useNow } from './Tasks'
+import type { MenuCard, Selection } from './WorkList'
 import { ChildSessions } from './SessionTree'
 
 const mag = window.mag
@@ -49,272 +41,123 @@ export function ownerSession(work: Task, sessions: AgentSession[]): AgentSession
   )
 }
 
-const WORK_STAGES: WorkStage[] = ['Plan', 'Approve', 'Build', 'Merge']
-const REVIEW_STAGES: ReviewStage[] = ['Running', 'Report ready', 'Waiting for author']
-
-/** A work's stages Plan → Merge, a review's Running → Waiting for author; Done shows them all past. */
-function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: (WorkStage | ReviewStage)[] }) {
-  const at = stage === 'Done' ? stages.length : stages.indexOf(stage)
-  return (
-    <span className="stepper" aria-label={`Stage: ${stage}`}>
-      {stages.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
-    </span>
-  )
-}
-
-const STEP_STATE: Record<StepLine['state'], string> = { done: 'done', merge: 'merge', build: 'building', waiting: 'waits', manual: 'start manually', todo: 'next' }
-const stepState = (s: StepLine) => (s.state === 'waiting' ? `waits for ${s.waitsFor}` : STEP_STATE[s.state])
-
-/**
- * The work's steps as one line of chips: "✓ 1 · Model · PR #84 › 2 · Rows · PR #85 · merge"; done ones green, the
- * current one amber with where it stands; every chip names its key and state on hover.
- */
-export function StepChips({ steps }: { steps: StepLine[] }) {
-  const current = steps.find((s) => s.state !== 'done')
-  return (
-    <div className="stepchips" aria-label="Steps">
-      {steps.map((s, i) => (
-        <Fragment key={s.key}>
-          {i > 0 && <span className="arrow" aria-hidden>›</span>}
-          <span className={`stepchip${s.state === 'done' ? ' done' : s === current ? ' now' : ''}`} title={`${s.key} · ${s.title} · ${stepState(s)}`}>
-            <span className="t">{s.state === 'done' ? '✓ ' : ''}{s.no} · {s.title}</span>
-            {s.pr && <span> · {s.pr}</span>}
-            {s === current && <span> · {stepState(s)}</span>}
-          </span>
-        </Fragment>
-      ))}
-    </div>
-  )
-}
-
-/** "Waiting on you: <the row's move>" with the button for it (work-list-the-left-column.2). */
-function WaitingBar({ move, work, state, onAnswer }: { move: CardMove; work: Task; state: AppState; onAnswer: () => void }) {
-  return (
-    <div className="waitingbar" role="status">
-      <b>Waiting on you</b>
-      <span>{move.text}</span>
-      {move.action && <MoveButton action={move.action} work={work} state={state} onAnswer={onAnswer} />}
-    </div>
-  )
-}
-
-export type WorkTab = 'conversation' | 'plan' | 'diagrams' | 'doc' | 'agents' | 'review'
-
-/** A work's tabs: Conversation · Plan & steps · Diagrams · Doc · Agents; a review's Conversation · Review · Agents. */
-export function WorkTabs({ work, state, tab, onTab }: { work: Task; state: AppState; tab: WorkTab; onTab: (tab: WorkTab) => void }) {
-  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
-  const { diagrams, canvases } = useWorkCanvases(work, state)
-  const progress = subtaskProgress(work.id, tasks)
-  const agents = workSessions(work, state).length
-  const tabs: [WorkTab, string, string | number | null][] = isReview(work)
-    ? [['conversation', 'Conversation', null], ['review', 'Review', null], ['agents', 'Agents', agents || null]]
-    : [
-      ['conversation', 'Conversation', null],
-      ['plan', 'Plan & steps', progress.total ? `${progress.done}/${progress.total}` : null],
-      ['diagrams', 'Diagrams', diagrams.length + canvases.length || null],
-      ['doc', 'Doc', null],
-      ['agents', 'Agents', agents || null],
-    ]
-  return (
-    <div className="worktabs" role="tablist">
-      {tabs.map(([id, label, n]) => (
-        <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => onTab(id)}>
-          {label}{n !== null && <span className="n">{n}</span>}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/** The header's ⋯: the same menu as the row's in the sidebar. */
 /** What opens a referenced chat: its topic, or its work or review. */
 const refSelection = (ref: ChatRef): Selection => ({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })
 
-function HeadMenu({ card, onSelect, onGone }: { card: MenuCard; onSelect: (s: Selection) => void; onGone: () => void }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <span className="menu">
-      <button className="iconbtn" aria-label={`More for ${card.title}`} aria-haspopup="menu" aria-expanded={open} title="Rename, close, delete…" onClick={() => setOpen(!open)}>⋯</button>
-      {open && <RowMenu card={card} className="wlmenu headmenu" onClose={() => setOpen(false)} onSelect={onSelect} onGone={onGone} />}
-    </span>
-  )
-}
-
-/** The drawer of a screen: the canvas open in it, and the opener canvas cards below it use. */
-function useDrawer() {
-  const [open, setOpen] = useState<DrawerCanvas | null>(null)
-  const show = useCallback((c: CanvasRef | string, focus?: string) => setOpen({ id: typeof c === 'string' ? c : c.id, focus }), [])
+/** The drawer of a screen: the artifact open in it, and the opener canvas cards in the chat use. */
+function useDrawer(initial: ArtifactTarget | null) {
+  const [open, setOpen] = useState<ArtifactTarget | null>(initial)
+  const show = useCallback((c: CanvasRef | string, focus?: string) => setOpen({ kind: 'canvas', id: typeof c === 'string' ? c : c.id, focus }), [])
   const close = useCallback(() => setOpen(null), [])
-  return { open, show, close }
+  return { open, setOpen, show, close }
 }
 
 /**
- * A work's screen (redesign-start-screen-big-composer.3): a compact header (title, kind and key, ⋯), its steps as
- * chips, the Waiting bar and the tabs; below, the tab open and, when a diagram is opened, the drawer at the right. The
- * conversation is its owner's chat, with the cards of what waits on you at its end: of every work the chat owns.
+ * A topic's screen (topics-a-tree-of-agent.3): a compact header (title, kind, Turn into a work, ⋯), the sessions under
+ * it and what waits on you; below, its conversation with the cards of every work it owns, and at the right the list of
+ * its artifacts, or the one opened in the drawer. A work opens here, through its owner topic, with its card open.
+ * `topic` null: a work whose owner is its groomer, or nobody yet; the screen is the work's, with the groomer's chat.
  */
-export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }: {
-  work: Task
+export function TopicConversation({ topic, work, initial = null, state, onOpenKey, onSelect, onDeleted }: {
+  topic: AgentSession | null
+  /** The work opened from the list; with no topic, the work the screen is. */
+  work: Task | null
+  /** The artifact open in the drawer when the screen opens. */
+  initial?: ArtifactTarget | null
   state: AppState
   onOpenKey: (key: string) => void
   onSelect: (s: Selection) => void
-  /** The work is gone (deleted from its menu or its review page). */
+  /** What the screen shows is gone (deleted from its menu or its review page). */
   onDeleted: () => void
 }) {
   const now = useNow(15_000)
   const box = useRef<HTMLDivElement>(null)
-  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
-  const project = state.projects.find((p) => p.id === work.projectId)
-  const owner = ownerSession(work, state.sessions)
-  const mine = workSessions(work, state)
-  const review = isReview(work)
-  // The same card as the work's row: its stage and whose move. A review without a stage (asking, failed) has none here
-  // either.
-  const card = workCard(work, tasks, state.sessions, now)
-  const stage = card ? card.stage : review ? null : workStage(work, tasks)
-  // A legacy work's subtasks are a checklist, not steps.
-  const steps = review || isLegacy(work) ? [] : stepsLine(work, tasks)
-  // A review opens on its report; a work on its conversation.
-  const [tab, setTab] = useState<WorkTab>(review ? 'review' : 'conversation')
-  const drawer = useDrawer()
-  const [fullBrief, setFullBrief] = useState(false)
-  const pr = work.prReview?.pr
-  const canGroom = !review && !mine.some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
-  // An answer goes to the conversation: back to its tab, then into the composer.
-  const focus = () => {
-    setTab('conversation')
-    requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
+  const projectId = topic?.projectId ?? work!.projectId
+  const project = state.projects.find((p) => p.id === projectId)
+  const tasks = state.tasks.filter((t) => t.projectId === projectId)
+  const drawer = useDrawer(initial)
+  const [listShown, setListShown] = useState(true)
+  const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
+  // The review mag made this topic for: the screen is that review's.
+  const review = topic ? tasks.find((t) => isReview(t) && (t.id === topic.reviewOf || reviewTopic(t, state.sessions)?.id === topic.id)) : work && isReview(work) ? work : undefined
+  // The conversation: the topic, else the work's owner (its groomer, or a review's topic that is gone).
+  const chat = topic ?? (work ? ownerSession(work, state.sessions) : null)
+  // The works whose cards wait at the end of the conversation: those this session owns, the one opened first.
+  const reviews = topic ? tasks.filter((t) => isReview(t) && t !== review && t.ownerSessionId === topic.id && t.status === 'in_progress') : []
+  const owned = topic ? [...(review ? [review] : []), ...reviews, ...ownedWorks(topic.id, tasks)] : work ? [work] : []
+  const cardsOf = work && owned.some((t) => t.id === work.id) ? [work, ...owned.filter((t) => t.id !== work.id)] : owned
+  const waiting = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).find((c) => c.card?.move.who === 'you')
+  // An answer goes into the composer.
+  const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
+  const cards = cardsOf.length ? <>{cardsOf.map((t, i) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={i > 0} />)}</> : undefined
+  const running = chat?.status === 'running'
+  const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
+  const pr = review?.prReview?.pr
+  // A work or review closed or deleted from its card: back to the topic without it (gone with it too: Home).
+  const gone = () => {
+    drawer.close()
+    if (topic) onSelect({ kind: 'topic', id: topic.id })
+    else onDeleted()
   }
-  // One conversation per chat: the cards of every work it owns, this work's first, each other's under its key and title.
-  const siblings = owner?.role === 'chat' && !owner.taskId && !review ? ownedWorks(owner.id, tasks).filter((t) => t.id !== work.id) : []
-  const cards = (
-    <>
-      <WorkCards work={work} owner={owner} state={state} onAnswer={focus} />
-      {siblings.map((t) => <WorkCards key={t.id} work={t} owner={owner} state={state} onAnswer={focus} label />)}
-    </>
-  )
+  const turn = () => void mag.turnIntoWork(topic!.id).catch((e: Error) => alert(e.message))
+  const refsFrom = topic && { tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
+  const chip = project && chat && runRole(chat) === 'chat' ? <ModelChip project={project} activeModel={chat.activeModel} /> : undefined
+  const parent = topic?.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
+  const subject = topic ? null : work!
+  const menu: MenuCard = review ? workMenuCard(review) : topic ? { kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt } : workMenuCard(subject!)
   return (
     <CanvasOpener.Provider value={drawer.show}>
       <section className="convo" ref={box}>
         <header className="convohead">
           <div className="headline">
-            <h1 title={work.title}>{shortTitle(work)}</h1>
-            <span className="kind">{review ? 'review' : 'work'} · {work.key}</span>
-            {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : <TicketLinks task={work} />}
-            {stage && !steps.length && <Stepper stage={stage} stages={review ? REVIEW_STAGES : WORK_STAGES} />}
-            <AgentDot state={agentState(work, mine, tasks)} now={now} />
+            {topic ? <TopicTitle topic={topic} /> : <h1 title={subject!.title}>{shortTitle(subject!)}</h1>}
+            <span className="kind">{review ? `review · ${review.key}` : topic ? (topic.parentId ? `session · ${sessionRole(topic)}` : 'discussion') : `work · ${subject!.key}`}</span>
+            {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
+            {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
-            {canGroom && !owner && <button className="small" onClick={() => mag.groom(work.id)}>Groom</button>}
-            {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review ⧉</button>}
-            {!review && <ReopenButton task={work} />}
-            <HeadMenu card={{ kind: review ? 'review' : 'work', title: shortTitle(work), task: work, closed: work.status === 'canceled' || !!work.closedAt }} onSelect={onSelect} onGone={onDeleted} />
+            {topic && !review && <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>}
+            {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
+            {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
+            {artifacts.length > 0 && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The docs, plans, diagrams, facts and reviews made here" onClick={() => (drawer.open ? (drawer.close(), setListShown(true)) : setListShown((v) => !v))}>Artifacts · {artifacts.length}</button>}
+            <HeadMenu card={menu} onSelect={onSelect} onGone={onDeleted} />
           </div>
-          {steps.length > 0 && <StepChips steps={steps} />}
-          {owner && !owner.taskId && !review && <ChildSessions parent={owner} sessions={state.sessions} onSelect={onSelect} />}
-          {card?.move.who === 'you' && <WaitingBar move={card.move} work={work} state={state} onAnswer={focus} />}
-          {review && work.description && (
-            <div className={`brief ${fullBrief ? 'full' : ''}`}>
-              <span className="brieftext">{work.description}</span>
-              <button className="link" onClick={() => setFullBrief((f) => !f)}>{fullBrief ? 'Less' : 'Full brief'}</button>
-            </div>
-          )}
-          {work.status === 'canceled' && <CanceledLine work={work} tasks={tasks} />}
-          <WorkTabs work={work} state={state} tab={tab} onTab={setTab} />
-        </header>
-        <div className="screenbody">
-          <div className="screenmain">
-            {tab === 'conversation' ? (
-              owner ? (
-                <Chat session={owner} name="owner" sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={{ kind: 'task', id: work.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
-              ) : (
-                <div className="chatbox">
-                  <div className="items">
-                    <p className="muted small">This work has no owner conversation yet. Groom it: an agent reads the brief, plans the work with you here.</p>
-                    {cards}
-                  </div>
-                </div>
-              )
-            ) : (
-              <div className="tabbody">
-                {tab === 'plan' && <PlanTab work={work} state={state} />}
-                {tab === 'diagrams' && <DiagramsTab work={work} state={state} onOpen={drawer.show} />}
-                {tab === 'doc' && <DocTab work={work} state={state} onOpenKey={onOpenKey} />}
-                {tab === 'agents' && <AgentsTab work={work} state={state} onOpenKey={onOpenKey} />}
-                {tab === 'review' && <ReviewTab work={work} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} />}
-              </div>
-            )}
-          </div>
-          {drawer.open && <DiagramDrawer open={drawer.open} state={state} onClose={drawer.close} />}
-        </div>
-      </section>
-    </CanvasOpener.Provider>
-  )
-}
-
-function CanceledLine({ work, tasks }: { work: Task; tasks: Task[] }) {
-  const prs = openPrs(work, tasks)
-  return (
-    <div className="muted small">
-      Canceled{work.cancelReason ? `: ${work.cancelReason}` : '.'}
-      {prs.length > 0 && <> Its PRs are still open; close them on GitHub: {prs.map((r) => <button key={r.prUrl} className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl!)}</button>)}</>}
-    </div>
-  )
-}
-
-/**
- * A discussion's screen: the same layout without steps and tabs. Its header: the title (click to rename), Turn into a
- * work and the ⋯ menu (rename, branch, close, delete); a canvas opens in the drawer.
- */
-export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted }: {
-  topic: AgentSession
-  state: AppState
-  onOpenKey: (key: string) => void
-  onSelect: (s: Selection) => void
-  onDeleted: () => void
-}) {
-  const project = state.projects.find((p) => p.id === topic.projectId)
-  const tasks = state.tasks.filter((t) => t.projectId === topic.projectId)
-  const refsFrom = { tasks, sessions: state.sessions.filter((s) => s.projectId === topic.projectId), self: { kind: 'topic' as const, id: topic.id } }
-  const parent = topic.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
-  const running = topic.status === 'running'
-  const drawer = useDrawer()
-  const chip = project && <ModelChip project={project} activeModel={topic.activeModel} />
-  const turn = () => void mag.turnIntoWork(topic.id).catch((e: Error) => alert(e.message))
-  return (
-    <CanvasOpener.Provider value={drawer.show}>
-      <section className="convo">
-        <header className="convohead">
-          <div className="headline">
-            <TopicTitle topic={topic} />
-            <span className="kind">{topic.parentId ? `session · ${sessionRole(topic)}` : 'discussion'}</span>
-            <div className="grow" />
-            <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>
-            <HeadMenu card={{ kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt }} onSelect={onSelect} onGone={onDeleted} />
-          </div>
-          {topic.parentId && (
+          {topic?.parentId && (
             <div className="muted small">
               Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted session'}
             </div>
           )}
-          <ChildSessions parent={topic} sessions={state.sessions} onSelect={onSelect} />
+          {topic && !review && <ChildSessions parent={topic} sessions={state.sessions} onSelect={onSelect} />}
+          {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1} />}
         </header>
         <div className="screenbody">
           <div className="screenmain">
-            {topic.items.length ? (
-              <Chat session={topic} sessions={state.sessions} canvases={state.canvases} tasks={tasks} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Reply…" chip={chip} />
-            ) : (
+            {chat && (chat.items.length || !topic) ? (
+              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} chip={chip} />
+            ) : topic ? (
               <div className="chatbox">
                 <div className="items">
                   <p className="muted small">
-                    Talk about the project: a problem, ideas, design, priorities. The agent reads the code, draws mockups, and
-                    plans a work with you; it never edits code itself.
+                    Work on the project with the agent: a problem, ideas, design, a quick change. It works in the repo like
+                    Claude Code; what it draws and plans shows in its artifacts.
                   </p>
+                  {cards}
                 </div>
-                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom} />
+                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
+              </div>
+            ) : (
+              <div className="chatbox">
+                <div className="items">
+                  <p className="muted small">This work has no owner conversation yet. Groom it: an agent reads the brief, plans the work with you here.</p>
+                  {cards}
+                </div>
               </div>
             )}
           </div>
-          {drawer.open && <DiagramDrawer open={drawer.open} state={state} onClose={drawer.close} />}
+          {drawer.open ? (
+            <ArtifactDrawer open={drawer.open} state={state} onClose={drawer.close} onGone={gone} onOpenKey={onOpenKey} onSelect={onSelect} />
+          ) : listShown && artifacts.length > 0 && (
+            <ArtifactsList artifacts={artifacts} onOpen={drawer.setOpen} />
+          )}
         </div>
       </section>
     </CanvasOpener.Provider>
