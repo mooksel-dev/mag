@@ -757,10 +757,9 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .wlcrash { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; }
 .wlcrash .wltop { display: flex; align-items: flex-start; gap: 6px; }
 .wlcrash .actions { display: flex; gap: 4px; margin-top: 4px; }
-/* A work's and a discussion's screen: compact header, step chips, Waiting bar, tabs; the tab and the drawer below. */
+/* A topic's screen: compact header, its sessions, Waiting bar; the conversation and the artifacts list (or the drawer) below. */
 .convo { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.convohead { flex: none; padding: 14px var(--sp-6) 0; display: flex; flex-direction: column; gap: var(--sp-2); border-bottom: 1px solid var(--line); }
-.convohead:not(:has(.worktabs)) { padding-bottom: var(--sp-3); }
+.convohead { flex: none; padding: 14px var(--sp-6) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); border-bottom: 1px solid var(--line); }
 .headline { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .headline h1 { font-size: var(--fs-xl); font-weight: 650; margin: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .headline .kind { flex: none; font-size: var(--fs-xs); color: var(--faint); white-space: nowrap; }
@@ -772,20 +771,21 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .stepchip .t { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .stepchip.done { background: var(--green-bg); color: var(--green-fg); }
 .stepchip.now { background: var(--amber-bg); color: var(--amber-fg); font-weight: 600; }
-.worktabs { display: flex; gap: 2px; margin-top: var(--sp-1); }
-.worktabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: var(--sp-2) var(--sp-3); color: var(--muted); font-weight: 500; }
-.worktabs button:hover { color: var(--text); }
-.worktabs button.on { color: var(--text); border-bottom-color: var(--text); }
-.worktabs .n { margin-left: 4px; font-size: var(--fs-xs); color: var(--faint); }
 .screenbody { flex: 1; min-height: 0; display: flex; }
 .screenmain { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* The conversation reads in one centred column of about 780px; the composer under it the same width. */
 .screenmain > .chatbox > .items { padding: 18px max(var(--sp-6), calc((100% - 780px) / 2)) var(--sp-2); gap: var(--sp-3); }
 .screenmain > .chatbox > .composer { width: 100%; max-width: calc(780px + 2 * var(--sp-6)); margin: 0 auto; padding: var(--sp-2) var(--sp-6) 18px; }
-.tabbody { flex: 1; min-height: 0; overflow: auto; padding: 20px var(--sp-6); }
-.tabin { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-3); }
 .brieffull { white-space: pre-wrap; color: var(--muted); line-height: var(--lh); }
-.tabtools { display: flex; justify-content: flex-end; }
+/* The topic's artifacts at the right of its conversation, by kind; one opens in the drawer in their place. */
+.artifacts { flex: none; width: 260px; min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
+.artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
+.artrow { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
+.artrow:hover { background: var(--hover); }
+.artrow .title, .artrow .small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artbody { display: flex; flex-direction: column; gap: var(--sp-3); }
+.artline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.artline .kind { font-size: var(--fs-xs); color: var(--faint); }
 .drawer { flex: none; width: clamp(380px, 42%, 720px); min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
 .drawerhead { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .drawerhead .title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -815,7 +815,7 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .questions, .plansteps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .questions .rec { color: var(--green-fg); }
-.agentlog { display: flex; flex-direction: column; height: calc(100% + 40px); min-height: 0; margin: -20px calc(-1 * var(--sp-6)); }
+.agentlog { display: flex; flex-direction: column; height: 70vh; min-height: 0; border: 1px solid var(--line); border-radius: var(--r); }
 .pagewrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pagewrap > .page { flex: 1; min-height: 0; }
 .pagehead { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); font-weight: 600; }

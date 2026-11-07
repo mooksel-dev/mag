@@ -1,108 +1,248 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useContext, useState } from 'react'
 import {
+  agentState,
   currentStep,
   isLegacy,
+  isReview,
+  openPrs,
+  prHeads,
+  reportLine,
   repoWorkName,
+  shortTitle,
+  stepsLine,
   subtasksOf,
-  taskDiagrams,
   taskPrs,
-  workCanvases,
+  workCard,
+  workStage,
   type AgentSession,
+  type CardMove,
+  type ReviewStage,
+  type StepLine,
   type Task,
   type TaskWork,
+  type WorkStage,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
-import { Chat, Markdown } from './Chat'
-import { DiffTab, diagramsOf } from './DiffTab'
+import { ARTIFACT_KINDS, ARTIFACT_NAMES, type Artifact, type ArtifactTarget } from './artifacts'
+import { MoveButton } from './Cards'
+import { CanvasOpener, Chat, Markdown } from './Chat'
+import { FactPanel } from './FactPanel'
+import { prLabel } from './format'
 import { PrPill } from './LinkPill'
+import { ReportView } from './ReportView'
 import { ReviewView } from './Reviews'
-import { SubtaskIcon, SubtaskList, useNow } from './Tasks'
+import { AgentDot, ReopenButton, SubtaskIcon, SubtaskList, TicketLinks, useNow } from './Tasks'
+import { RowMenu, type MenuCard, type Selection } from './WorkList'
 
 /**
- * The bodies of a work's tabs (redesign-start-screen-big-composer.3): Plan & steps, Diagrams, Doc, Agents, and a review's
- * page. They were the right column; the work's screen shows them under its header, one at a time.
+ * The artifacts of a topic (topics-a-tree-of-agent.3): the list beside its conversation, and the bodies the drawer
+ * shows for a work's card, its doc and a review. They replace the work screen's tabs.
  */
 
 const mag = window.mag
 
-/**
- * A work's diagrams and canvases for its tabs: its own diagrams, then those of other tasks its doc links (T-55.3); its
- * HTML canvases and those its owner topic drew before the work existed.
- */
-export function useWorkCanvases(work: Task, state: AppState) {
-  const doc = state.docs[work.id]
-  const projectCanvases = useMemo(() => state.canvases.filter((c) => c.projectId === work.projectId), [state.canvases, work.projectId])
-  const diagrams = useMemo(() => diagramsOf(taskDiagrams(work, doc, projectCanvases)), [projectCanvases, work, doc])
-  const canvases = useMemo(() => workCanvases(work, projectCanvases), [projectCanvases, work])
-  return { projectCanvases, diagrams, canvases }
+/** The topic's artifacts by kind, newest first; a click opens one in the drawer. */
+export function ArtifactsList({ artifacts, onOpen }: { artifacts: Artifact[]; onOpen: (target: ArtifactTarget) => void }) {
+  return (
+    <aside className="artifacts" aria-label="Artifacts">
+      {ARTIFACT_KINDS.map((kind) => {
+        const mine = artifacts.filter((a) => a.kind === kind)
+        if (!mine.length) return null
+        return (
+          <section key={kind}>
+            <div className="artkind">{ARTIFACT_NAMES[kind]} · {mine.length}</div>
+            {mine.map((a) => (
+              <button key={a.key} className="artrow" title={`${a.title}\n${a.detail}`} onClick={() => onOpen(a.open)}>
+                <span className="title">{a.title}</span>
+                <span className="muted small">{a.detail}</span>
+              </button>
+            ))}
+          </section>
+        )
+      })}
+    </aside>
+  )
 }
 
-/** Plan & steps: the brief, then the steps in order (a legacy work: its checklist). */
-export function PlanTab({ work, state }: { work: Task; state: AppState }) {
+/** What the drawer's head says for a task's artifact, and whether its window opens with ⧉. */
+export function taskArtifactHead(target: Exclude<ArtifactTarget, { kind: 'canvas' }>, task: Task): { title: string; window: (() => void) | null } {
+  if (target.kind === 'doc') return { title: `Doc · ${task.key}`, window: () => mag.openWindow({ kind: 'doc', taskId: task.id }) }
+  if (target.kind === 'review') return { title: task.parentId ? `Review · ${task.key}` : `Review · ${shortTitle(task)}`, window: () => mag.openWindow({ kind: 'review', taskId: task.id }) }
+  return { title: `${task.key} · ${shortTitle(task)}`, window: null }
+}
+
+/** The body of a task's artifact in the drawer: a work's card, its doc, a PR's review or a step's agent review. */
+export function TaskArtifact({ target, task, state, onOpenKey, onSelect, onDeleted }: {
+  target: Exclude<ArtifactTarget, { kind: 'canvas' }>
+  task: Task
+  state: AppState
+  onOpenKey: (key: string) => void
+  onSelect: (s: Selection) => void
+  onDeleted: () => void
+}) {
+  if (target.kind === 'doc') return <DocArtifact work={task} state={state} onOpenKey={onOpenKey} />
+  if (target.kind === 'review') return task.parentId ? <StepReview step={task} state={state} /> : <PrReview work={task} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} />
+  return <WorkArtifact work={task} state={state} onOpenKey={onOpenKey} onSelect={onSelect} onDeleted={onDeleted} />
+}
+
+const WORK_STAGES: WorkStage[] = ['Plan', 'Approve', 'Build', 'Merge']
+const REVIEW_STAGES: ReviewStage[] = ['Running', 'Report ready', 'Waiting for author']
+
+/** A work's stages Plan → Merge, a review's Running → Waiting for author; Done shows them all past. */
+function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: (WorkStage | ReviewStage)[] }) {
+  const at = stage === 'Done' ? stages.length : stages.indexOf(stage)
+  return (
+    <span className="stepper" aria-label={`Stage: ${stage}`}>
+      {stages.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
+    </span>
+  )
+}
+
+const STEP_STATE: Record<StepLine['state'], string> = { done: 'done', merge: 'merge', build: 'building', waiting: 'waits', manual: 'start manually', todo: 'next' }
+const stepState = (s: StepLine) => (s.state === 'waiting' ? `waits for ${s.waitsFor}` : STEP_STATE[s.state])
+
+/**
+ * The work's steps as one line of chips: "✓ 1 · Model · PR #84 › 2 · Rows · PR #85 · merge"; done ones green, the
+ * current one amber with where it stands; every chip names its key and state on hover.
+ */
+function StepChips({ steps }: { steps: StepLine[] }) {
+  const current = steps.find((s) => s.state !== 'done')
+  return (
+    <div className="stepchips" aria-label="Steps">
+      {steps.map((s, i) => (
+        <Fragment key={s.key}>
+          {i > 0 && <span className="arrow" aria-hidden>›</span>}
+          <span className={`stepchip${s.state === 'done' ? ' done' : s === current ? ' now' : ''}`} title={`${s.key} · ${s.title} · ${stepState(s)}`}>
+            <span className="t">{s.state === 'done' ? '✓ ' : ''}{s.no} · {s.title}</span>
+            {s.pr && <span> · {s.pr}</span>}
+            {s === current && <span> · {stepState(s)}</span>}
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+/** "Waiting on you · <key>: <the row's move>" with the button for it (work-list-the-left-column.2). */
+export function WaitingBar({ move, work, state, onAnswer, keyed = false }: { move: CardMove; work: Task; state: AppState; onAnswer: () => void; keyed?: boolean }) {
+  return (
+    <div className="waitingbar" role="status">
+      <b>Waiting on you{keyed ? ` · ${work.key}` : ''}</b>
+      <span>{move.text}</span>
+      {move.action && <MoveButton action={move.action} work={work} state={state} onAnswer={onAnswer} />}
+    </div>
+  )
+}
+
+/** A header's ⋯: the same menu as the row's in the sidebar. */
+export function HeadMenu({ card, onSelect, onGone }: { card: MenuCard; onSelect: (s: Selection) => void; onGone: () => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="menu">
+      <button className="iconbtn" aria-label={`More for ${card.title}`} aria-haspopup="menu" aria-expanded={open} title="Rename, close, delete…" onClick={() => setOpen(!open)}>⋯</button>
+      {open && <RowMenu card={card} className="wlmenu headmenu" onClose={() => setOpen(false)} onSelect={onSelect} onGone={onGone} />}
+    </span>
+  )
+}
+
+/** The ⋯ menu's card of a work or a review. */
+export const workMenuCard = (work: Task): MenuCard => ({ kind: isReview(work) ? 'review' : 'work', title: shortTitle(work), task: work, closed: work.status === 'canceled' || !!work.closedAt })
+
+function CanceledLine({ work, tasks }: { work: Task; tasks: Task[] }) {
+  const prs = openPrs(work, tasks)
+  return (
+    <div className="muted small">
+      Canceled{work.cancelReason ? `: ${work.cancelReason}` : '.'}
+      {prs.length > 0 && <> Its PRs are still open; close them on GitHub: {prs.map((r) => <button key={r.prUrl} className="link" onClick={() => mag.open(r.prUrl!)}>{prLabel(r.prUrl!)}</button>)}</>}
+    </div>
+  )
+}
+
+/** The agents that worked on a work (its own sessions). */
+export const workSessions = (work: Task, state: AppState) => state.sessions.filter((s) => s.taskId === work.id)
+
+/**
+ * A work's card (it was the Plan & steps and Agents tabs): its stage or steps as chips, its tickets, what its agent
+ * does, Continue and its ⋯ menu; the brief and the steps with their PRs; then per step its worktrees, branches and
+ * agents, whose logs open in place.
+ */
+function WorkArtifact({ work, state, onOpenKey, onSelect, onDeleted }: { work: Task; state: AppState; onOpenKey: (key: string) => void; onSelect: (s: Selection) => void; onDeleted: () => void }) {
+  const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
   const steps = subtasksOf(work.id, tasks)
+  const chips = isLegacy(work) ? [] : stepsLine(work, tasks)
+  const card = workCard(work, tasks, state.sessions, now)
+  const stage = card ? card.stage : workStage(work, tasks)
   return (
-    <div className="tabin">
+    <div className="artbody">
+      <div className="artline">
+        <span className="kind">work · {work.key}</span>
+        <TicketLinks task={work} />
+        {stage && !chips.length && <Stepper stage={stage} stages={WORK_STAGES} />}
+        <AgentDot state={agentState(work, workSessions(work, state), tasks)} now={now} />
+        <div className="grow" />
+        <ReopenButton task={work} />
+        <HeadMenu card={workMenuCard(work)} onSelect={onSelect} onGone={onDeleted} />
+      </div>
+      {chips.length > 0 && <StepChips steps={chips} />}
+      {work.status === 'canceled' && <CanceledLine work={work} tasks={tasks} />}
       {work.description && <div className="brieffull">{work.description}</div>}
       {steps.length ? <SubtaskList parent={work} subs={steps} tasks={tasks} steps={!isLegacy(work)} project={project} /> : <p className="muted">No steps yet: the owner plans them.</p>}
       <p className="muted small">To change the plan, tell the owner in the conversation.</p>
+      <WorkAgents work={work} state={state} onOpenKey={onOpenKey} />
     </div>
   )
 }
 
-/**
- * Diagrams: by their place (options, plan by step with plan ↔ fact, the rest), then the other canvases of the work and
- * its owner topic. A click opens one in the drawer.
- */
-export function DiagramsTab({ work, state, onOpen }: { work: Task; state: AppState; onOpen: (canvasId: string) => void }) {
+/** A work's doc; its canvases open in the drawer, ⧉ in the drawer's head pops it out. */
+function DocArtifact({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
+  const doc = state.docs[work.id]
+  const canvases = state.canvases.filter((c) => c.projectId === work.projectId)
+  return doc ? <Markdown className="md docmd" text={doc} canvases={canvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet: the owner writes it while planning.</p>
+}
+
+/** A teammate's PR review: the report, its fact and diagrams, as its own window shows them. */
+function PrReview({ work, state, onOpenKey, onDeleted }: { work: Task; state: AppState; onOpenKey: (key: string) => void; onDeleted: () => void }) {
+  const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
-  const { diagrams, canvases } = useWorkCanvases(work, state)
-  return (
-    <div className="tabin">
-      <DiffTab task={work} tasks={tasks} project={project} diagrams={diagrams} onOpen={onOpen} />
-      {canvases.length > 0 && (
-        <section>
-          <div className="diffhead">Canvases · {canvases.length}</div>
-          <div className="difflistrows">
-            {canvases.map((c) => (
-              <button key={c.id} className="diffrow" onClick={() => onOpen(c.id)}>
-                <span className="type">{c.kind === 'diagram' ? 'Diagram' : 'Mockup'}</span>
-                <span className="title">{c.title}</span>
-                <span className="muted small">v{c.version}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
-  )
-}
-
-/** Doc: the work's document; its canvases open in the drawer, ⧉ pops the doc out. */
-export function DocTab({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
-  const doc = state.docs[work.id]
-  const { projectCanvases } = useWorkCanvases(work, state)
-  return (
-    <div className="tabin">
-      {doc ? (
-        <>
-          <div className="tabtools"><button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'doc', taskId: work.id })}>⧉ Open in window</button></div>
-          <Markdown className="md docmd" text={doc} canvases={projectCanvases} onOpenTask={onOpenKey} />
-        </>
-      ) : <p className="muted">No document yet: the owner writes it while planning.</p>}
-    </div>
-  )
-}
-
-/** A review's page: the report, its fact and diagrams. */
-export function ReviewTab({ work, state, onOpenKey, onDeleted }: { work: Task; state: AppState; onOpenKey: (key: string) => void; onDeleted: () => void }) {
-  const now = useNow(15_000)
-  const project = state.projects.find((p) => p.id === work.projectId)
+  const stage = workCard(work, tasks, state.sessions, now)?.stage
   if (!project) return null
-  return <div className="tabin"><ReviewView key={work.id} work={work} project={project} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} /></div>
+  return (
+    <div className="artbody">
+      {stage && <div className="artline"><Stepper stage={stage} stages={REVIEW_STAGES} /></div>}
+      <ReviewView key={work.id} work={work} project={project} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} />
+    </div>
+  )
+}
+
+/** A step has a fact to show: an open PR, or the fact mag recorded at its review. */
+const hasFact = (step: Task) => !!step.fact || Object.keys(prHeads(step.work)).length > 0
+
+/** The agent review of a step's PRs: plan ↔ fact, the report (or its verdict and findings); the whole of it in its window. */
+function StepReview({ step, state }: { step: Task; state: AppState }) {
+  const open = useContext(CanvasOpener)
+  const r = step.review
+  const diagramsKey = state.canvases.filter((c) => c.stepId === step.id).map((c) => `${c.id}@${c.version}`).join(',')
+  return (
+    <div className="artbody">
+      <div className="artline"><SubtaskIcon status={step.status} /> {step.key} · {step.title}</div>
+      {hasFact(step) && <FactPanel step={step} diagramsKey={diagramsKey} />}
+      {r?.report ? (
+        <>
+          <div className="diffhead">Agent review: {reportLine(r.report, 'step')}</div>
+          <ReportView report={r.report} fact={step.fact} kind="step" onView={(id) => open?.({ id, title: '', version: 0 })} />
+        </>
+      ) : r ? (
+        <>
+          <div className="diffhead">Agent review: {r.verdict} · round {r.round}</div>
+          {r.findings.length > 0 ? <ul>{r.findings.map((f, i) => <li key={i}>{f.text}</li>)}</ul> : <p className="muted small">No findings.</p>}
+        </>
+      ) : <p className="muted">No agent review yet.</p>}
+    </div>
+  )
 }
 
 const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
@@ -124,14 +264,11 @@ function sessionGroups(steps: Task[], sessions: AgentSession[]): SessionGroup[] 
   return groups.filter((g) => g.sessions.length || g.step)
 }
 
-/** The agents that worked on a work (its own sessions). */
-export const workSessions = (work: Task, state: AppState) => state.sessions.filter((s) => s.taskId === work.id)
-
 /**
  * Per step its worktrees, branches, PRs and agents; an agent opens as its log. The user never writes there: questions
  * go through the owner, who passes them on with message_agent.
  */
-export function AgentsTab({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
+function WorkAgents({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
   const [shownId, setShownId] = useState<string | null>(null)
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const steps = isLegacy(work) ? [] : subtasksOf(work.id, tasks)
@@ -141,7 +278,8 @@ export function AgentsTab({ work, state, onOpenKey }: { work: Task; state: AppSt
   const groups = sessionGroups(steps, sessions)
   const anyPr = taskPrs(work, steps).length > 0
   return (
-    <div className="tabin">
+    <>
+      <div className="diffhead">Agents</div>
       <p className="muted small">Agents' chats are logs: write to the owner in the conversation, it passes things on. {anyPr && <button className="link small" onClick={() => mag.checkPrs()}>check PRs now</button>}</p>
       {work.work && (
         <div className="workgroup">
@@ -160,7 +298,7 @@ export function AgentsTab({ work, state, onOpenKey }: { work: Task; state: AppSt
         </div>
       ))}
       {!sessions.length && <p className="muted">No agent has worked on this yet.</p>}
-    </div>
+    </>
   )
 }
 
