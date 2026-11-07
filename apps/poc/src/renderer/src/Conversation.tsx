@@ -137,9 +137,11 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             ) : topic ? (
               <div className="chatbox">
                 <div className="items">
+                  {topic.brief && <TopicBrief topic={topic} onOpenKey={onOpenKey} />}
                   <p className="muted small">
-                    Work on the project with the agent: a problem, ideas, design, a quick change. It works in the repo like
-                    Claude Code; what it draws and plans shows in its artifacts.
+                    {topic.parkedAt
+                      ? 'An idea, parked. Write to talk it over with the agent: it sees the idea and reads the code. Your first message makes it a live topic.'
+                      : 'Work on the project with the agent: a problem, ideas, design, a quick change. It works in the repo like Claude Code; what it draws and plans shows in its artifacts.'}
                   </p>
                   {cards}
                 </div>
@@ -163,6 +165,19 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         </div>
       </section>
     </CanvasOpener.Provider>
+  )
+}
+
+/** The idea a topic was parked with (ideas-are-parked-topics.1): its text and where it came from. */
+function TopicBrief({ topic, onOpenKey }: { topic: AgentSession; onOpenKey: (key: string) => void }) {
+  const source = topic.source
+  return (
+    <div className="topicbrief">
+      <div className="muted small">
+        Idea {source ? <>from <button type="button" className="link key" onClick={() => onOpenKey(source.replace(/\.\d+$/, ''))}>{source}</button></> : 'of yours'}
+      </div>
+      <div className="ideatext">{topic.brief}</div>
+    </div>
   )
 }
 

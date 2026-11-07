@@ -437,23 +437,14 @@ export function canReopen(task: Task): boolean {
 }
 
 /**
- * Something worth doing that nobody works on yet (T-55.6): the user's note or an agent's finding outside its scope. No
- * status, priority or key: what has a state is a work. Starting a work from it takes it off the list.
+ * The project's ideas (ideas-are-parked-topics.1): its parked topics, things worth doing that nobody works on yet,
+ * newest parked first; `sessions` in the order they were created, which breaks ties.
  */
-export interface Idea {
-  id: string
-  projectId: string
-  text: string
-  createdAt: number
-  /** Where it came from: the key of the work or step whose agent found it; missing for the user's own and a chat's. */
-  source?: string | null
-  /** The project topic that discusses it, created when the user first writes there: a link to a talk, not a state. */
-  topicId?: string | null
-}
-
-/** The project's ideas, newest first; `ideas` are in the order they were added, which breaks ties. */
-export function projectIdeas(ideas: Idea[], projectId: string): Idea[] {
-  return ideas.filter((i) => i.projectId === projectId).reverse().sort((a, b) => b.createdAt - a.createdAt)
+export function parkedTopics(projectId: string, sessions: AgentSession[]): AgentSession[] {
+  return sessions
+    .filter((s) => s.projectId === projectId && !!s.parkedAt && s.role === 'chat' && !s.taskId && !s.parentId)
+    .reverse()
+    .sort((a, b) => b.parkedAt! - a.parkedAt!)
 }
 
 /** An idea's text as stored: trimmed; throws when empty. */
@@ -465,24 +456,16 @@ export function ideaText(text: string): string {
 
 const IDEA_TITLE_MAX = 100
 
-/** An idea's line in the list: its first non-empty line, cut at IDEA_TITLE_MAX characters. */
-export function ideaTitle(idea: Pick<Idea, 'text'>): string {
-  const line = idea.text.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+/** An idea's title: the first non-empty line of its text, cut at IDEA_TITLE_MAX characters. */
+export function ideaTitle(text: string): string {
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
   return line.length > IDEA_TITLE_MAX ? `${line.slice(0, IDEA_TITLE_MAX - 1).trimEnd()}…` : line
 }
 
-/**
- * The message that starts a work from an idea: the topic gets it and owns the work from the problem on. `discussed`:
- * the idea's own topic, where it was talked over; else a new topic and the idea is its first message.
- */
-export function ideaPrompt(idea: Pick<Idea, 'text' | 'source'>, discussed = false): string {
-  const found = idea.source ? ` (found in ${idea.source})` : ''
-  return `Let's start a work from ${discussed ? 'the idea we discussed here' : 'this idea'}${found}:\n\n${idea.text}\n\nCheck list_tasks for a work about the same problem first (a done one is continued with reopen_work), then plan it with me as the playbook says.`
-}
-
-/** What the agent of an idea's topic knows about it: the idea as it was when the topic started. */
-export function ideaContext(idea: Pick<Idea, 'text' | 'source'>): string {
-  return `## The idea this topic discusses\nThe user opened this topic from an idea on the project's list${idea.source ? ` (found in ${idea.source})` : ''}. Discuss it; a work starts from it only when the user asks (create_work here; the idea then leaves the list).\n\n${idea.text}`
+/** What the agent of a topic parked as an idea knows about it: its brief, as of each run; '' without one. */
+export function briefContext(topic: Pick<AgentSession, 'brief' | 'source'>): string {
+  if (!topic.brief) return ''
+  return `## The idea this topic is about\nThe user opened this topic from an idea on the project's list${topic.source ? ` (found in ${topic.source})` : ''}. Discuss it; a work starts from it only when the user asks (create_work here).\n\n${topic.brief}`
 }
 
 /** Branch of a step: T-41.3 → mag/t-41-3. */
@@ -927,6 +910,15 @@ export interface AgentSession {
   commands?: string[]
   /** A project topic the user closed: its history stays, the list shows it under Done; writing to it reopens it. */
   closedAt?: number | null
+  /**
+   * A parked topic, an idea (ideas-are-parked-topics.1): worth doing, nobody works on it yet; the sidebar lists it under
+   * Ideas, not with the live topics. The user's first message in it clears the mark.
+   */
+  parkedAt?: number | null
+  /** The idea's text: the topic's agent gets it in its prompt (see briefContext). */
+  brief?: string | null
+  /** Where the idea came from: the key of the work or step whose agent parked it; missing for the user's own and a chat's. */
+  source?: string | null
   /** A closed topic: what it was about, written on Close (archive-of-chats-summaries-search.1). */
   summary?: ChatSummary | null
   /** `at` of the last item `summary` covers; a later Close writes a new one only when newer items exist. */

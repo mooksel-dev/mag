@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ChildRole, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ChildRole, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -12,8 +12,6 @@ export interface AppState {
   canvases: Omit<Canvas, 'html'>[]
   /** Project activity log, oldest first. */
   events: ProjectEvent[]
-  /** Ideas of every project, in the order they were added (see projectIdeas). */
-  ideas: Idea[]
   /** MCP servers agents reported (claude.ai connectors and others); modes are per project in Project.integrations. */
   integrations: Integration[]
   claudeBin: string | null
@@ -164,16 +162,8 @@ export interface MagApi {
   approveAndStart(taskId: string, localRepos?: string[]): Promise<void>
   /** Continue a done work: back to planning; its owner (else a new groomer) gets `what` and plans the steps for it. */
   reopen(taskId: string, what: string): Promise<void>
-  addIdea(projectId: string, text: string): Promise<void>
-  updateIdea(ideaId: string, text: string): Promise<void>
-  deleteIdea(ideaId: string): Promise<void>
-  /** The idea's own topic for its discussion, created the first time. Returns its session id. */
-  discussIdea(ideaId: string): Promise<string>
-  /**
-   * Starts a work from the idea in its topic, or in a new one without a discussion (the idea leaves the list at once;
-   * a discussed one when the work is created). Returns the topic's session id.
-   */
-  startIdea(ideaId: string): Promise<string>
+  /** "+ Idea": parks a new topic titled after `text`, its brief (see parkedTopics). Returns the topic's session id. */
+  addIdea(projectId: string, text: string): Promise<string>
   /** Check open PRs for merges and new comments right away. */
   checkPrs(): Promise<void>
   /** Open a URL in the browser or a path in Finder. */

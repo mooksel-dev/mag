@@ -288,6 +288,13 @@ test('topicKids: a line only for a child that runs, waits on you or failed, and 
   assert.deepEqual(topicKids({}), { works: [], sessions: [], done: 0 })
 })
 
+test('workCards: a parked topic (an idea) is no row; once live it is; a work it owns is a row of its own (ideas-are-parked-topics.1)', () => {
+  const parked = session('idea', { title: 'Dark mode', titleGenerated: true, parkedAt: NOW - DAY, brief: 'Dark mode' })
+  assert.deepEqual(cards([], [parked, session('live')]).map((c) => c.id), ['live'])
+  assert.deepEqual(cards([], [{ ...parked, parkedAt: null }]).map((c) => c.id), ['idea'])
+  assert.deepEqual(cards([task('w', { ownerSessionId: 'idea' })], [parked]).map((c) => [c.kind, c.id]), [['work', 'w']])
+})
+
 test('workCards: a closed topic is closed however long ago; running or asking, it is not', () => {
   const approval = { kind: 'approval' as const, id: 'a1', tool: 'x', server: 'jira', input: {}, status: 'pending' as const, at: NOW }
   const sessions = [

@@ -526,14 +526,16 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .pill.red { background: var(--danger-bg); color: var(--danger-fg); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; align-self: start; }
 .card h2 { margin: 0 0 8px; font-size: 14px; }
-.idealist { margin-top: 12px; }
-.idearow { cursor: pointer; }
-.idealine { flex: 1; min-width: 0; }
-.ideatitle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ideatext { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; max-width: 900px; }
-.ideaadd, .ideaedit { display: flex; flex-direction: column; gap: 6px; max-width: 900px; }
-.ideaadd textarea, .ideaedit textarea { font: inherit; resize: vertical; }
+.ideaadd { display: flex; flex-direction: column; gap: 6px; max-width: 900px; padding: 4px 8px; }
+.ideaadd textarea { font: inherit; resize: vertical; }
 .ideaaddactions { display: flex; gap: 6px; }
+.wlideas { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 4px; }
+.wlidea { cursor: pointer; padding: 5px 12px; gap: 8px; border-radius: var(--r); }
+.wlidea:hover { background: var(--hover); }
+.wlidea.on { background: var(--soft); }
+.wlideatitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topicbrief { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: var(--r); }
 .statuschip { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 10px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--info-bg); color: var(--info-fg); font-size: 12px; }
 .statuschip button.icon { border: none; background: none; padding: 0 6px; color: inherit; }
 .cmdmenu { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 2px); z-index: 5; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
