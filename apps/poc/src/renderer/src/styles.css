@@ -652,7 +652,13 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .popset { padding: 12px; overflow: auto; }
 
 /* The work list and one screen (redesign-start-screen-big-composer.3): no right column; a diagram opens in a drawer. */
-.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); border-top: 1px solid var(--line); }
+.layout { --left-w: 280px; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--left-w) 0 minmax(0, 1fr); border-top: 1px solid var(--line); }
+/* A sidebar's drag handle (topic-screen-one-new-compact.1): a zero-width item whose grip straddles the pane's edge. */
+.panehandle { position: relative; z-index: 5; flex: none; width: 0; }
+.panehandle::before { content: ''; position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; }
+.panehandle:hover::before, .panehandle.on::before { background: var(--accent); opacity: .5; }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe { pointer-events: none; }
 .worklist { min-height: 0; display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line); }
 .wlhead2 { display: flex; flex-direction: column; gap: 10px; padding: var(--sp-3) var(--sp-3) var(--sp-2); }
 .wlhead2 .projbtn { width: 100%; padding: 0 6px; border-radius: var(--r); }
@@ -699,7 +705,7 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .wlgroup > .wlchat { margin-left: 10px; }
 /* A chat's works under its row (work-list-the-left-column.3). */
 .wlkids { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 2px; }
-.wlchild .wlmain { padding-top: 5px; padding-bottom: 5px; }
+.wlchild .wlmain { padding-top: 4px; padding-bottom: 4px; }
 .wlsess { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; font-size: var(--fs-sm); }
 .wlsess:hover { background: var(--hover); }
 .wlsess.on { background: var(--soft); }
@@ -709,14 +715,16 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .sessdot.amber { background: var(--amber-fg); }
 .sessrole { flex: none; font-size: var(--fs-xs); color: var(--faint); }
 .childsess { display: flex; flex-direction: column; gap: 2px; }
-.childsesshead { display: flex; align-items: center; gap: var(--sp-2); }
+.childsessline { display: flex; align-items: center; flex-wrap: wrap; gap: 4px var(--sp-2); }
+.sesschip { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border-radius: var(--r-pill); background: var(--status); }
+.sesschip.green { background: var(--green-bg); }
+.sesschip.amber { background: var(--amber-bg); }
+.sesschip .iconbtn { width: 16px; height: 16px; padding: 0; font-size: 9px; line-height: 1; }
 .childsessrow { display: flex; align-items: center; gap: var(--sp-2); min-height: 24px; }
 .childsessrow .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .childsessform { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .childsessform textarea { width: 100%; resize: vertical; }
 .childsessform .row { display: flex; align-items: center; gap: var(--sp-2); }
-.wlkey { margin-right: 6px; font-size: var(--fs-sm); font-weight: 400; color: var(--faint); }
-.wlkidfold { padding: 3px 8px; }
 /* Another work of the same chat: its cards in the conversation under its key and title. */
 .cardsof { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); font-size: var(--fs-sm); color: var(--muted); }
 .wlgempty { margin: 0 0 4px; padding: 4px 8px; font-size: var(--fs-xs); color: var(--faint); }
@@ -732,14 +740,15 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .wlrow { position: relative; border-radius: var(--r); }
 .wlrow:hover, .wlrow.menuopen { background: var(--hover); }
 .wlrow.on { background: var(--soft); }
-.wlmain { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--sp-2); width: 100%; padding: 7px 8px; border: none; background: none; text-align: left; font-weight: 400; }
+.wlmain { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: var(--sp-2); width: 100%; padding: 5px 8px; border: none; background: none; text-align: left; font-weight: 400; }
 .wlmain .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wltime { font-size: var(--fs-xs); color: var(--faint); }
-.wlrow:hover .wltime, .wlrow.menuopen .wltime { visibility: hidden; }
-.wlmove { grid-column: 1 / 3; font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wlrow:hover .wltime, .wlrow.menuopen .wltime, .wlrow:hover .wlmain > .wlbadge, .wlrow.menuopen .wlmain > .wlbadge { visibility: hidden; }
+.wlmain > .wlbadge { margin-right: 0; }
+.wlmove { grid-column: 2 / 4; font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wlmove.you { color: var(--amber-fg); font-weight: 500; }
 .wlmove.agent { color: var(--green-fg); }
-.wlmore { position: absolute; right: 6px; top: 6px; display: none; width: 24px; height: 22px; padding: 0; border: none; border-radius: var(--r-sm); background: var(--surface); color: var(--muted); box-shadow: var(--shadow); line-height: 1; }
+.wlmore { position: absolute; right: 6px; top: 3px; display: none; width: 24px; height: 22px; padding: 0; border: none; border-radius: var(--r-sm); background: var(--surface); color: var(--muted); box-shadow: var(--shadow); line-height: 1; }
 .wlrow:hover .wlmore, .wlrow.menuopen .wlmore, .wlmore:focus-visible { display: block; }
 .wlmenu { right: 6px; top: 30px; width: 190px; border-radius: 10px; box-shadow: var(--shadow); }
 .wlmenu button:disabled { color: var(--faint); background: none; }
@@ -771,18 +780,31 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .stepchip .t { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .stepchip.done { background: var(--green-bg); color: var(--green-fg); }
 .stepchip.now { background: var(--amber-bg); color: var(--amber-fg); font-weight: 600; }
-.screenbody { flex: 1; min-height: 0; display: flex; }
+.screenbody { --right-w: 260px; flex: 1; min-height: 0; display: flex; }
+/* A width the user dragged: the drawer takes it too (its default is wider). */
+.screenbody.sized > .drawer { width: var(--right-w); }
 .screenmain { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* The conversation reads in one centred column of about 780px; the composer under it the same width. */
 .screenmain > .chatbox > .items { padding: 18px max(var(--sp-6), calc((100% - 780px) / 2)) var(--sp-2); gap: var(--sp-3); }
 .screenmain > .chatbox > .composer { width: 100%; max-width: calc(780px + 2 * var(--sp-6)); margin: 0 auto; padding: var(--sp-2) var(--sp-6) 18px; }
 .brieffull { white-space: pre-wrap; color: var(--muted); line-height: var(--lh); }
 /* The topic's artifacts at the right of its conversation, by kind; one opens in the drawer in their place. */
-.artifacts { flex: none; width: 260px; min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
+.artifacts { flex: none; width: var(--right-w); min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
 .artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
-.artrow { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
-.artrow:hover { background: var(--hover); }
-.artrow .title, .artrow .small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* By work, then by step (topic-screen-one-new-compact.1): a step is one line, its artifacts chips under it. */
+.artwork { display: flex; flex-direction: column; gap: 2px; }
+.artworktitle, .artstepline { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
+.artworktitle { font-weight: 600; }
+.artworktitle:hover, .artstepline:hover { background: var(--hover); }
+.artworktitle .title, .artstepline .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artstepline .tag.p-working, .artstepline .tag.p-in-review { background: var(--amber-bg); color: var(--amber-fg); }
+.artstepline .tag.p-merged, .artstepline .tag.p-done { background: var(--green-bg); color: var(--green-fg); }
+.artchips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 6px 4px 19px; }
+.artchip { max-width: 100%; padding: 1px 8px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface); font-size: var(--fs-xs); font-weight: 400; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artchip:hover { border-color: var(--faint); color: var(--text); }
+.artchip.green { background: var(--green-bg); color: var(--green-fg); border-color: transparent; }
+.artchip.amber { background: var(--amber-bg); color: var(--amber-fg); border-color: transparent; }
+.artchip.red { background: var(--danger-bg); color: var(--danger-fg); border-color: transparent; }
 .artbody { display: flex; flex-direction: column; gap: var(--sp-3); }
 .artline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .artline .kind { font-size: var(--fs-xs); color: var(--faint); }

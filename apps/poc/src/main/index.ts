@@ -291,7 +291,6 @@ app.whenReady().then(async () => {
   handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))
   handle('chat:delete', (_, sessionId: string) => orch.deleteChat(sessionId))
   handle('chat:close', (_, sessionId: string) => orch.closeChat(sessionId))
-  handle('chat:turn-into-work', (_, sessionId: string) => orch.turnIntoWork(sessionId))
   handle('task:delete', (_, id: string) => orch.deleteWork(id))
   handle('task:close', (_, id: string) => orch.closeWork(id))
   handle('sidebar:restore', (_, kind: 'work' | 'topic', id: string) => orch.restore(kind, id))

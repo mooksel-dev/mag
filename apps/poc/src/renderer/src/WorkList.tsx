@@ -9,13 +9,13 @@ import {
   cardRef,
   flatCards,
   groupKey,
-  isSubagent,
   moveRef,
   removeGroup,
   renameGroup,
   rowMatches,
   sidebarRows,
   toggleGroup,
+  topicKids,
   workCards,
   type CardFilter,
   type ChatRef,
@@ -148,12 +148,13 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   /** A row; a chat's with its works under it (a child moves with its chat, it is not dragged on its own). */
   const row = (c: WorkCard, groupId: string | null) => {
     const ref = cardRef(c)
-    const one = (k: WorkCard, child: boolean) => (
+    const one = (k: WorkCard, child: boolean, done = 0) => (
       <Row
         key={cardRef(k)}
         card={k}
         now={now}
         child={child}
+        done={done}
         on={selected?.id === k.id}
         menu={menu === cardRef(k)}
         over={!child && over === ref}
@@ -164,13 +165,19 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
       />
     )
     if (!c.children && !c.sessions) return one(c, false)
-    // Under a filter only the matching works show; done works fold under their chat.
-    const kids = c.children && (hiding ? c.children.filter((k) => cardMatches(k, filter)) : c.children)
+    // One line per topic: a child has its own only while it runs or waits on you (and the open one); done ones are the
+    // row's "N ✓". Under a filter, the matching works show.
+    const shown = topicKids(c, selected?.id ?? null)
+    const works = hiding ? (c.children ?? []).filter((k) => cardMatches(k, filter)) : shown.works
     return (
       <div key={ref} className="wlchat">
-        {one(c, false)}
-        {c.sessions && <div className="wlkids" aria-label={`Sessions under ${c.title}`}><SessionRows nodes={c.sessions} selectedId={selected?.kind === 'topic' ? selected.id : null} onSelect={onSelect} /></div>}
-        {kids && <ChildRows chat={c} kids={kids} folded={c.group === 'done'} render={(k) => one(k, true)} />}
+        {one(c, false, shown.done)}
+        {(shown.sessions.length > 0 || works.length > 0) && (
+          <div className="wlkids" aria-label={`Under ${c.title}`}>
+            <SessionRows nodes={shown.sessions} selectedId={selected?.kind === 'topic' ? selected.id : null} onSelect={onSelect} />
+            {works.map((k) => one(k, true))}
+          </div>
+        )}
       </div>
     )
   }
@@ -192,7 +199,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => onPicker(null)} />}
         </div>
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
-          ＋ New <kbd>⌘N</kbd>
+          ＋ New topic <kbd>⌘N</kbd>
         </button>
         <button className="wlsearch" aria-haspopup="dialog" aria-expanded={searching} title="Search chats and works by title, summary and messages, archive included" onClick={() => setSearching(true)}>
           <span aria-hidden>⌕</span>
@@ -261,24 +268,6 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   )
 }
 
-/** A chat's works under its row: the open ones, then the done ones behind a fold (all of them when the chat is done). */
-function ChildRows({ chat, kids, folded, render }: { chat: WorkCard; kids: WorkCard[]; folded: boolean; render: (k: WorkCard) => ReactNode }) {
-  const [unfolded, setUnfolded] = useState(false)
-  const open = folded ? [] : kids.filter((k) => k.group !== 'done')
-  const done = kids.filter((k) => !open.includes(k))
-  return (
-    <div className="wlkids" aria-label={`Works of ${chat.title}`}>
-      {open.map(render)}
-      {done.length > 0 && (
-        <button className="wlfold wlkidfold" aria-expanded={unfolded} onClick={() => setUnfolded((u) => !u)}>
-          {unfolded ? '▾' : '▸'} {done.length} done
-        </button>
-      )}
-      {unfolded && done.map(render)}
-    </div>
-  )
-}
-
 type DragProps = Partial<Pick<HTMLAttributes<HTMLDivElement>, 'draggable' | 'onDragStart' | 'onDragEnd' | 'onDragOver' | 'onDrop'>>
 
 /** A group of the user's: caret (collapse), name (double-click renames), count; on hover + (new in it) and ⋯. */
@@ -331,24 +320,18 @@ function Group({ group: g, open, naming, over, drag, children, onToggle, onRenam
   )
 }
 
-/** The badge of a row's state: amber waiting on you, green an agent working, grey done; else none. */
-function badge(c: WorkCard): { tone: string; text: string } | null {
-  if (c.closed) return null
-  if (c.dot === 'amber') return { tone: 'amber', text: 'waiting on you' }
-  if (c.dot === 'green') return { tone: 'green', text: 'agent working' }
-  if (c.group === 'done') return { tone: 'grey', text: 'done' }
-  return null
-}
-
 /**
- * A row: title and time, then the state badge and whose move (a discussion without one: its last message). ⋯ on hover
- * and a right-click open its menu; it is dragged to move it.
+ * A row on one line (topic-screen-one-new-compact.1): its state dot, title, then "you" when it waits on you, else the
+ * count of its done children ("N ✓"), else the time. The status line under it (whose move) only while it works or
+ * waits on you. ⋯ on hover and a right-click open its menu; it is dragged to move it.
  */
-function Row({ card: c, now, child, on, menu, over, drag, onMenu, onSelect, onGone }: {
+function Row({ card: c, now, child, done, on, menu, over, drag, onMenu, onSelect, onGone }: {
   card: WorkCard
   now: number
-  /** A work under its chat's row: indented, its key before its title. */
+  /** A work under its topic's row: indented, one line; its key in the tooltip. */
   child: boolean
+  /** A topic's done children. */
+  done: number
   on: boolean
   menu: boolean
   over: boolean
@@ -358,19 +341,20 @@ function Row({ card: c, now, child, on, menu, over, drag, onMenu, onSelect, onGo
   onGone: () => void
 }) {
   const tone = c.move.who === 'you' ? 'you' : c.move.who === 'agent' ? 'agent' : 'other'
-  const b = badge(c)
-  // A discussion without a move or works shows its last message; a done row its last event (the badge says done).
-  const line = (c.kind === 'topic' && !c.children && c.move.who === 'other') || b?.tone === 'grey' ? c.last?.text ?? (b ? '' : c.move.text) : c.move.text
+  const you = !c.closed && c.group === 'waiting'
+  const status = !child && !c.closed && (c.group === 'working' || c.group === 'waiting')
+  const time = threadTime(c.at, now)
   return (
     <div
       className={`wlrow${child ? ' wlchild' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
       onContextMenu={(e) => { e.preventDefault(); onMenu(true) }}
       {...drag}
     >
-      <button className="wlmain" title={c.task?.key} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
-        <span className="title">{child && c.task && <span className="wlkey">{c.task.key}</span>}{c.title}</span>
-        <span className="wltime">{threadTime(c.at, now)}</span>
-        <span className={`wlmove ${tone}`}>{b && <span className={`wlbadge ${b.tone}`}>{b.text}</span>}{line}</span>
+      <button className="wlmain" title={[c.task?.key, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
+        <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} aria-hidden />
+        <span className="title">{c.title}</span>
+        {you ? <span className="wlbadge amber">you</span> : done > 0 ? <span className="wltime" title={`${done} done`}>{done} ✓</span> : <span className="wltime">{time}</span>}
+        {status && <span className={`wlmove ${tone}`}>{c.move.text}</span>}
       </button>
       <button className="wlmore" aria-label={`More for ${c.title}`} aria-haspopup="menu" aria-expanded={menu} title="Rename, close, delete…" onClick={() => onMenu(!menu)}>⋯</button>
       {menu && <RowMenu card={c} onClose={() => onMenu(false)} onSelect={onSelect} onGone={onGone} />}
@@ -385,9 +369,9 @@ export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'c
 type Asking = 'rename' | 'close' | null
 
 /**
- * The row menu: a discussion is renamed, branched, turned into a work, closed (history kept) or deleted; an open work
- * is closed by cancel (with a reason), a done work or a review closed with all it has; a closed row (not a canceled
- * work) is restored to where it was. Delete asks first. A work's or a discussion's header ⋯ opens the same menu.
+ * The row menu: a discussion is renamed, branched, closed (history kept) or deleted; an open work is closed by cancel
+ * (with a reason), a done work or a review closed with all it has; a closed row (not a canceled work) is restored to
+ * where it was. Delete asks first. A work's or a discussion's header ⋯ opens the same menu.
  * With a conversation open, any row is referenced in its composer (a chip: the agent gets its summary).
  */
 export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmenu' }: {
@@ -434,13 +418,11 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
     )
   } else if (c.kind === 'topic' && s) {
     const canBranch = s.agent === 'claude-code' && !!s.nativeSessionId
-    const running = s.status === 'running'
     body = (
       <>
         {reference}
         <button role="menuitem" onClick={() => ask('rename', c.title)}>Rename</button>
         <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A session under this one that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.startChild(s.id, '', null, true).then((c) => onSelect({ kind: 'topic', id: c.id })))}>Branch</button>
-        {!isSubagent(s) && <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>}
         <hr />
         {c.closed
           ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>

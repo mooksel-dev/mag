@@ -24,7 +24,7 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
-import { ARTIFACT_KINDS, ARTIFACT_NAMES, type Artifact, type ArtifactTarget } from './artifacts'
+import type { ArtifactChip, ArtifactTarget, StepPhase, TopicArtifacts } from './artifacts'
 import { MoveButton } from './Cards'
 import { CanvasOpener, Chat, Markdown } from './Chat'
 import { FactPanel } from './FactPanel'
@@ -42,26 +42,56 @@ import { RowMenu, type MenuCard, type Selection } from './WorkList'
 
 const mag = window.mag
 
-/** The topic's artifacts by kind, newest first; a click opens one in the drawer. */
-export function ArtifactsList({ artifacts, onOpen }: { artifacts: Artifact[]; onOpen: (target: ArtifactTarget) => void }) {
+/**
+ * The topic's artifacts (topic-screen-one-new-compact.1): by work (its title; its doc and option sketches as chips),
+ * then by step, one line each with its number, title and phase and its plan, fact and review as chips; "This chat" for
+ * what was drawn outside any work. Keys only in tooltips; a click opens the artifact in the drawer.
+ */
+export function ArtifactsList({ artifacts, onOpen }: { artifacts: TopicArtifacts; onOpen: (target: ArtifactTarget) => void }) {
   return (
     <aside className="artifacts" aria-label="Artifacts">
-      {ARTIFACT_KINDS.map((kind) => {
-        const mine = artifacts.filter((a) => a.kind === kind)
-        if (!mine.length) return null
-        return (
-          <section key={kind}>
-            <div className="artkind">{ARTIFACT_NAMES[kind]} · {mine.length}</div>
-            {mine.map((a) => (
-              <button key={a.key} className="artrow" title={`${a.title}\n${a.detail}`} onClick={() => onOpen(a.open)}>
-                <span className="title">{a.title}</span>
-                <span className="muted small">{a.detail}</span>
+      {artifacts.works.map(({ work, open, chips, steps }) => (
+        <section key={work.id} className="artwork">
+          <button className="artworktitle" title={`${work.key} · ${work.status.replace('_', ' ')}`} onClick={() => onOpen(open)}>
+            <span className="title">{shortTitle(work)}</span>
+            {(work.status === 'done' || work.status === 'canceled') && <span className="muted small">{work.status}</span>}
+          </button>
+          {chips.length > 0 && <ArtChips chips={chips} onOpen={onOpen} />}
+          {steps.map((s) => (
+            <div key={s.step.id} className="artstep">
+              <button className="artstepline" title={`${s.step.key} · ${s.step.title} · ${s.phase}`} onClick={() => onOpen(open)}>
+                <span className={`sessdot ${STEP_DOTS[s.phase]}`} aria-hidden />
+                <span className="title">{s.no} · {s.step.title}</span>
+                <span className={`tag p-${s.phase.replace(' ', '-')}`}>{s.phase}</span>
               </button>
-            ))}
-          </section>
-        )
-      })}
+              {s.chips.length > 0 && <ArtChips chips={s.chips} onOpen={onOpen} />}
+            </div>
+          ))}
+        </section>
+      ))}
+      {artifacts.loose.length > 0 && (
+        <section className="artwork">
+          <div className="artkind">This chat</div>
+          {artifacts.loose.map((c) => (
+            <button key={c.key} className="artstepline" title={c.title} onClick={() => onOpen(c.open)}>
+              <span className="title">{c.label}</span>
+            </button>
+          ))}
+        </section>
+      )}
     </aside>
+  )
+}
+
+const STEP_DOTS: Record<StepPhase, string> = { todo: '', working: 'green', 'in review': 'amber', merged: 'green', done: 'green' }
+
+function ArtChips({ chips, onOpen }: { chips: ArtifactChip[]; onOpen: (target: ArtifactTarget) => void }) {
+  return (
+    <div className="artchips">
+      {chips.map((c) => (
+        <button key={c.key} className={`artchip${c.tone ? ` ${c.tone}` : ''}`} title={c.title} onClick={() => onOpen(c.open)}>{c.label}</button>
+      ))}
+    </div>
   )
 }
 

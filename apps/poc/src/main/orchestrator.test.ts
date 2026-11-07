@@ -755,16 +755,6 @@ test('reopen of a closed done work clears its closed mark', () => {
   assert.equal(store.task(task.id).closedAt, null)
 })
 
-test('turnIntoWork: the topic\'s agent gets the fixed request; not while it works', async () => {
-  const { store, orch, project } = setup()
-  const id = orch.newChat(project.id)
-  await orch.turnIntoWork(id)
-  const job = store.session(id).items.at(-1)
-  assert.equal(job?.kind === 'job' && job.title, 'Turn into a work')
-  assert.match(opened.at(-1)!.sent.at(-1)!, /create_work from this discussion/)
-  assert.throws(() => orch.turnIntoWork(id), /still working/)
-})
-
 test('deleteWork: steps, sessions, docs and the owner topic go; refused while an agent runs; an owner of another work stays; a review as deleteReview', async () => {
   const { store, orch, project } = setup()
   const newWork = (owner: string) => {

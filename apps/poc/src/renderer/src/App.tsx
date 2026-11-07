@@ -35,6 +35,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
 import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
+import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { useTheme, type ThemeMode } from './useTheme'
 import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkList'
 import { useRenderReviewExport } from './ReviewExport'
@@ -62,6 +63,7 @@ export function App({ projectId }: { projectId: string }) {
   /** The idea open on the Ideas page. */
   const [ideaId, setIdeaId] = useState<string | null>(null)
   const [theme, setTheme] = useTheme()
+  const leftPane = usePaneWidth('left')
   // A group's + opened Home: what it creates goes first in that group.
   const [homeGroup, setHomeGroup] = useState<HomeGroup | null>(null)
   // This window renders a review's static page for its archive when main asks (review-v2-part-2-v1-2.3).
@@ -139,10 +141,11 @@ export function App({ projectId }: { projectId: string }) {
         {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠ Claude CLI not found</span>}
         <ThemeSwitch mode={theme} onChange={setTheme} />
       </div>
-      <div className="layout">
+      <div className="layout" style={leftPane.style}>
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
           <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onNewIn={(g) => { select(null); setHomeGroup(g) }} onOpenPage={setPage} />
         </ErrorBoundary>
+        <PaneHandle side="left" onResize={leftPane.set} />
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {page ? (
             <main className="pagewrap">
