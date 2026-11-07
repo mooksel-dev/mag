@@ -7,7 +7,7 @@ import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
 import { useAppliedTheme } from './useTheme'
-import { mdSegments } from './markdown'
+import { canvasHref, mdSegments, parseCanvasHref } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 import { foldEvents, type EventItem } from './conversationCards'
 import { IntegrationCard } from './Cards'
@@ -42,11 +42,14 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
 
 /**
  * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams and [title](canvas:<id>) links as
- * inline canvases (canvas:<id>#<node> focuses a node of a diagram). Agent output is sanitized: it may echo repo or web content.
+ * canvases (canvas:<id>#<node> focuses a node of a diagram): a link alone on its line shows the canvas in place, one
+ * inside text is a link that opens it (see openCanvasLink). `canvases`: the ones it may show; a link to another id
+ * stays a link. Agent output is sanitized: it may echo repo or web content.
  */
 export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; canvases?: CanvasRef[]; className?: string }) {
   const theme = useAppliedTheme()
   const ref = useRef<HTMLDivElement>(null)
+  const opener = useContext(CanvasOpener)
   // Canvases are React siblings of the HTML chunks, never portals into them: React must own every node it removes.
   const segments = useMemo(
     () =>
@@ -69,7 +72,9 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
         if (!a) return
         e.preventDefault()
         const href = a.getAttribute('href') ?? ''
-        if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
+        const link = parseCanvasHref(href)
+        if (link) openCanvasLink(link.id, link.node, canvases, opener)
+        else if (href.startsWith('#task:')) onOpenTask?.(href.slice(6))
         else if (/^https:\/\//.test(href)) mag.open(href)
       }}
     >
@@ -77,10 +82,21 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
         // A theme change re-renders mermaid from the source, so start from fresh HTML.
         if (seg.kind === 'md') return <div key={`${i}-${theme}`} dangerouslySetInnerHTML={{ __html: seg.html }} />
         const canvas = canvases?.find((c) => c.id === seg.id)
-        return canvas ? <div key={i} className="canvasslot"><CanvasCard key={canvas.version} canvas={canvas} focus={seg.node} /></div> : <p key={i}>{seg.title}</p>
+        if (canvas) return <div key={i} className="canvasslot"><CanvasCard key={canvas.version} canvas={canvas} focus={seg.node} /></div>
+        return <p key={i}><a href={canvasHref(seg.id, seg.node)}>{seg.title || seg.id}</a></p>
       })}
     </div>
   )
+}
+
+/**
+ * Opens the canvas a link in markdown points at: a known one in the screen's drawer (CanvasOpener), else, or when the
+ * screen has no drawer, in its own window by id.
+ */
+function openCanvasLink(id: string, node: string | undefined, canvases: CanvasRef[] | undefined, opener: ((canvas: CanvasRef, focus?: string) => void) | null) {
+  const canvas = canvases?.find((c) => c.id === id)
+  if (canvas && opener) opener(canvas, node)
+  else void mag.openWindow({ kind: 'canvas', canvasId: id })
 }
 
 const fileUrl = (a: Attachment) => `mag-file://att/${encodeURIComponent(a.path.split(/[\\/]/).pop() ?? '')}`
@@ -170,11 +186,12 @@ const AGENT_NAMES: Record<string, string> = { chat: 'agent', groomer: 'owner', d
  * `readOnly`: an agent's log, without a composer (ux-odna-rozmova-na-robotu.2): the user talks to the work's owner only.
  * `cards`: what the work needs from the user, after the last item. `name`: over the agent's replies (default by role).
  * `tasks`: the project's; with them the composer references chats ("@") and a bubble's ref chips open with `onOpenRef`.
- * `self`: the chat this is, which it does not reference.
+ * `self`: the chat this is, which it does not reference. `canvases`: the app's; its messages show the project's ones they link.
  */
-export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self }: {
+export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self }: {
   session: AgentSession
   sessions: AgentSession[]
+  canvases: Pick<Canvas, 'id' | 'title' | 'version' | 'projectId'>[]
   onOpenTask?: (key: string) => void
   placeholder?: string
   chip?: ReactNode
@@ -191,6 +208,8 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
   // Only the last mention of a canvas renders it; earlier ones point forward.
   const lastCanvasAt = new Map<string, number>()
   session.items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
+  // What its messages' canvas links may show: the project's canvases, as in the doc.
+  const shown = useMemo(() => canvases.filter((c) => c.projectId === session.projectId), [canvases, session.projectId])
 
   // A turn's model, cost and duration go under its last reply, shown on hover.
   const metaAt = new Map<number, string>()
@@ -233,10 +252,10 @@ export function Chat({ session, sessions, onOpenTask, placeholder, chip, readOnl
               return (
                 <AgentReply key={n} name={who} first={first}>
                   {interim.has(n) ? (
-                    <InterimReply text={i.text} onOpenTask={onOpenTask} />
+                    <InterimReply text={i.text} canvases={shown} onOpenTask={onOpenTask} />
                   ) : (
                     <div className="reply">
-                      <Markdown className="msg agent md" text={i.text} onOpenTask={onOpenTask} />
+                      <Markdown className="msg agent md" text={i.text} canvases={shown} onOpenTask={onOpenTask} />
                       {meta && <div className="turnmeta">{meta}</div>}
                     </div>
                   )}
@@ -289,11 +308,11 @@ function AgentReply({ name, first, children }: { name: string; first: boolean; c
 }
 
 /** An interim reply: two muted lines; a click (not on a link) expands or collapses it. */
-function InterimReply({ text, onOpenTask }: { text: string; onOpenTask?: (key: string) => void }) {
+function InterimReply({ text, canvases, onOpenTask }: { text: string; canvases?: CanvasRef[]; onOpenTask?: (key: string) => void }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="interimwrap" onClick={(e) => !(e.target as HTMLElement).closest('a') && setOpen(!open)}>
-      <Markdown className={`msg agent md interim${open ? ' open' : ''}`} text={text} onOpenTask={onOpenTask} />
+      <Markdown className={`msg agent md interim${open ? ' open' : ''}`} text={text} canvases={canvases} onOpenTask={onOpenTask} />
     </div>
   )
 }
