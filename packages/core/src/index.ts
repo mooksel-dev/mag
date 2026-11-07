@@ -480,10 +480,6 @@ export function ideaPrompt(idea: Pick<Idea, 'text' | 'source'>, discussed = fals
   return `Let's start a work from ${discussed ? 'the idea we discussed here' : 'this idea'}${found}:\n\n${idea.text}\n\nCheck list_tasks for a work about the same problem first (a done one is continued with reopen_work), then plan it with me as the playbook says.`
 }
 
-/** The user's Turn into a work of a discussion: its agent creates the work from what was discussed and owns it. */
-export const TURN_INTO_WORK_PROMPT =
-  "Let's turn what we discussed here into a work. Check list_tasks for a work about the same problem first (a done one is continued with reopen_work); otherwise call create_work from this discussion, then plan it with me as the playbook says."
-
 /** What the agent of an idea's topic knows about it: the idea as it was when the topic started. */
 export function ideaContext(idea: Pick<Idea, 'text' | 'source'>): string {
   return `## The idea this topic discusses\nThe user opened this topic from an idea on the project's list${idea.source ? ` (found in ${idea.source})` : ''}. Discuss it; a work starts from it only when the user asks (create_work here; the idea then leaves the list).\n\n${idea.text}`

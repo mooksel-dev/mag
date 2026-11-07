@@ -23,6 +23,7 @@ import { topicArtifacts, type ArtifactTarget } from './artifacts'
 import { WorkCards } from './Cards'
 import { CanvasOpener, Chat, Composer, ModelChip } from './Chat'
 import { ArtifactDrawer } from './Drawer'
+import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { TicketLinks, AgentDot, useNow } from './Tasks'
 import type { MenuCard, Selection } from './WorkList'
 import { ChildSessions } from './SessionTree'
@@ -54,9 +55,10 @@ function useDrawer(initial: ArtifactTarget | null) {
 }
 
 /**
- * A topic's screen (topics-a-tree-of-agent.3): a compact header (title, kind, Turn into a work, ⋯), the sessions under
- * it and what waits on you; below, its conversation with the cards of every work it owns, and at the right the list of
- * its artifacts, or the one opened in the drawer. A work opens here, through its owner topic, with its card open.
+ * A topic's screen (topics-a-tree-of-agent.3): a compact header (title, kind, ⋯), the line of sessions under it (with
+ * + session) and what waits on you; below, its conversation with the cards of every work it owns, and at the right
+ * the list of its artifacts, or the one opened in the drawer; both sides resize (topic-screen-one-new-compact.1). A
+ * work opens here, through its owner topic, with its card open.
  * `topic` null: a work whose owner is its groomer, or nobody yet; the screen is the work's, with the groomer's chat.
  */
 export function TopicConversation({ topic, work, initial = null, state, onOpenKey, onSelect, onDeleted }: {
@@ -78,6 +80,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const tasks = state.tasks.filter((t) => t.projectId === projectId)
   const drawer = useDrawer(initial)
   const [listShown, setListShown] = useState(true)
+  const rightPane = usePaneWidth('right')
   const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
   // The review mag made this topic for: the screen is that review's.
   const review = topic ? tasks.find((t) => isReview(t) && (t.id === topic.reviewOf || reviewTopic(t, state.sessions)?.id === topic.id)) : work && isReview(work) ? work : undefined
@@ -91,7 +94,6 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   // An answer goes into the composer.
   const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
   const cards = cardsOf.length ? <>{cardsOf.map((t, i) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={i > 0} />)}</> : undefined
-  const running = chat?.status === 'running'
   const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const pr = review?.prReview?.pr
   // A work or review closed or deleted from its card: back to the topic without it (gone with it too: Home).
@@ -100,7 +102,6 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
     if (topic) onSelect({ kind: 'topic', id: topic.id })
     else onDeleted()
   }
-  const turn = () => void mag.turnIntoWork(topic!.id).catch((e: Error) => alert(e.message))
   const refsFrom = topic && { tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
   const chip = project && chat && runRole(chat) === 'chat' ? <ModelChip project={project} activeModel={chat.activeModel} /> : undefined
   const parent = topic?.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
@@ -116,10 +117,9 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
-            {topic && !review && !isSubagent(topic) && <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>}
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
-            {artifacts.length > 0 && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The docs, plans, diagrams, facts and reviews made here" onClick={() => (drawer.open ? (drawer.close(), setListShown(true)) : setListShown((v) => !v))}>Artifacts · {artifacts.length}</button>}
+            {artifacts.count > 0 && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The docs, plans, diagrams, facts and reviews made here" onClick={() => (drawer.open ? (drawer.close(), setListShown(true)) : setListShown((v) => !v))}>Artifacts · {artifacts.count}</button>}
             <HeadMenu card={menu} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {topic?.parentId && (
@@ -130,7 +130,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
           {topic && !review && <ChildSessions parent={topic} sessions={state.sessions} onSelect={onSelect} />}
           {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1} />}
         </header>
-        <div className="screenbody">
+        <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
             {chat && (chat.items.length || !topic) ? (
               <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} chip={chip} readOnly={!!topic && isSubagent(topic)} />
@@ -154,9 +154,10 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
               </div>
             )}
           </div>
+          {(drawer.open || (listShown && artifacts.count > 0)) && <PaneHandle side="right" onResize={rightPane.set} />}
           {drawer.open ? (
             <ArtifactDrawer open={drawer.open} state={state} onClose={drawer.close} onGone={gone} onOpenKey={onOpenKey} onSelect={onSelect} />
-          ) : listShown && artifacts.length > 0 && (
+          ) : listShown && artifacts.count > 0 && (
             <ArtifactsList artifacts={artifacts} onOpen={drawer.setOpen} />
           )}
         </div>

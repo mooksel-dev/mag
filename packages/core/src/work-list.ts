@@ -481,6 +481,34 @@ export function flatCards(cards: WorkCard[]): WorkCard[] {
   return cards.flatMap((c) => [c, ...(c.children ?? [])])
 }
 
+/** A session that needs a line of its own: it runs, waits on the user or failed. */
+export const liveNode = (n: SessionNode): boolean => n.state === 'running' || n.state === 'waiting' || n.state === 'error'
+
+/** What of a topic's children has a line under its one-line row (topic-screen-one-new-compact.1). */
+export interface TopicKids {
+  /** Its works that wait on the user or have an agent running, and the selected one. */
+  works: WorkCard[]
+  /** The sessions of its tree (flat, parents first) that run, wait on the user or failed, and the selected one. */
+  sessions: SessionNode[]
+  /** Its finished works and its sessions that are idle or closed: the row's "N ✓". */
+  done: number
+}
+
+/**
+ * The children a topic's row shows on lines of their own: only those that run or wait on the user (or failed), and the
+ * one open (`selectedId`) so it stays in sight; done ones are a count, listed on the topic's page. An open work that
+ * waits on someone else (CI, a step) has no line: the topic's status line says it.
+ */
+export function topicKids(card: Pick<WorkCard, 'children' | 'sessions'>, selectedId: string | null = null): TopicKids {
+  const kids = card.children ?? []
+  const nodes = flatNodes(card.sessions ?? [])
+  return {
+    works: kids.filter((k) => k.group === 'waiting' || (k.group !== 'done' && k.dot === 'green') || k.id === selectedId),
+    sessions: nodes.filter((n) => liveNode(n) || n.session.id === selectedId),
+    done: kids.filter((k) => k.group === 'done').length + nodes.filter((n) => n.state === 'idle' || n.state === 'closed').length,
+  }
+}
+
 /**
  * The work a chat opens on: the one it owns that waits on the user, else the first of ownedWorks (the newest open, else
  * the newest); null when it owns none. `tasks` and `sessions` are the project's.

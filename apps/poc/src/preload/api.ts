@@ -199,8 +199,6 @@ export interface MagApi {
   deleteChat(sessionId: string): Promise<void>
   /** Closes a project chat (topic): its agent stops, it goes to Done with its history; writing to it reopens it. */
   closeChat(sessionId: string): Promise<void>
-  /** Asks the topic's agent to create a work from the discussion; the topic owns it. */
-  turnIntoWork(sessionId: string): Promise<void>
   /** Deletes a work for good (a review as deleteReview): steps, sessions, docs, diagrams; refused while its agents run. */
   deleteWork(taskId: string): Promise<void>
   /** Closes a done work (a review as closeReview): it stays done and goes to Closed. */

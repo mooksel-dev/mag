@@ -61,7 +61,6 @@ const api: MagApi = {
   renameChat: (sessionId, title) => ipcRenderer.invoke('chat:rename', sessionId, title),
   deleteChat: (sessionId) => ipcRenderer.invoke('chat:delete', sessionId),
   closeChat: (sessionId) => ipcRenderer.invoke('chat:close', sessionId),
-  turnIntoWork: (sessionId) => ipcRenderer.invoke('chat:turn-into-work', sessionId),
   deleteWork: (taskId) => ipcRenderer.invoke('task:delete', taskId),
   closeWork: (taskId) => ipcRenderer.invoke('task:close', taskId),
   restore: (kind, id) => ipcRenderer.invoke('sidebar:restore', kind, id),
