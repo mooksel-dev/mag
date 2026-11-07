@@ -227,7 +227,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
 
   // Runs of events render as one collapsible line; n = index of the (first) item, used as key.
   const lines = foldEvents(session.items)
-  const who = name ?? AGENT_NAMES[session.role] ?? session.role
+  const who = name ?? (session.role ? AGENT_NAMES[session.role] ?? session.role : 'agent')
 
   return (
     <div className="chatbox">

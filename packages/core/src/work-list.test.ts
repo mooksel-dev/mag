@@ -231,6 +231,33 @@ test('workCards: topics: approval waits on you; a running topic is working; a pl
   assert.deepEqual(got[2].last, { text: 'you: how do we price the pro plan for teams', at: NOW - 2 * MIN })
 })
 
+test('workCards: the sessions under a topic are its tree, not rows; they count as the topic working or waiting (topics-a-tree-of-agent.2)', () => {
+  const approval = { kind: 'approval' as const, id: 'a1', tool: 'Bash', input: { command: 'git push origin x' }, status: 'pending' as const, at: NOW }
+  const t = (title: string) => ({ title, titleGenerated: true })
+  const sessions = [
+    session('c', t('Auth')),
+    session('k1', { ...t('Run the app'), role: null, parentId: 'c', status: 'running', runStartedAt: NOW - 3 * MIN, createdAt: NOW - MIN }),
+    session('k2', { ...t('Old branch'), parentId: 'c' }),
+    session('g1', { ...t('Read logs'), role: 'reviewer', parentId: 'k1' }),
+  ]
+  const got = cards([], sessions)
+  assert.deepEqual(got.map(line), ['working:c:green agent: Run the app · agent · 3 min'])
+  const tree = got[0].sessions!
+  const shape = (nodes: typeof tree): unknown[] => nodes.map((n) => [n.session.id, n.role, n.state, n.dot, shape(n.children)])
+  assert.deepEqual(shape(tree), [['k1', 'general', 'running', 'green', [['g1', 'reviewer', 'idle', 'grey', []]]], ['k2', 'topic', 'idle', 'grey', []]])
+  assert.equal(got[0].at, NOW - MIN, 'its activity includes its sessions')
+
+  // An approval anywhere in the tree waits on the user on the topic's row.
+  const asking = sessions.map((x) => (x.id === 'g1' ? { ...x, items: [approval] } : x))
+  assert.deepEqual(cards([], asking).map(line), ['waiting:c:amber you: Allow Bash: git push origin x'])
+  assert.equal(cards([], asking)[0].sessions![0].children[0].state, 'waiting')
+
+  // A work a session under the topic owns is the topic's child.
+  const work = task('w1', { ownerSessionId: 'g1', status: 'planning' })
+  const withWork = cards([work], sessions)
+  assert.deepEqual([withWork.length, kids(withWork[0])], [1, ['w1']])
+})
+
 test('workCards: a closed topic is closed however long ago; running or asking, it is not', () => {
   const approval = { kind: 'approval' as const, id: 'a1', tool: 'x', server: 'jira', input: {}, status: 'pending' as const, at: NOW }
   const sessions = [

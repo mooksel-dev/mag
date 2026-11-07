@@ -29,6 +29,7 @@ import { ProjectPicker, ProjectSquare } from './Picker'
 import { SearchPalette } from './SearchPalette'
 import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
+import { SessionRows } from './SessionTree'
 
 const mag = window.mag
 
@@ -161,13 +162,14 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         onGone={() => gone(k)}
       />
     )
-    if (!c.children) return one(c, false)
+    if (!c.children && !c.sessions) return one(c, false)
     // Under a filter only the matching works show; done works fold under their chat.
-    const kids = hiding ? c.children.filter((k) => cardMatches(k, filter)) : c.children
+    const kids = c.children && (hiding ? c.children.filter((k) => cardMatches(k, filter)) : c.children)
     return (
       <div key={ref} className="wlchat">
         {one(c, false)}
-        <ChildRows chat={c} kids={kids} folded={c.group === 'done'} render={(k) => one(k, true)} />
+        {c.sessions && <div className="wlkids" aria-label={`Sessions under ${c.title}`}><SessionRows nodes={c.sessions} selectedId={selected?.kind === 'topic' ? selected.id : null} onSelect={onSelect} /></div>}
+        {kids && <ChildRows chat={c} kids={kids} folded={c.group === 'done'} render={(k) => one(k, true)} />}
       </div>
     )
   }
@@ -376,7 +378,7 @@ function Row({ card: c, now, child, on, menu, over, drag, onMenu, onSelect, onGo
 }
 
 /** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
-export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed'>
+export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed' | 'sessions'>
 
 /** What the row menu shows instead of its items: a field for a topic's title, or for why a work closes. */
 type Asking = 'rename' | 'close' | null
@@ -436,14 +438,14 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
       <>
         {reference}
         <button role="menuitem" onClick={() => ask('rename', c.title)}>Rename</button>
-        <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A new topic that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.branchChat(s.id).then((id) => onSelect({ kind: 'topic', id })))}>Branch</button>
+        <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A session under this one that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.startChild(s.id, '', null, true).then((c) => onSelect({ kind: 'topic', id: c.id })))}>Branch</button>
         <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>
         <hr />
         {c.closed
           ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>
           : <button role="menuitem" onClick={act(() => mag.closeChat(s.id))}>Close (keep history)</button>}
         <button role="menuitem" className="danger" onClick={() => {
-          if (!confirm(`Delete topic "${c.title}"? Its history is lost.`)) return onClose()
+          if (!confirm(`Delete topic "${c.title}"${c.sessions?.length ? ' and the sessions under it' : ''}? Its history is lost.`)) return onClose()
           act(() => mag.deleteChat(s.id).then(onGone))()
         }}>Delete…</button>
       </>

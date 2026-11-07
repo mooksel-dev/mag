@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, isLegacy, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -163,6 +163,7 @@ export class Store {
     () => this.migrateToWorkStates(),
     () => this.migrateToReviewResults(),
     () => this.migrateToClosedMark(),
+    () => this.migrateToSessionTree(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -185,6 +186,20 @@ export class Store {
     // Through migrateToSteps.
     if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
     return 0
+  }
+
+  /**
+   * Sessions form a tree (topics-a-tree-of-agent.2): a branched topic's branchOf becomes its parentId, so it is a child
+   * of the topic it was branched from. One whose parent is gone becomes a topic of its own.
+   */
+  private migrateToSessionTree() {
+    const ids = new Set(this.data.sessions.map((s) => s.id))
+    for (const s of this.data.sessions) {
+      const old = s as AgentSession & { branchOf?: string | null }
+      if (!('branchOf' in old)) continue
+      if (old.branchOf && ids.has(old.branchOf) && old.branchOf !== s.id) s.parentId = old.branchOf
+      delete old.branchOf
+    }
   }
 
   /**
@@ -698,11 +713,15 @@ export class Store {
     this.changed()
   }
 
-  /** Removes a session; canvases drawn in it and events stay. An idea it discussed has no discussion again. */
+  /**
+   * Removes a session with the sessions under it (its tree, topics-a-tree-of-agent.2); canvases drawn in them and events
+   * stay. An idea one of them discussed has no discussion again.
+   */
   deleteSession(sid: string) {
     this.session(sid)
-    this.data.sessions = this.data.sessions.filter((s) => s.id !== sid)
-    for (const i of this.data.ideas) if (i.topicId === sid) i.topicId = null
+    const gone = new Set(sessionTree(sid, this.data.sessions).map((s) => s.id))
+    this.data.sessions = this.data.sessions.filter((s) => !gone.has(s.id))
+    for (const i of this.data.ideas) if (i.topicId && gone.has(i.topicId)) i.topicId = null
     this.changed()
   }
 }

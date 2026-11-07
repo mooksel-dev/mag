@@ -59,7 +59,7 @@ export function WorkCards({ work, owner, state, onAnswer, label = false }: {
   return (
     <>
       {label && <div className="cardsof" title={work.title}>{work.key} · {shortTitle(work)}</div>}
-      {approvals.map(({ s, i }) => <ApprovalCard key={i.id} sessionId={s.id} item={i} who={s.role} />)}
+      {approvals.map(({ s, i }) => <ApprovalCard key={i.id} sessionId={s.id} item={i} who={s.role ?? undefined} />)}
       {integrations.map(({ s, i }) => <IntegrationCard key={i.id} sessionId={s.id} item={i} />)}
       {checks && <div className="workcard"><LocalChecks step={step} project={project} /></div>}
       {questions && <QuestionsCard key={work.needsInput} work={work} owner={owner} busy={ownerBusy} onAnswer={onAnswer} />}

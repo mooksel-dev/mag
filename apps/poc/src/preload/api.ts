@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ChildRole, ComponentDiagram, DirectionChoice, Idea, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -187,8 +187,12 @@ export interface MagApi {
   send(sessionId: string, text: string, attachments?: Attachment[], refs?: ChatRef[]): Promise<void>
   /** New project chat; returns its session id. */
   newChat(projectId: string): Promise<string>
-  /** Branch: a new topic forking the topic's agent session (all its context); returns the new topic's id. */
-  branchChat(sessionId: string): Promise<string>
+  /**
+   * A child session of a topic or of a session under it (topics-a-tree-of-agent.2): `brief` its first message, the
+   * user's (empty: it waits for one); `role` a preset or null; `fork` starts it with all of the parent's conversation
+   * (the topic's Branch). Returns the child.
+   */
+  startChild(parentId: string, brief: string, role: ChildRole | null, fork?: boolean): Promise<AgentSession>
   /** The user's title for a project chat (topic); the generated title no longer replaces it. */
   renameChat(sessionId: string, title: string): Promise<void>
   /** Deletes a project chat (topic) with its history; its agent stops first. */

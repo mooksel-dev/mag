@@ -79,19 +79,22 @@ test('a pending approval nobody polls expires; a hang-up stops the wait', async 
 
 test('a Bash call (a GitHub write that matched an ask rule) asks in chat and groomer sessions, with its command and no server; other roles stay denied (chat-publishes-to-github-prs.2)', async () => {
   const bash = { tool_name: 'Bash', input: { command: 'gh pr comment 4 -b "[mag] ok"', description: 'Comment' }, tool_use_id: 'tb1' }
-  for (const role of ['chat', 'groomer'] as const) {
+  // null: a general session under a topic asks as a topic does (topics-a-tree-of-agent.2).
+  for (const role of ['chat', 'groomer', null] as const) {
     const { store, session, approvals, approval } = setup()
     session.role = role
     const pending = approvals.request({ sessionId: session.id }, bash)
     await sleep(5)
-    assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tb1', tool: 'Bash', input: bash.input, status: 'pending', at: 0 }, role)
+    assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tb1', tool: 'Bash', input: bash.input, status: 'pending', at: 0 }, String(role))
     approvals.decide(session.id, 'tb1', true)
     assert.deepEqual(JSON.parse(await pending), { behavior: 'allow', updatedInput: bash.input })
     assert.equal(store.data.events.at(-1)?.text, 'Bash: gh pr comment 4 -b "[mag] ok" allowed')
   }
+  // A developer or reviewer under a topic is denied as theirs are (its run has no ask rules).
   for (const role of ['developer', 'reviewer', 'architect'] as const) {
     const { session, approvals } = setup()
     session.role = role
+    session.parentId = 'topic'
     assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, bash)).behavior, 'deny', role)
     assert.equal(session.items.length, 0, role)
   }

@@ -2131,27 +2131,32 @@ test('delete_chats: a work whose agent is in a turn is refused, the next target 
   assert.ok(s.store.data.tasks.some((t) => t.id === s.task.id))
 })
 
-test("branchChat: the new topic forks the parent's session on its first live turn; the parent stays (branch-this-topic-novyi-topik.1)", async () => {
-  const { store, orch, project } = setup()
-  const parentId = orch.newChat(project.id)
-  // A topic without an agent session has nothing to fork.
-  assert.throws(() => orch.branchChat(parentId), /no agent session to branch yet/)
-  await orch.send(parentId, 'Design the login')
-  const parentLive = opened.at(-1)!
-  parentLive.emit({ type: 'session.started', nativeSessionId: 'parent-native' })
-  parentLive.emit({ type: 'turn.done', ok: true })
+/** A topic whose Claude Code session has started (`native`) and is between turns. */
+async function liveTopic(s: ReturnType<typeof setup>, text = 'Design the login', native = 'parent-native') {
+  const id = s.orch.newChat(s.project.id)
+  await s.orch.send(id, text)
+  const live = opened.at(-1)!
+  live.emit({ type: 'session.started', nativeSessionId: native })
+  live.emit({ type: 'turn.done', ok: true })
   await tick()
-  const parent = store.session(parentId)
+  return { topic: s.store.session(id), live }
+}
 
-  const id = orch.branchChat(parentId, ' And the logout? ')
-  const topic = store.session(id)
-  assert.deepEqual([topic.forkOf, topic.branchOf, topic.title, topic.role, topic.taskId], ['parent-native', parentId, 'Branch of Design the login', 'chat', null])
+test("startChild with fork: the Branch of a topic; its child forks the parent's session on its first turn, the parent stays (topics-a-tree-of-agent.2)", async () => {
+  const s = setup()
+  const { store, orch, project } = s
+  // A topic without an agent session has nothing to fork.
+  assert.throws(() => orch.startChild(orch.newChat(project.id), '', null, true), /no agent session to fork yet/)
+  const { topic: parent, live: parentLive } = await liveTopic(s)
+
+  const child = orch.startChild(parent.id, ' And the logout? ', null, true, 'user')
+  assert.deepEqual([child.forkOf, child.parentId, child.title, child.role, child.taskId], ['parent-native', parent.id, 'And the logout?', null, null])
   await tick()
   const live = opened.at(-1)!
   assert.notEqual(live, parentLive)
-  assert.deepEqual(live.sent, ['And the logout?'])
+  assert.deepEqual(live.sent, ['And the logout?'], "the user's brief is the user's own first message")
   assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession], ['parent-native', true])
-  assert.equal(topic.title, 'Branch of Design the login', 'the title is not replaced by the first message')
+  assert.equal(store.session(child.id).items[0].kind, 'user')
   assert.deepEqual(parent.items.filter((i) => i.kind === 'user').length, 1, 'the parent is untouched')
 
   // Its next process resumes the fork, not the parent.
@@ -2160,28 +2165,136 @@ test("branchChat: the new topic forks the parent's session on its first live tur
   await tick()
   live.close()
   await tick()
-  await orch.send(id, 'more')
+  await orch.send(child.id, 'more')
   assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession], ['fork-native', false])
 
-  // Without text the topic waits for the user's first message.
+  // Without a brief the child waits for the user's first message.
   const count = opened.length
-  const empty = store.session(orch.branchChat(parentId))
+  const empty = orch.startChild(parent.id, '', null, true)
   await tick()
-  assert.deepEqual([empty.items.length, opened.length], [0, count])
+  assert.deepEqual([empty.title, empty.items.length, opened.length], ['Branch of Design the login', 0, count])
+  assert.deepEqual(orch.treeOf(parent.id).map((x) => x.id), [parent.id, child.id, empty.id])
 })
 
-test('branch_topic: a project topic branches itself into a new one; other sessions cannot (branch-this-topic-novyi-topik.1)', async () => {
+test("startChild from an agent: a general child gets the brief as a job naming whom to report to, and a topic's tools (topics-a-tree-of-agent.2)", async () => {
   const s = setup()
-  const tools = createTools(s.store, { branchChat: (id: string, text?: string) => s.orch.branchChat(id, text) } as ToolActions)
-  const topic = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Auth' })
-  const call = (args: Record<string, unknown>, sessionId = topic.id) => tools({ projectId: s.project.id, sessionId }, 'branch_topic', args)
-  await assert.rejects(call({}), /no agent session to branch yet/)
-  topic.nativeSessionId = 'auth-native'
-  const architect = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'architect', agent: 'claude-code', status: 'idle' })
-  await assert.rejects(call({}, architect.id), /branch_topic is for a project topic/)
-  assert.match(String(await call({})), /^Branched into a new topic "Branch of Auth" \(\w+\)\. Tell the user/)
-  const branch = s.store.data.sessions.at(-1)!
-  assert.deepEqual([branch.branchOf, branch.forkOf, branch.items.length], [topic.id, 'auth-native', 0])
+  const { topic } = await liveTopic(s)
+  const child = s.orch.startChild(topic.id, 'Run the app and check the login screen')
+  await tick()
+  const live = opened.at(-1)!
+  const first = s.store.session(child.id).items[0]
+  assert.equal(first.kind, 'job')
+  assert.equal(first.kind === 'job' && first.title, 'Brief from Design the login')
+  assert.match(live.sent[0], /Run the app and check the login screen/)
+  assert.match(live.sent[0], new RegExp(`message_session with session_id "${topic.id}"`))
+  const spec = specs.at(-1)!
+  assert.deepEqual([spec.resumeId, spec.forkSession, spec.readOnly], [undefined, false, false])
+  assert.ok(spec.allowedTools!.includes('Edit') && spec.allowedTools!.includes('EnterWorktree'))
+  assert.equal(spec.permissionPromptTool, 'mcp__mag__approve_tool', 'its GitHub writes ask, as a topic\'s do')
+  assert.ok(spec.askTools!.includes('Bash(git push:*)'))
+  assert.ok(spec.disallowedTools!.includes('Bash(gh pr merge:*)'))
+  assert.match(readFileSync(spec.mcpConfigPath!, 'utf8'), /"MAG_ROLE":"chat"/, 'its mag tools are a topic\'s')
+  // A child of a child is in the same tree.
+  const grandchild = s.orch.startChild(child.id, 'Look at the logs')
+  assert.deepEqual(s.orch.treeOf(topic.id).map((x) => x.id), [topic.id, child.id, grandchild.id])
+})
+
+test('startChild presets: a developer changes code but never writes to GitHub, a reviewer only reads; others are refused (topics-a-tree-of-agent.2)', async () => {
+  const s = setup()
+  const { topic } = await liveTopic(s)
+  s.orch.startChild(topic.id, 'Fix the typo in the README', 'developer')
+  await tick()
+  const dev = specs.at(-1)!
+  assert.ok(dev.allowedTools!.includes('Edit'))
+  assert.equal(dev.readOnly, false)
+  assert.ok(dev.disallowedTools!.includes('Bash(git push:*)') && dev.disallowedTools!.includes('Bash(gh pr comment:*)'))
+  assert.equal(dev.askTools, undefined)
+  assert.match(dev.appendSystemPrompt!, /You are a developer session under a topic/)
+
+  s.orch.startChild(topic.id, 'Read the auth module and list the risks', 'reviewer')
+  await tick()
+  const rev = runs.at(-1)!.spec
+  assert.ok(!rev.allowedTools!.includes('Edit'))
+  assert.equal(rev.readOnly, true)
+  assert.ok(rev.disallowedTools!.includes('Edit') && rev.disallowedTools!.includes('Bash(git push:*)'))
+  assert.match(rev.appendSystemPrompt!, /You are a reviewer session under a topic/)
+  assert.match(readFileSync(rev.mcpConfigPath!, 'utf8'), /"MAG_ROLE":"reviewer"/)
+
+  assert.throws(() => s.orch.startChild(topic.id, 'x', 'groomer' as 'developer'), /role must be one of developer, reviewer/)
+  // A work's sessions have no tree; mag's topic of a PR review only reads.
+  const dev2 = s.store.createSession({ projectId: s.project.id, taskId: s.task.id, role: 'developer', agent: 'claude-code', status: 'idle' })
+  assert.throws(() => s.orch.startChild(dev2.id, 'x'), /not a topic or a session under one/)
+  const review = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', reviewOf: s.task.id })
+  assert.throws(() => s.orch.startChild(review.id, 'x'), /only reads: it starts no sessions/)
+})
+
+test("tree tools: start_session, message_session and stop_session reach only the caller's topic tree (topics-a-tree-of-agent.2)", async () => {
+  const s = setup()
+  const actions = {
+    startChild: (p: string, brief: string, role: 'developer' | 'reviewer' | null, fork: boolean) => s.orch.startChild(p, brief, role, fork),
+    sessionInTree: (caller: string, target: string) => s.orch.sessionInTree(caller, target),
+    send: (id: string, text: string, job?: string) => s.orch.send(id, text, [], job),
+    stop: (id: string) => s.orch.stop(id),
+  } as ToolActions
+  const tools = createTools(s.store, actions)
+  const call = (sessionId: string, name: string, args: Record<string, unknown>) => tools({ projectId: s.project.id, sessionId }, name, args)
+  const { topic, live: parentLive } = await liveTopic(s)
+  const { topic: other } = await liveTopic(s, 'Billing', 'billing-native')
+
+  await assert.rejects(call(topic.id, 'start_session', { brief: ' ' }), /brief is required/)
+  await assert.rejects(call(topic.id, 'start_session', { brief: 'x', role: 'architect' }), /role must be one of developer, reviewer/)
+  assert.match(await call(topic.id, 'start_session', { brief: 'Check the logs', role: 'reviewer' }), /^Started session \w+ "Check the logs" \(reviewer\), under this one/)
+  const child = s.store.data.sessions.at(-1)!
+  assert.deepEqual([child.parentId, child.role], [topic.id, 'reviewer'])
+  const childRun = runs.at(-1)!
+
+  // The child reports back to its parent: a job card in the parent's chat, delivered to its live process.
+  assert.equal(await call(child.id, 'message_session', { session_id: topic.id, text: 'Two risks found' }), `Sent to ${topic.id} "Design the login".`)
+  const card = s.store.session(topic.id).items.at(-1)!
+  assert.deepEqual(card.kind === 'job' && [card.title, card.text], [`From Check the logs (${child.id})`, 'Two risks found'])
+  assert.equal(parentLive.sent.at(-1), 'Two risks found')
+
+  // Another topic's tree is out of reach, both ways; so is the caller itself.
+  await assert.rejects(call(other.id, 'message_session', { session_id: child.id, text: 'hi' }), /is not in this topic's tree/)
+  await assert.rejects(call(child.id, 'message_session', { session_id: other.id, text: 'hi' }), /is not in this topic's tree/)
+  await assert.rejects(call(topic.id, 'stop_session', { session_id: other.id }), /is not in this topic's tree/)
+  // A reviewer child reports, it does not stop others.
+  await assert.rejects(call(child.id, 'stop_session', { session_id: topic.id }), /not available to the reviewer agent/)
+  await assert.rejects(call(topic.id, 'message_session', { session_id: topic.id, text: 'hi' }), /That is this session/)
+  // A work's session has no tree.
+  const dev = s.store.createSession({ projectId: s.project.id, taskId: s.task.id, role: 'developer', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(call(dev.id, 'message_session', { session_id: topic.id, text: 'hi' }), /not a topic or a session under one|not available/)
+
+  assert.match(await call(topic.id, 'stop_session', { session_id: child.id }), /^Stopped the turn of/)
+  await tick()
+  childRun.end()
+  await tick()
+  assert.equal(await call(topic.id, 'stop_session', { session_id: child.id }), `${child.id} is not in a turn.`)
+})
+
+test('deleteChat and closeChat take the sessions under a topic with it (topics-a-tree-of-agent.2)', async () => {
+  const s = setup()
+  const { topic } = await liveTopic(s)
+  const child = s.orch.startChild(topic.id, 'Prototype the sidebar')
+  await tick()
+  const childLive = opened.at(-1)!
+  const grandchild = s.orch.startChild(child.id, 'Measure it')
+  await tick()
+  // A session under the topic that owns an open work holds the close back.
+  s.store.updateTask(s.task.id, { ownerSessionId: grandchild.id })
+  await assert.rejects(s.orch.closeChat(topic.id), /A session under this topic owns login: close the work instead/)
+  s.store.updateTask(s.task.id, { ownerSessionId: undefined })
+
+  await s.orch.closeChat(topic.id)
+  assert.ok([topic, child, grandchild].every((x) => !!s.store.session(x.id).closedAt))
+  assert.equal(childLive.closed, true, 'its process ended')
+
+  // Restore brings the tree back with it.
+  s.orch.restore('topic', topic.id)
+  assert.ok([topic, child, grandchild].every((x) => !s.store.session(x.id).closedAt))
+
+  await s.orch.deleteChat(topic.id)
+  assert.deepEqual(s.store.data.sessions.filter((x) => [topic.id, child.id, grandchild.id].includes(x.id)), [])
 })
 
 /** Notice lines in a session's chat. */

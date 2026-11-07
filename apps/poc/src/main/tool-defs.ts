@@ -641,12 +641,43 @@ export const TOOL_DEFS = [
       required: ['key'],
     },
   },
+  // The session tree (topics-a-tree-of-agent.2): a topic and the sessions under it.
   {
-    name: 'branch_topic',
+    name: 'start_session',
     scope: 'project',
+    reviewer: 'also',
     description:
-      'Branch this topic into a new one, when the user asks to go on with a separate question there: the new topic forks your session, so it starts with everything said here, and this topic stays as it is. text, if given, is its first message: the new topic\'s agent answers it there. Answers with the new topic\'s id; the user finds it in Topics.',
-    inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Optional first message of the new topic, as the user would write it.' } } },
+      "Start a child session of yours for a part of the job worth its own session (a long run, research, a prototype, work in parallel): it works on the brief on its own, the user sees it under this topic and can write to it, and it reports back to you with message_session. role: none for a general session with a topic's tools; developer to change code (in a worktree, no GitHub writes); reviewer to read and report only. fork: true starts it with all of this conversation (Claude Code only; the user's \"branch this topic\"). Answers with its session id.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        brief: { type: 'string', description: 'What it does, standing on its own: the goal, where, what to report. Empty only with fork, for a branch the user goes on in.' },
+        role: { type: 'string', enum: ['developer', 'reviewer'], description: 'A preset; leave it out for a general session.' },
+        fork: { type: 'boolean', description: 'Start with all of this conversation instead of only the brief.' },
+      },
+      required: ['brief'],
+    },
+  },
+  {
+    name: 'message_session',
+    scope: 'project',
+    reviewer: 'also',
+    description:
+      'Write to a session of this topic\'s tree (the topic, a child, the session that started you), as the user writes in its chat: it resumes with the text, or gets it in its turn. Its reply comes back only if it writes to you. Answers whether it was sent.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'The session: an id start_session answered with, or the one your brief names.' },
+        text: { type: 'string', description: 'The message, standing on its own.' },
+      },
+      required: ['session_id', 'text'],
+    },
+  },
+  {
+    name: 'stop_session',
+    scope: 'project',
+    description: "Stop the turn of a session of this topic's tree, as the user's Stop; it stays and resumes when written to. Never your own.",
+    inputSchema: { type: 'object', properties: { session_id: { type: 'string' } }, required: ['session_id'] },
   },
   {
     name: 'get_pr_changes',

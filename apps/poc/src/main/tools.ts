@@ -1,4 +1,4 @@
-import { MAG_MCP_ID, chatTranscript, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -38,8 +38,12 @@ export interface ToolActions {
   askOwner(stepId: string, question: string): boolean
   /** The owner's answer to its step developer's waiting question; the developer goes on with it. */
   answerDeveloper(stepId: string, text: string): Promise<void>
-  /** A topic's Branch: a new topic forking its agent session; `text` is its first message. Returns the new topic's id. */
-  branchChat(sessionId: string, text?: string): string
+  /** start_session (topics-a-tree-of-agent.2): a child of `parentId`, its brief from the parent's agent; started. */
+  startChild(parentId: string, brief: string, role: ChildRole | null, fork: boolean): AgentSession
+  /** The tree tools' target: a session of the caller's topic tree; throws for any other. */
+  sessionInTree(callerId: string, targetId: string): AgentSession
+  /** stop_session: stops the session's turn, as the user's Stop. */
+  stop(sessionId: string): Promise<void>
   /** A topic's review_pr: the review of a teammate's PR in `format` (the project's without one), run by `by`; returns the job for its turn. */
   reviewPr(projectId: string, url: string, by: string, format?: ReviewFormat): Promise<{ taskId: string; job: string }>
   /** The user's export_review: the review's .zip at `path` (default: Downloads); returns the file's path. */
@@ -62,8 +66,8 @@ export interface ToolActions {
   restartReview(taskId: string): Promise<void>
   /** The session a message to a work or a step goes to: of `role`, else the one that worked last. */
   agentOf(taskId: string, role?: MessagedRole): AgentSession | null
-  /** A message to a session, as the user's in its chat; resumes it. */
-  send(sessionId: string, text: string): Promise<void>
+  /** A message to a session, as the user's in its chat (`job`: as mag's card with this title); resumes it. */
+  send(sessionId: string, text: string, job?: string): Promise<void>
   /** Stops the agents of a work or a step in a turn; returns those stopped. */
   stopAgents(taskId: string): Promise<AgentSession[]>
   /** The user's Close of a topic; refused while it owns an open work. */
@@ -229,7 +233,8 @@ export type ToolHandler = (ctx: ToolContext, name: string, args: Record<string, 
 
 export function createTools(store: Store, actions: ToolActions): ToolHandler {
   return async (callCtx, name, args) => {
-    const role = callCtx.sessionId ? store.data.sessions.find((s) => s.id === callCtx.sessionId)?.role : undefined
+    const caller = callCtx.sessionId ? store.data.sessions.find((s) => s.id === callCtx.sessionId) : undefined
+    const role = caller ? runRole(caller) : undefined
     const def = TOOL_DEFS.find((d) => d.name === name)
     if (def && role && !toolForRole(def, role)) throw new Error(`${name} is not available to the ${role} agent`)
     const ctx = ownerContext(store, callCtx, name, args, role)
@@ -939,7 +944,7 @@ function sharedTool(
       // The links are checked first: a bad one creates nothing.
       const tickets = ticketsArg(args.tickets)
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      const owner = session?.role === 'chat' ? session.id : undefined
+      const owner = session && runRole(session) === 'chat' ? session.id : undefined
       const t = store.createTask({
         projectId: project.id,
         title,
@@ -975,7 +980,7 @@ function sharedTool(
     case 'reopen_work': {
       const t = byKey(args.key)
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      if (session?.role !== 'chat') throw new Error('reopen_work is for a project chat')
+      if (!session || runRole(session) !== 'chat') throw new Error('reopen_work is for a project chat')
       const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
       ideaBecameWork(store, session.id)
       return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user approves the plan when it is ready.`
@@ -983,7 +988,7 @@ function sharedTool(
 
     case 'review_pr': {
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      if (session?.role !== 'chat') throw new Error('review_pr is for a project topic')
+      if (!session || runRole(session) !== 'chat') throw new Error('review_pr is for a project topic')
       const format = args.format == null || args.format === '' ? undefined : (args.format as ReviewFormat)
       if (format && !REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
       return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format).then((r) => r.job)
@@ -996,12 +1001,36 @@ function sharedTool(
       return actions.exportReview(t.id, path).then((file) => `Exported ${t.key} to ${file}. Tell the user the path; on another mag it opens with Import review in the work list's PR field.`)
     }
 
-    case 'branch_topic': {
-      const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-      if (session?.role !== 'chat' || session.taskId) throw new Error('branch_topic is for a project topic')
-      const id = actions.branchChat(session.id, typeof args.text === 'string' ? args.text : undefined)
-      const title = store.session(id).title
-      return `Branched into a new topic "${title}" (${id})${typeof args.text === 'string' && args.text.trim() ? '; its agent answers the first message there' : ''}. Tell the user it is in Topics; go on here only with this topic's own question.`
+    case 'start_session': {
+      const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (!caller) throw new Error('start_session is for a session of a topic')
+      const role = args.role == null || args.role === '' ? null : String(args.role)
+      if (role !== null && !(CHILD_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
+      const brief = typeof args.brief === 'string' ? args.brief : ''
+      const fork = args.fork === true
+      if (!brief.trim() && !fork) throw new Error('brief is required: what the session does, standing on its own')
+      const child = actions.startChild(caller.id, brief, role as ChildRole | null, fork)
+      log.info('tools', `session ${caller.id}: started ${child.id}`, { role, fork })
+      return `Started session ${child.id} "${child.title}"${role ? ` (${role})` : ''}${fork ? ', a fork of this one' : ''}, under this one; the user sees it in the topic's tree. ${brief.trim() ? 'It reports back to you with message_session.' : 'It waits for the user\'s first message.'}`
+    }
+
+    case 'message_session': {
+      const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (!caller) throw new Error('message_session is for a session of a topic')
+      const target = actions.sessionInTree(caller.id, String(args.session_id ?? '').trim())
+      if (target.id === caller.id) throw new Error('That is this session: write to another one of the tree')
+      const text = String(args.text ?? '').trim()
+      if (!text) throw new Error('text is required')
+      return actions.send(target.id, text, `From ${caller.title ?? 'a session'} (${caller.id})`).then(() => `Sent to ${target.id} "${target.title ?? 'New topic'}".`)
+    }
+
+    case 'stop_session': {
+      const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      if (!caller) throw new Error('stop_session is for a session of a topic')
+      const target = actions.sessionInTree(caller.id, String(args.session_id ?? '').trim())
+      if (target.id === caller.id) throw new Error('That is this session: end your turn instead')
+      if (target.status !== 'running') return `${target.id} is not in a turn.`
+      return actions.stop(target.id).then(() => `Stopped the turn of ${target.id} "${target.title ?? 'New topic'}"; it resumes when written to.`)
     }
 
     case 'add_idea': {
@@ -1089,14 +1118,14 @@ function sharedTool(
       const id = String(args.id ?? '').trim()
       const integration = store.data.integrations.find((i) => i.id === id && i.id !== MAG_MCP_ID)
       if (!integration) throw new Error(`No integration ${id || '(none)'}; the ids are in your prompt`)
-      const mode = integrationMode(project, session.role, id)
-      if (mode !== 'off') return `${integration.name} is already on (${mode}) for the ${session.role} role in mag; it applies from your next turn.`
+      const mode = integrationMode(project, runRole(session), id)
+      if (mode !== 'off') return `${integration.name} is already on (${mode}) for the ${runRole(session)} role in mag; it applies from your next turn.`
       // One card per integration while it is still off.
       if (!session.items.some((i) => i.kind === 'integration' && i.integrationId === id && i.status === 'off')) {
         const why = String(args.why ?? '').replace(/\s+/g, ' ').trim()
-        store.pushItem(session.id, { kind: 'integration', id: randomUUID(), integrationId: id, server: integration.name, role: session.role, why, status: 'off', at: Date.now() })
+        store.pushItem(session.id, { kind: 'integration', id: randomUUID(), integrationId: id, server: integration.name, role: runRole(session), why, status: 'off', at: Date.now() })
       }
-      return `The user is asked to turn on ${integration.name}. End your turn now, saying ${integration.name} is turned off in mag for the ${session.role} role; once it is on, mag tells you to repeat your last step.`
+      return `The user is asked to turn on ${integration.name}. End your turn now, saying ${integration.name} is turned off in mag for the ${runRole(session)} role; once it is on, mag tells you to repeat your last step.`
     }
 
     case 'show_canvas': {
@@ -1189,7 +1218,7 @@ function sharedTool(
  */
 async function controlTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>, byKey: (key: unknown) => Task): Promise<string> {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-  if (session?.role !== 'chat') throw new Error(`${name} is for a project chat`)
+  if (!session || runRole(session) !== 'chat') throw new Error(`${name} is for a project chat`)
   const t = byKey(args.key)
   const work = t.parentId ? store.task(t.parentId) : t
   const logged = (what: string, of: Task = t) => {
@@ -1290,10 +1319,13 @@ const day = (at: number) => {
  */
 async function chatsTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<string> {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-  if (session?.role !== 'chat') throw new Error(`${name} is for a project chat`)
+  if (!session || runRole(session) !== 'chat') throw new Error(`${name} is for a project chat`)
   const self = session.id
   const sessions = () => store.data.sessions.filter((s) => s.projectId === project.id)
-  const topics = () => sessions().filter((s) => s.role === 'chat' && !s.taskId)
+  // Topics are the roots of their trees; a child goes with its topic (topics-a-tree-of-agent.2).
+  const topics = () => sessions().filter((s) => s.role === 'chat' && !s.taskId && !s.parentId)
+  /** Closing or deleting a topic does the same to its whole tree: never the tree this turn runs in. */
+  const holdsSelf = (topicId: string) => sessionTree(topicId, sessions()).some((s) => s.id === self)
   const works = () => store.data.tasks.filter((t) => t.projectId === project.id && !t.parentId)
   /** The sessions whose items make up a work's conversation: its own, and mag's topics of a review. */
   const conversation = (t: Task) => sessions().filter((s) => s.taskId === t.id || s.reviewOf === t.id)
@@ -1308,7 +1340,7 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
   const deletesSelf = (t: Task) =>
     isReview(t)
       ? reviewTopic(t, sessions())?.id === self || sessions().some((s) => s.reviewOf === t.id && s.id === self)
-      : t.ownerSessionId === self && !store.data.tasks.some((x) => x.id !== t.id && x.ownerSessionId === self)
+      : !!t.ownerSessionId && holdsSelf(t.ownerSessionId) && !store.data.tasks.some((x) => x.id !== t.id && x.ownerSessionId === t.ownerSessionId)
   /**
    * The work a topic is part of, as the sidebar hides it (rowTopics): the owner of an open work or review, or a review's
    * topic. It goes with that work's Close or Delete, never on its own: deleting it would leave the work without its owner.
@@ -1370,7 +1402,7 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
     const r = resolve(target)
     const line = async (): Promise<string> => {
       if ('none' in r) return r.none
-      if ('topic' in r ? r.topic.id === self : !close && deletesSelf(r.work))
+      if ('topic' in r ? holdsSelf(r.topic.id) : !close && deletesSelf(r.work))
         return `refused: ${'topic' in r ? 'this is the topic you are in' : `deleting it deletes this topic too`}; the user does it with the button`
       const of = 'topic' in r ? partOf(r.topic) : undefined
       if (of) return `refused: it is the topic of ${of.key}; ${close ? 'close' : 'delete'} ${of.key} instead`

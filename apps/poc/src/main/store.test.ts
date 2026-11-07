@@ -391,7 +391,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 7, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 8, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -400,7 +400,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file)
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 7)
+      assert.equal(again.data.schemaVersion, 8)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -415,6 +415,42 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   restart((d) => {
     d.schemaVersion = 0
   })
+})
+
+test('session-tree migration: branchOf becomes parentId; a branch of a deleted topic becomes a topic; once (topics-a-tree-of-agent.2)', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [], createdAt: 1 }
+  writeFileSync(file, JSON.stringify({
+    projects: [], tasks: [], docs: {}, canvases: {}, events: [], ideas: [], integrations: [], schemaVersion: 7,
+    sessions: [
+      { ...base, id: 'root' },
+      { ...base, id: 'branch', branchOf: 'root', forkOf: 'root-native' },
+      { ...base, id: 'orphan', branchOf: 'gone' },
+      { ...base, id: 'plain', branchOf: null },
+    ],
+  }))
+  const store = new Store(file)
+  const shape = () => store.data.sessions.map((x) => [x.id, x.parentId ?? null, 'branchOf' in x])
+  assert.deepEqual(shape(), [['root', null, false], ['branch', 'root', false], ['orphan', null, false], ['plain', null, false]])
+  assert.equal(store.session('branch').forkOf, 'root-native')
+  assert.equal(store.data.schemaVersion, 8)
+  store.flush()
+  assert.deepEqual(new Store(file).data.sessions.map((x) => [x.id, x.parentId ?? null]), [['root', null], ['branch', 'root'], ['orphan', null], ['plain', null]])
+})
+
+test('deleteSession removes the sessions under it too; an idea one of them discussed loses its link (topics-a-tree-of-agent.2)', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const mk = (parentId: string | null) => store.createSession({ projectId: p.id, taskId: null, role: parentId ? null : 'chat', agent: 'claude-code', status: 'idle', parentId })
+  const root = mk(null)
+  const child = mk(root.id)
+  const grandchild = mk(child.id)
+  const other = mk(null)
+  const idea = store.addIdea(p.id, 'x')
+  store.updateIdea(idea.id, { topicId: grandchild.id })
+  store.deleteSession(child.id)
+  assert.deepEqual(store.data.sessions.map((x) => x.id), [root.id, other.id])
+  assert.equal(store.idea(idea.id).topicId, null)
 })
 
 test('saveCanvas: root stays on one diagram of a set; a revision keeps root and inventory unless given (povnyi-diff-nabir-pov-iazanykh.1)', () => {
@@ -450,7 +486,7 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 7)
+  assert.equal(store.data.schemaVersion, 8)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })
