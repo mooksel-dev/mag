@@ -114,8 +114,8 @@ function mcpArgs(path: string): string[] {
 /**
  * Arguments for `codex exec`. `allowedTools`/`disallowedTools` have no Codex equivalent;
  * the sandbox is the only control: workspace-write when Edit or Bash is allowed, read-only otherwise and always for a
- * readOnly run (chat, owner, architect: its Bash can't push or write to a PR). workspace-write also gets network, since
- * developers push and open PRs; read-only never does.
+ * readOnly run (owner, architect, a PR review topic: its Bash can't push or write to a PR). workspace-write also gets
+ * network, since developers and topics push and open PRs; read-only never does.
  */
 export function buildArgs(spec: RunSpec): string[] {
   const write = writes(spec)

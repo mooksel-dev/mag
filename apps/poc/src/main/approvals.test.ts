@@ -99,3 +99,19 @@ test('a Bash call (a GitHub write that matched an ask rule) asks in chat and gro
   const { session, approvals } = setup()
   assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, { ...bash, tool_name: 'Edit' })).behavior, 'deny')
 })
+
+test("a push whose target is not named, or is a work's base, is denied without a card; a named branch asks (topics-a-tree-of-agent.1)", async () => {
+  const { store, session, approvals } = setup()
+  // Another work's repository has a base of its own.
+  const work = store.createTask({ projectId: session.projectId, title: 'w', type: 'dev', description: '', status: 'in_progress' })
+  store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 0, repos: [{ repo: '/r', worktree: '/w/r', branch: 'b', prUrl: null, prState: null, base: 'develop' }] } })
+  const push = (command: string, id: string) => approvals.request({ sessionId: session.id }, { tool_name: 'Bash', input: { command }, tool_use_id: id })
+  for (const [i, c] of ['git push', 'git push origin', 'git push origin HEAD', 'git -C /r push', 'git push origin develop'].entries()) {
+    const answer = JSON.parse(await push(c, `p${i}`))
+    assert.equal(answer.behavior, 'deny', c)
+    assert.match(answer.message, /does not name the branch|pushes to the base branch develop/, c)
+  }
+  assert.equal(session.items.length, 0, 'no card for a blocked push')
+  assert.deepEqual(JSON.parse(await push('git push -u origin fix-typo', 'ok')), { pending: true })
+  assert.equal(session.items.length, 1)
+})
