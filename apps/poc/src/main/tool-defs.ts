@@ -147,12 +147,48 @@ const DIAGRAM = {
           interface: INTERFACE,
           uses: {
             type: 'array',
-            items: { type: 'object', required: ['to', 'calls'], properties: { to: { type: 'string' }, calls: LINES('Methods of `to` it calls'), diff: DIFF, files: FILES, links: LINKS } },
+            items: {
+              type: 'object',
+              required: ['to', 'calls'],
+              properties: {
+                to: { type: 'string' },
+                calls: LINES('Methods of `to` it calls'),
+                diff: DIFF,
+                files: FILES,
+                links: LINKS,
+                flow: { type: 'string', description: 'The id of a flow (flows) this use is a step of.' },
+                step: { type: 'string', description: 'With flow: its label in the flow, in order ("1", "2", "A"); drawn on the arrow and listed under the diagram.' },
+                async: { type: 'boolean', description: 'Fire and forget: an event, a queue, a webhook; drawn dashed.' },
+              },
+            },
           },
           links: LINKS,
-          children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields.' }, description: 'Inner modules.' },
+          boundary: { type: 'string', description: 'The id of the boundary (boundaries) it runs in: a cloud account, a VPC, a runtime, the device, outside.' },
+          children: { type: 'array', items: { type: 'object', description: 'An inner module with the same fields.' }, description: 'Inner modules: the user clicks the module to see its level, drawn the same way.' },
         },
       },
+    },
+    boundaries: {
+      type: 'array',
+      description:
+        'component: where modules run, drawn as nested frames around them: AWS accounts or OUs, VPCs, clusters, runtimes, the user\'s device, 3rd parties. Give them on the system level, so the user sees which infra and accounts a change touches.',
+      items: {
+        type: 'object',
+        required: ['id', 'name'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string', description: 'e.g. "AWS · Identity OU".' },
+          kind: { type: 'string', description: 'AWS account, VPC, device, 3rd party…' },
+          note: { type: 'string', description: 'One line: environments, owner, where it is defined (e.g. its Terraform repo).' },
+          parent: { type: 'string', description: 'The id of the boundary it sits in.' },
+          diff: DIFF,
+        },
+      },
+    },
+    flows: {
+      type: 'array',
+      description: 'component: the main scenarios across modules (a request path, an ingest path, alerts), each numbered by the uses that carry its flow and step; listed under the level as tables. A detailed scenario goes on a sequence diagram.',
+      items: { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string' }, name: { type: 'string' }, note: { type: 'string' }, diff: DIFF } },
     },
     participants: {
       type: 'array',
@@ -968,7 +1004,7 @@ export const TOOL_DEFS = [
     // The reviewer draws the fact set of its step only (T-57.4, T-58, povnyi-diff-nabir-pov-iazanykh.1).
     reviewer: 'also',
     description:
-      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question: component when modules, their interfaces or the calls between them change; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (its entities and relations say what belongs there). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Mocks, fakes and test-only types are never on a diagram. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind), so every changed module reaches the data, scenarios and method logic it takes part in; a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A fact set (the reviewer\'s of its step, a review\'s of a teammate\'s PR) takes only sequence and flowchart diagrams: mag generates its Component and Data diagrams from the change inventory (set_inventory). Draw a scenario (participants with module ids: mag links it from those modules) or the logic of a method the inventory lists with logic nontrivial (flowchart with of "<module>#<method>", the last segment of its name), without role: it joins the fact set. The answer is mag\'s check of the fact: the inventory against the hunks, links, plan ↔ fact.',
+      'Record a typed diagram of a change; mag draws it and keeps it with the task (in a task run) or the project. One diagram per question; name the view it answers first (modules, deployment, a scenario) and draw one level per view. component when modules, their interfaces or the calls between them change, and for the system view: apps and outside runtimes at the top level in their boundaries (cloud accounts, VPCs, runtimes, the device, outside) with the main flows numbered, each app\'s modules in its children, so the user clicks into the app and sees its level drawn the same way; sequence for a scenario between participants (services, databases, queues, outside APIs, CLIs); state for the states of an entity; flowchart for an algorithm, with of for the logic of one method; data when stored data changes (its entities and relations say what belongs there). Mark every changed element with diff (add, mod, del); also move, with from, for an interface method (component) or an entity or field (data) that moved or is renamed (one line, never a del and an add). Mocks, fakes and test-only types are never on a diagram. component takes its modules from get_architecture (same ids) and needs summary: one or two sentences on what changes in substance. Unchanged neighbours without a mark give context. For a method whose non-trivial logic changes, public or private, also draw a flowchart with of, summary and changes, linked from its interface line or, for a private method, from the step of the flowchart that calls it; a new method replacing an old one sets replaces. Draw as many diagrams as the change needs, several of one type too, each a separate named diagram. Give it its place in the task: role option with option for the sketch of an option, role plan with step and repo for the change of a step (steps exist only after create_subtask: place earlier diagrams then with place_diagram). Fails with a list of errors and saves nothing when the data is wrong. A component diagram is also checked against the architecture, and the answer lists where they disagree (an id not in the architecture and not marked add, an add of a module it has, a new module without path): saved anyway, fix it or say in the doc why it is right. A new module gives path, the code it will own. To revise, pass the id you got back. The diagrams of one place (an option, a step\'s plan, a step\'s fact) are one set: mark its entry (the system level or the top component diagram) root, and link the others from modules, interface lines, uses and entities (links: to, node, kind), so every changed module reaches the data, scenarios and method logic it takes part in; a flowchart\'s of counts as a logic link from its method. The answer warns where the set does not hang together (no root, a link outside the set or to a missing node, a diagram the root does not reach) and where a diagram breaks a rule of the diff (an entity without module, data that is not stored, a reference field without relation, a relation between modules not cross, mocks, a rename drawn as del and add). A fact set (the reviewer\'s of its step, a review\'s of a teammate\'s PR) takes only sequence and flowchart diagrams: mag generates its Component and Data diagrams from the change inventory (set_inventory). Draw a scenario (participants with module ids: mag links it from those modules) or the logic of a method the inventory lists with logic nontrivial (flowchart with of "<module>#<method>", the last segment of its name), without role: it joins the fact set. The answer is mag\'s check of the fact: the inventory against the hunks, links, plan ↔ fact.',
     inputSchema: {
       type: 'object',
       properties: {

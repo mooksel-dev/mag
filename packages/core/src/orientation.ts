@@ -28,8 +28,9 @@ time. Everything below serves that.
   to the user. Only the user merges: mag blocks merges and pushes to the base branch for every agent.
 - A step is done when its PRs are merged (a step without code is closed by its developer); the next one starts on its
   own unless it waits for the user's Start. A done work that needs more is reopened, never duplicated.
-- Diagrams are how the user reads a change: component (modules, interfaces, calls), sequence (a scenario), state,
-  flowchart (an algorithm or the logic of one method) and data (stored data). The plan's diagrams say what will change;
+- Diagrams are how the user reads a change: component (modules, interfaces, calls; at the system level also the
+  boundaries they run in, such as cloud accounts and VPCs, and numbered flows; click a module to go inside), sequence
+  (a scenario), state, flowchart (an algorithm or the logic of one method) and data (stored data). The plan's diagrams say what will change;
   the fact is drawn from the PR's diff. mag compares the two (plan ↔ fact), so a deviation is seen, not guessed.
 - What mag checks itself, so you spend your judgment on what it cannot: diagrams and the change inventory when they are
   saved, plan ↔ fact, CI of open PRs, and the architecture rules where the project enforces them. A review's verdict

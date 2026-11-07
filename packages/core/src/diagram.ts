@@ -43,6 +43,8 @@ export interface DNode extends Omit<ArchNode, 'interface' | 'uses' | 'children'>
   uses: DUse[]
   children?: DNode[]
   links?: DiagramLink[]
+  /** The id of the boundary it runs in (a cloud account, a VPC, a runtime, the device, outside); see ComponentDiagram.boundaries. */
+  boundary?: string
 }
 
 export interface DUse extends Omit<ArchUse, 'calls'> {
@@ -51,6 +53,36 @@ export interface DUse extends Omit<ArchUse, 'calls'> {
   /** On a fact diagram: the PR's files the dependency rests on (T-58). */
   files?: string[]
   links?: DiagramLink[]
+  /** The id of the flow this use is a step of; see ComponentDiagram.flows. */
+  flow?: string
+  /** Its label in that flow, in order: "1", "2", "A". */
+  step?: string
+  /** Fire and forget (an event, a queue, a webhook): drawn dashed. */
+  async?: boolean
+}
+
+/**
+ * Where modules run: a cloud account, a VPC, a runtime, the user's device, outside systems. Boundaries nest by parent;
+ * a level of the diagram draws the boundaries of its modules as frames around them.
+ */
+export interface DBoundary {
+  id: string
+  name: string
+  /** "AWS account", "VPC", "device", "3rd party"… */
+  kind?: string
+  /** One line: owner, environments, where it is defined. */
+  note?: string
+  /** The id of the boundary it sits in. */
+  parent?: string
+  diff?: DiffMark
+}
+
+/** A scenario across modules, drawn as numbered arrows (its uses carry flow and step) and listed under the diagram. */
+export interface DFlow {
+  id: string
+  name: string
+  note?: string
+  diff?: DiffMark
 }
 
 export type MessageKind = 'call' | 'reply' | 'async'
@@ -61,6 +93,8 @@ export interface ComponentDiagram {
   /** One or two sentences on what changes in substance; required on save, missing on diagrams saved before T-43. */
   summary?: string
   modules: DNode[]
+  boundaries?: DBoundary[]
+  flows?: DFlow[]
 }
 export interface SequenceDiagram {
   type: 'sequence'
@@ -187,13 +221,18 @@ export function normalizeDiagram(raw: unknown): Diagram {
         const out = { ...n, id: str(n.id), name: str(n.name ?? n.id), description: str(n.description) } as DNode
         if (n.interface !== undefined) out.interface = lines(n.interface)
         out.uses = (Array.isArray(n.uses) ? n.uses : []).map((u: unknown) =>
-          typeof u === 'string' ? { to: u, calls: [] } : { ...(u as DUse), to: str((u as Raw)?.to), calls: lines((u as Raw)?.calls) },
+          typeof u === 'string'
+            ? { to: u, calls: [] }
+            : { ...(u as DUse), to: str((u as Raw)?.to), calls: lines((u as Raw)?.calls), ...((u as Raw)?.step != null && { step: str((u as Raw).step) }) },
         )
         if (Array.isArray(n.children) && n.children.length) out.children = arr(n.children).map(node)
         else delete out.children
         return out
       }
-      return { type: 'component', summary: str(d.summary).trim(), modules: arr(d.modules).map(node) }
+      const out: ComponentDiagram = { type: 'component', summary: str(d.summary).trim(), modules: arr(d.modules).map(node) }
+      if (Array.isArray(d.boundaries)) out.boundaries = arr(d.boundaries).map((b) => ({ ...b, id: str(b.id), name: str(b.name ?? b.id) }))
+      if (Array.isArray(d.flows)) out.flows = arr(d.flows).map((f) => ({ ...f, id: str(f.id), name: str(f.name ?? f.id) }))
+      return out
     }
     case 'sequence':
       return {
@@ -385,6 +424,41 @@ export function validateDiagram(d: Diagram): string[] {
             files(what, c.files)
             if (looksGrouped(c.text)) errors.push(`${what}: ${grouped('call', 'name(args)')}`)
           }
+        }
+      }
+      const boundaries = d.boundaries ?? []
+      const bounds = idsOf('boundary', boundaries)
+      for (const b of boundaries) {
+        mark(`Boundary ${b.id}`, b.diff)
+        if (b.parent === undefined) continue
+        if (!bounds.has(b.parent)) errors.push(`Boundary ${b.id}: parent "${b.parent}", no such boundary`)
+        // A parent chain that comes back to itself.
+        const seen = new Set([b.id])
+        for (let p = boundaries.find((x) => x.id === b.parent); p; p = boundaries.find((x) => x.id === p!.parent)) {
+          if (seen.has(p.id)) {
+            errors.push(`Boundary ${b.id}: its parents form a cycle`)
+            break
+          }
+          seen.add(p.id)
+        }
+      }
+      const flows = d.flows ?? []
+      const flowIds = idsOf('flow', flows)
+      for (const f of flows) mark(`Flow ${f.id}`, f.diff)
+      const steps = new Set<string>()
+      for (const n of all) {
+        if (n.boundary !== undefined && !bounds.has(n.boundary)) errors.push(`Module ${n.id}: boundary "${n.boundary}", no such boundary; list it in boundaries`)
+        for (const u of n.uses) {
+          const what = `Use ${n.id} → ${u.to}`
+          if (u.async !== undefined && typeof u.async !== 'boolean') errors.push(`${what}: async must be true or false`)
+          if (u.flow === undefined) {
+            if (u.step !== undefined) errors.push(`${what}: step needs flow, the id of a flow in flows`)
+            continue
+          }
+          if (!flowIds.has(u.flow)) errors.push(`${what}: flow "${u.flow}", no such flow; list it in flows`)
+          if (!u.step?.trim()) errors.push(`${what}: a use of flow ${u.flow} needs step, its label in the flow ("1", "2", "A")`)
+          else if (steps.has(`${u.flow}\n${u.step}`)) errors.push(`${what}: step "${u.step}" of flow ${u.flow} is taken by another use`)
+          else steps.add(`${u.flow}\n${u.step}`)
         }
       }
       break

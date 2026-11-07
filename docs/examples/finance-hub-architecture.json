@@ -1,0 +1,1022 @@
+{
+  "type": "component",
+  "summary": "System level. The mobile app (lisa) talks only GraphQL to the gateway (coach-krupt graphql-layer at graph.aurasvc.io), which calls FTM REST. We add a third FTM app, ftm hub, that serves the Finance Hub tabs and computes recurring, card-on-file and alerts; the gateway gets a finance-hub entity proxying it; ingest changes to fetch deeper history, update transactions and keep connection health.",
+  "boundaries": [
+    {
+      "id": "device",
+      "name": "User device",
+      "kind": "device"
+    },
+    {
+      "id": "aura-ai",
+      "name": "Aura AI",
+      "kind": "runtime",
+      "note": "account TBD"
+    },
+    {
+      "id": "web-backend",
+      "name": "AWS · Web Backend OU",
+      "kind": "AWS accounts",
+      "note": "aurasvc dev / test / prod · web-backend-plumbing"
+    },
+    {
+      "id": "identity",
+      "name": "AWS · Identity OU",
+      "kind": "AWS accounts",
+      "note": "identity dev / test / prod · identity-plumbing · us-east-1"
+    },
+    {
+      "id": "identity-vpc",
+      "name": "VPC · private subnets",
+      "kind": "VPC",
+      "parent": "identity"
+    },
+    {
+      "id": "outside",
+      "name": "Outside",
+      "kind": "3rd party"
+    }
+  ],
+  "flows": [
+    {
+      "id": "read",
+      "name": "Tab read path",
+      "note": "mobile → GraphQL gateway → FTM REST → hub API → DocumentDB",
+      "diff": "add"
+    },
+    {
+      "id": "ingest",
+      "name": "Ingest path",
+      "note": "Plaid → ingest → DynamoDB → SNS → SQS → populator and hub worker",
+      "diff": "mod"
+    },
+    {
+      "id": "alerts",
+      "name": "Alerts",
+      "note": "hub → SNS → AP → al-sneed; the SNS → AP bridge is a guess",
+      "diff": "add"
+    },
+    {
+      "id": "budget",
+      "name": "Ask Aura budget tools",
+      "note": "route TBD",
+      "diff": "add"
+    }
+  ],
+  "modules": [
+    {
+      "id": "lisa",
+      "name": "Aura mobile app (lisa)",
+      "kind": "React Native, RTK Query + GraphQL",
+      "diff": "mod",
+      "description": "New Finance Hub screens; query.gql + generated hooks, like the transactions feature.",
+      "uses": [
+        {
+          "to": "graph-gateway",
+          "calls": [
+            {
+              "text": "transactions(filters)"
+            },
+            {
+              "text": "linkedFinancialItems()"
+            },
+            {
+              "text": "financeHubOverview(month)"
+            },
+            {
+              "text": "financeHubSpending()"
+            },
+            {
+              "text": "financeHubIncome(month)"
+            },
+            {
+              "text": "financeHubBills(pattern)"
+            },
+            {
+              "text": "financeHubCardShield()"
+            }
+          ],
+          "flow": "read",
+          "step": "1"
+        }
+      ],
+      "boundary": "device"
+    },
+    {
+      "id": "ask-aura",
+      "name": "Ask Aura",
+      "kind": "chat agent",
+      "description": "Builds the budget in chat.",
+      "uses": [
+        {
+          "to": "ftm-hub",
+          "calls": [
+            {
+              "text": "POST /ftm/hub/budget/proposal"
+            }
+          ],
+          "diff": "add",
+          "flow": "budget",
+          "step": "1"
+        }
+      ],
+      "boundary": "aura-ai"
+    },
+    {
+      "id": "graph-gateway",
+      "name": "API Gateway graph.aurasvc.io",
+      "kind": "API Gateway",
+      "boundary": "web-backend",
+      "description": "Public GraphQL endpoint of the app.",
+      "uses": [
+        {
+          "to": "graphql-layer",
+          "calls": [
+            {
+              "text": "POST /graphql"
+            }
+          ],
+          "flow": "read",
+          "step": "2"
+        }
+      ]
+    },
+    {
+      "id": "graphql-layer",
+      "name": "GraphQL gateway (coach-krupt graphql-layer)",
+      "kind": "type-graphql, graph.aurasvc.io",
+      "diff": "mod",
+      "description": "Existing TransactionsAPI datasource proxies /ftm. New: finance-hub entity + FinanceHubAPI datasource, thin pass-through.",
+      "uses": [
+        {
+          "to": "identity-gateway",
+          "calls": [
+            {
+              "text": "GET /ftm/hub/overview",
+              "diff": "add"
+            },
+            {
+              "text": "GET /ftm/hub/spending",
+              "diff": "add"
+            },
+            {
+              "text": "GET /ftm/hub/income",
+              "diff": "add"
+            },
+            {
+              "text": "GET /ftm/hub/bills",
+              "diff": "add"
+            },
+            {
+              "text": "GET /ftm/hub/card-shield",
+              "diff": "add"
+            },
+            {
+              "text": "GET /ftm/transactions"
+            },
+            {
+              "text": "GET /ftm/items"
+            }
+          ],
+          "flow": "read",
+          "step": "3"
+        }
+      ],
+      "boundary": "web-backend"
+    },
+    {
+      "id": "al-sneed",
+      "name": "al-sneed",
+      "kind": "Lambdas + SQS feed_ingest",
+      "uses": [],
+      "description": "Push and feed notifications.",
+      "boundary": "web-backend",
+      "diff": "mod"
+    },
+    {
+      "id": "identity-gateway",
+      "name": "API Gateway identity.aurasvc.io/ftm",
+      "kind": "API Gateway",
+      "boundary": "identity",
+      "description": "CUSTOM authorizer (JWT); the Plaid webhook route has no auth.",
+      "uses": [
+        {
+          "to": "ftm-hub",
+          "calls": [
+            {
+              "text": "GET /ftm/hub/*"
+            }
+          ],
+          "diff": "add",
+          "flow": "read",
+          "step": "4"
+        },
+        {
+          "to": "ftm-query",
+          "calls": [
+            {
+              "text": "GET /ftm/transactions"
+            }
+          ]
+        },
+        {
+          "to": "ftm-ingest",
+          "calls": [
+            {
+              "text": "GET /ftm/items"
+            },
+            {
+              "text": "POST /ftm/items/webhook"
+            }
+          ],
+          "flow": "ingest",
+          "step": "B"
+        }
+      ]
+    },
+    {
+      "id": "ftm-ingest",
+      "name": "ftm ingest (existing)",
+      "kind": "Lambda",
+      "diff": "mod",
+      "description": "Plaid link and webhooks. Changes: 730 days history, /transactions/sync, item health.",
+      "interface": [
+        {
+          "text": "linkItem(publicToken): Item - requests 730 days",
+          "diff": "mod"
+        },
+        {
+          "text": "syncTransactions(itemId): void - added, modified, removed",
+          "diff": "add"
+        },
+        {
+          "text": "onItemWebhook(payload): void - keeps errorCode and lastSuccessfulUpdate",
+          "diff": "mod"
+        }
+      ],
+      "uses": [
+        {
+          "to": "plaid",
+          "calls": [
+            {
+              "text": "/transactions/get"
+            },
+            {
+              "text": "/transactions/sync",
+              "diff": "add"
+            }
+          ],
+          "diff": "mod",
+          "flow": "ingest",
+          "step": "C"
+        },
+        {
+          "to": "dynamodb",
+          "calls": [
+            {
+              "text": "write events and item view"
+            }
+          ],
+          "flow": "ingest",
+          "step": "D"
+        }
+      ],
+      "boundary": "identity"
+    },
+    {
+      "id": "ftm-query",
+      "name": "ftm query (existing)",
+      "kind": "Lambda",
+      "diff": "mod",
+      "description": "Keeps ftm.transactions; legacy transaction list. Change: applies modified events.",
+      "uses": [
+        {
+          "to": "documentdb",
+          "calls": [
+            {
+              "text": "upsert ftm.transactions"
+            }
+          ],
+          "flow": "ingest",
+          "step": "H"
+        }
+      ],
+      "boundary": "identity-vpc"
+    },
+    {
+      "id": "ftm-alert",
+      "name": "ftm alert (existing)",
+      "kind": "Lambda",
+      "boundary": "identity",
+      "description": "Legacy threshold alerts; unchanged.",
+      "uses": [
+        {
+          "to": "dynamodb",
+          "calls": [
+            {
+              "text": "read thresholds-config"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ftm-hub",
+      "name": "ftm hub (new FTM app)",
+      "kind": "Lambda: API + worker",
+      "diff": "add",
+      "path": "finance-hub/ftm/apps/hub",
+      "description": "Tab APIs and derived data: recurring streams, card-on-file, budgets, alerts. Click to see its modules.",
+      "uses": [],
+      "boundary": "identity-vpc",
+      "children": [
+        {
+          "id": "hub-api",
+          "name": "hub API",
+          "layer": "app",
+          "diff": "add",
+          "path": "apps/hub/src/app/api",
+          "description": "REST /ftm/hub/*: one endpoint per tab, composes services into Screen<T>.",
+          "interface": [
+            {
+              "text": "getOverview(month): Screen<Overview>",
+              "diff": "add"
+            },
+            {
+              "text": "getSpending(): Screen<Spending>",
+              "diff": "add"
+            },
+            {
+              "text": "getIncome(month): Screen<Income>",
+              "diff": "add"
+            },
+            {
+              "text": "getBills(pattern): Screen<Bills>",
+              "diff": "add"
+            },
+            {
+              "text": "getCardShield(): Screen<CardShield>",
+              "diff": "add"
+            },
+            {
+              "text": "proposeBudget(): Section<BudgetProposal>",
+              "diff": "add"
+            },
+            {
+              "text": "saveBudget(categories): Budget",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "ledger-service",
+              "calls": [
+                {
+                  "text": "summarize(user, period, tz)",
+                  "diff": "add"
+                },
+                {
+                  "text": "categoryRollup(user, current, previous)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "recurring-service",
+              "calls": [
+                {
+                  "text": "getStreams(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "budget-service",
+              "calls": [
+                {
+                  "text": "getProgress(user, month)",
+                  "diff": "add"
+                },
+                {
+                  "text": "propose(user, recurringIncome, fixedBills)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "card-shield-service",
+              "calls": [
+                {
+                  "text": "getMerchants(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "connection-service",
+              "calls": [
+                {
+                  "text": "getStatus(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "alert-service",
+              "calls": [
+                {
+                  "text": "listActive(user)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "hub-worker",
+          "name": "hub worker",
+          "layer": "app",
+          "diff": "add",
+          "path": "apps/hub/src/app/worker",
+          "description": "On transaction/item events and a daily tick: recomputes derived data and alerts per user.",
+          "interface": [
+            {
+              "text": "onTransactionsChanged(userId): void - recompute streams, card-on-file, alerts",
+              "diff": "add"
+            },
+            {
+              "text": "onDailyTick(): void - missed deposits and bill reminders",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "recurring-service",
+              "calls": [
+                {
+                  "text": "recompute(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "card-shield-service",
+              "calls": [
+                {
+                  "text": "recompute(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "alert-service",
+              "calls": [
+                {
+                  "text": "evaluate(user)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ledger-service",
+          "name": "ledger service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/ledger",
+          "description": "Net month, daily spending, category rollups. Computed on read.",
+          "interface": [
+            {
+              "text": "summarize(user, period, tz): MonthSummary",
+              "diff": "add"
+            },
+            {
+              "text": "categoryRollup(user, current, previous): CategoryTile[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "transactions-client",
+              "calls": [
+                {
+                  "text": "findByUser(user, period, filter)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "money-lib",
+              "calls": [
+                {
+                  "text": "classify(tx)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "recurring-service",
+          "name": "recurring service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/recurring",
+          "description": "Income streams and bill schedules with predictions. Precomputed.",
+          "interface": [
+            {
+              "text": "recompute(user): Stream[]",
+              "diff": "add"
+            },
+            {
+              "text": "getStreams(user): {income, bills}",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "transactions-client",
+              "calls": [
+                {
+                  "text": "findByUser(user, period, filter)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "hub-store-client",
+              "calls": [
+                {
+                  "text": "saveStreams(user, streams)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "money-lib",
+              "calls": [
+                {
+                  "text": "classify(tx)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "budget-service",
+          "name": "budget service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/budget",
+          "description": "Budget with category limits; deterministic proposal for the chat.",
+          "interface": [
+            {
+              "text": "propose(user, recurringIncome, fixedBills): BudgetProposal",
+              "diff": "add"
+            },
+            {
+              "text": "getProgress(user, month): BudgetProgress",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "hub-store-client",
+              "calls": [
+                {
+                  "text": "getBudget(user)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "transactions-client",
+              "calls": [
+                {
+                  "text": "findByUser(user, period, filter)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "card-shield-service",
+          "name": "card shield service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/card-shield",
+          "description": "Card-on-file merchants per account, joined with breaches.",
+          "interface": [
+            {
+              "text": "recompute(user): void",
+              "diff": "add"
+            },
+            {
+              "text": "getMerchants(user): StoredCardMerchant[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "transactions-client",
+              "calls": [
+                {
+                  "text": "findByUser(user, period, filter)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "breach-client",
+              "calls": [
+                {
+                  "text": "getMerchantBreaches(merchantIds)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "hub-store-client",
+              "calls": [
+                {
+                  "text": "saveCardOnFile(user, merchants)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "connection-service",
+          "name": "connection service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/connection",
+          "description": "connected / needs_reconnect / no_accounts / unknown.",
+          "interface": [
+            {
+              "text": "getStatus(user): ConnectionStatus",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "items-client",
+              "calls": [
+                {
+                  "text": "getItemsByUser(user)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "alert-service",
+          "name": "alert service",
+          "layer": "service",
+          "diff": "add",
+          "path": "apps/hub/src/core/services/alerts",
+          "description": "Evaluates and dedups hub alerts; publishes them.",
+          "interface": [
+            {
+              "text": "evaluate(user): HubAlert[]",
+              "diff": "add"
+            },
+            {
+              "text": "listActive(user): HubAlert[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "hub-store-client",
+              "calls": [
+                {
+                  "text": "saveAlerts(user, alerts)",
+                  "diff": "add"
+                }
+              ]
+            },
+            {
+              "to": "alerts-client",
+              "calls": [
+                {
+                  "text": "publish(alert)",
+                  "diff": "add"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "transactions-client",
+          "name": "transactions client",
+          "layer": "client",
+          "diff": "add",
+          "path": "apps/hub/src/core/clients/transactions",
+          "description": "Reads ftm.transactions (DocumentDB, filled by ftm query).",
+          "interface": [
+            {
+              "text": "findByUser(user, period, filter): Transaction[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "documentdb",
+              "calls": [
+                {
+                  "text": "read ftm.transactions"
+                }
+              ],
+              "diff": "add",
+              "flow": "read",
+              "step": "5"
+            }
+          ]
+        },
+        {
+          "id": "hub-store-client",
+          "name": "hub store client",
+          "layer": "client",
+          "diff": "add",
+          "path": "apps/hub/src/core/clients/hub-store",
+          "description": "Hub-owned DocumentDB collections: streams, budgets, card_on_file, alerts.",
+          "interface": [
+            {
+              "text": "saveStreams(user, streams): void",
+              "diff": "add"
+            },
+            {
+              "text": "getBudget(user): Budget | null",
+              "diff": "add"
+            },
+            {
+              "text": "saveCardOnFile(user, merchants): void",
+              "diff": "add"
+            },
+            {
+              "text": "saveAlerts(user, alerts): void",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "documentdb",
+              "calls": [
+                {
+                  "text": "readWrite ftm_hub.*"
+                }
+              ],
+              "diff": "add"
+            }
+          ]
+        },
+        {
+          "id": "items-client",
+          "name": "items client",
+          "layer": "client",
+          "diff": "add",
+          "path": "apps/hub/src/core/clients/items",
+          "description": "Reads the ingest item view (DynamoDB).",
+          "interface": [
+            {
+              "text": "getItemsByUser(user): Item[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "dynamodb",
+              "calls": [
+                {
+                  "text": "read ingest-item-view"
+                }
+              ],
+              "diff": "add"
+            }
+          ]
+        },
+        {
+          "id": "breach-client",
+          "name": "breach client",
+          "layer": "client",
+          "diff": "add",
+          "path": "apps/hub/src/core/clients/breach",
+          "description": "Dark web / merchant breach records (source TBD).",
+          "interface": [
+            {
+              "text": "getMerchantBreaches(merchantIds): Breach[]",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "breach-monitoring",
+              "calls": [
+                {
+                  "text": "getMerchantBreaches(merchantIds)"
+                }
+              ],
+              "diff": "add",
+              "flow": "read",
+              "step": "6"
+            }
+          ]
+        },
+        {
+          "id": "alerts-client",
+          "name": "alerts client",
+          "layer": "client",
+          "diff": "add",
+          "path": "apps/hub/src/core/clients/alerts",
+          "description": "Publishes FtmHubAlertCreated to SNS.",
+          "interface": [
+            {
+              "text": "publish(alert): void",
+              "diff": "add"
+            }
+          ],
+          "uses": [
+            {
+              "to": "sns-identity",
+              "calls": [
+                {
+                  "text": "publish FtmHubAlertCreated"
+                }
+              ],
+              "diff": "add",
+              "flow": "alerts",
+              "step": "1",
+              "async": true
+            }
+          ]
+        },
+        {
+          "id": "money-lib",
+          "name": "money definitions",
+          "layer": "lib",
+          "diff": "add",
+          "path": "apps/hub/src/core/lib/money",
+          "description": "Category mapping, Bills allowlist, transfer/refund/pending rules.",
+          "interface": [
+            {
+              "text": "classify(tx): Classified",
+              "diff": "add"
+            },
+            {
+              "text": "suggestedLimit(average): Money",
+              "diff": "add"
+            }
+          ],
+          "uses": []
+        }
+      ]
+    },
+    {
+      "id": "dynamodb",
+      "name": "DynamoDB",
+      "kind": "database",
+      "uses": [
+        {
+          "to": "sns-identity",
+          "calls": [
+            {
+              "text": "table stream"
+            }
+          ],
+          "flow": "ingest",
+          "step": "E",
+          "async": true
+        }
+      ],
+      "description": "Ingest event stores and item view; stream to SNS.",
+      "boundary": "identity"
+    },
+    {
+      "id": "sns-identity",
+      "name": "SNS identity topic",
+      "kind": "queue",
+      "uses": [
+        {
+          "to": "sqs-queues",
+          "calls": [
+            {
+              "text": "fan out by filter policy"
+            }
+          ],
+          "flow": "ingest",
+          "step": "F",
+          "async": true
+        },
+        {
+          "to": "aura-platform",
+          "calls": [
+            {
+              "text": "FtmHubAlertCreated"
+            }
+          ],
+          "diff": "add",
+          "flow": "alerts",
+          "step": "2",
+          "async": true
+        }
+      ],
+      "description": "Owned by identity-plumbing.",
+      "boundary": "identity"
+    },
+    {
+      "id": "sqs-queues",
+      "name": "SQS queues",
+      "kind": "queue",
+      "boundary": "identity",
+      "description": "ingest, query populator, hub worker (new).",
+      "uses": [
+        {
+          "to": "ftm-query",
+          "calls": [
+            {
+              "text": "transaction events"
+            }
+          ],
+          "flow": "ingest",
+          "step": "G",
+          "async": true
+        },
+        {
+          "to": "hub-worker",
+          "calls": [
+            {
+              "text": "transaction and item events"
+            }
+          ],
+          "diff": "add",
+          "flow": "ingest",
+          "step": "I",
+          "async": true
+        }
+      ]
+    },
+    {
+      "id": "documentdb",
+      "name": "DocumentDB Elastic",
+      "kind": "database",
+      "uses": [],
+      "description": "ftm.transactions (existing); ftm_hub.* (new). Owned by ftm query terraform.",
+      "boundary": "identity-vpc"
+    },
+    {
+      "id": "plaid",
+      "name": "Plaid",
+      "kind": "3rd-party API",
+      "uses": [
+        {
+          "to": "identity-gateway",
+          "calls": [
+            {
+              "text": "TRANSACTIONS webhook"
+            }
+          ],
+          "flow": "ingest",
+          "step": "A",
+          "async": true
+        }
+      ],
+      "description": "Transactions API and webhooks.",
+      "boundary": "outside"
+    },
+    {
+      "id": "breach-monitoring",
+      "name": "Breach monitoring (source TBD)",
+      "kind": "internal service",
+      "uses": [],
+      "description": "Dark web and merchant breaches; source TBD.",
+      "boundary": "outside"
+    },
+    {
+      "id": "aura-platform",
+      "name": "Aura Platform (AP)",
+      "kind": "event webhooks",
+      "boundary": "outside",
+      "description": "Bridges SNS events to al-sneed; account TBD.",
+      "uses": [
+        {
+          "to": "al-sneed",
+          "calls": [
+            {
+              "text": "event webhook → SQS feed_ingest"
+            }
+          ],
+          "diff": "add",
+          "flow": "alerts",
+          "step": "3",
+          "async": true
+        }
+      ]
+    }
+  ]
+}

@@ -98,7 +98,31 @@ function renames(d: ComponentDiagram): string[] {
   return out
 }
 
-/** The warnings of one diagram: noise, renames drawn as a del and an add, and the data rules; [] when there are none. */
+/** Top-level modules that read better framed: several outside runtimes or apps, none placed in a boundary. */
+const FRAME_AT = 5
+
+/**
+ * The layout of a component diagram: one level per view (the system, then the inside of one app through children),
+ * boundaries where several systems sit side by side, and flows that have steps.
+ */
+function levels(d: ComponentDiagram): string[] {
+  const out: string[] = []
+  const layered = d.modules.filter((n) => n.layer)
+  if (layered.length && layered.length < d.modules.length)
+    out.push(
+      `Top-level modules ${layered.map((n) => n.id).join(', ')} have a layer next to systems without one: the top level is the system view (apps and outside runtimes); put an app's modules in its children, so the user clicks into it.`,
+    )
+  if (d.modules.length >= FRAME_AT && !layered.length && !d.modules.some((n) => n.boundary))
+    out.push(
+      `The top level has ${d.modules.length} systems and no boundary: give boundaries (cloud accounts, VPCs, runtimes, the device, outside) and each module its boundary, so the user sees where each one runs; number the main scenarios with flows.`,
+    )
+  const used = new Set<string>()
+  walkArch(d.modules, (n: DNode) => n.uses.forEach((u) => u.flow && used.add(u.flow)))
+  for (const f of d.flows ?? []) if (!used.has(f.id)) out.push(`Flow ${f.id} has no step: give its uses flow "${f.id}" and step, or drop it.`)
+  return out
+}
+
+/** The warnings of one diagram: noise, renames drawn as a del and an add, the data rules and the component layout; [] when there are none. */
 export function diagramWarnings(d: Diagram): string[] {
-  return [...noise(d), ...(d.type === 'data' ? data(d) : []), ...(d.type === 'component' ? renames(d) : [])]
+  return [...noise(d), ...(d.type === 'data' ? data(d) : []), ...(d.type === 'component' ? [...renames(d), ...levels(d)] : [])]
 }

@@ -397,3 +397,86 @@ export function movePath(from: PlacedEntity, fromRow: PlacedRow, to: PlacedEntit
   const r = (n: number) => Math.round(n * 10) / 10
   return `M${r(x1)} ${r(y1)} C${r(x1 + bend)} ${r(y1)} ${r(x2 - bend)} ${r(y2)} ${r(x2)} ${r(y2)}`
 }
+
+// One level of a Component diagram drawn as a graph: modules as boxes the DOM sizes, the boundaries they run in (cloud
+// accounts, VPCs, runtimes) as nested frames, callers above what they call.
+
+export interface FrameBox {
+  id: string
+  w: number
+  h: number
+  /** The frame it sits in; none: the level itself. */
+  frame?: string
+}
+
+export interface Frame {
+  id: string
+  /** The frame it sits in. */
+  parent?: string
+}
+
+export interface PlacedFrame {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Nesting: 0 for a frame of the level itself. */
+  depth: number
+}
+
+export interface FramedLayout {
+  w: number
+  h: number
+  boxes: Map<string, Point>
+  frames: PlacedFrame[]
+}
+
+/** Room for a frame's name and note above its boxes. */
+export const FRAME_HEAD = 34
+
+/**
+ * Boxes in their frames, top-down by the arrows between them. A frame with no box in it (and no frame with one) is
+ * left out. The input order is kept where the algorithm allows, so the level reads in the order the agent wrote it.
+ */
+export async function layoutFramed(boxes: FrameBox[], frames: Frame[], edges: { from: string; to: string }[]): Promise<FramedLayout> {
+  elk ??= new ELK()
+  const byId = new Map(frames.map((f) => [f.id, f]))
+  const used = new Set<string>()
+  for (const b of boxes) for (let f = b.frame ? byId.get(b.frame) : undefined; f && !used.has(f.id); f = f.parent ? byId.get(f.parent) : undefined) used.add(f.id)
+  const key = (id: string) => `\u0000frame:${id}`
+  const ids = new Set(boxes.map((b) => b.id))
+  const inside = (parent: string | undefined): ElkNode[] => [
+    ...frames
+      .filter((f) => used.has(f.id) && (f.parent && byId.has(f.parent) ? f.parent : undefined) === parent)
+      .map((f) => ({ id: key(f.id), layoutOptions: { 'elk.padding': `[top=${FRAME_HEAD + 10},left=14,bottom=14,right=14]` }, children: inside(f.id) })),
+    ...boxes.filter((b) => (b.frame && used.has(b.frame) ? b.frame : undefined) === parent).map((b) => ({ id: b.id, width: b.w, height: b.h })),
+  ]
+  const graph: ElkNode = {
+    id: 'root',
+    layoutOptions: {
+      ...LAYERED,
+      'elk.direction': 'DOWN',
+      'elk.spacing.nodeNode': '28',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '56',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'elk.json.shapeCoords': 'ROOT',
+      'elk.padding': '[top=4,left=4,bottom=4,right=4]',
+    },
+    children: inside(undefined),
+    edges: edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to).map((e, i) => ({ id: `e${i}`, sources: [e.from], targets: [e.to] })),
+  }
+  const out = await elk.layout(graph)
+  const placed = new Map<string, Point>()
+  const placedFrames: PlacedFrame[] = []
+  const walk = (list: ElkNode[], depth: number) => {
+    for (const c of list) {
+      if (c.id.startsWith(key(''))) {
+        placedFrames.push({ id: c.id.slice(key('').length), x: c.x ?? 0, y: c.y ?? 0, w: c.width ?? 0, h: c.height ?? 0, depth })
+        walk(c.children ?? [], depth + 1)
+      } else placed.set(c.id, { x: c.x ?? 0, y: c.y ?? 0 })
+    }
+  }
+  walk(out.children ?? [], 0)
+  return { w: out.width ?? 0, h: out.height ?? 0, boxes: placed, frames: placedFrames }
+}

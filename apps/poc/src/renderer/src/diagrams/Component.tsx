@@ -1,11 +1,12 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
-import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DBoundary, type DFlow, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
 import { callGroups, edgePill, flowLines, flowOf, methodCallers, moveEdges, relatedFlows, unchangedAt, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
 import type { PlanOverlay } from '@mag/diff/types'
 import { paintPlan, type Painted } from '../planOverlay'
 import { DiffLegend } from './DiffLegend'
 import { FlowchartView } from './Graph'
+import { FRAME_HEAD, layoutFramed, type FramedLayout } from '../graphLayout'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'app', label: 'App layer', hint: 'UI, handlers, workers' },
@@ -55,6 +56,10 @@ const laneKey = (n: DNode, top: boolean) => n.layer ?? (top ? 'top' : 'other')
 const flagged = (all: DNode[], n: DNode) => !!n.concern || n.uses.some((u) => ruleOf(all, n, u.to)?.severity === 'error')
 
 const NO_FLOWS: FlowItem[] = []
+const NO_BOUNDARIES: DBoundary[] = []
+const NO_FLOW_DEFS: DFlow[] = []
+/** The frame of the modules outside a graph level. */
+const PORTS = '\u0000ports'
 
 /** Opens the flow of a method: the module's id and the method. */
 export type OpenFlow = (module: string, method: string) => void
@@ -67,8 +72,12 @@ export type OpenFlow = (module: string, method: string) => void
  * plan diagram painted with its comparison to the fact: as planned green, otherwise yellow, missing grey struck
  * through, the fact's unplanned modules and dependencies added in and dashed (plan-fact-porivniannia-na-rivni.1).
  */
-export function ComponentView({ modules: drawn, diff = false, summary, focus, flows = NO_FLOWS, overlay, onSelect, onFlow }: {
+export function ComponentView({ modules: drawn, boundaries = NO_BOUNDARIES, flowDefs = NO_FLOW_DEFS, diff = false, summary, focus, flows = NO_FLOWS, overlay, onSelect, onFlow }: {
   modules: DNode[]
+  /** Where modules run; a level with modules in boundaries is drawn as a graph in their frames. */
+  boundaries?: DBoundary[]
+  /** Numbered scenarios across modules; their steps label the arrows and are listed under the level. */
+  flowDefs?: DFlow[]
   diff?: boolean
   summary?: string
   focus?: string
@@ -184,7 +193,7 @@ export function ComponentView({ modules: drawn, diff = false, summary, focus, fl
         )}
       </div>
       <div className="archbody">
-        <Level key={parentId ?? ''} all={modules} diff={diff} paint={paint} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
+        <Level key={parentId ?? ''} all={modules} boundaries={boundaries} flowDefs={flowDefs} diff={diff} paint={paint} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
         {diff ? (
           // A diff keeps the panel in place, so hovering a box does not reflow the diagram under the pointer.
           <aside className="archside">
@@ -210,8 +219,10 @@ export function ComponentView({ modules: drawn, diff = false, summary, focus, fl
   )
 }
 
-function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal, onFlow }: {
+function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, selected, hover, onHover: setHover, onSelect, onOpen, onReveal, onFlow }: {
   all: DNode[]
+  boundaries: DBoundary[]
+  flowDefs: DFlow[]
   diff: boolean
   /** A plan painted with its comparison: boxes and arrows take its colors. */
   paint: Painted | null
@@ -263,6 +274,35 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
     })
   const moved = useMemo(() => (diff ? moveEdges(diagram, parentId) : []), [diff, diagram, parentId])
 
+  // Systems side by side, or modules placed in boundaries: a graph in frames, callers above what they call, not lanes.
+  const framed = nodes.some((n) => n.boundary) || (top && !nodes.some((n) => n.layer))
+  const drawnNodes = framed ? nodes.filter((n) => !collapsed(n.id)) : []
+  // Box sizes as the DOM draws them; the layout runs again when one changes.
+  const [sizes, setSizes] = useState<Map<string, { w: number; h: number }>>(new Map())
+  const [layout, setLayout] = useState<FramedLayout | null>(null)
+  useEffect(() => {
+    if (!framed) return
+    let live = true
+    const sized = (n: DNode, frame?: string) => ({ id: n.id, w: sizes.get(n.id)?.w ?? 190, h: sizes.get(n.id)?.h ?? 64, frame })
+    const frames = [...boundaries.map((b) => ({ id: b.id, parent: b.parent })), { id: PORTS }]
+    void layoutFramed([...drawnNodes.map((n) => sized(n, n.boundary)), ...ports.map((n) => sized(n, PORTS))], frames, edges).then((l) => live && setLayout(l))
+    return () => {
+      live = false
+    }
+  }, [framed, nodes, ports, edges, boundaries, sizes, folded, unfolded])
+  const placed = (id: string): CSSProperties => {
+    const at = layout?.boxes.get(id)
+    return { position: 'absolute', left: at?.x ?? 0, top: at?.y ?? 0 }
+  }
+  // A flow picked under the level: only its arrows, its modules in full.
+  const [flowOn, setFlowOn] = useState<string | null>(null)
+  const inFlow = useMemo(() => {
+    if (!flowOn) return null
+    const ids = new Set<string>()
+    for (const e of edges) if (e.steps?.some((x) => x.flow === flowOn)) ids.add(e.from).add(e.to)
+    return ids
+  }, [edges, flowOn])
+
   // Box positions drive the arrows; they change whenever the diagram reflows (window resize, drawer open, new data).
   useLayoutEffect(() => {
     const root = wrap.current
@@ -275,20 +315,34 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
         next.set(id, { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height })
       }
       setBoxes(next)
+      if (framed)
+        setSizes((prev) => {
+          let changed = false
+          const out = new Map(prev)
+          for (const [id, el] of els.current) {
+            const [w, h] = [el.offsetWidth, el.offsetHeight]
+            const was = prev.get(id)
+            if (was && Math.abs(was.w - w) <= 1 && Math.abs(was.h - h) <= 1) continue
+            out.set(id, { w, h })
+            changed = true
+          }
+          return changed ? out : prev
+        })
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(root)
     return () => ro.disconnect()
-  }, [nodes, ports, folded, unfolded, opened])
+  }, [nodes, ports, folded, unfolded, opened, framed, layout])
 
   const focus = (hover && boxes.has(hover) ? hover : null) ?? (selected && boxes.has(selected) ? selected : null)
   const near = (id: string) =>
-    !focus || id === focus || [...edges, ...moved].some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id))
+    !focus ? !inFlow || inFlow.has(id) : id === focus || [...edges, ...moved].some((e) => (e.from === focus && e.to === id) || (e.to === focus && e.from === id))
 
   const routes = useMemo(() => {
     const shown = edges
       .filter((e) => !focus || e.from === focus || e.to === focus)
+      .filter((e) => !flowOn || e.steps?.some((x) => x.flow === flowOn))
       .map((e) => {
         const from = findNode(all, e.from)
         // A painted plan's arrows are colored by how they came out; a diff diagram's by their change, not by layering.
@@ -299,7 +353,7 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
       .filter((m) => !focus || m.from === focus || m.to === focus)
       .map((m): ArchEdge & { sev: string; moved?: string[] } => ({ from: m.from, to: m.to, calls: [], sev: 'd-move', moved: m.names }))
     return routeEdges([...shown, ...shownMoves], boxes)
-  }, [all, diff, paint, edges, moved, focus, boxes])
+  }, [all, diff, paint, edges, moved, focus, boxes, flowOn])
 
   const marker = (sev: string) => `${uid}-${sev}`
   const ref = (id: string) => (el: HTMLElement | null) => {
@@ -311,9 +365,86 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
     onMouseLeave: () => setHover((h) => (h === id ? null : h)),
   })
 
+  /** A module's box; a port is a module outside the level. `style` places it on a graph level. */
+  const box = (n: DNode, port: boolean, style?: CSSProperties) => {
+    const cls = `archbox ${n.layer ? `layer-${n.layer}` : 'nolayer'}${diffCls(diff, nodeDiff(n))}${paint ? ` ov-${paint.module(n.id) ?? 'none'}` : ''}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`
+    if (port) {
+      const where = pathTo(all, n.id).slice(0, -1).map((a) => a.name).join(' › ')
+      return (
+        <button key={n.id} ref={ref(n.id)} style={style} className={`${cls} port`} title={`Outside this level. Click to show it in place.\n${n.description}`} onClick={() => onReveal(n.id)} {...hoverProps(n.id)}>
+          <span className="name">{n.name}</span>
+          <span className="desc">{where ? `in ${where}` : n.kind ?? 'top level'}</span>
+        </button>
+      )
+    }
+    const inner = n.children?.length ?? 0
+    const changes = diff && inner ? formatDiffCount(innerSummary(n, all)) : ''
+    const mark = diff ? nodeDiff(n) : undefined
+    const full = opened.has(n.id)
+    const changed = diff ? cardLines(n, diagram, flows, full) : null
+    return (
+      <div
+        key={n.id}
+        ref={ref(n.id)}
+        style={style}
+        role="button"
+        tabIndex={0}
+        className={`${cls}${inner ? ' nested' : ''}${changed?.shown.length ? ' withlines' : ''}`}
+        title={`${mark ? `${DIFF_NAMES[mark]} · ` : ''}${n.name}\n${n.description}`}
+        onClick={() => (inner ? onOpen(n.id) : onSelect(n.id))}
+        onKeyDown={(e) => e.key === 'Enter' && (inner ? onOpen(n.id) : onSelect(n.id))}
+        {...hoverProps(n.id)}
+      >
+        <span className="name">{n.name}</span>
+        {n.kind && <span className="kind">{n.kind}</span>}
+        {!diff && <span className="desc">{n.description}</span>}
+        {changed && changed.shown.length > 0 && (
+          <span className="lines">
+            {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} onFlow={flowFor(flows, n.id, l, onFlow)} />)}
+            {(changed.more > 0 || full) && (
+              <button
+                className="more link muted"
+                title={full ? 'Show the first lines only' : 'Show every changed line of this module'}
+                onClick={(e) => (e.stopPropagation(), toggleOpened(n.id))}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {full ? 'show less' : `+${changed.more} more`}
+              </button>
+            )}
+          </span>
+        )}
+        {inner > 0 && (
+          <span className="inside">
+            ▸ {inner} inside
+            {changes && <span className="changes" title="Changes inside">{changes}</span>}
+            <button className="link" title="Details" onClick={(e) => (e.stopPropagation(), onSelect(n.id))}>details</button>
+          </span>
+        )}
+        {flagged(all, n) && <span className="flag">!</span>}
+      </div>
+    )
+  }
+
   return (
     <div className="archdiagram" ref={wrap}>
-      {lanes.map((lane) => (
+      {framed ? (
+        <div className="archgraph" style={{ width: layout?.w ?? 0, height: layout?.h ?? 0, visibility: layout ? 'visible' : 'hidden' }}>
+          {layout?.frames.map((f) => {
+            const b = boundaries.find((x) => x.id === f.id)
+            return (
+              <div key={f.id} className={`archframe depth-${Math.min(f.depth, 3)}${f.id === PORTS ? ' ports' : diffCls(diff, b?.diff)}`} style={{ left: f.x, top: f.y, width: f.w, height: f.h }}>
+                <div className="archframehead">
+                  <span className="name">{f.id === PORTS ? 'Outside this level' : b?.name}</span>
+                  {b?.kind && <span className="kind">{b.kind}</span>}
+                  {b?.note && <span className="note muted small">{b.note}</span>}
+                </div>
+              </div>
+            )
+          })}
+          {drawnNodes.map((n) => box(n, false, placed(n.id)))}
+          {ports.map((n) => box(n, true, placed(n.id)))}
+        </div>
+      ) : lanes.map((lane) => (
         <div key={lane.key} className={`archlane${lane.ports ? ' ports' : ''}`}>
           <div className="archlanehead">
             <div>{lane.label}</div>
@@ -321,63 +452,7 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
           </div>
           <div className="archboxes">
             {lane.nodes.length === 0 && <span className="muted small">none</span>}
-            {lane.nodes.map((n) => {
-              const cls = `archbox ${n.layer ? `layer-${n.layer}` : 'nolayer'}${diffCls(diff, nodeDiff(n))}${paint ? ` ov-${paint.module(n.id) ?? 'none'}` : ''}${n.id === selected ? ' on' : ''}${near(n.id) ? '' : ' dim'}`
-              if (lane.ports) {
-                const where = pathTo(all, n.id).slice(0, -1).map((a) => a.name).join(' › ')
-                return (
-                  <button key={n.id} ref={ref(n.id)} className={`${cls} port`} title={`Outside this level. Click to show it in place.\n${n.description}`} onClick={() => onReveal(n.id)} {...hoverProps(n.id)}>
-                    <span className="name">{n.name}</span>
-                    <span className="desc">{where ? `in ${where}` : n.kind ?? 'top level'}</span>
-                  </button>
-                )
-              }
-              const inner = n.children?.length ?? 0
-              const changes = diff && inner ? formatDiffCount(innerSummary(n, all)) : ''
-              const mark = diff ? nodeDiff(n) : undefined
-              const full = opened.has(n.id)
-              const changed = diff ? cardLines(n, diagram, flows, full) : null
-              return (
-                <div
-                  key={n.id}
-                  ref={ref(n.id)}
-                  role="button"
-                  tabIndex={0}
-                  className={`${cls}${inner ? ' nested' : ''}${changed?.shown.length ? ' withlines' : ''}`}
-                  title={`${mark ? `${DIFF_NAMES[mark]} · ` : ''}${n.name}\n${n.description}`}
-                  onClick={() => (inner ? onOpen(n.id) : onSelect(n.id))}
-                  onKeyDown={(e) => e.key === 'Enter' && (inner ? onOpen(n.id) : onSelect(n.id))}
-                  {...hoverProps(n.id)}
-                >
-                  <span className="name">{n.name}</span>
-                  {n.kind && <span className="kind">{n.kind}</span>}
-                  {!diff && <span className="desc">{n.description}</span>}
-                  {changed && changed.shown.length > 0 && (
-                    <span className="lines">
-                      {changed.shown.map((l, i) => <BoxLineView key={i} all={all} line={l} onFlow={flowFor(flows, n.id, l, onFlow)} />)}
-                      {(changed.more > 0 || full) && (
-                        <button
-                          className="more link muted"
-                          title={full ? 'Show the first lines only' : 'Show every changed line of this module'}
-                          onClick={(e) => (e.stopPropagation(), toggleOpened(n.id))}
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
-                          {full ? 'show less' : `+${changed.more} more`}
-                        </button>
-                      )}
-                    </span>
-                  )}
-                  {inner > 0 && (
-                    <span className="inside">
-                      ▸ {inner} inside
-                      {changes && <span className="changes" title="Changes inside">{changes}</span>}
-                      <button className="link" title="Details" onClick={(e) => (e.stopPropagation(), onSelect(n.id))}>details</button>
-                    </span>
-                  )}
-                  {flagged(all, n) && <span className="flag">!</span>}
-                </div>
-              )
-            })}
+            {lane.nodes.map((n) => box(n, !!lane.ports))}
           </div>
         </div>
       ))}
@@ -415,10 +490,20 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
           ))}
         </defs>
         {routes.map((r) => (
-          <path key={`${r.moved ? 'move:' : ''}${r.from}>${r.to}`} d={r.d} className={r.sev} markerEnd={`url(#${marker(r.sev)})`} />
+          <path key={`${r.moved ? 'move:' : ''}${r.from}>${r.to}`} d={r.d} className={`${r.sev}${r.async ? ' async' : ''}`} markerEnd={`url(#${marker(r.sev)})`} />
         ))}
       </svg>
       <div className="archbadges">
+        {routes.filter((r) => r.steps?.length).map((r) => (
+          <span
+            key={`step:${r.from}>${r.to}`}
+            className={`archstep${r.calls.length || r.moved ? ' beside' : ''}`}
+            style={{ left: r.mid.x, top: r.mid.y }}
+            title={r.steps!.map((x) => `${flowName(flowDefs, x.flow)} · ${x.step}`).join('\n')}
+          >
+            {r.steps!.filter((x) => !flowOn || x.flow === flowOn).map((x) => x.step).join(' · ')}
+          </span>
+        ))}
         {routes.filter((r) => r.moved).map((r) => (
           <span key={`move:${r.from}>${r.to}`} className="archbadge pill d-move" style={{ left: r.mid.x, top: r.mid.y }} title={`moved ${findNode(all, r.from)?.name} → ${findNode(all, r.to)?.name}\n${r.moved!.join('\n')}`}>
             ↷{r.moved!.length}
@@ -445,6 +530,50 @@ function Level({ all, diff, paint, flows, parentId, selected, hover, onHover: se
           )
         })}
       </div>
+      <FlowSteps all={all} edges={edges} flowDefs={flowDefs} on={flowOn} onPick={setFlowOn} />
+    </div>
+  )
+}
+
+const flowName = (defs: DFlow[], id: string) => defs.find((f) => f.id === id)?.name ?? id
+const byStep = new Intl.Collator(undefined, { numeric: true })
+
+/**
+ * The numbered flows of a level, one table each: its steps in order, from → to with the calls made. A step of an
+ * inner module shows on the arrow of its module on this level. Clicking a flow shows only its arrows.
+ */
+function FlowSteps({ all, edges, flowDefs, on, onPick }: { all: DNode[]; edges: ArchEdge[]; flowDefs: DFlow[]; on: string | null; onPick: (id: string | null) => void }) {
+  const rows = flowDefs
+    .map((f) => ({
+      flow: f,
+      steps: edges
+        .flatMap((e) => (e.steps ?? []).filter((x) => x.flow === f.id).map((x) => ({ step: x.step, edge: e })))
+        .sort((a, b) => byStep.compare(a.step, b.step)),
+    }))
+    .filter((r) => r.steps.length)
+  if (!rows.length) return null
+  const name = (id: string) => findNode(all, id)?.name ?? id
+  return (
+    <div className="archflows">
+      {rows.map(({ flow, steps }) => (
+        <div key={flow.id} className={`archflow${on && on !== flow.id ? ' dim' : ''}`}>
+          <button className={`archflowhead link${on === flow.id ? ' on' : ''}${flow.diff ? ` d-${flow.diff}` : ''}`} title={on === flow.id ? 'Show every arrow' : 'Show only this flow'} onClick={() => onPick(on === flow.id ? null : flow.id)}>
+            {flow.name}
+          </button>
+          {flow.note && <span className="muted small"> {flow.note}</span>}
+          <table className="table small">
+            <tbody>
+              {steps.map(({ step, edge }) => (
+                <tr key={`${step}:${edge.from}>${edge.to}`} className={edge.diff ? `d-${edge.diff}` : undefined}>
+                  <td className="archstepcell"><span className="archstep static">{step}</span></td>
+                  <td>{name(edge.from)} → {name(edge.to)}{edge.async && <span className="muted"> · async</span>}</td>
+                  <td>{edge.calls.map((c) => <code key={c}>{c}</code>)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   )
 }
