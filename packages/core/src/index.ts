@@ -913,6 +913,14 @@ export interface AgentSession {
    * topic (a root) and for a work's sessions. Was branchOf, a topic branched from another one.
    */
   parentId?: string | null
+  /**
+   * subagent: a Claude Code subagent read from its parent's stream (topics-a-tree-of-agent.4), a read-only child that
+   * nobody writes to or stops on its own; it runs and ends within its parent's process. mag (or missing): a session mag
+   * runs.
+   */
+  origin?: 'mag' | 'subagent'
+  /** A subagent: the id of the parent's Agent tool call that started it (the CLI's tool_use id). */
+  toolUseId?: string | null
   /** A project topic mag created for a review of a PR: that review's id. A topic that asked for it (review_pr) has none. */
   reviewOf?: string
   /** mag's topic of a review: the format its run records (review-v2-part-2-v1-2.1), each format in its own topic. */
@@ -1027,12 +1035,25 @@ export function backgroundLabel(tasks: BackgroundTask[]): string {
   return `${tasks.length} background ${tasks.length === 1 ? 'task' : 'tasks'} · ${names}`
 }
 
-/** Normalized events every agent adapter emits. */
+/** A session read from its parent's stream: nobody writes to it or stops it on its own (topics-a-tree-of-agent.4). */
+export const isSubagent = (s: Pick<AgentSession, 'origin'>): boolean => s.origin === 'subagent'
+
+/** Claude Code's tools that start a subagent: Agent, Task in older versions. */
+export const SUBAGENT_TOOLS: readonly string[] = ['Agent', 'Task']
+
+/**
+ * Normalized events every agent adapter emits. `parentToolUseId`: the event is a subagent's, the one started by the
+ * Agent call with that id (topics-a-tree-of-agent.4); missing for the session's own.
+ */
 export type AgentEvent =
   | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }
-  | { type: 'message'; text: string }
-  | { type: 'tool.call'; id: string; name: string; input: unknown }
-  | { type: 'tool.result'; id: string; ok: boolean }
+  | { type: 'message'; text: string; parentToolUseId?: string }
+  | { type: 'tool.call'; id: string; name: string; input: unknown; parentToolUseId?: string }
+  | { type: 'tool.result'; id: string; ok: boolean; parentToolUseId?: string }
+  /** The subagent of Agent call `toolUseId` began; `background`: it runs on after the call returns. */
+  | { type: 'subagent.started'; toolUseId: string; background: boolean }
+  /** The subagent of Agent call `toolUseId` ended; `summary`: its last reply. */
+  | { type: 'subagent.done'; toolUseId: string; ok: boolean; summary?: string }
   | { type: 'turn.done'; ok: boolean; costUsd?: number; nativeSessionId?: string }
   /** Live process: a turn began without our message (a background task woke the agent). */
   | { type: 'turn.started' }

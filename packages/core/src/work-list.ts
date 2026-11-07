@@ -91,15 +91,16 @@ export type SessionState = 'running' | 'waiting' | 'idle' | 'error' | 'closed'
 /** A session under a topic, as the sidebar and the topic page show it: its role, where it stands, and its children. */
 export interface SessionNode {
   session: AgentSession
-  /** general (no role), topic (a branched topic of before the tree), or its preset. */
+  /** general (no role), topic (a branched topic of before the tree), subagent, or its preset. */
   role: string
   state: SessionState
   dot: CardDot
   children: SessionNode[]
 }
 
-/** The label of a child session's role. */
-export const sessionRole = (s: Pick<AgentSession, 'role'>): string => (s.role === null ? 'general' : s.role === 'chat' ? 'topic' : s.role)
+/** The label of a child session's role: subagent for one read from its parent's stream. */
+export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin'>): string =>
+  s.origin === 'subagent' ? 'subagent' : s.role === null ? 'general' : s.role === 'chat' ? 'topic' : s.role
 
 const pendingApproval = (s: AgentSession) => s.items.some((i) => i.kind === 'approval' && i.status === 'pending')
 

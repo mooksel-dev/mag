@@ -7,6 +7,7 @@ import {
   prRepoName,
   reviewTopic,
   runRole,
+  isSubagent,
   sessionRole,
   shortTitle,
   workCard,
@@ -115,7 +116,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
-            {topic && !review && <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>}
+            {topic && !review && !isSubagent(topic) && <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>}
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
             {artifacts.length > 0 && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The docs, plans, diagrams, facts and reviews made here" onClick={() => (drawer.open ? (drawer.close(), setListShown(true)) : setListShown((v) => !v))}>Artifacts · {artifacts.length}</button>}
@@ -132,7 +133,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         <div className="screenbody">
           <div className="screenmain">
             {chat && (chat.items.length || !topic) ? (
-              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} chip={chip} />
+              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} chip={chip} readOnly={!!topic && isSubagent(topic)} />
             ) : topic ? (
               <div className="chatbox">
                 <div className="items">

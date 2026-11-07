@@ -9,6 +9,7 @@ import {
   cardRef,
   flatCards,
   groupKey,
+  isSubagent,
   moveRef,
   removeGroup,
   renameGroup,
@@ -439,7 +440,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
         {reference}
         <button role="menuitem" onClick={() => ask('rename', c.title)}>Rename</button>
         <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A session under this one that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.startChild(s.id, '', null, true).then((c) => onSelect({ kind: 'topic', id: c.id })))}>Branch</button>
-        <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>
+        {!isSubagent(s) && <button role="menuitem" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={act(() => { onSelect({ kind: 'topic', id: s.id }); return mag.turnIntoWork(s.id) })}>Turn into a work</button>}
         <hr />
         {c.closed
           ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>

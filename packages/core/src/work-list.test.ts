@@ -487,3 +487,13 @@ test('needsQuestions: text required, recommendation optional, empty is none', ()
 test('acceptRecommendations: one numbered line per question', () => {
   assert.equal(acceptRecommendations([{ text: 'Keep?', recommendation: 'Yes' }, { text: 'Two PRs?', recommendation: '' }]), 'I accept your recommendations:\n1. Keep? → Yes\n2. Two PRs? → as you recommend')
 })
+
+test('workCards: a subagent read from a session\'s stream is a child labelled subagent, working while it runs (topics-a-tree-of-agent.4)', () => {
+  const sessions = [
+    session('c', { title: 'Auth', titleGenerated: true }),
+    session('s1', { title: 'Read the login', titleGenerated: true, role: null, parentId: 'c', origin: 'subagent', toolUseId: 'toolu_1', status: 'running', runStartedAt: NOW - MIN }),
+  ]
+  const got = cards([], sessions)
+  assert.deepEqual(got[0].sessions!.map((n) => [n.session.id, n.role, n.state]), [['s1', 'subagent', 'running']])
+  assert.equal(got[0].dot, 'green')
+})
