@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { approvalName, integrationMode, integrationOf, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
 import { ASKING_ROLES } from './tool-defs.ts'
+import { blockedPush, projectBases } from './git-push.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
@@ -55,6 +56,10 @@ export class Approvals {
     const asked = session && this.asked(session, toolName)
     // Anything else stays denied, as it was before the prompt tool existed.
     if (!session || !asked) return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
+    // A push whose target the deny rules cannot see (bare `git push` in a checkout on main) never reaches the card.
+    const command = toolName === 'Bash' && typeof args.input === 'object' && args.input ? (args.input as { command?: unknown }).command : undefined
+    const blocked = typeof command === 'string' ? blockedPush(command, projectBases(this.store.project(session.projectId), this.store.data.tasks)) : null
+    if (blocked) return deny(blocked)
 
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined

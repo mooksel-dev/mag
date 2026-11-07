@@ -310,7 +310,8 @@ test('a topic is full Claude Code: edits, free Bash and worktrees run without a 
   for (const c of ['npm test', 'git commit -m x', 'git worktree add ../w']) assert.ok(!anyMatches(spec.askTools, c) && !anyMatches(spec.disallowedTools, c), c)
   const prompt = spec.appendSystemPrompt ?? ''
   assert.match(prompt, /You work like Claude Code in the repo[\s\S]*enter a worktree \(EnterWorktree\);\s+when it is unclear which, ask the user/)
-  assert.doesNotMatch(prompt, /never change code|Bash is for reading only/)
+  assert.match(prompt, /Push only a branch you name \(git push <remote> <branch>\)/)
+  assert.doesNotMatch(prompt, /never change code|Bash is for reading only|reviews a teammate's PR: here you only read/)
 })
 
 test("mag's topic for a teammate's PR review stays read only (topics-a-tree-of-agent.1)", async () => {
@@ -324,8 +325,7 @@ test("mag's topic for a teammate's PR review stays read only (topics-a-tree-of-a
   assert.ok(spec.allowedTools?.includes('Bash'))
   assert.equal(spec.readOnly, true)
   assert.ok(anyMatches(spec.askTools, 'gh pr review 4 --comment -b x'), 'it still publishes after the Allow')
-  assert.match(spec.appendSystemPrompt ?? '', /Bash is for reading only, and you never change code: this topic reviews a teammate's PR/)
-  assert.doesNotMatch(spec.appendSystemPrompt ?? '', /You work like Claude Code/)
+  assert.match(spec.appendSystemPrompt ?? '', /This topic reviews a teammate's PR: here you only read\. Bash is for reading only, and you never change code/)
 })
 
 test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {

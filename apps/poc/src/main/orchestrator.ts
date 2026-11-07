@@ -13,6 +13,7 @@ import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
+import { baseOf, projectBases } from './git-push.ts'
 
 interface Paths {
   /** Built task-mcp.js next to the main bundle. */
@@ -54,9 +55,6 @@ in this chat; the user approves the plan (the work goes to ready) and cancels it
 never edit it, because developers change it in their own worktrees.
 Bash is for reading. ${GITHUB_WRITES_LINE}
 Keep chat replies short, with your position in them; the doc carries the detail.`
-
-/** A repository's base branch: its own (RepoWork.base), else the project's, for works from before it was recorded. */
-const baseOf = (project: Project, r: RepoWork) => r.base ?? project.baseBranch
 
 /** Every base branch of a work's repositories and the project's, once each: what developers never push to. */
 const basesOf = (project: Project, work: TaskWork | null) => [...new Set([project.baseBranch, ...(work?.repos ?? []).map((r) => baseOf(project, r))])]
@@ -164,16 +162,11 @@ What makes the tree useful:
   even renamed or moved, because diagrams and diffs refer to modules by id.
 Skim the structure first (Glob), then read the key files. Be concise everywhere.`
 
-/** How a topic works in the repo (topics-a-tree-of-agent.1): like Claude Code; mag's topic for a PR review only reads. */
-const chatWorkLine = (review: boolean) =>
-  review
-    ? `- Bash is for reading only, and you never change code: this topic reviews a teammate's PR.`
-    : `- You work like Claude Code in the repo: read, edit, run the app, tests and scripts. When a change should not touch
-  the user's checkout (it may hold their work in progress, or the change is big), enter a worktree (EnterWorktree);
-  when it is unclear which, ask the user. A change that needs design-level review before merge still goes through a
-  work with steps (below), so it is planned, reviewed and merged by the user.`
+/** mag's topic for a teammate's PR review only reads (topics-a-tree-of-agent.1); its tools hold it, this says so. */
+const REVIEW_TOPIC_LINE = `This topic reviews a teammate's PR: here you only read. Bash is for reading only, and you never change code or
+enter a worktree, whatever the lines above say about working in the repo.`
 
-const chatPrompt = (project: Project, logsDir: string, review: boolean) => {
+const chatPrompt = (project: Project, logsDir: string) => {
   const playbook = playbookOf(project)
   return `You are the user's partner for project "${project.name}" in "mag", a workspace that organizes agents' work on problems;
 tickets live in the user's trackers, and mag knows them as links. This topic is about whatever the user brings: ideas,
@@ -224,7 +217,12 @@ ${orientation(playbook.reviewRounds)}
 - Refer to works by key (a ticket key like ABC-12 or a slug; T-12 for older works) and steps by theirs (ABC-12.3).
 - Be concise: short answers, markdown only where it helps. The user dislikes filler, not disagreement: short never
   means agreeing.
-${chatWorkLine(review)}
+- You work like Claude Code in the repo: read, edit, run the app, tests and scripts. When a change should not touch
+  the user's checkout (it may hold their work in progress, or the change is big), enter a worktree (EnterWorktree);
+  when it is unclear which, ask the user; back from a pause, check with pwd that you are still in it before you edit.
+  A change that needs design-level review before merge still goes through a work with steps (below), so it is
+  planned, reviewed and merged by the user. Push only a branch you name (git push <remote> <branch>): mag blocks a
+  push that names none, and any push to a base branch.
   ${GITHUB_WRITES_LINE.replace(/\n/g, '\n  ')}
 - mag logs and crash reports are in ${logsDir} (main-<date>.log: JSON lines; crashes/<time>-<kind>.json: one per
   crash; crashes/native: minidumps). Read them when the user reports a crash or asks about the latest one.
@@ -1918,7 +1916,7 @@ export class Orchestrator {
       return {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
-        appendSystemPrompt: chatPrompt(project, this.paths.logsDir, review) + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
+        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + (review ? blocks(REVIEW_TOPIC_LINE) : '') + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
         // Listed so they run without a card: under -p, a tool neither allowed nor denied goes to approve_tool, which denies
         // all but GitHub writes. Never a merge or a push to a base.
         allowedTools: review ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
@@ -1991,8 +1989,7 @@ export class Orchestrator {
 
   /** Every base branch of the project and of its works' repositories: what a chat, owner or groomer never pushes to. */
   private projectBases(project: Project) {
-    const works = this.store.data.tasks.filter((t) => t.projectId === project.id).flatMap((t) => (t.work ? [t.work] : []))
-    return [...new Set([project.baseBranch, ...works.flatMap((w) => basesOf(project, w))])]
+    return projectBases(project, this.store.data.tasks)
   }
 
   /** A chat's, owner's or groomer's GitHub writes ask through approve_tool, which may wait for the user for days. */
