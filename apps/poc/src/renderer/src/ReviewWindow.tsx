@@ -170,7 +170,7 @@ export function ChatDrawer({ sessionId, state, onClose }: { sessionId: string | 
         <b>Agent</b>
         <button className="link small" onClick={onClose}>close</button>
       </div>
-      {session ? <Chat session={session} sessions={state.sessions} placeholder="Write to the agent…" /> : <p className="muted small">This review has no conversation yet.</p>}
+      {session ? <Chat session={session} sessions={state.sessions} canvases={state.canvases} placeholder="Write to the agent…" /> : <p className="muted small">This review has no conversation yet.</p>}
     </aside>
   )
 }

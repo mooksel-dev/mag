@@ -184,7 +184,7 @@ function IdeaView({ idea, project, state, now, onBack, onOpenKey, onOpenTopic }:
       <div className="chatpanel">
         <div className="chathead"><span className="chatmodel">Discussion</span></div>
         {topic && topic.items.length > 0 ? (
-          <Chat session={topic} sessions={state.sessions} onOpenTask={onOpenKey} placeholder="Message…" chip={chip} />
+          <Chat session={topic} sessions={state.sessions} canvases={state.canvases} onOpenTask={onOpenKey} placeholder="Message…" chip={chip} />
         ) : (
           <div className="chatbox">
             <div className="items">

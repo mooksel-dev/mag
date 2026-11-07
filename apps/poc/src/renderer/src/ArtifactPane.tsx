@@ -187,7 +187,7 @@ function AgentLog({ session, work, state, onBack, onOpenKey }: { session: AgentS
         {session.status === 'running' && <button className="small" onClick={() => mag.stop(session.id)}>Stop</button>}
         {restart && <button className="small" title="Run this agent again where it stopped" onClick={() => void restart()}>Restart</button>}
       </div>
-      <Chat session={session} sessions={state.sessions} onOpenTask={onOpenKey} readOnly />
+      <Chat session={session} sessions={state.sessions} canvases={state.canvases} onOpenTask={onOpenKey} readOnly />
     </div>
   )
 }

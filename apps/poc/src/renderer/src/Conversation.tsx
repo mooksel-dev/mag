@@ -222,7 +222,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
           <div className="screenmain">
             {tab === 'conversation' ? (
               owner ? (
-                <Chat session={owner} name="owner" sessions={state.sessions} tasks={tasks} self={{ kind: 'task', id: work.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
+                <Chat session={owner} name="owner" sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={{ kind: 'task', id: work.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Write to the owner: ask, change the plan, give feedback…" cards={cards} chip={project && owner.role === 'chat' ? <ModelChip project={project} activeModel={owner.activeModel} /> : undefined} />
               ) : (
                 <div className="chatbox">
                   <div className="items">
@@ -297,7 +297,7 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
         <div className="screenbody">
           <div className="screenmain">
             {topic.items.length ? (
-              <Chat session={topic} sessions={state.sessions} tasks={tasks} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Reply…" chip={chip} />
+              <Chat session={topic} sessions={state.sessions} canvases={state.canvases} tasks={tasks} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder="Reply…" chip={chip} />
             ) : (
               <div className="chatbox">
                 <div className="items">
