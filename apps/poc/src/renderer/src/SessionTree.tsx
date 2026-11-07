@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { shortTitle, type AgentSession, type SessionNode, type SessionState } from '@mag/core'
 import { Composer } from './Chat'
 import { startSubtopic } from './draftSubtopic'
-import type { Selection } from './WorkList'
+import { RowMenu, type Selection } from './WorkList'
 
 const mag = window.mag
 
@@ -10,34 +10,54 @@ const STATE_LABELS: Record<SessionState, string> = { running: 'working', waiting
 
 /**
  * A topic's subtopics in the sidebar (topic-screen-one-new-compact.2): one line each with its state dot, nested by
- * depth; a click opens it. The draft of a New subtopic under one of them (`draftOf`) shows as its last line.
+ * depth; a click opens it, ⋯ on hover or a right-click opens the topic's menu (New subtopic, Rename, Branch, Close,
+ * Delete). The draft of a New subtopic under one of them (`draftOf`) shows as its last line.
  */
-export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, depth = 0 }: {
+export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, depth = 0 }: {
   nodes: SessionNode[]
   selectedId: string | null
   /** The session a New subtopic draft is open under, if any. */
   draftOf: string | null
   onSelect: (s: Selection) => void
+  /** A subtopic was deleted from its menu. */
+  onGone: (s: AgentSession) => void
   depth?: number
 }) {
+  const [menu, setMenu] = useState<string | null>(null)
   return (
     <>
-      {nodes.map((n) => (
-        <div key={n.session.id}>
-          <button
-            className={`wlsess${selectedId === n.session.id ? ' on' : ''}`}
-            style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
-            aria-current={selectedId === n.session.id ? 'true' : undefined}
-            title={`${shortTitle(n.session)} · ${STATE_LABELS[n.state]}`}
-            onClick={() => onSelect({ kind: 'topic', id: n.session.id })}
-          >
-            <span className={`sessdot ${n.dot}`} aria-hidden />
-            <span className="title">{shortTitle(n.session)}</span>
-          </button>
-          {n.children.length > 0 && <SubtopicRows nodes={n.children} selectedId={selectedId} draftOf={draftOf} onSelect={onSelect} depth={depth + 1} />}
-          {draftOf === n.session.id && <DraftRow depth={depth + 1} />}
-        </div>
-      ))}
+      {nodes.map((n) => {
+        const s = n.session
+        const title = shortTitle(s)
+        const on = selectedId === s.id
+        return (
+          <div key={s.id}>
+            <div className={`wlrow wlsub${on ? ' on' : ''}${menu === s.id ? ' menuopen' : ''}`} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.id) }}>
+              <button
+                className="wlsess"
+                style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
+                aria-current={on ? 'true' : undefined}
+                title={`${title} · ${STATE_LABELS[n.state]}`}
+                onClick={() => onSelect({ kind: 'topic', id: s.id })}
+              >
+                <span className={`sessdot ${n.dot}`} aria-hidden />
+                <span className="title">{title}</span>
+              </button>
+              <button className="wlmore" aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menu === s.id} title="New subtopic, rename, close, delete…" onClick={() => setMenu(menu === s.id ? null : s.id)}>⋯</button>
+              {menu === s.id && (
+                <RowMenu
+                  card={{ kind: 'topic', title, session: s, closed: !!s.closedAt, sessions: n.children }}
+                  onClose={() => setMenu(null)}
+                  onSelect={onSelect}
+                  onGone={() => onGone(s)}
+                />
+              )}
+            </div>
+            {n.children.length > 0 && <SubtopicRows nodes={n.children} selectedId={selectedId} draftOf={draftOf} onSelect={onSelect} onGone={onGone} depth={depth + 1} />}
+            {draftOf === s.id && <DraftRow depth={depth + 1} />}
+          </div>
+        )
+      })}
     </>
   )
 }

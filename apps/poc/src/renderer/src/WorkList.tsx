@@ -144,6 +144,11 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const edit = (f: (layout: SidebarNode[]) => SidebarNode[]) => save(f(sidebar.layout))
   // What the selection was is gone (deleted): Home.
   const gone = (c: WorkCard) => { if (selected?.id === c.id) onNew() }
+  // A subtopic deleted from its menu: what was open in it (itself, a subtopic or draft under it) goes to its parent.
+  const goneSub = (s: AgentSession) => {
+    const under = (id: string): boolean => id === s.id || (() => { const p = state.sessions.find((x) => x.id === id)?.parentId; return !!p && under(p) })()
+    if (selected && selected.kind !== 'work' && under(selected.id)) onSelect({ kind: 'topic', id: s.parentId! })
+  }
 
   /** Drops what is dragged: a group only at the top level (dropped on a row of a group: before that group). */
   const drop = (to: Drop) => {
@@ -203,7 +208,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         {one}
         {open && (
           <div className="wlkids" aria-label={`Subtopics of ${c.title}`}>
-            <SubtopicRows nodes={subs} selectedId={sel} draftOf={draftOf} onSelect={onSelect} />
+            <SubtopicRows nodes={subs} selectedId={sel} draftOf={draftOf} onSelect={onSelect} onGone={goneSub} />
             {draftOf === c.id && <DraftRow />}
           </div>
         )}

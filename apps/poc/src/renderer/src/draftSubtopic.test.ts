@@ -4,12 +4,13 @@ import type { AgentSession, Attachment } from '@mag/core'
 import { startSubtopic, type SubtopicApi } from './draftSubtopic.ts'
 
 /** A fake mag that records its calls in order. */
-function fake() {
+function fake(failSend = false) {
   const calls: unknown[][] = []
   const api: SubtopicApi = {
     startChild: async (...a) => { calls.push(['startChild', ...a]); return { id: 'kid' } as AgentSession },
     renameChat: async (...a) => { calls.push(['renameChat', ...a]) },
-    send: async (...a) => { calls.push(['send', ...a]) },
+    send: async (...a) => { calls.push(['send', ...a]); if (failSend) throw new Error('offline') },
+    deleteChat: async (...a) => { calls.push(['deleteChat', ...a]) },
   }
   return { api, calls }
 }
@@ -37,4 +38,11 @@ test('startSubtopic: with files or references it starts empty, takes the first l
   const only = fake()
   await startSubtopic(only.api, 'topic', '', [file], [])
   assert.deepEqual(only.calls[1], ['renameChat', 'kid', 'shot.png'])
+})
+
+test('startSubtopic: a send that fails deletes the empty subtopic it started, and the error reaches the draft', async () => {
+  const { api, calls } = fake(true)
+  await assert.rejects(startSubtopic(api, 'topic', 'Look', [file], []), /offline/)
+  assert.deepEqual(calls.map((c) => c[0]), ['startChild', 'renameChat', 'send', 'deleteChat'])
+  assert.deepEqual(calls[3], ['deleteChat', 'kid'])
 })

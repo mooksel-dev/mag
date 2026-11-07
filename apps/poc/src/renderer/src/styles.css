@@ -941,3 +941,7 @@ details.inline { display: inline-block; margin-left: 6px; }
 .scardfoot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-top: 1px solid var(--line); background: var(--subtle); }
 .scardfoot .muted { flex: 1 1 200px; }
 .factpanel .scard { margin: var(--sp-2) 0; }
+/* A subtopic's line: its ⋯ on hover, as a topic's row. */
+.wlsub .wlsess { padding-right: 30px; }
+.wlsub .wlmore { top: 1px; }
+.wlsub.on, .wlsub.on .wlsess { background: var(--soft); }
