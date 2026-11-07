@@ -37,6 +37,7 @@ import { Logo } from './Logo'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { useTheme, type ThemeMode } from './useTheme'
 import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkList'
+import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
@@ -69,7 +70,9 @@ export function App({ projectId }: { projectId: string }) {
     setSelected(s)
     setHomeGroup(null)
     setPage(null)
-    try { localStorage.setItem(selKey, JSON.stringify(s)) } catch { /* ignore */ }
+    // A New subtopic draft is this window's state only: reopened, its topic shows.
+    const kept = s?.kind === 'draft' ? { kind: 'topic', id: s.id } : s
+    try { localStorage.setItem(selKey, JSON.stringify(kept)) } catch { /* ignore */ }
   }
 
   useEffect(() => {
@@ -126,8 +129,10 @@ export function App({ projectId }: { projectId: string }) {
   const shownTopic = pickedTopic ?? (owner && isTopic(owner) ? owner : null)
   const shownReview = pickedTopic && reviewOfTopic(tasks, pickedTopic.id)
   const initial = work ? workTarget(work) : shownReview ? workTarget(shownReview) : null
-  const current: Selection | null = work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
-  const screen = page ? PAGE_NAMES[page] : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
+  // A New subtopic draft under a topic or subtopic that still exists (topic-screen-one-new-compact.2).
+  const draftParent = selected?.kind === 'draft' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
+  const current: Selection | null = draftParent ? { kind: 'draft', id: draftParent.id } : work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
+  const screen = page ? PAGE_NAMES[page] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
 
   return (
     <div className="app">
@@ -157,6 +162,8 @@ export function App({ projectId }: { projectId: string }) {
                 <Settings project={project} integrations={state.integrations} />
               )}
             </main>
+          ) : draftParent ? (
+            <DraftSubtopic key={`draft:${draftParent.id}`} parent={draftParent} onSelect={select} />
           ) : shownTopic || work ? (
             <TopicConversation key={`${shownTopic?.id ?? ''}:${work?.id ?? ''}`} topic={shownTopic} work={work} initial={initial} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
           ) : (

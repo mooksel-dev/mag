@@ -481,32 +481,24 @@ export function flatCards(cards: WorkCard[]): WorkCard[] {
   return cards.flatMap((c) => [c, ...(c.children ?? [])])
 }
 
-/** A session that needs a line of its own: it runs, waits on the user or failed. */
-export const liveNode = (n: SessionNode): boolean => n.state === 'running' || n.state === 'waiting' || n.state === 'error'
+/**
+ * A subtopic (topic-screen-one-new-compact.2): a session under a topic that the user talks in, as in a topic: a general
+ * one (no role, a Branch or New subtopic) or a branched topic of before the tree. Not an agent: a role's preset or a
+ * Claude Code subagent.
+ */
+export const isSubtopic = (s: Pick<AgentSession, 'role' | 'origin' | 'parentId'>): boolean =>
+  !!s.parentId && s.origin !== 'subagent' && (s.role === null || s.role === 'chat')
 
-/** What of a topic's children has a line under its one-line row (topic-screen-one-new-compact.1). */
-export interface TopicKids {
-  /** Its works that wait on the user or have an agent running, and the selected one. */
-  works: WorkCard[]
-  /** The sessions of its tree (flat, parents first) that run, wait on the user or failed, and the selected one. */
-  sessions: SessionNode[]
-  /** Its finished works and its sessions that are idle or closed: the row's "N ✓". */
-  done: number
-}
+/** The subtopics of a tree, nested by depth: an agent and everything under it are left out. */
+export const subtopicNodes = (nodes: SessionNode[]): SessionNode[] =>
+  nodes.filter((n) => isSubtopic(n.session)).map((n) => ({ ...n, children: subtopicNodes(n.children) }))
 
 /**
- * The children a topic's row shows on lines of their own: only those that run or wait on the user (or failed), and the
- * one open (`selectedId`) so it stays in sight; done ones are a count, listed on the topic's page. An open work that
- * waits on someone else (CI, a step) has no line: the topic's status line says it.
+ * What a topic's row has under it in the sidebar (topic-screen-one-new-compact.2): its subtopics, always, nested by
+ * depth. Its agents and works are on the topic's page, not in the sidebar.
  */
-export function topicKids(card: Pick<WorkCard, 'children' | 'sessions'>, selectedId: string | null = null): TopicKids {
-  const kids = card.children ?? []
-  const nodes = flatNodes(card.sessions ?? [])
-  return {
-    works: kids.filter((k) => k.group === 'waiting' || (k.group !== 'done' && k.dot === 'green') || k.id === selectedId),
-    sessions: nodes.filter((n) => liveNode(n) || n.session.id === selectedId),
-    done: kids.filter((k) => k.group === 'done').length + nodes.filter((n) => n.state === 'idle' || n.state === 'closed').length,
-  }
+export function topicKids(card: Pick<WorkCard, 'sessions'>): SessionNode[] {
+  return subtopicNodes(card.sessions ?? [])
 }
 
 /**

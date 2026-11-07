@@ -9,6 +9,7 @@ import {
   emptyResult,
   flatCards,
   headerWork,
+  isSubtopic,
   ownedWorks,
   rowMatches,
   needsQuestions,
@@ -259,33 +260,33 @@ test('workCards: the sessions under a topic are its tree, not rows; they count a
   assert.deepEqual([withWork.length, kids(withWork[0])], [1, ['w1']])
 })
 
-test('topicKids: a line only for a child that runs, waits on you or failed, and the open one; done ones are a count (topic-screen-one-new-compact.1)', () => {
+test('topicKids: the subtopics, always, nested by depth; no agents (topic-screen-one-new-compact.2)', () => {
   const t = (title: string) => ({ title, titleGenerated: true })
   const sessions = [
     session('c', t('Auth')),
     session('k1', { ...t('Run the app'), role: null, parentId: 'c', status: 'running', runStartedAt: NOW - 3 * MIN }),
     session('g1', { ...t('Read logs'), role: 'reviewer', parentId: 'k1' }),
+    session('k1a', { ...t('Deeper'), role: null, parentId: 'k1' }),
+    session('k1b', { ...t('Under an agent'), role: null, parentId: 'g1' }),
     session('k2', { ...t('Old branch'), parentId: 'c', closedAt: NOW - DAY }),
-    session('k3', { ...t('Broke'), role: null, parentId: 'c', status: 'error' }),
+    session('sub', { ...t('Explore'), role: null, parentId: 'c', origin: 'subagent' }),
+    session('d1', { ...t('Fix it'), role: 'developer', parentId: 'c', status: 'running' }),
     session('dev', { role: 'developer', taskId: 'wr', stepId: 'wr.1', status: 'running', runStartedAt: NOW - MIN }),
   ]
-  const tasks = [
-    task('wd', { ownerSessionId: 'c', status: 'done', createdAt: 1 }),
-    task('ww', { ownerSessionId: 'c', status: 'planning', createdAt: 2 }),
-    ...building('wci', withPr(7, { ci: 'pending' }), { ownerSessionId: 'c', createdAt: 3 }),
-    ...building('wr', {}, { ownerSessionId: 'c', createdAt: 4 }),
-  ]
+  const tasks = [...building('wr', {}, { ownerSessionId: 'c', createdAt: 4 })]
   const c = cards(tasks, sessions).find((x) => x.id === 'c')!
-  const got = topicKids(c)
-  assert.deepEqual(got.works.map((k) => k.id), ['wr', 'ww'], 'a running work and one waiting on you; not the done one nor the one on CI')
-  assert.deepEqual(got.sessions.map((n) => n.session.id), ['k1', 'k3'], 'running and failed sessions, flat; not the idle or closed ones')
-  assert.equal(got.done, 3, 'the done work, the idle g1 and the closed k2')
+  const ids = (nodes: ReturnType<typeof topicKids>): unknown[] => nodes.map((n) => (n.children.length ? [n.session.id, ids(n.children)] : n.session.id))
+  // k1 (running) and k2 (closed, an old branched topic) alike; the reviewer g1, the subagent and the developer are agents.
+  assert.deepEqual(ids(topicKids(c)), [['k1', ['k1a']], 'k2'])
+  assert.deepEqual(topicKids({}), [])
+})
 
-  // The open child keeps its line.
-  const open = topicKids(c, 'g1')
-  assert.deepEqual(open.sessions.map((n) => n.session.id), ['k1', 'g1', 'k3'])
-  assert.deepEqual(topicKids(c, 'wd').works.map((k) => k.id), ['wr', 'ww', 'wd'])
-  assert.deepEqual(topicKids({}), { works: [], sessions: [], done: 0 })
+test('isSubtopic: a general or branched session under a topic; not a role, a subagent or a root', () => {
+  assert.equal(isSubtopic({ role: null, parentId: 'c' }), true)
+  assert.equal(isSubtopic({ role: 'chat', parentId: 'c' }), true)
+  assert.equal(isSubtopic({ role: 'developer', parentId: 'c' }), false)
+  assert.equal(isSubtopic({ role: null, parentId: 'c', origin: 'subagent' }), false)
+  assert.equal(isSubtopic({ role: 'chat', parentId: null }), false)
 })
 
 test('workCards: a parked topic (an idea) is no row; once live it is; a work it owns is a row of its own (ideas-are-parked-topics.1)', () => {

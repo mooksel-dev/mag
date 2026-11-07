@@ -1,120 +1,119 @@
 import { useState } from 'react'
-import { CHILD_ROLES, flatNodes, isSubagent, liveNode, sessionNodes, shortTitle, type AgentSession, type ChildRole, type SessionNode, type SessionState } from '@mag/core'
-import type { Selection } from './WorkList'
+import { shortTitle, type AgentSession, type SessionNode, type SessionState } from '@mag/core'
+import { Composer } from './Chat'
+import { startSubtopic } from './draftSubtopic'
+import { RowMenu, type Selection } from './WorkList'
 
 const mag = window.mag
 
 const STATE_LABELS: Record<SessionState, string> = { running: 'working', waiting: 'waiting on you', idle: 'idle', error: 'failed', closed: 'closed' }
 
 /**
- * The sessions under a topic in the sidebar (topics-a-tree-of-agent.2): one line each, with its role and state; a click
- * opens it. Only those topicKids picks (topic-screen-one-new-compact.1), flat.
+ * A topic's subtopics in the sidebar (topic-screen-one-new-compact.2): one line each with its state dot, nested by
+ * depth; a click opens it, ⋯ on hover or a right-click opens the topic's menu (New subtopic, Rename, Branch, Close,
+ * Delete). The draft of a New subtopic under one of them (`draftOf`) shows as its last line.
  */
-export function SessionRows({ nodes, selectedId, onSelect }: { nodes: SessionNode[]; selectedId: string | null; onSelect: (s: Selection) => void }) {
+export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, depth = 0 }: {
+  nodes: SessionNode[]
+  selectedId: string | null
+  /** The session a New subtopic draft is open under, if any. */
+  draftOf: string | null
+  onSelect: (s: Selection) => void
+  /** A subtopic was deleted from its menu. */
+  onGone: (s: AgentSession) => void
+  depth?: number
+}) {
+  const [menu, setMenu] = useState<string | null>(null)
   return (
     <>
-      {nodes.map((n) => (
-        <button
-          key={n.session.id}
-          className={`wlsess${selectedId === n.session.id ? ' on' : ''}`}
-          aria-current={selectedId === n.session.id ? 'true' : undefined}
-          title={`${shortTitle(n.session)} · ${n.role} · ${STATE_LABELS[n.state]}`}
-          onClick={() => onSelect({ kind: 'topic', id: n.session.id })}
-        >
-          <span className={`sessdot ${n.dot}`} aria-hidden />
-          <span className="title">{shortTitle(n.session)}</span>
-          <span className="sessrole">{n.role}</span>
-        </button>
-      ))}
+      {nodes.map((n) => {
+        const s = n.session
+        const title = shortTitle(s)
+        const on = selectedId === s.id
+        return (
+          <div key={s.id}>
+            <div className={`wlrow wlsub${on ? ' on' : ''}${menu === s.id ? ' menuopen' : ''}`} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.id) }}>
+              <button
+                className="wlsess"
+                style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
+                aria-current={on ? 'true' : undefined}
+                title={`${title} · ${STATE_LABELS[n.state]}`}
+                onClick={() => onSelect({ kind: 'topic', id: s.id })}
+              >
+                <span className={`sessdot ${n.dot}`} aria-hidden />
+                <span className="title">{title}</span>
+              </button>
+              <button className="wlmore" aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menu === s.id} title="New subtopic, rename, close, delete…" onClick={() => setMenu(menu === s.id ? null : s.id)}>⋯</button>
+              {menu === s.id && (
+                <RowMenu
+                  card={{ kind: 'topic', title, session: s, closed: !!s.closedAt, sessions: n.children }}
+                  onClose={() => setMenu(null)}
+                  onSelect={onSelect}
+                  onGone={() => onGone(s)}
+                />
+              )}
+            </div>
+            {n.children.length > 0 && <SubtopicRows nodes={n.children} selectedId={selectedId} draftOf={draftOf} onSelect={onSelect} onGone={onGone} depth={depth + 1} />}
+            {draftOf === s.id && <DraftRow depth={depth + 1} />}
+          </div>
+        )
+      })}
     </>
   )
 }
 
-/**
- * The sessions under a topic or a session, on its page, as one line (topic-screen-one-new-compact.1): "Sessions:", the
- * ones that run, wait on you or failed (Stop on a running one), "N done" that unfolds all of them with their state, and
- * + session, which starts one more under it (a brief, an optional preset, fork). Writing to one is in its own
- * conversation. A subagent (topics-a-tree-of-agent.4) only lists the subagents it started: it starts none, and none of
- * them stops.
- */
-export function ChildSessions({ parent, sessions, onSelect }: { parent: AgentSession; sessions: AgentSession[]; onSelect: (s: Selection) => void }) {
-  const nodes = sessionNodes(parent.id, sessions)
-  const [adding, setAdding] = useState(false)
-  const [all, setAll] = useState(false)
-  const [brief, setBrief] = useState('')
-  const [role, setRole] = useState<ChildRole | ''>('')
-  const [fork, setFork] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const canFork = parent.agent === 'claude-code' && !!parent.nativeSessionId
-  const start = () => {
-    setBusy(true)
-    mag
-      .startChild(parent.id, brief, role || null, fork && canFork)
-      .then((c) => {
-        setAdding(false)
-        setBrief('')
-        setRole('')
-        setFork(false)
-        onSelect({ kind: 'topic', id: c.id })
-      })
-      .catch((e: Error) => alert(e.message))
-      .finally(() => setBusy(false))
-  }
-  const readOnly = isSubagent(parent)
-  if (readOnly && !nodes.length) return null
-  const flat = flatNodes(nodes)
-  const live = flat.filter(liveNode)
-  const rest = flat.length - live.length
+/** The line of a New subtopic draft: it has no session yet. */
+export function DraftRow({ depth = 0 }: { depth?: number }) {
   return (
-    <div className="childsess" aria-label={`Sessions under ${shortTitle(parent)}`}>
-      <div className="childsessline small">
-        <span className="muted">Sessions:</span>
-        {live.map((n) => (
-          <span key={n.session.id} className={`sesschip ${n.dot}`} title={`${n.role} · ${STATE_LABELS[n.state]}`}>
-            <button className="link" onClick={() => onSelect({ kind: 'topic', id: n.session.id })}>{shortTitle(n.session)}</button>
-            {n.session.status === 'running' && !isSubagent(n.session) && <button className="iconbtn" aria-label={`Stop ${shortTitle(n.session)}`} title="Stop" onClick={() => void mag.stop(n.session.id).catch((e: Error) => alert(e.message))}>■</button>}
-          </span>
-        ))}
-        {rest > 0 && <button className="link muted" aria-expanded={all} onClick={() => setAll((a) => !a)}>{all ? '▾' : '▸'} {rest} done</button>}
-        {!adding && !readOnly && <button className="link" onClick={() => setAdding(true)}>＋ session</button>}
-      </div>
-      {all && <NodeList nodes={nodes} onSelect={onSelect} />}
-      {adding && (
-        <form className="childsessform" onSubmit={(e) => { e.preventDefault(); start() }}>
-          <textarea autoFocus rows={2} value={brief} placeholder="What it does: its first message (empty: you write it there)" aria-label="Brief" onChange={(e) => setBrief(e.target.value)} />
-          <div className="row">
-            <select value={role} aria-label="Role" onChange={(e) => setRole(e.target.value as ChildRole | '')}>
-              <option value="">General</option>
-              {CHILD_ROLES.map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
-            </select>
-            <label className="small" title={canFork ? 'It starts with all of this conversation' : 'Needs a Claude Code session here (send a message first)'}>
-              <input type="checkbox" checked={fork && canFork} disabled={!canFork} onChange={(e) => setFork(e.target.checked)} /> With this conversation
-            </label>
-            <div className="grow" />
-            <button type="button" className="small" onClick={() => setAdding(false)}>Cancel</button>
-            <button className="small primary" disabled={busy || (!brief.trim() && !(fork && canFork))}>Start</button>
-          </div>
-        </form>
-      )}
+    <div className="wlsess on wldraft" aria-current="true" style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}>
+      <span className="sessdot grey" aria-hidden />
+      <span className="title">New subtopic</span>
     </div>
   )
 }
 
-function NodeList({ nodes, onSelect, depth = 0 }: { nodes: SessionNode[]; onSelect: (s: Selection) => void; depth?: number }) {
+/**
+ * A New subtopic (topic-screen-one-new-compact.2): an empty conversation under `parent` with the usual composer. It
+ * is only this screen until the first message, which starts the subtopic and opens it; left without one, nothing is
+ * kept.
+ */
+export function DraftSubtopic({ parent, onSelect }: { parent: AgentSession; onSelect: (s: Selection) => void }) {
+  const [busy, setBusy] = useState(false)
+  const send = async (text: string, attachments: Parameters<typeof startSubtopic>[3], refs: Parameters<typeof startSubtopic>[4]) => {
+    setBusy(true)
+    try {
+      const child = await startSubtopic(mag, parent.id, text, attachments, refs)
+      onSelect({ kind: 'topic', id: child.id })
+    } catch (e) {
+      alert((e as Error).message)
+      throw e
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <>
-      {nodes.map((n) => (
-        <div key={n.session.id}>
-          <div className="childsessrow" style={{ paddingLeft: depth * 14 }}>
-            <span className={`sessdot ${n.dot}`} aria-hidden />
-            <button className="link title" onClick={() => onSelect({ kind: 'topic', id: n.session.id })}>{shortTitle(n.session)}</button>
-            <span className="sessrole">{n.role}</span>
-            <span className="muted small">{STATE_LABELS[n.state]}</span>
-            {n.session.status === 'running' && !isSubagent(n.session) && <button className="small" onClick={() => void mag.stop(n.session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
-          </div>
-          {n.children.length > 0 && <NodeList nodes={n.children} onSelect={onSelect} depth={depth + 1} />}
+    <section className="convo">
+      <header className="convohead">
+        <div className="headline">
+          <h1>New subtopic</h1>
+          <span className="kind">subtopic</span>
+          <div className="grow" />
+          <button className="small" title="Nothing is kept" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>Cancel</button>
         </div>
-      ))}
-    </>
+        <div className="muted small">
+          Under <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button>
+        </div>
+      </header>
+      <div className="screenbody">
+        <div className="screenmain">
+          <div className="chatbox">
+            <div className="items">
+              <p className="muted small">A subtopic of {shortTitle(parent)}: a conversation of its own with the agent, in the same project. Your first message starts it; left empty, it is not kept.</p>
+            </div>
+            <Composer busy={busy} autoFocus placeholder="What is this subtopic about?" onSend={send} />
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }
