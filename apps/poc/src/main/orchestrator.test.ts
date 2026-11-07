@@ -2272,6 +2272,25 @@ test("tree tools: start_session, message_session and stop_session reach only the
   assert.equal(await call(topic.id, 'stop_session', { session_id: child.id }), `${child.id} is not in a turn.`)
 })
 
+test('deleteWork keeps its owner topic while a session under it owns another work (topics-a-tree-of-agent.2)', async () => {
+  const s = setup()
+  const { topic } = await liveTopic(s)
+  const child = s.orch.startChild(topic.id, 'Plan billing')
+  await tick()
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  s.store.updateTask(s.task.id, { ownerSessionId: topic.id })
+  const billing = s.store.createTask({ projectId: s.project.id, title: 'Billing', type: 'dev', description: '', ownerSessionId: child.id })
+  await s.orch.deleteWork(s.task.id)
+  assert.ok(s.store.data.sessions.some((x) => x.id === topic.id) && s.store.data.sessions.some((x) => x.id === child.id))
+  assert.equal(s.store.task(billing.id).ownerSessionId, child.id)
+  // Once nothing else in the tree owns a work, the owner goes with its tree.
+  await s.orch.deleteWork(billing.id)
+  const other = s.store.createTask({ projectId: s.project.id, title: 'Other', type: 'dev', description: '', ownerSessionId: topic.id })
+  await s.orch.deleteWork(other.id)
+  assert.equal(s.store.data.sessions.some((x) => x.id === topic.id || x.id === child.id), false)
+})
+
 test('deleteChat and closeChat take the sessions under a topic with it (topics-a-tree-of-agent.2)', async () => {
   const s = setup()
   const { topic } = await liveTopic(s)
@@ -2289,9 +2308,19 @@ test('deleteChat and closeChat take the sessions under a topic with it (topics-a
   assert.ok([topic, child, grandchild].every((x) => !!s.store.session(x.id).closedAt))
   assert.equal(childLive.closed, true, 'its process ended')
 
-  // Restore brings the tree back with it.
+  // Restore brings the tree back with it; a session under a closed topic comes back with the topics above it.
   s.orch.restore('topic', topic.id)
   assert.ok([topic, child, grandchild].every((x) => !s.store.session(x.id).closedAt))
+  await s.orch.closeChat(topic.id)
+  s.orch.restore('topic', grandchild.id)
+  assert.ok([topic, child, grandchild].every((x) => !s.store.session(x.id).closedAt))
+
+  // What holds a Close holds a Delete: a work owned under the topic would lose its owner.
+  s.store.updateTask(s.task.id, { ownerSessionId: grandchild.id })
+  await assert.rejects(s.orch.deleteChat(topic.id), /A session under this topic owns login: close or delete the work first/)
+  await assert.rejects(s.orch.deleteChat(child.id), /A session under this topic owns login/)
+  assert.equal(s.store.data.sessions.filter((x) => [topic.id, child.id, grandchild.id].includes(x.id)).length, 3)
+  s.store.updateTask(s.task.id, { ownerSessionId: undefined })
 
   await s.orch.deleteChat(topic.id)
   assert.deepEqual(s.store.data.sessions.filter((x) => [topic.id, child.id, grandchild.id].includes(x.id)), [])

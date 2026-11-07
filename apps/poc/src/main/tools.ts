@@ -1345,8 +1345,11 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
    * The work a topic is part of, as the sidebar hides it (rowTopics): the owner of an open work or review, or a review's
    * topic. It goes with that work's Close or Delete, never on its own: deleting it would leave the work without its owner.
    */
-  const partOf = (s: AgentSession) =>
-    works().find((t) => (t.ownerSessionId === s.id && t.status !== 'done' && t.status !== 'canceled') || t.id === s.reviewOf || (isReview(t) && reviewTopic(t, sessions())?.id === s.id))
+  const partOf = (s: AgentSession) => {
+    // A session under the topic owning an open work holds the topic too (topics-a-tree-of-agent.2).
+    const tree = new Set(sessionTree(s.id, sessions()).map((x) => x.id))
+    return works().find((t) => (!!t.ownerSessionId && tree.has(t.ownerSessionId) && t.status !== 'done' && t.status !== 'canceled') || t.id === s.reviewOf || (isReview(t) && reviewTopic(t, sessions())?.id === s.id))
+  }
   const said = (e: unknown) => `refused: ${(e as Error).message}`
 
   if (name === 'list_chats') {

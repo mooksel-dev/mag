@@ -638,6 +638,20 @@ export class Orchestrator {
     await Promise.all([...runs.map((r) => r.done), ...sessions.map((s) => this.closeLive(s.id))])
   }
 
+  /**
+   * An open work one of these sessions owns (topics-a-tree-of-agent.2): it holds a Close and a Delete of their tree back,
+   * since the work would lose its owner. `except`: a work that goes anyway (deleteWork's own).
+   */
+  private openWorkOf(tree: AgentSession[], except?: string) {
+    const ids = new Set(tree.map((s) => s.id))
+    return this.store.data.tasks.find((t) => !t.parentId && t.id !== except && !!t.ownerSessionId && ids.has(t.ownerSessionId) && canCancel(t))
+  }
+
+  /** "This topic owns ABC-1" or "A session under this topic owns ABC-1": why a Close or a Delete is refused. */
+  private ownsLine(sessionId: string, owned: Task) {
+    return `${owned.ownerSessionId === sessionId ? 'This topic' : 'A session under this topic'} owns ${owned.key}`
+  }
+
   /** The user's title for a topic; the generated title never replaces it. */
   renameChat(sessionId: string, title: string) {
     const session = this.projectChat(sessionId)
@@ -650,11 +664,15 @@ export class Orchestrator {
 
   /**
    * Deletes a topic (or a child) for good, with the sessions under it: their turns and live processes end first (with
-   * their background tasks and approvals).
+   * their background tasks and approvals). Refused while one of them owns an open work, as a Close is; `except`: the
+   * work being deleted with it (deleteWork, deleteReview).
    */
-  async deleteChat(sessionId: string) {
+  async deleteChat(sessionId: string, except?: string) {
     this.projectChat(sessionId)
     const tree = this.treeOf(sessionId)
+    // What holds a Close holds a Delete: an open work of the tree would be left without its owner.
+    const owned = this.openWorkOf(tree, except)
+    if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close or delete the work first`)
     // The end of a run must not start a title run for a topic that is gone.
     for (const s of tree) s.titleGenerated = true
     await this.endRuns(tree)
@@ -670,9 +688,8 @@ export class Orchestrator {
     const session = this.projectChat(sessionId)
     // The sessions under it close with it (topics-a-tree-of-agent.2): one of them owning an open work holds it open too.
     const tree = this.treeOf(sessionId)
-    const ids = new Set(tree.map((s) => s.id))
-    const owned = this.store.data.tasks.find((t) => !t.parentId && !!t.ownerSessionId && ids.has(t.ownerSessionId) && canCancel(t))
-    if (owned) throw new Error(`${owned.ownerSessionId === sessionId ? 'This topic' : 'A session under this topic'} owns ${owned.key}: close the work instead`)
+    const owned = this.openWorkOf(tree)
+    if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close the work instead`)
     await this.endRuns(tree)
     for (const s of tree) if (!s.closedAt) this.store.closeSession(s.id)
     log.info('agent', 'topic closed', { session: sessionId, under: tree.length - 1 })
@@ -694,10 +711,13 @@ export class Orchestrator {
 
   /** Restore of a closed work or review (not a canceled one: cancel is final) or topic: back where it was in the list. */
   restore(kind: 'work' | 'topic', id: string) {
-    // A topic closes with the sessions under it, and comes back with them.
+    // A topic closes with the sessions under it, and comes back with them; a session comes back with the topics above it.
     if (kind === 'topic') {
       this.projectChat(id)
-      for (const s of this.treeOf(id)) this.store.reopenSession(s.id)
+      const sessions = this.store.data.sessions
+      const above: string[] = []
+      for (let p = this.store.session(id).parentId; p && !above.includes(p); p = sessions.find((s) => s.id === p)?.parentId) above.push(p)
+      for (const s of [...above.flatMap((a) => sessions.filter((x) => x.id === a)), ...this.treeOf(id)]) this.store.reopenSession(s.id)
       return
     }
     const work = this.store.task(id)
@@ -717,8 +737,8 @@ export class Orchestrator {
 
   /**
    * The user deletes a work for good: a review as deleteReview; otherwise, while no agent of the work runs, its steps
-   * and the work with their sessions, docs and diagrams, their worktrees, and the owner topic unless it owns another
-   * work. Branches and PRs stay as they are.
+   * and the work with their sessions, docs and diagrams, their worktrees, and the owner topic with its tree unless a
+   * session of that tree owns another work. Branches and PRs stay as they are.
    */
   async deleteWork(taskId: string) {
     const work = this.store.task(taskId)
@@ -726,15 +746,18 @@ export class Orchestrator {
     if (isReview(work)) return this.deleteReview(taskId)
     const sessions = this.store.data.sessions
     const owner = sessions.find((s) => s.id === work.ownerSessionId && s.role === 'chat' && !s.taskId)
-    const ownsOther = !!owner && this.store.data.tasks.some((t) => t.id !== taskId && t.ownerSessionId === owner.id)
-    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? this.treeOf(owner.id) : [])]
+    // The owner topic goes with its tree, so it stays while a session of that tree owns another work.
+    const tree = owner ? this.treeOf(owner.id) : []
+    const ids = new Set(tree.map((s) => s.id))
+    const ownsOther = this.store.data.tasks.some((t) => t.id !== taskId && !t.parentId && !!t.ownerSessionId && ids.has(t.ownerSessionId))
+    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? tree : [])]
     if (gone.some((s) => this.isRunning(s.id))) throw new Error(`An agent of ${work.key} is still working; stop it first, then delete the work`)
     const steps = subtasksOf(taskId, this.store.data.tasks)
     await Promise.all(gone.map((s) => this.closeLive(s.id)))
     for (const t of [work, ...steps]) await this.removeWork(t.work)
     for (const s of steps) this.store.deleteTask(s.id)
     this.store.deleteTask(taskId)
-    if (owner && !ownsOther) await this.deleteChat(owner.id)
+    if (owner && !ownsOther) await this.deleteChat(owner.id, taskId)
     this.wakeWaiting(steps.map((s) => s.key))
     log.info('agent', `${work.key}: work deleted`, { steps: steps.length, topic: !!owner && !ownsOther })
   }
@@ -1650,7 +1673,7 @@ export class Orchestrator {
     const own = [...new Set([reviewTopic(work, sessions), ...sessions.filter((s) => s.reviewOf === workId)].filter((s): s is AgentSession => !!s))]
     const owner = work.ownerSessionId
     if (owner && !own.some((s) => s.id === owner) && this.isRunning(owner)) throw new Error(`The topic of ${work.key} is still working; stop it or wait, then delete the review`)
-    for (const s of own) await this.deleteChat(s.id)
+    for (const s of own) await this.deleteChat(s.id, workId)
     if (work.imported) rmSync(work.imported.diffPath, { force: true })
     this.store.deleteTask(workId)
     log.info('agent', `${work.key}: review deleted`, { topics: own.length })
