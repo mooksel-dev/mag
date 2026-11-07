@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -166,6 +166,25 @@ Skim the structure first (Glob), then read the key files. Be concise everywhere.
 const REVIEW_TOPIC_LINE = `This topic reviews a teammate's PR: here you only read. Bash is for reading only, and you never change code or
 enter a worktree, whatever the lines above say about working in the repo.`
 
+/**
+ * What a child session with a preset is (topics-a-tree-of-agent.2), after a topic's prompt: its tools hold it, this says
+ * so. Neither writes to GitHub: the session that started it, or the user, publishes.
+ */
+const CHILD_ROLE_LINES: Record<ChildRole, string> = {
+  developer: `You are a developer session under a topic: you change code for your brief. Work in a worktree (EnterWorktree)
+unless the brief says where, so the user's checkout stays as it is. You never push or write to GitHub: the session
+that started you, or the user, does that.`,
+  reviewer: `You are a reviewer session under a topic: you read (code, diffs, logs, the web) and report what you find. You never
+change code, enter a worktree or write to GitHub, whatever the lines above say about working in the repo.`,
+}
+
+/** A child's first message from the agent that started it (topics-a-tree-of-agent.2): the brief, and whom it reports to. */
+const childBrief = (parent: AgentSession, brief: string) => `You are a session under a topic in mag, started by session ${parent.id} ("${parent.title ?? 'a topic'}") for this brief:
+
+${brief}
+
+Do that. When it is done, or you need a decision, report to that session in a few lines: message_session with session_id "${parent.id}". The user sees this conversation too and may write to you here.`
+
 const chatPrompt = (project: Project, logsDir: string) => {
   const playbook = playbookOf(project)
   return `You are the user's partner for project "${project.name}" in "mag", a workspace that organizes agents' work on problems;
@@ -191,8 +210,10 @@ ${orientation(playbook.reviewRounds)}
 - The user asks you to review a teammate's PR (a GitHub PR link, "поревюй <url>"): review_pr(url), then do the job it
   answers with, right here. You own that review: when the user asks for more, revise it and record it again with
   set_pr_review. Nothing you run writes to the PR.
-- The user asks to branch this topic (go on with a separate question in a new topic, "відгалузь", "branch"):
-  branch_topic, with text when they said what the new topic is about. The new topic starts with all of this one.
+- A part of the job that is worth its own session (a long run, research, a prototype, work in parallel): start_session
+  with its brief, a child of this topic that the user sees in the tree and can step into; fork: true when it needs all of
+  this conversation, as when the user asks to branch this topic ("відгалузь", "branch"). Write to a session of this tree
+  with message_session and stop its turn with stop_session; a child reports back to you with message_session.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
 - Record outcomes so they outlive this chat: what was decided about a work, once you have weighed it, goes under
@@ -517,28 +538,65 @@ export class Orchestrator {
   }
 
   /**
-   * A new topic branched from a project topic: its agent session forks the parent's, so it starts with all of that
-   * context, and the parent stays as it is. `text`, if given, is its first message. Returns the new topic's id.
+   * A child session of `parentId` (topics-a-tree-of-agent.2), in the parent's topic tree. `role`: none for a general
+   * session with a topic's tools, or a preset (CHILD_ROLES). `fork`: it starts as a fork of the parent's agent session,
+   * with all of its context, the parent staying as it is (Claude Code only; the Branch of a topic). `brief`, if any, is
+   * its first message: the user's own (`by` user), or a job from the parent's agent (`by` agent) that says whom to
+   * report to. Without a brief the child waits for the user's first message. Returns the child, its run started.
    */
-  branchChat(sessionId: string, text?: string) {
-    const parent = this.projectChat(sessionId)
-    // Only Claude Code forks a session; Codex's resume would write into the parent's own.
-    if (parent.agent !== 'claude-code' || !parent.nativeSessionId) throw new Error('This topic has no agent session to branch yet: send it a message first (Claude Code only)')
-    if (this.choice(parent.projectId, 'chat').agent !== 'claude-code') throw new Error('Branching needs Claude Code as the agent of project chats')
-    const topic = this.store.createSession({
+  startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent'): AgentSession {
+    const parent = this.treeSession(parentId)
+    if (rootSession(parent.id, this.store.data.sessions)?.reviewOf) throw new Error("mag's topic of a PR review only reads: it starts no sessions")
+    if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
+    const text = brief.trim()
+    const agent = this.choice(parent.projectId, runRole({ role })).agent
+    if (fork) {
+      // Only Claude Code forks a session; Codex's resume would write into the parent's own.
+      if (parent.agent !== 'claude-code' || !parent.nativeSessionId) throw new Error('This session has no agent session to fork yet: send it a message first (Claude Code only)')
+      if (agent !== 'claude-code') throw new Error(`A fork needs Claude Code as the agent of the ${runRole({ role })} role`)
+    }
+    const child = this.store.createSession({
       projectId: parent.projectId,
       taskId: null,
-      role: 'chat',
-      agent: 'claude-code',
+      role,
+      agent,
       status: 'idle',
-      title: `Branch of ${parent.title ?? 'a topic'}`.slice(0, 60),
+      title: (text ? text.replace(/\s+/g, ' ') : `Branch of ${parent.title ?? 'a topic'}`).slice(0, 60),
       titleGenerated: true,
-      forkOf: parent.nativeSessionId,
-      branchOf: parent.id,
+      forkOf: fork ? parent.nativeSessionId : null,
+      parentId: parent.id,
     })
-    log.info('agent', 'topic branched', { session: topic.id, from: parent.id })
-    if (text?.trim()) void this.send(topic.id, text.trim()).catch((e) => log.warn('agent', 'the first message of a branched topic failed', e))
-    return topic.id
+    log.info('agent', 'child session started', { session: child.id, parent: parent.id, role, fork, by })
+    if (text) {
+      const first = by === 'user' ? this.send(child.id, text) : this.send(child.id, childBrief(parent, text), [], `Brief from ${parent.title ?? 'its parent'}`)
+      void first.catch((e) => log.warn('agent', 'the first message of a child session failed', e))
+    }
+    return child
+  }
+
+  /** A topic and all its descendants, each parent before its children. */
+  treeOf(topicId: string): AgentSession[] {
+    return sessionTree(topicId, this.store.data.sessions)
+  }
+
+  /**
+   * The tree tools' target (start_session, message_session, stop_session): a session of the caller's topic tree, never
+   * another topic's. Only topics and their children have a tree; a work's sessions don't.
+   */
+  sessionInTree(callerId: string, targetId: string): AgentSession {
+    const caller = this.treeSession(callerId)
+    const sessions = this.store.data.sessions
+    const root = rootSession(caller.id, sessions)!
+    const target = sessionTree(root.id, sessions).find((s) => s.id === targetId)
+    if (!target) throw new Error(`Session ${targetId} is not in this topic's tree`)
+    return target
+  }
+
+  /** A topic or a child of one: a session of the project, not of a work. */
+  private treeSession(sessionId: string) {
+    const session = this.store.session(sessionId)
+    if (session.taskId || (session.role !== 'chat' && !session.parentId)) throw new Error(`Session ${sessionId} is not a topic or a session under one`)
+    return session
   }
 
   /** The topic that discusses an idea: its own, created the first time and titled after it. */
@@ -566,10 +624,32 @@ export class Orchestrator {
     return sid
   }
 
+  /** A project topic, or a session under one (topics-a-tree-of-agent.2): renamed, closed, deleted the same way. */
   private projectChat(sessionId: string) {
     const session = this.store.session(sessionId)
-    if (session.role !== 'chat' || session.taskId) throw new Error(`Session ${sessionId} is not a project topic`)
+    if (session.taskId || (session.role !== 'chat' && !session.parentId)) throw new Error(`Session ${sessionId} is not a project topic`)
     return session
+  }
+
+  /** Ends the turns and live processes of these sessions (their background tasks and approvals with them). */
+  private async endRuns(sessions: AgentSession[]) {
+    const runs = sessions.flatMap((s) => this.runs.get(s.id) ?? [])
+    for (const r of runs) r.kill()
+    await Promise.all([...runs.map((r) => r.done), ...sessions.map((s) => this.closeLive(s.id))])
+  }
+
+  /**
+   * An open work one of these sessions owns (topics-a-tree-of-agent.2): it holds a Close and a Delete of their tree back,
+   * since the work would lose its owner. `except`: a work that goes anyway (deleteWork's own).
+   */
+  private openWorkOf(tree: AgentSession[], except?: string) {
+    const ids = new Set(tree.map((s) => s.id))
+    return this.store.data.tasks.find((t) => !t.parentId && t.id !== except && !!t.ownerSessionId && ids.has(t.ownerSessionId) && canCancel(t))
+  }
+
+  /** "This topic owns ABC-1" or "A session under this topic owns ABC-1": why a Close or a Delete is refused. */
+  private ownsLine(sessionId: string, owned: Task) {
+    return `${owned.ownerSessionId === sessionId ? 'This topic' : 'A session under this topic'} owns ${owned.key}`
   }
 
   /** The user's title for a topic; the generated title never replaces it. */
@@ -582,16 +662,22 @@ export class Orchestrator {
     this.store.changed()
   }
 
-  /** Deletes a topic for good: its turn and live process end first (with their background tasks and approvals). */
-  async deleteChat(sessionId: string) {
-    const session = this.projectChat(sessionId)
-    // The end of the run must not start a title run for a topic that is gone.
-    session.titleGenerated = true
-    const run = this.runs.get(sessionId)
-    run?.kill()
-    await Promise.all([run?.done, this.closeLive(sessionId)])
+  /**
+   * Deletes a topic (or a child) for good, with the sessions under it: their turns and live processes end first (with
+   * their background tasks and approvals). Refused while one of them owns an open work, as a Close is; `except`: the
+   * work being deleted with it (deleteWork, deleteReview).
+   */
+  async deleteChat(sessionId: string, except?: string) {
+    this.projectChat(sessionId)
+    const tree = this.treeOf(sessionId)
+    // What holds a Close holds a Delete: an open work of the tree would be left without its owner.
+    const owned = this.openWorkOf(tree, except)
+    if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close or delete the work first`)
+    // The end of a run must not start a title run for a topic that is gone.
+    for (const s of tree) s.titleGenerated = true
+    await this.endRuns(tree)
     this.store.deleteSession(sessionId)
-    log.info('agent', 'topic deleted', { session: sessionId })
+    log.info('agent', 'topic deleted', { session: sessionId, under: tree.length - 1 })
   }
 
   /**
@@ -600,13 +686,13 @@ export class Orchestrator {
    */
   async closeChat(sessionId: string) {
     const session = this.projectChat(sessionId)
-    const owned = this.store.data.tasks.find((t) => !t.parentId && t.ownerSessionId === sessionId && canCancel(t))
-    if (owned) throw new Error(`This topic owns ${owned.key}: close the work instead`)
-    const run = this.runs.get(sessionId)
-    run?.kill()
-    await Promise.all([run?.done, this.closeLive(sessionId)])
-    this.store.closeSession(session.id)
-    log.info('agent', 'topic closed', { session: sessionId })
+    // The sessions under it close with it (topics-a-tree-of-agent.2): one of them owning an open work holds it open too.
+    const tree = this.treeOf(sessionId)
+    const owned = this.openWorkOf(tree)
+    if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close the work instead`)
+    await this.endRuns(tree)
+    for (const s of tree) if (!s.closedAt) this.store.closeSession(s.id)
+    log.info('agent', 'topic closed', { session: sessionId, under: tree.length - 1 })
     void this.summarize('topic', session.id)
   }
 
@@ -625,7 +711,15 @@ export class Orchestrator {
 
   /** Restore of a closed work or review (not a canceled one: cancel is final) or topic: back where it was in the list. */
   restore(kind: 'work' | 'topic', id: string) {
-    if (kind === 'topic') return this.store.reopenSession(this.projectChat(id).id)
+    // A topic closes with the sessions under it, and comes back with them; a session comes back with the topics above it.
+    if (kind === 'topic') {
+      this.projectChat(id)
+      const sessions = this.store.data.sessions
+      const above: string[] = []
+      for (let p = this.store.session(id).parentId; p && !above.includes(p); p = sessions.find((s) => s.id === p)?.parentId) above.push(p)
+      for (const s of [...above.flatMap((a) => sessions.filter((x) => x.id === a)), ...this.treeOf(id)]) this.store.reopenSession(s.id)
+      return
+    }
     const work = this.store.task(id)
     if (work.status === 'canceled') throw new Error(`${work.key} is canceled; a canceled work cannot be restored`)
     this.store.reopenTask(id)
@@ -643,8 +737,8 @@ export class Orchestrator {
 
   /**
    * The user deletes a work for good: a review as deleteReview; otherwise, while no agent of the work runs, its steps
-   * and the work with their sessions, docs and diagrams, their worktrees, and the owner topic unless it owns another
-   * work. Branches and PRs stay as they are.
+   * and the work with their sessions, docs and diagrams, their worktrees, and the owner topic with its tree unless a
+   * session of that tree owns another work. Branches and PRs stay as they are.
    */
   async deleteWork(taskId: string) {
     const work = this.store.task(taskId)
@@ -652,15 +746,18 @@ export class Orchestrator {
     if (isReview(work)) return this.deleteReview(taskId)
     const sessions = this.store.data.sessions
     const owner = sessions.find((s) => s.id === work.ownerSessionId && s.role === 'chat' && !s.taskId)
-    const ownsOther = !!owner && this.store.data.tasks.some((t) => t.id !== taskId && t.ownerSessionId === owner.id)
-    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? [owner] : [])]
+    // The owner topic goes with its tree, so it stays while a session of that tree owns another work.
+    const tree = owner ? this.treeOf(owner.id) : []
+    const ids = new Set(tree.map((s) => s.id))
+    const ownsOther = this.store.data.tasks.some((t) => t.id !== taskId && !t.parentId && !!t.ownerSessionId && ids.has(t.ownerSessionId))
+    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? tree : [])]
     if (gone.some((s) => this.isRunning(s.id))) throw new Error(`An agent of ${work.key} is still working; stop it first, then delete the work`)
     const steps = subtasksOf(taskId, this.store.data.tasks)
     await Promise.all(gone.map((s) => this.closeLive(s.id)))
     for (const t of [work, ...steps]) await this.removeWork(t.work)
     for (const s of steps) this.store.deleteTask(s.id)
     this.store.deleteTask(taskId)
-    if (owner && !ownsOther) await this.deleteChat(owner.id)
+    if (owner && !ownsOther) await this.deleteChat(owner.id, taskId)
     this.wakeWaiting(steps.map((s) => s.key))
     log.info('agent', `${work.key}: work deleted`, { steps: steps.length, topic: !!owner && !ownsOther })
   }
@@ -1576,7 +1673,7 @@ export class Orchestrator {
     const own = [...new Set([reviewTopic(work, sessions), ...sessions.filter((s) => s.reviewOf === workId)].filter((s): s is AgentSession => !!s))]
     const owner = work.ownerSessionId
     if (owner && !own.some((s) => s.id === owner) && this.isRunning(owner)) throw new Error(`The topic of ${work.key} is still working; stop it or wait, then delete the review`)
-    for (const s of own) await this.deleteChat(s.id)
+    for (const s of own) await this.deleteChat(s.id, workId)
     if (work.imported) rmSync(work.imported.diffPath, { force: true })
     this.store.deleteTask(workId)
     log.info('agent', `${work.key}: review deleted`, { topics: own.length })
@@ -1913,17 +2010,21 @@ export class Orchestrator {
       const scratch = this.scratches.get(session.id)
       // mag's topic for a teammate's PR review reads only (topics-a-tree-of-agent.1); any other topic is full Claude Code.
       const review = !!session.reviewOf
+      // A child with a preset (topics-a-tree-of-agent.2): a reviewer reads only; neither writes to GitHub.
+      const preset = session.role === 'developer' || session.role === 'reviewer' ? session.role : null
+      const reads = review || preset === 'reviewer'
+      const prompt = chatPrompt(project, this.paths.logsDir) + (review ? blocks(REVIEW_TOPIC_LINE) : '') + (preset ? blocks(CHILD_ROLE_LINES[preset]) : '')
       return {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
-        appendSystemPrompt: chatPrompt(project, this.paths.logsDir) + (review ? blocks(REVIEW_TOPIC_LINE) : '') + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
+        appendSystemPrompt: prompt + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
         // Listed so they run without a card: under -p, a tool neither allowed nor denied goes to approve_tool, which denies
         // all but GitHub writes. Never a merge or a push to a base.
-        allowedTools: review ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
-        disallowedTools: [...(review ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] : []), ...NEVER_MERGE, ...noPushTo(this.projectBases(project))],
+        allowedTools: reads ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
+        disallowedTools: [...(reads ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] : []), ...(preset ? NO_PR_WRITES : NEVER_MERGE), ...noPushTo(this.projectBases(project))],
         // A topic may own a review of a teammate's PR: what it writes to GitHub (a push too) waits for the user's Approve.
-        ...this.askingGithubWrites(),
-        readOnly: review,
+        ...(preset ? {} : this.askingGithubWrites()),
+        readOnly: reads,
       }
     }
     const task = this.store.task(session.taskId)
@@ -2096,7 +2197,7 @@ export class Orchestrator {
   /** A turn of the session: on its live process (see liveSession), or on a process of its own. */
   private async run(session: AgentSession, prompt: string) {
     // The agent the session runs on next decides; a live process of an agent without them goes first.
-    if (liveSession({ role: session.role, agent: this.choice(session.projectId, session.role).agent })) return this.runLive(session, prompt)
+    if (liveSession({ role: session.role, agent: this.choice(session.projectId, runRole(session)).agent })) return this.runLive(session, prompt)
     if (this.lives.has(session.id)) await this.closeLive(session.id)
     if (this.hasScratch(session)) await this.ensureScratch(session)
     this.runOnce(session, prompt)
@@ -2104,11 +2205,11 @@ export class Orchestrator {
 
   /** One process for this turn; the run ends when it exits. */
   private runOnce(session: AgentSession, prompt: string) {
-    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: session.role }
+    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
 
-    const c = this.choice(session.projectId, session.role)
+    const c = this.choice(session.projectId, runRole(session))
     if (c.agent !== session.agent) {
       // Native sessions can't move between providers; the next run starts fresh.
       session.agent = c.agent
@@ -2125,7 +2226,7 @@ export class Orchestrator {
 
     const onEvent = this.onEvent(session)
 
-    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
+    const spec = this.withIntegrations(session.projectId, runRole(session), session.agent, true, this.spec(session))
     // A forking session's first run (a reviewer's, a branched topic's) forks; later runs resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
@@ -2191,7 +2292,7 @@ export class Orchestrator {
    */
   private async runLive(session: AgentSession, prompt: string) {
     this.clearIdle(session.id)
-    const c = this.choice(session.projectId, session.role)
+    const c = this.choice(session.projectId, runRole(session))
     let live = this.lives.get(session.id)
     // A new session is created running before its first turn: only a live process can be in a turn.
     const inTurn = !!live && !live.closing && session.status === 'running'
@@ -2218,10 +2319,10 @@ export class Orchestrator {
       session.agent = c.agent
       session.nativeSessionId = null
     }
-    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: session.role }
+    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
-    const spec = this.withIntegrations(session.projectId, session.role, session.agent, true, this.spec(session))
+    const spec = this.withIntegrations(session.projectId, runRole(session), session.agent, true, this.spec(session))
     const who = { session: session.id, role: session.role, agent: session.agent, model: c.model }
     const openedAt = Date.now()
     // A branched topic's first process forks its parent's session; later ones resume the fork.
@@ -2428,7 +2529,7 @@ export class Orchestrator {
   /** Make sure a finished run (or turn of a live session) never leaves a task silently stuck. */
   private async afterRun(session: AgentSession) {
     // An owner's turn is over: a question queued for it goes first; one sent then may still be answered in that turn.
-    if ((session.role === 'chat' || session.role === 'groomer') && !session.background?.length && !this.deliverQueued(session)) this.unanswered(session)
+    if ((runRole(session) === 'chat' || session.role === 'groomer') && !session.background?.length && !this.deliverQueued(session)) this.unanswered(session)
     if (!session.taskId) return
     const task = this.store.task(session.taskId)
     // A step closed or merged during the run: its worktrees could not go while the run was on. Its process goes first.

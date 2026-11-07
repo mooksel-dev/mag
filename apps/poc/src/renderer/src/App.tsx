@@ -118,7 +118,8 @@ export function App({ projectId }: { projectId: string }) {
   }
   // The selection, while it still exists; else Home. A chat that owns works opens on its header work (the one waiting on
   // the user, else the newest); a topic a review shows through, on that review.
-  const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && s.role === 'chat') ?? null : null
+  // A session under a topic opens on its own page, as a topic does (topics-a-tree-of-agent.2).
+  const picked = selected?.kind === 'topic' ? state.sessions.find((s) => s.id === selected.id && s.projectId === project.id && !s.taskId && (s.role === 'chat' || !!s.parentId)) ?? null : null
   const owned = picked && (headerWork(picked.id, tasks, state.sessions.filter((s) => s.projectId === project.id), Date.now()) ?? reviewOfTopic(tasks, picked.id))
   const work = owned ?? (selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null)
   const topic = owned ? null : picked

@@ -8,6 +8,7 @@ import {
   ownedWorks,
   prRepoName,
   reviewTopic,
+  sessionRole,
   shortTitle,
   stepsLine,
   subtaskProgress,
@@ -31,6 +32,7 @@ import { DiagramDrawer, type DrawerCanvas } from './Drawer'
 import { prLabel } from './format'
 import { ReopenButton, TicketLinks, AgentDot, useNow } from './Tasks'
 import { RowMenu, type MenuCard, type Selection } from './WorkList'
+import { ChildSessions } from './SessionTree'
 
 const mag = window.mag
 
@@ -208,6 +210,7 @@ export function WorkConversation({ work, state, onOpenKey, onSelect, onDeleted }
             <HeadMenu card={{ kind: review ? 'review' : 'work', title: shortTitle(work), task: work, closed: work.status === 'canceled' || !!work.closedAt }} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {steps.length > 0 && <StepChips steps={steps} />}
+          {owner && !owner.taskId && !review && <ChildSessions parent={owner} sessions={state.sessions} onSelect={onSelect} />}
           {card?.move.who === 'you' && <WaitingBar move={card.move} work={work} state={state} onAnswer={focus} />}
           {review && work.description && (
             <div className={`brief ${fullBrief ? 'full' : ''}`}>
@@ -272,7 +275,7 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
   const project = state.projects.find((p) => p.id === topic.projectId)
   const tasks = state.tasks.filter((t) => t.projectId === topic.projectId)
   const refsFrom = { tasks, sessions: state.sessions.filter((s) => s.projectId === topic.projectId), self: { kind: 'topic' as const, id: topic.id } }
-  const parent = topic.branchOf ? state.sessions.find((s) => s.id === topic.branchOf) : undefined
+  const parent = topic.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
   const running = topic.status === 'running'
   const drawer = useDrawer()
   const chip = project && <ModelChip project={project} activeModel={topic.activeModel} />
@@ -283,16 +286,17 @@ export function TopicConversation({ topic, state, onOpenKey, onSelect, onDeleted
         <header className="convohead">
           <div className="headline">
             <TopicTitle topic={topic} />
-            <span className="kind">discussion</span>
+            <span className="kind">{topic.parentId ? `session · ${sessionRole(topic)}` : 'discussion'}</span>
             <div className="grow" />
             <button className="small" disabled={running} title={running ? 'The agent is still working' : 'Its agent creates a work from what was discussed'} onClick={turn}>Turn into a work</button>
             <HeadMenu card={{ kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt }} onSelect={onSelect} onGone={onDeleted} />
           </div>
-          {topic.branchOf && (
+          {topic.parentId && (
             <div className="muted small">
-              Branched from {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{parent.title ?? 'Topic'}</button> : 'a deleted topic'}
+              Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted session'}
             </div>
           )}
+          <ChildSessions parent={topic} sessions={state.sessions} onSelect={onSelect} />
         </header>
         <div className="screenbody">
           <div className="screenmain">

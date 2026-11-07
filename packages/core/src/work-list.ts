@@ -9,7 +9,9 @@ import {
   isArchived,
   isLegacy,
   isReview,
+  childSessions,
   openPrs,
+  rootSession,
   resultLine,
   reviewState,
   reviewTopicIds,
@@ -77,9 +79,50 @@ export interface WorkCard {
   session?: AgentSession
   /** A chat: its own state, without its children's (what a filter matches it by). */
   own?: { group: WorkGroup; dot: CardDot }
-  /** A chat: the works it owns, newest created first. */
+  /** A chat: the works it owns (and the sessions under it own), newest created first. */
   children?: WorkCard[]
+  /** A topic: the sessions under it (topics-a-tree-of-agent.2), each with its own; in the order they were started. */
+  sessions?: SessionNode[]
 }
+
+/** waiting = an approval waits on the user; closed = closed with its topic or on its own. */
+export type SessionState = 'running' | 'waiting' | 'idle' | 'error' | 'closed'
+
+/** A session under a topic, as the sidebar and the topic page show it: its role, where it stands, and its children. */
+export interface SessionNode {
+  session: AgentSession
+  /** general (no role), topic (a branched topic of before the tree), or its preset. */
+  role: string
+  state: SessionState
+  dot: CardDot
+  children: SessionNode[]
+}
+
+/** The label of a child session's role. */
+export const sessionRole = (s: Pick<AgentSession, 'role'>): string => (s.role === null ? 'general' : s.role === 'chat' ? 'topic' : s.role)
+
+const pendingApproval = (s: AgentSession) => s.items.some((i) => i.kind === 'approval' && i.status === 'pending')
+
+/** Where one session stands, by itself. */
+export function sessionState(s: AgentSession): SessionState {
+  if (pendingApproval(s)) return 'waiting'
+  if (s.status === 'running') return 'running'
+  if (s.status === 'error') return 'error'
+  return s.closedAt ? 'closed' : 'idle'
+}
+
+/** The sessions under `parentId`, each with its own (a cycle in a broken file stops at a session seen before). */
+export function sessionNodes(parentId: string, sessions: AgentSession[], seen = new Set<string>([parentId])): SessionNode[] {
+  return childSessions(parentId, sessions)
+    .filter((s) => !seen.has(s.id) && !!seen.add(s.id))
+    .map((s) => {
+      const state = sessionState(s)
+      return { session: s, role: sessionRole(s), state, dot: state === 'waiting' ? 'amber' : state === 'running' ? 'green' : 'grey', children: sessionNodes(s.id, sessions, seen) }
+    })
+}
+
+/** Every node of a tree, parents before children. */
+export const flatNodes = (nodes: SessionNode[]): SessionNode[] => nodes.flatMap((n) => [n, ...flatNodes(n.children)])
 
 export type CardFilter = 'all' | 'waiting' | 'working' | 'reviews'
 export const CARD_FILTERS: CardFilter[] = ['all', 'waiting', 'working', 'reviews']
@@ -163,7 +206,7 @@ function runningOf(task: Task, sessions: AgentSession[]): AgentSession | undefin
 function agentMove(s: AgentSession, owner: boolean, now: number): CardMove {
   const tool = lastItem(s.items, 'tool')
   const activity = tool ? cut(tool.summary ? `${tool.name} ${tool.summary}` : tool.name, 60) : null
-  const role = owner ? 'owner' : s.role === 'chat' ? 'agent' : s.role
+  const role = owner ? 'owner' : s.role && s.role !== 'chat' ? s.role : 'agent'
   return { who: 'agent', text: [role, span(now - (s.runStartedAt ?? s.createdAt)), activity].filter(Boolean).join(' · ') }
 }
 
@@ -303,8 +346,9 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
  * and not the user's topic that a review shows through (legacy). Each has a row; the works it owns are its children.
  */
 function chatTopics(mine: AgentSession[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
+  // A session under a topic is in that topic's tree, not a row (topics-a-tree-of-agent.2).
   return mine.filter((s) =>
-    s.role === 'chat' && !s.taskId && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+    s.role === 'chat' && !s.taskId && !s.parentId && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
 }
 
 const finished = (t: Task) => t.status === 'done' || t.status === 'canceled'
@@ -347,13 +391,19 @@ function taskCard(task: Task, item: InboxItem | undefined, mine: AgentSession[],
  * finished and the chat neither asks nor runs. Its move: its own approval or run, else the move of a child waiting on
  * the user "via <key>", else the newest open child's stage, else a discussion's line. Closed only when nothing is open.
  */
-function chatCard(s: AgentSession, children: WorkCard[], approval: InboxItem | undefined, mine: AgentSession[], now: number): WorkCard {
-  const running = s.status === 'running'
+function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], approval: InboxItem | undefined, mine: AgentSession[], now: number): WorkCard {
+  // The sessions under the topic are its own state (topics-a-tree-of-agent.2): a child running is the topic working.
+  const runningChild = flatNodes(tree).find((n) => n.session.status === 'running')?.session
+  const running = s.status === 'running' || !!runningChild
   const open = children.filter((c) => c.group !== 'done')
   const ownGroup: WorkGroup = approval ? 'waiting' : running ? 'working' : 'topics'
+  const childMove = (c: AgentSession) => {
+    const m = agentMove(c, false, now)
+    return { ...m, text: `${shortTitle(c)} · ${m.text}` }
+  }
   const ownMove: CardMove = approval
     ? approvalMove(approval)
-    : running ? agentMove(s, false, now) : { who: 'other', text: 'Discussion · no work yet' }
+    : s.status === 'running' ? agentMove(s, false, now) : runningChild ? childMove(runningChild) : { who: 'other', text: 'Discussion · no work yet' }
   const idle = !approval && !running
   // No child open: a discussion without works is done once closed; one with works, once they all are finished.
   const done = idle && !open.length && (children.length > 0 || !!s.closedAt)
@@ -370,6 +420,7 @@ function chatCard(s: AgentSession, children: WorkCard[], approval: InboxItem | u
   // Green while the chat or any open child has an agent running.
   const dot: CardDot = group === 'waiting' ? 'amber' : group !== 'done' && (running || open.some((c) => c.dot === 'green')) ? 'green' : 'grey'
   const last = [lastEvent(s, mine), ...children.map((c) => c.last)].filter((l) => !!l).sort((a, b) => b.at - a.at)[0] ?? null
+  const under = flatNodes(tree).map((n) => n.session)
   return {
     id: s.id,
     kind: 'topic',
@@ -380,12 +431,13 @@ function chatCard(s: AgentSession, children: WorkCard[], approval: InboxItem | u
     progress: null,
     move,
     last,
-    at: Math.max(sessionActivity(s), ...children.map((c) => c.at)),
+    at: Math.max(sessionActivity(s), ...under.map(sessionActivity), ...children.map((c) => c.at)),
     createdAt: s.createdAt,
     closed,
     session: s,
     own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'green' : 'grey' },
     ...(children.length ? { children } : {}),
+    ...(tree.length ? { sessions: tree } : {}),
   }
 }
 
@@ -407,14 +459,18 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
     // A chat's approval is on the chat's row, not on a work's.
     const item = finished(task) ? undefined : items.find((i) => i.task?.id === task.id)
     const c = taskCard(task, item, mine, tasks, now)
-    const chat = !isReview(task) && task.ownerSessionId && chatIds.has(task.ownerSessionId) ? task.ownerSessionId : null
+    // A work a session under a topic owns is the topic's too.
+    const root = !isReview(task) && task.ownerSessionId ? rootSession(task.ownerSessionId, mine)?.id : undefined
+    const chat = root && chatIds.has(root) ? root : null
     if (chat) children.set(chat, [...(children.get(chat) ?? []), c])
     else out.push(c)
   }
   for (const s of chats) {
-    const approval = items.find((i) => i.kind === 'approval' && !i.task && i.session?.id === s.id)
+    const tree = sessionNodes(s.id, mine)
+    const ids = new Set([s.id, ...flatNodes(tree).map((n) => n.session.id)])
+    const approval = items.find((i) => i.kind === 'approval' && !i.task && !!i.session && ids.has(i.session.id))
     const kids = (children.get(s.id) ?? []).sort((a, b) => b.createdAt - a.createdAt)
-    out.push(chatCard(s, kids, approval, mine, now))
+    out.push(chatCard(s, kids, tree, approval, mine, now))
   }
   return out.sort((a, b) => b.createdAt - a.createdAt)
 }
@@ -522,7 +578,9 @@ function searchSessions(task: Task, tasks: Task[], sessions: AgentSession[]): Ag
 /** The topics search lists on their own: a chat that owns an open work searches as that work (as before chats had children). */
 function searchTopics(sessions: AgentSession[], works: Task[], tasks: Task[]): AgentSession[] {
   const owners = new Set(works.filter((t) => !finished(t)).map((t) => t.ownerSessionId))
-  return chatTopics(sessions, tasks, sessions).filter((s) => !owners.has(s.id))
+  // Sessions under a topic are found on their own too, as branched topics were (topics-a-tree-of-agent.2).
+  const under = sessions.filter((s) => s.parentId && !s.taskId)
+  return [...chatTopics(sessions, tasks, sessions), ...under].filter((s) => !owners.has(s.id))
 }
 
 /** ~120 characters of `text` around `at`, on one line. */

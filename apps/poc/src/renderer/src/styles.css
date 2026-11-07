@@ -700,6 +700,21 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 /* A chat's works under its row (work-list-the-left-column.3). */
 .wlkids { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 2px; }
 .wlchild .wlmain { padding-top: 5px; padding-bottom: 5px; }
+.wlsess { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; font-size: var(--fs-sm); }
+.wlsess:hover { background: var(--hover); }
+.wlsess.on { background: var(--soft); }
+.wlsess .title { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sessdot { flex: none; width: 7px; height: 7px; border-radius: 4px; background: var(--badge); }
+.sessdot.green { background: var(--green-fg); }
+.sessdot.amber { background: var(--amber-fg); }
+.sessrole { flex: none; font-size: var(--fs-xs); color: var(--faint); }
+.childsess { display: flex; flex-direction: column; gap: 2px; }
+.childsesshead { display: flex; align-items: center; gap: var(--sp-2); }
+.childsessrow { display: flex; align-items: center; gap: var(--sp-2); min-height: 24px; }
+.childsessrow .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.childsessform { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.childsessform textarea { width: 100%; resize: vertical; }
+.childsessform .row { display: flex; align-items: center; gap: var(--sp-2); }
 .wlkey { margin-right: 6px; font-size: var(--fs-sm); font-weight: 400; color: var(--faint); }
 .wlkidfold { padding: 3px 8px; }
 /* Another work of the same chat: its cards in the conversation under its key and title. */

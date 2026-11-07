@@ -893,7 +893,11 @@ export interface AgentSession {
   title?: string
   /** The chat has a real title: generated, given by the user or set by mag; until then the list shows "New topic". */
   titleGenerated?: boolean
-  role: AgentRole
+  /**
+   * null: a general child session of a topic, with a topic's full Claude Code tools (topics-a-tree-of-agent.2); it runs
+   * with the chat role's settings (see runRole).
+   */
+  role: AgentRole | null
   /** Developer sessions: the step they implement; null for groomers, chats and legacy developers. */
   stepId?: string | null
   agent: AgentKind
@@ -904,8 +908,11 @@ export interface AgentSession {
    * topic: its parent topic's.
    */
   forkOf?: string | null
-  /** A project topic branched from another one (Branch): that topic's id. */
-  branchOf?: string | null
+  /**
+   * A child session (topics-a-tree-of-agent.2): the session that started it, in its topic's tree; null or missing for a
+   * topic (a root) and for a work's sessions. Was branchOf, a topic branched from another one.
+   */
+  parentId?: string | null
   /** A project topic mag created for a review of a PR: that review's id. A topic that asked for it (review_pr) has none. */
   reviewOf?: string
   /** mag's topic of a review: the format its run records (review-v2-part-2-v1-2.1), each format in its own topic. */
@@ -959,7 +966,57 @@ export interface BackgroundTask {
  * (Codex, reviewers) run a process per turn.
  */
 export function liveSession(s: Pick<AgentSession, 'role' | 'agent'>): boolean {
-  return s.agent === 'claude-code' && (s.role === 'chat' || s.role === 'groomer' || s.role === 'developer')
+  const role = runRole(s)
+  return s.agent === 'claude-code' && (role === 'chat' || role === 'groomer' || role === 'developer')
+}
+
+/**
+ * The role whose settings a session runs with (model, integrations, tools, approvals): its own, or chat for a general
+ * child (role null), which has a topic's tools (topics-a-tree-of-agent.2).
+ */
+export function runRole(s: Pick<AgentSession, 'role'>): AgentRole {
+  return s.role ?? 'chat'
+}
+
+/**
+ * The presets a child session may start with (topics-a-tree-of-agent.2), besides none (a general session): developer
+ * changes code with a topic's tools under the developer's settings; reviewer only reads, under the reviewer's.
+ */
+export const CHILD_ROLES = ['developer', 'reviewer'] as const
+export type ChildRole = (typeof CHILD_ROLES)[number]
+
+/** The sessions `parentId` started, in the order they were created. */
+export function childSessions(parentId: string, sessions: AgentSession[]): AgentSession[] {
+  return sessions.filter((s) => s.parentId === parentId)
+}
+
+/** The root of a session's tree (its topic): itself without a parent, or when its parent is gone. */
+export function rootSession(sessionId: string, sessions: AgentSession[]): AgentSession | undefined {
+  const byId = new Map(sessions.map((s) => [s.id, s]))
+  let s = byId.get(sessionId)
+  // A cycle can't be written by mag; the seen set only keeps a broken file from hanging the app.
+  const seen = new Set<string>()
+  while (s?.parentId && byId.has(s.parentId) && !seen.has(s.id)) {
+    seen.add(s.id)
+    s = byId.get(s.parentId)
+  }
+  return s
+}
+
+/** A topic and all its descendants, each parent before its children (depth first, children in creation order). */
+export function sessionTree(rootId: string, sessions: AgentSession[]): AgentSession[] {
+  const root = sessions.find((s) => s.id === rootId)
+  if (!root) return []
+  const out: AgentSession[] = []
+  const seen = new Set<string>()
+  const walk = (s: AgentSession) => {
+    if (seen.has(s.id)) return
+    seen.add(s.id)
+    out.push(s)
+    for (const c of childSessions(s.id, sessions)) walk(c)
+  }
+  walk(root)
+  return out
 }
 
 /** "1 background task · Monitor", "3 background tasks · Monitor ×2, Bash". */
@@ -1232,7 +1289,7 @@ export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]):
   if (approval?.kind === 'approval') return { kind: 'waiting', reason: `Approval: ${approvalName(approval)}` }
   if (task.needsInput) return { kind: 'waiting', reason: task.needsInput }
   const running = mine.filter((s) => s.status === 'running').at(-1)
-  if (running) return { kind: 'working', role: running.role, since: running.runStartedAt ?? running.createdAt }
+  if (running) return { kind: 'working', role: runRole(running), since: running.runStartedAt ?? running.createdAt }
   const wait = stepWait(task, tasks)
   const step = task.parentId || isLegacy(task) ? null : currentStep(task.id, tasks)
   if (step?.waitingFor) return { kind: 'waiting', reason: `Waiting for ${step.waitingFor.key} (${baseName(step.waitingFor.repo)})` }
@@ -1272,7 +1329,7 @@ const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', 
 /** The task's agent session that ran last (a step's reviewer runs again after its developer). */
 export function lastTaskSession(taskId: string, sessions: AgentSession[]): AgentSession | undefined {
   const at = (s: AgentSession) => s.runStartedAt ?? s.createdAt
-  return sessions.filter((s) => s.taskId === taskId && TASK_AGENTS.includes(s.role)).reduce<AgentSession | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
+  return sessions.filter((s) => s.taskId === taskId && !!s.role && TASK_AGENTS.includes(s.role)).reduce<AgentSession | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
 }
 
 /** One item for a top-level task; its steps' PRs and Start count for it. A finished work waits on nobody. */
@@ -1281,7 +1338,7 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
   if (isReview(task)) return reviewItem(task, sessions)
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
-  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: FAILED[last.role] ?? 'Agent failed' }
+  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: (last.role && FAILED[last.role]) || 'Agent failed' }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }

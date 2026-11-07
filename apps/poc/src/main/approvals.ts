@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { approvalName, integrationMode, integrationOf, type AgentSession, type ChatItem } from '@mag/core'
+import { approvalName, integrationMode, integrationOf, runRole, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
 import { ASKING_ROLES } from './tool-defs.ts'
 import { blockedPush, projectBases } from './git-push.ts'
@@ -80,8 +80,8 @@ export class Approvals {
    */
   private asked(session: AgentSession, toolName: string): Pick<ApprovalItem, 'tool' | 'server'> | null {
     const found = integrationOf(toolName, this.store.data.integrations)
-    if (found) return integrationMode(this.store.project(session.projectId), session.role, found.integration.id) === 'ask' ? { tool: found.tool, server: found.integration.name } : null
-    return toolName === 'Bash' && ASKING_ROLES.includes(session.role) ? { tool: toolName } : null
+    if (found) return integrationMode(this.store.project(session.projectId), runRole(session), found.integration.id) === 'ask' ? { tool: found.tool, server: found.integration.name } : null
+    return toolName === 'Bash' && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
   }
 
   /** The user's answer; wakes the waiting poll and logs it. */

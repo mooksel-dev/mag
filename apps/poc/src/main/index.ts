@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type ChatRef, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -100,7 +100,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, branchChat: () => { throw new Error('Not ready') }, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -133,7 +133,9 @@ app.whenReady().then(async () => {
   actions.reopen = (id, what, by) => orch.reopen(id, what, by)
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
-  actions.branchChat = (sessionId, text) => orch.branchChat(sessionId, text)
+  actions.startChild = (parentId, brief, role, fork) => orch.startChild(parentId, brief, role, fork)
+  actions.sessionInTree = (callerId, targetId) => orch.sessionInTree(callerId, targetId)
+  actions.stop = (id) => orch.stop(id)
   actions.reviewPr = (projectId, url, by, format) => orch.reviewPr(projectId, url, by, format)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
   actions.setPrReview = (id, sessionId, review) => orch.setPrReview(id, sessionId, review)
@@ -144,7 +146,7 @@ app.whenReady().then(async () => {
   actions.startStep = (id) => orch.startStep(id)
   actions.restartReview = (id) => orch.reviewTask(id)
   actions.agentOf = (id, role) => orch.agentOf(id, role)
-  actions.send = (sessionId, text) => orch.send(sessionId, text)
+  actions.send = (sessionId, text, job) => orch.send(sessionId, text, [], job)
   actions.stopAgents = (id) => orch.stopAgents(id)
 
   // A review's archive (review-v2-part-2-v1-2.3): a window renders the review window static, main adds the PR and zips.
@@ -285,7 +287,7 @@ app.whenReady().then(async () => {
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[], refs?: ChatRef[]) => orch.send(sid, text, attachments, undefined, refs))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
-  handle('chat:branch', (_, sessionId: string) => orch.branchChat(sessionId))
+  handle('session:start-child', (_, parentId: string, brief: string, role: ChildRole | null, fork?: boolean) => orch.startChild(parentId, brief, role, !!fork, 'user'))
   handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))
   handle('chat:delete', (_, sessionId: string) => orch.deleteChat(sessionId))
   handle('chat:close', (_, sessionId: string) => orch.closeChat(sessionId))
