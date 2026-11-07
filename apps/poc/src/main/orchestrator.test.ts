@@ -2542,3 +2542,94 @@ test('orientation: every role\'s system prompt says how mag works, who reads it 
   assert.match(frame, /up to 3 review rounds in a row; after that the user decides/, 'the project\'s round limit')
   for (const p of [groomer, chat, dev]) assert.doesNotMatch(p, /\b(NEVER|ALWAYS|MUST|IMPORTANT|ONLY|DO NOT)\b/, 'no ALL-CAPS emphasis')
 })
+
+/** The subagents under a session: title, status, the parent they hang from (topics-a-tree-of-agent.4). */
+const subagents = (store: Store) => store.data.sessions.filter((x) => x.origin === 'subagent')
+
+test("a background subagent's calls go to its own read-only child, not the topic's transcript; it ends at its notification (topics-a-tree-of-agent.4)", async () => {
+  const s = setup()
+  const { topic, live } = await liveTopic(s)
+  await s.orch.send(topic.id, 'Check the login in a subagent')
+  const before = topic.items.length
+  live.emit({ type: 'tool.call', id: 'agent1', name: 'Agent', input: { description: 'Read the login', prompt: 'Read login.ts and report', subagent_type: 'Explore' } })
+  const [child] = subagents(s.store)
+  assert.deepEqual([child.parentId, child.toolUseId, child.role, child.status, child.title, child.agent], [topic.id, 'agent1', null, 'running', 'Read the login', 'claude-code'])
+  assert.deepEqual(child.items.map((i) => i.kind === 'job' && [i.title, i.text]), [['Brief from Design the login · Explore', 'Read login.ts and report']])
+
+  live.emit({ type: 'subagent.started', toolUseId: 'agent1', background: true })
+  live.emit({ type: 'tool.result', id: 'agent1', ok: true })
+  assert.equal(child.status, 'running', 'a background subagent outlives its call')
+  live.emit({ type: 'tool.call', id: 'read1', name: 'Read', input: { file_path: 'login.ts' }, parentToolUseId: 'agent1' })
+  live.emit({ type: 'tool.result', id: 'read1', ok: true, parentToolUseId: 'agent1' })
+  live.emit({ type: 'message', text: 'It is still reading.' })
+  live.emit({ type: 'message', text: 'login.ts checks the password.', parentToolUseId: 'agent1' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(child.status, 'running', 'the turn ended, the background subagent runs on in the process')
+  live.emit({ type: 'subagent.done', toolUseId: 'agent1', ok: true, summary: 'login.ts checks the password.' })
+
+  assert.equal(child.status, 'idle')
+  assert.deepEqual(child.items.slice(1).map((i) => (i.kind === 'tool' ? `tool ${i.name} ${i.ok}` : i.kind === 'assistant' ? i.text : i.kind)), ['tool Read true', 'login.ts checks the password.'], 'its last reply is not repeated')
+  const mine = topic.items.slice(before).map((i) => (i.kind === 'tool' ? `tool ${i.name}` : i.kind === 'assistant' ? i.text : i.kind))
+  assert.deepEqual(mine, ['tool Agent', 'It is still reading.', 'result'])
+  assert.equal(subagents(s.store).length, 1, 'its events found the child the call made')
+})
+
+test('a foreground subagent ends with its call; its own Agent call starts a grandchild; a subagent left running ends with the turn or the process (topics-a-tree-of-agent.4)', async () => {
+  const s = setup()
+  const { topic, live } = await liveTopic(s)
+  await s.orch.send(topic.id, 'Go')
+  live.emit({ type: 'tool.call', id: 'a1', name: 'Agent', input: { description: 'Outer', prompt: 'p' } })
+  live.emit({ type: 'subagent.started', toolUseId: 'a1', background: false })
+  live.emit({ type: 'tool.call', id: 'a2', name: 'Agent', input: { description: 'Inner', prompt: 'q' }, parentToolUseId: 'a1' })
+  const [outer, inner] = subagents(s.store)
+  assert.deepEqual([outer.title, inner.title, inner.parentId], ['Outer', 'Inner', outer.id])
+  assert.deepEqual(s.orch.treeOf(topic.id).map((x) => x.id), [topic.id, outer.id, inner.id])
+  live.emit({ type: 'tool.result', id: 'a1', ok: false })
+  assert.deepEqual([outer.status, inner.status], ['error', 'idle'], 'the call failed; what ran under it ended with it')
+
+  // Events of a subagent whose call mag never saw: a child named Subagent, ended with the turn.
+  live.emit({ type: 'message', text: 'hi', parentToolUseId: 'a3' })
+  const lost = subagents(s.store).find((x) => x.toolUseId === 'a3')!
+  assert.deepEqual([lost.title, lost.parentId, lost.status], ['Subagent', topic.id, 'running'])
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(lost.status, 'idle')
+  assert.equal(lost.items.at(-1)?.kind, 'notice')
+
+  // A background one ends with the process.
+  await s.orch.send(topic.id, 'Again')
+  live.emit({ type: 'tool.call', id: 'a4', name: 'Task', input: { description: 'Long' } })
+  live.emit({ type: 'subagent.started', toolUseId: 'a4', background: true })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  const long = subagents(s.store).find((x) => x.toolUseId === 'a4')!
+  assert.equal(long.status, 'running')
+  live.exited()
+  await tick()
+  assert.equal(long.status, 'idle')
+})
+
+test('a subagent is read-only: nobody writes to it, stops it or starts a session under it (topics-a-tree-of-agent.4)', async () => {
+  const s = setup()
+  const { topic, live } = await liveTopic(s)
+  await s.orch.send(topic.id, 'Go')
+  live.emit({ type: 'tool.call', id: 'a1', name: 'Agent', input: { description: 'Look', prompt: 'p' } })
+  const [child] = subagents(s.store)
+  await assert.rejects(s.orch.send(child.id, 'hello'), /A subagent is read-only/)
+  await assert.rejects(s.orch.stop(child.id), /ends with the session above it/)
+  assert.throws(() => s.orch.startChild(child.id, 'x'), /A subagent is read-only/)
+  assert.equal(opened.at(-1), live, 'no process of its own')
+  // Tree tools reach it, and refuse the same way.
+  const tools = createTools(s.store, { sessionInTree: (c, t) => s.orch.sessionInTree(c, t), send: (id, text, job) => s.orch.send(id, text, [], job), stop: (id) => s.orch.stop(id) } as Partial<ToolActions> as ToolActions)
+  await assert.rejects(tools({ projectId: s.project.id, sessionId: topic.id }, 'message_session', { session_id: child.id, text: 'hi' }), /A subagent is read-only/)
+  await assert.rejects(tools({ projectId: s.project.id, sessionId: topic.id }, 'stop_session', { session_id: child.id }), /ends with the session above it/)
+})
+
+test("a work's session keeps its subagents' calls in its own transcript: it has no tree yet (topics-a-tree-of-agent.4)", async () => {
+  const { store, session, live } = await developing()
+  live.emit({ type: 'tool.call', id: 'a1', name: 'Agent', input: { description: 'Look', prompt: 'p' } })
+  live.emit({ type: 'tool.call', id: 'r1', name: 'Read', input: { file_path: 'x.ts' }, parentToolUseId: 'a1' })
+  assert.equal(subagents(store).length, 0)
+  assert.deepEqual(session.items.flatMap((i) => (i.kind === 'tool' ? [i.name] : [])), ['Agent', 'Read'])
+})

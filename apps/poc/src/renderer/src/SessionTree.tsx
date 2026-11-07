@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CHILD_ROLES, sessionNodes, shortTitle, type AgentSession, type ChildRole, type SessionNode, type SessionState } from '@mag/core'
+import { CHILD_ROLES, isSubagent, sessionNodes, shortTitle, type AgentSession, type ChildRole, type SessionNode, type SessionState } from '@mag/core'
 import type { Selection } from './WorkList'
 
 const mag = window.mag
@@ -35,7 +35,8 @@ export function SessionRows({ nodes, selectedId, onSelect, depth = 0 }: { nodes:
 
 /**
  * The sessions under a topic or a session, on its page: each with its role and state, Open and Stop, and New session
- * (a brief, an optional preset, fork) that starts one more under it. Writing to one is in its own conversation.
+ * (a brief, an optional preset, fork) that starts one more under it. Writing to one is in its own conversation. A
+ * subagent (topics-a-tree-of-agent.4) only lists the subagents it started: it starts none, and none of them stops.
  */
 export function ChildSessions({ parent, sessions, onSelect }: { parent: AgentSession; sessions: AgentSession[]; onSelect: (s: Selection) => void }) {
   const nodes = sessionNodes(parent.id, sessions)
@@ -59,13 +60,15 @@ export function ChildSessions({ parent, sessions, onSelect }: { parent: AgentSes
       .catch((e: Error) => alert(e.message))
       .finally(() => setBusy(false))
   }
+  const readOnly = isSubagent(parent)
+  if (readOnly && !nodes.length) return null
   if (!nodes.length && !adding)
     return <div className="childsess"><button className="link small" onClick={() => setAdding(true)}>＋ New session</button></div>
   return (
     <div className="childsess" aria-label={`Sessions under ${shortTitle(parent)}`}>
       <div className="childsesshead">
         <span className="muted small">Sessions · {nodes.length}</span>
-        {!adding && <button className="link small" onClick={() => setAdding(true)}>＋ New session</button>}
+        {!adding && !readOnly && <button className="link small" onClick={() => setAdding(true)}>＋ New session</button>}
       </div>
       <NodeList nodes={nodes} onSelect={onSelect} />
       {adding && (
@@ -99,7 +102,7 @@ function NodeList({ nodes, onSelect, depth = 0 }: { nodes: SessionNode[]; onSele
             <button className="link title" onClick={() => onSelect({ kind: 'topic', id: n.session.id })}>{shortTitle(n.session)}</button>
             <span className="sessrole">{n.role}</span>
             <span className="muted small">{STATE_LABELS[n.state]}</span>
-            {n.session.status === 'running' && <button className="small" onClick={() => void mag.stop(n.session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
+            {n.session.status === 'running' && !isSubagent(n.session) && <button className="small" onClick={() => void mag.stop(n.session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
           </div>
           {n.children.length > 0 && <NodeList nodes={n.children} onSelect={onSelect} depth={depth + 1} />}
         </div>

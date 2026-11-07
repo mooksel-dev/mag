@@ -48,7 +48,13 @@ export function parseClaudeLine(line: string): AgentEvent[] {
   return fromClaude(j)
 }
 
+/**
+ * A subagent's events carry `parent_tool_use_id`, the Agent call that started it (topics-a-tree-of-agent.4). Its start
+ * and end come as `task_started` / `task_notification` with that call's `tool_use_id`: a backgrounded Agent call (the
+ * default since Claude Code 2.1) returns at once, and the subagent runs on until its notification.
+ */
 function fromClaude(j: any): AgentEvent[] {
+  const parent = typeof j.parent_tool_use_id === 'string' && j.parent_tool_use_id ? { parentToolUseId: j.parent_tool_use_id as string } : {}
   switch (j.type) {
     case 'system':
       if (j.subtype === 'init' && j.session_id) {
@@ -57,12 +63,17 @@ function fromClaude(j: any): AgentEvent[] {
         return [{ type: 'session.started', nativeSessionId: j.session_id, model: j.model, ...(commands && { commands }), ...(integrations && { integrations }) }]
       }
       if (j.subtype === 'compact_boundary') return [{ type: 'context.compacted', preTokens: j.compact_metadata?.pre_tokens }]
+      if (j.subtype === 'task_started' && typeof j.tool_use_id === 'string' && (j.task_type === 'local_agent' || j.subagent_type))
+        return [{ type: 'subagent.started', toolUseId: j.tool_use_id, background: j.is_backgrounded === true }]
+      // Background Bash tasks notify too: the orchestrator knows which ids are subagents.
+      if (j.subtype === 'task_notification' && typeof j.tool_use_id === 'string')
+        return [{ type: 'subagent.done', toolUseId: j.tool_use_id, ok: j.status === 'completed', ...(typeof j.summary === 'string' && j.summary.trim() && { summary: j.summary }) }]
       return [{ type: 'raw', payload: j }]
     case 'assistant': {
       const out: AgentEvent[] = []
       for (const b of j.message?.content ?? []) {
-        if (b.type === 'text' && b.text?.trim()) out.push({ type: 'message', text: b.text })
-        else if (b.type === 'tool_use') out.push({ type: 'tool.call', id: b.id, name: b.name, input: b.input })
+        if (b.type === 'text' && b.text?.trim()) out.push({ type: 'message', text: b.text, ...parent })
+        else if (b.type === 'tool_use') out.push({ type: 'tool.call', id: b.id, name: b.name, input: b.input, ...parent })
       }
       return out
     }
@@ -71,7 +82,7 @@ function fromClaude(j: any): AgentEvent[] {
       const content = j.message?.content
       if (Array.isArray(content))
         for (const b of content)
-          if (b.type === 'tool_result') out.push({ type: 'tool.result', id: b.tool_use_id, ok: !b.is_error })
+          if (b.type === 'tool_result') out.push({ type: 'tool.result', id: b.tool_use_id, ok: !b.is_error, ...parent })
       return out
     }
     case 'result':
@@ -137,9 +148,9 @@ export function liveParser(onControl: (requestId: string, ok: boolean, error?: s
       }
       if (j.type === 'system' && j.subtype === 'task_started') {
         const name = tools.get(j.tool_use_id)
-        if (!name) return []
+        if (!name) return fromClaude(j).filter((e) => e.type !== 'raw')
         taskTools.set(j.task_id, name)
-        return tasks.some((t) => t.task_id === j.task_id) ? [background()] : []
+        return [...(tasks.some((t) => t.task_id === j.task_id) ? [background()] : []), ...fromClaude(j).filter((e) => e.type !== 'raw')]
       }
       if (j.type === 'system' && j.subtype === 'init' && !inTurn) {
         inTurn = true

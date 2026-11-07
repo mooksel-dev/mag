@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, TURN_INTO_WORK_PROMPT, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -431,7 +431,7 @@ const SUMMARY_WAIT_MS = 60_000
 function summarize(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const o = input as Record<string, unknown>
-  const v = o.file_path ?? o.path ?? o.pattern ?? o.command ?? o.query ?? o.reason ?? o.title ?? o.url
+  const v = o.file_path ?? o.path ?? o.pattern ?? o.command ?? o.query ?? o.reason ?? o.title ?? o.url ?? o.description
   return v == null ? '' : String(v).slice(0, 120)
 }
 
@@ -447,6 +447,8 @@ export class Orchestrator {
   private reviewTried = new Map<string, string>()
   /** Topics whose title is being generated. */
   private naming = new Set<string>()
+  /** Agent calls (tool_use ids) whose subagent runs in the background: it outlives the call and ends at its notification. */
+  private backgroundSubagents = new Set<string>()
   /** `topic:<id>` | `task:<id>` with a summary run going on: the run, so a ref's send waits for the same one. */
   private summarizing = new Map<string, Promise<void>>()
   /** Sessions whose send waits for the summaries of its refs before the run starts. */
@@ -546,6 +548,7 @@ export class Orchestrator {
    */
   startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent'): AgentSession {
     const parent = this.treeSession(parentId)
+    if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
     if (rootSession(parent.id, this.store.data.sessions)?.reviewOf) throw new Error("mag's topic of a PR review only reads: it starts no sessions")
     if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
     const text = brief.trim()
@@ -1871,6 +1874,7 @@ export class Orchestrator {
    */
   async send(sessionId: string, text: string, attachments: Attachment[] = [], job?: string, refs: ChatRef[] = []) {
     const session = this.store.session(sessionId)
+    if (isSubagent(session)) throw new Error('A subagent is read-only: write to the session above it')
     if (this.runs.has(sessionId) || this.preparing.has(sessionId)) throw new Error('Agent is still working')
     // Writing to a closed topic opens it again.
     this.store.reopenSession(sessionId)
@@ -1938,6 +1942,7 @@ export class Orchestrator {
 
   /** Stops the current turn. A live process lives on with its background tasks. */
   async stop(sessionId: string) {
+    if (isSubagent(this.store.session(sessionId))) throw new Error('A subagent ends with the session above it: stop that one')
     const live = this.lives.get(sessionId)
     if (live && !live.closing) return live.handle.interrupt()
     this.runs.get(sessionId)?.kill()
@@ -2237,6 +2242,7 @@ export class Orchestrator {
     this.runs.set(session.id, handle)
     handle.done.then(() => {
       this.runs.delete(session.id)
+      this.endSubagents(session, false)
       void this.removeScratch(session)
       if (session.status === 'running') session.status = 'idle'
       log.info('agent', `${session.role} run ended: ${session.status}`, { ...who, seconds: Math.round((Date.now() - startedAt) / 1000) })
@@ -2253,8 +2259,11 @@ export class Orchestrator {
       session.items.push(item)
       this.store.changed()
     }
+    const tree = this.hasSubagents(session)
     return (e: AgentEvent) => {
       const at = Date.now()
+      // A subagent's events go to its own child, not into this transcript (topics-a-tree-of-agent.4).
+      if (tree && 'parentToolUseId' in e && e.parentToolUseId) return this.subagentEvent(this.subagentChild(session, e.parentToolUseId), e)
       switch (e.type) {
         case 'session.started':
           session.nativeSessionId = e.nativeSessionId
@@ -2265,16 +2274,26 @@ export class Orchestrator {
         case 'message':
           return push({ kind: 'assistant', text: e.text, at })
         case 'tool.call':
+          if (tree && SUBAGENT_TOOLS.includes(e.name)) this.subagentChild(session, e.id, e.input)
           return push({ kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
         case 'tool.result': {
           const item = session.items.find((i) => i.kind === 'tool' && i.id === e.id)
           if (item && item.kind === 'tool') item.ok = e.ok
+          if (tree) this.agentCallReturned(session, e.id, e.ok)
           return this.store.changed()
         }
+        case 'subagent.started':
+          if (tree && e.background) this.backgroundSubagents.add(e.toolUseId)
+          return
+        case 'subagent.done':
+          if (tree) this.endSubagent(session, e.toolUseId, e.ok, e.summary)
+          return
         case 'context.compacted':
           return push({ kind: 'notice', text: `Context compacted${e.preTokens ? ` (was ≈${Math.round(e.preTokens / 1000)}k tokens)` : ''}`, at })
         case 'turn.done':
           if (e.nativeSessionId) session.nativeSessionId = e.nativeSessionId
+          // A subagent in the foreground runs within the turn; one in the background lives on with the process.
+          this.endSubagents(session, true)
           return push({ kind: 'result', ok: e.ok, costUsd: e.costUsd, at })
         case 'error':
           session.status = 'error'
@@ -2284,6 +2303,109 @@ export class Orchestrator {
           return push({ kind: 'notice', text: 'Stopped', at })
       }
     }
+  }
+
+  /**
+   * Its subagents become children: a session of a topic's tree. A work's sessions and mag's topic of a PR review have
+   * no tree shown, so their subagents' calls stay in their transcript, as before.
+   */
+  private hasSubagents(session: AgentSession): boolean {
+    if (session.taskId || (session.role !== 'chat' && !session.parentId)) return false
+    return !rootSession(session.id, this.store.data.sessions)?.reviewOf
+  }
+
+  /**
+   * The read-only child of `parent` for its Agent call `toolUseId` (topics-a-tree-of-agent.4): the one there is, else a
+   * new one (origin subagent, running) under the session that made the call. `input`, the call's, names it and gives
+   * its brief; a child first seen through its events (no call seen) is named "Subagent".
+   */
+  subagentChild(parent: AgentSession, toolUseId: string, input?: unknown): AgentSession {
+    const known = this.subagentOf(parent, toolUseId)
+    if (known) return known
+    const call = input && typeof input === 'object' ? (input as { description?: unknown; prompt?: unknown; subagent_type?: unknown }) : {}
+    const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+    const child = this.store.createSession({
+      projectId: parent.projectId,
+      taskId: null,
+      role: null,
+      agent: parent.agent,
+      status: 'running',
+      runStartedAt: Date.now(),
+      title: (text(call.description) || 'Subagent').replace(/\s+/g, ' ').slice(0, 60),
+      titleGenerated: true,
+      parentId: parent.id,
+      origin: 'subagent',
+      toolUseId,
+    })
+    if (text(call.prompt)) child.items.push({ kind: 'job', title: `Brief from ${parent.title ?? 'its parent'}${text(call.subagent_type) ? ` · ${text(call.subagent_type)}` : ''}`, text: text(call.prompt), at: Date.now() })
+    log.info('agent', 'subagent started', { session: child.id, parent: parent.id, toolUseId })
+    return child
+  }
+
+  /** The subagent of Agent call `toolUseId` in the tree of `session`, if there is one. */
+  private subagentOf(session: AgentSession, toolUseId: string): AgentSession | undefined {
+    const sessions = this.store.data.sessions
+    const root = rootSession(session.id, sessions)
+    return root && sessionTree(root.id, sessions).find((s) => isSubagent(s) && s.toolUseId === toolUseId)
+  }
+
+  /** A subagent's own message or tool call, in its child's transcript; an Agent call of its own starts a grandchild. */
+  private subagentEvent(child: AgentSession, e: Extract<AgentEvent, { type: 'message' | 'tool.call' | 'tool.result' }>) {
+    const at = Date.now()
+    if (e.type === 'message') child.items.push({ kind: 'assistant', text: e.text, at })
+    else if (e.type === 'tool.call') {
+      if (SUBAGENT_TOOLS.includes(e.name)) this.subagentChild(child, e.id, e.input)
+      child.items.push({ kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
+    } else {
+      const item = child.items.find((i) => i.kind === 'tool' && i.id === e.id)
+      if (item && item.kind === 'tool') item.ok = e.ok
+      this.agentCallReturned(child, e.id, e.ok)
+    }
+    this.store.changed()
+  }
+
+  /** An Agent call of `session` returned: its subagent ends with it, unless it runs on in the background. */
+  private agentCallReturned(session: AgentSession, toolUseId: string, ok: boolean) {
+    if (!this.backgroundSubagents.has(toolUseId)) this.endSubagent(session, toolUseId, ok)
+  }
+
+  /**
+   * The subagent of Agent call `toolUseId`, somewhere under `session`, ended: idle (or failed), with its last reply
+   * unless its transcript ends with it already. An id that is no subagent's (a background Bash) or one ended is a no-op.
+   */
+  private endSubagent(session: AgentSession, toolUseId: string, ok: boolean, summary?: string) {
+    this.backgroundSubagents.delete(toolUseId)
+    const child = this.subagentOf(session, toolUseId)
+    if (!child || child.status !== 'running') return
+    const last = [...child.items].reverse().find((i) => i.kind === 'assistant')
+    if (summary?.trim() && (last?.kind !== 'assistant' || last.text.trim() !== summary.trim())) child.items.push({ kind: 'assistant', text: summary, at: Date.now() })
+    if (!ok) child.items.push({ kind: 'notice', text: 'The subagent failed or was stopped', at: Date.now() })
+    child.status = ok ? 'idle' : 'error'
+    log.info('agent', `subagent ended: ${child.status}`, { session: child.id, toolUseId })
+    this.endSubagents(child, false)
+    this.store.changed()
+  }
+
+  /**
+   * The subagents still running under `session` (through subagents only: a mag child runs on its own) end with it:
+   * when its turn ends (`turnOnly`: those in the foreground), or with its process (all).
+   */
+  private endSubagents(session: AgentSession, turnOnly: boolean): boolean {
+    let ended = false
+    for (const child of this.store.data.sessions.filter((s) => s.parentId === session.id && isSubagent(s))) {
+      // One in the background lives on, and so does what runs under it.
+      if (turnOnly && child.status === 'running' && this.backgroundSubagents.has(child.toolUseId ?? '')) continue
+      if (child.status === 'running') {
+        this.backgroundSubagents.delete(child.toolUseId ?? '')
+        child.items.push({ kind: 'notice', text: 'Ended with the session above it', at: Date.now() })
+        child.status = 'idle'
+        ended = true
+        log.info('agent', 'subagent ended with its parent', { session: child.id, parent: session.id })
+      }
+      if (this.endSubagents(child, false)) ended = true
+    }
+    if (ended) this.store.changed()
+    return ended
   }
 
   /**
@@ -2351,6 +2473,7 @@ export class Orchestrator {
       if (!this.lives.has(session.id)) void this.removeScratch(session)
       this.clearIdle(session.id)
       session.live = false
+      this.endSubagents(session, false)
       const waited = !!session.background?.length
       if (waited) session.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
       session.background = undefined
