@@ -8,6 +8,7 @@ import {
   reviewTopic,
   runRole,
   isSubagent,
+  isSubtopic,
   sessionRole,
   shortTitle,
   workCard,
@@ -18,15 +19,14 @@ import {
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ArtifactsList, HeadMenu, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
-import { topicArtifacts, type ArtifactTarget } from './artifacts'
+import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
+import { topicAgents, topicArtifacts, type ArtifactTarget } from './artifacts'
 import { WorkCards } from './Cards'
 import { CanvasOpener, Chat, Composer, ModelChip } from './Chat'
 import { ArtifactDrawer } from './Drawer'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { TicketLinks, AgentDot, useNow } from './Tasks'
 import type { MenuCard, Selection } from './WorkList'
-import { ChildSessions } from './SessionTree'
 
 const mag = window.mag
 
@@ -55,10 +55,11 @@ function useDrawer(initial: ArtifactTarget | null) {
 }
 
 /**
- * A topic's screen (topics-a-tree-of-agent.3): a compact header (title, kind, ⋯), the line of sessions under it (with
- * + session) and what waits on you; below, its conversation with the cards of every work it owns, and at the right
- * the list of its artifacts, or the one opened in the drawer; both sides resize (topic-screen-one-new-compact.1). A
- * work opens here, through its owner topic, with its card open.
+ * A topic's screen (topics-a-tree-of-agent.3): a compact header (title, kind, Agents, ⋯ with New subtopic) and what
+ * waits on you; below, its conversation with the cards of every work it owns, and at the right its panel (its agents,
+ * then its documents and diagrams, topic-screen-one-new-compact.2), or the one opened in the drawer; both sides resize
+ * (topic-screen-one-new-compact.1). The panel shows by default while an agent works or waits on you, until the user
+ * toggles it. A work opens here, through its owner topic, with its card open.
  * `topic` null: a work whose owner is its groomer, or nobody yet; the screen is the work's, with the groomer's chat.
  */
 export function TopicConversation({ topic, work, initial = null, state, onOpenKey, onSelect, onDeleted }: {
@@ -79,9 +80,13 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const project = state.projects.find((p) => p.id === projectId)
   const tasks = state.tasks.filter((t) => t.projectId === projectId)
   const drawer = useDrawer(initial)
-  const [listShown, setListShown] = useState(true)
   const rightPane = usePaneWidth('right')
   const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
+  const agents = useMemo(() => topicAgents(topic, state, topic ? null : work), [topic, work, state])
+  const hasPanel = artifacts.count > 0 || agents.active.length + agents.done.length > 0
+  // null: the default, shown while an agent works or waits on you; the user's toggle wins.
+  const [panelChoice, setPanelChoice] = useState<boolean | null>(null)
+  const listShown = panelChoice ?? agents.active.some((a) => a.state !== 'failed')
   // The review mag made this topic for: the screen is that review's.
   const review = topic ? tasks.find((t) => isReview(t) && (t.id === topic.reviewOf || reviewTopic(t, state.sessions)?.id === topic.id)) : work && isReview(work) ? work : undefined
   // The conversation: the topic, else the work's owner (its groomer, or a review's topic that is gone).
@@ -113,21 +118,20 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         <header className="convohead">
           <div className="headline">
             {topic ? <TopicTitle topic={topic} /> : <h1 title={subject!.title}>{shortTitle(subject!)}</h1>}
-            <span className="kind">{review ? `review · ${review.key}` : topic ? (topic.parentId ? `session · ${sessionRole(topic)}` : 'discussion') : `work · ${subject!.key}`}</span>
+            <span className="kind">{review ? `review · ${review.key}` : topic ? (!topic.parentId ? 'topic' : isSubtopic(topic) ? 'subtopic' : `agent · ${sessionRole(topic)}`) : subject!.key}</span>
             {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
-            {artifacts.count > 0 && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The docs, plans, diagrams, facts and reviews made here" onClick={() => (drawer.open ? (drawer.close(), setListShown(true)) : setListShown((v) => !v))}>Artifacts · {artifacts.count}</button>}
+            {hasPanel && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The agents working here, and the documents and diagrams made here" onClick={() => (drawer.open ? (drawer.close(), setPanelChoice(true)) : setPanelChoice(!listShown))}>{agents.working ? `Agents · ${agents.working} working` : 'Agents'}</button>}
             <HeadMenu card={menu} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {topic?.parentId && (
             <div className="muted small">
-              Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted session'}
+              Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted topic'}
             </div>
           )}
-          {topic && !review && <ChildSessions parent={topic} sessions={state.sessions} onSelect={onSelect} />}
           {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1} />}
         </header>
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
@@ -150,17 +154,17 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             ) : (
               <div className="chatbox">
                 <div className="items">
-                  <p className="muted small">This work has no owner conversation yet. Groom it: an agent reads the brief, plans the work with you here.</p>
+                  <p className="muted small">This has no conversation yet. Groom it: an agent reads the brief and plans it with you here.</p>
                   {cards}
                 </div>
               </div>
             )}
           </div>
-          {(drawer.open || (listShown && artifacts.count > 0)) && <PaneHandle side="right" onResize={rightPane.set} />}
+          {(drawer.open || (listShown && hasPanel)) && <PaneHandle side="right" onResize={rightPane.set} />}
           {drawer.open ? (
             <ArtifactDrawer open={drawer.open} state={state} onClose={drawer.close} onGone={gone} onOpenKey={onOpenKey} onSelect={onSelect} />
-          ) : listShown && artifacts.count > 0 && (
-            <ArtifactsList artifacts={artifacts} onOpen={drawer.setOpen} />
+          ) : listShown && hasPanel && (
+            <TopicPanel agents={agents} artifacts={artifacts} onOpen={drawer.setOpen} onSelect={onSelect} />
           )}
         </div>
       </section>

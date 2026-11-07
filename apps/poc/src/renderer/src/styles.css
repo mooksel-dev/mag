@@ -705,9 +705,12 @@ body.resizing iframe { pointer-events: none; }
 .wlrename input { width: 100%; font-size: var(--fs-sm); padding: 3px 6px; }
 .wlgroup > .wlrow, .wlgroup > .wlgempty { margin-left: 10px; }
 .wlgroup > .wlchat { margin-left: 10px; }
-/* A chat's works under its row (work-list-the-left-column.3). */
+/* A topic's subtopics under its row, nested (topic-screen-one-new-compact.2); its ▸/▾ at the row's left. */
 .wlkids { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 2px; }
-.wlchild .wlmain { padding-top: 4px; padding-bottom: 4px; }
+.wlrow.folds .wlmain { padding-left: 20px; }
+.wlcaret { position: absolute; left: 2px; top: 5px; z-index: 1; width: 16px; height: 18px; padding: 0; border: none; border-radius: var(--r-sm); background: none; color: var(--faint); font-size: 10px; line-height: 1; }
+.wlcaret:hover { color: var(--text); background: var(--surface); }
+.wldraft .title { font-style: italic; color: var(--muted); }
 .wlsess { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; font-size: var(--fs-sm); }
 .wlsess:hover { background: var(--hover); }
 .wlsess.on { background: var(--soft); }
@@ -716,17 +719,6 @@ body.resizing iframe { pointer-events: none; }
 .sessdot.green { background: var(--green-fg); }
 .sessdot.amber { background: var(--amber-fg); }
 .sessrole { flex: none; font-size: var(--fs-xs); color: var(--faint); }
-.childsess { display: flex; flex-direction: column; gap: 2px; }
-.childsessline { display: flex; align-items: center; flex-wrap: wrap; gap: 4px var(--sp-2); }
-.sesschip { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border-radius: var(--r-pill); background: var(--status); }
-.sesschip.green { background: var(--green-bg); }
-.sesschip.amber { background: var(--amber-bg); }
-.sesschip .iconbtn { width: 16px; height: 16px; padding: 0; font-size: 9px; line-height: 1; }
-.childsessrow { display: flex; align-items: center; gap: var(--sp-2); min-height: 24px; }
-.childsessrow .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.childsessform { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.childsessform textarea { width: 100%; resize: vertical; }
-.childsessform .row { display: flex; align-items: center; gap: var(--sp-2); }
 /* Another work of the same chat: its cards in the conversation under its key and title. */
 .cardsof { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); font-size: var(--fs-sm); color: var(--muted); }
 .wlgempty { margin: 0 0 4px; padding: 4px 8px; font-size: var(--fs-xs); color: var(--faint); }
@@ -790,23 +782,25 @@ body.resizing iframe { pointer-events: none; }
 .screenmain > .chatbox > .items { padding: 18px max(var(--sp-6), calc((100% - 780px) / 2)) var(--sp-2); gap: var(--sp-3); }
 .screenmain > .chatbox > .composer { width: 100%; max-width: calc(780px + 2 * var(--sp-6)); margin: 0 auto; padding: var(--sp-2) var(--sp-6) 18px; }
 .brieffull { white-space: pre-wrap; color: var(--muted); line-height: var(--lh); }
-/* The topic's artifacts at the right of its conversation, by kind; one opens in the drawer in their place. */
+/* The topic's panel at the right of its conversation (topic-screen-one-new-compact.2): its agents, then its documents
+   and diagrams; one opens in the drawer in their place. */
 .artifacts { flex: none; width: var(--right-w); min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
 .artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
-/* By work, then by step (topic-screen-one-new-compact.1): a step is one line, its artifacts chips under it. */
-.artwork { display: flex; flex-direction: column; gap: 2px; }
-.artworktitle, .artstepline { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
-.artworktitle { font-weight: 600; }
-.artworktitle:hover, .artstepline:hover { background: var(--hover); }
-.artworktitle .title, .artstepline .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artstepline .tag.p-working, .artstepline .tag.p-in-review { background: var(--amber-bg); color: var(--amber-fg); }
-.artstepline .tag.p-merged, .artstepline .tag.p-done { background: var(--green-bg); color: var(--green-fg); }
-.artchips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 6px 4px 19px; }
-.artchip { max-width: 100%; padding: 1px 8px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface); font-size: var(--fs-xs); font-weight: 400; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artchip:hover { border-color: var(--faint); color: var(--text); }
-.artchip.green { background: var(--green-bg); color: var(--green-fg); border-color: transparent; }
-.artchip.amber { background: var(--amber-bg); color: var(--amber-fg); border-color: transparent; }
-.artchip.red { background: var(--danger-bg); color: var(--danger-fg); border-color: transparent; }
+.artsection { display: flex; flex-direction: column; gap: 2px; }
+.artline2, .agentline { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
+.artline2:hover, .agentrow:hover { background: var(--hover); }
+.artline2 .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artline2.green .title { color: var(--green-fg); }
+.artline2.amber .title { color: var(--amber-fg); }
+.artline2.red .title { color: var(--danger-fg); }
+.agentrow { display: flex; align-items: center; border-radius: var(--r); }
+.agentline { flex: 1; min-width: 0; padding-right: 2px; }
+.agentline .agenton { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agentline .agentstate { flex: none; font-size: var(--fs-xs); color: var(--faint); }
+.agentline .agentstate.waiting { color: var(--amber-fg); }
+.agentline .agentstate.working { color: var(--green-fg); }
+.agentline .agentstate.failed { color: var(--danger-fg); }
+.agentrow .link { flex: none; padding: 0 6px; font-size: var(--fs-xs); }
 .artbody { display: flex; flex-direction: column; gap: var(--sp-3); }
 .artline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .artline .kind { font-size: var(--fs-xs); color: var(--faint); }

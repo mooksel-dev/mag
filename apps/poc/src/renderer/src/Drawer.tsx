@@ -1,9 +1,9 @@
 import { useEffect, useMemo } from 'react'
-import { setOf } from '@mag/core'
+import { setOf, type AgentSession } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { TaskArtifact, taskArtifactHead } from './ArtifactPane'
 import type { ArtifactTarget } from './artifacts'
-import { CanvasFrame } from './Chat'
+import { CanvasFrame, Chat } from './Chat'
 import { DiffSetView, setContext } from './DiffSetView'
 import { diagramsOf } from './DiffTab'
 import type { Selection } from './WorkList'
@@ -26,9 +26,10 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
   onOpenKey: (key: string) => void
   onSelect: (s: Selection) => void
 }) {
-  const task = open.kind === 'canvas' ? undefined : state.tasks.find((t) => t.id === open.taskId)
+  const task = 'taskId' in open ? state.tasks.find((t) => t.id === open.taskId) : undefined
   const canvas = open.kind === 'canvas' ? state.canvases.find((c) => c.id === open.id) : undefined
-  const gone = !task && !canvas
+  const agent = open.kind === 'agent' ? state.sessions.find((s) => s.id === open.sessionId) : undefined
+  const gone = !task && !canvas && !agent
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose() }
     window.addEventListener('keydown', onKey)
@@ -38,7 +39,8 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
     if (gone) onClose()
   }, [gone, onClose])
   if (open.kind === 'canvas') return canvas ? <CanvasDrawer canvas={canvas} focus={open.focus} state={state} onClose={onClose} /> : null
-  if (!task) return null
+  if (open.kind === 'agent') return agent ? <AgentDrawer session={agent} state={state} onClose={onClose} onOpenKey={onOpenKey} /> : null
+  if (!task || !('taskId' in open)) return null
   const head = taskArtifactHead(open, task)
   return (
     <aside className={`drawer${open.kind === 'doc' ? '' : ' set'}`} aria-label={head.title}>
@@ -49,6 +51,29 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
       </div>
       <div className="drawerbody">
         <TaskArtifact key={`${open.kind}:${task.id}`} target={open} task={task} state={state} onOpenKey={onOpenKey} onSelect={onSelect} onDeleted={onGone} />
+      </div>
+    </aside>
+  )
+}
+
+/**
+ * The chat of a work's agent (topic-screen-one-new-compact.2), opened from the topic's Agents: a log, Stop while it
+ * runs. The user writes to the work's owner, who passes things on.
+ */
+function AgentDrawer({ session, state, onClose, onOpenKey }: { session: AgentSession; state: AppState; onClose: () => void; onOpenKey: (key: string) => void }) {
+  const on = state.tasks.find((t) => t.id === (session.stepId ?? session.taskId))
+  const title = [session.role ?? 'agent', on?.title].filter(Boolean).join(' · ')
+  return (
+    <aside className="drawer" aria-label={`Agent: ${title}`}>
+      <div className="drawerhead">
+        <span className="title" title={on ? `${title} · ${on.key}` : title}>{title}</span>
+        <span className="muted small">{session.activeModel ?? 'default'} · {session.status}</span>
+        {session.status === 'running' && <button className="small" onClick={() => void mag.stop(session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
+        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+      </div>
+      <div className="drawerbody">
+        <p className="muted small">An agent's chat is a log: write to the owner in the conversation, it passes things on.</p>
+        <Chat session={session} sessions={state.sessions} canvases={state.canvases} onOpenTask={onOpenKey} readOnly />
       </div>
     </aside>
   )

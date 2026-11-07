@@ -24,7 +24,7 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
-import type { ArtifactChip, ArtifactTarget, StepPhase, TopicArtifacts } from './artifacts'
+import type { AgentLine, ArtifactTarget, TopicAgents, TopicArtifacts } from './artifacts'
 import { MoveButton } from './Cards'
 import { CanvasOpener, Chat, Markdown } from './Chat'
 import { FactPanel } from './FactPanel'
@@ -43,37 +43,38 @@ import { RowMenu, type MenuCard, type Selection } from './WorkList'
 const mag = window.mag
 
 /**
- * The topic's artifacts (topic-screen-one-new-compact.1): by work (its title; its doc and option sketches as chips),
- * then by step, one line each with its number, title and phase and its plan, fact and review as chips; "This chat" for
- * what was drawn outside any work. Keys only in tooltips; a click opens the artifact in the drawer.
+ * The topic's panel (topic-screen-one-new-compact.2): Agents, every agent working within the topic or subtopic, those
+ * waiting on you and working first, the done ones folded into "N done"; then Documents and diagrams with plain titles.
+ * A tree's agent opens as its own page, a work's agent in the drawer; a document or diagram in the drawer.
  */
-export function ArtifactsList({ artifacts, onOpen }: { artifacts: TopicArtifacts; onOpen: (target: ArtifactTarget) => void }) {
+export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
+  agents: TopicAgents
+  artifacts: TopicArtifacts
+  onOpen: (target: ArtifactTarget) => void
+  onSelect: (s: Selection) => void
+}) {
+  const [allDone, setAllDone] = useState(false)
+  const docs = [...artifacts.works.flatMap((w) => w.lines), ...artifacts.loose]
+  const line = (a: AgentLine) => <AgentRow key={a.session.id} agent={a} onOpen={() => (a.open.kind === 'select' ? onSelect({ kind: 'topic', id: a.open.id }) : onOpen(a.open))} />
   return (
-    <aside className="artifacts" aria-label="Artifacts">
-      {artifacts.works.map(({ work, open, chips, steps }) => (
-        <section key={work.id} className="artwork">
-          <button className="artworktitle" title={`${work.key} · ${work.status.replace('_', ' ')}`} onClick={() => onOpen(open)}>
-            <span className="title">{shortTitle(work)}</span>
-            {(work.status === 'done' || work.status === 'canceled') && <span className="muted small">{work.status}</span>}
-          </button>
-          {chips.length > 0 && <ArtChips chips={chips} onOpen={onOpen} />}
-          {steps.map((s) => (
-            <div key={s.step.id} className="artstep">
-              <button className="artstepline" title={`${s.step.key} · ${s.step.title} · ${s.phase}`} onClick={() => onOpen(open)}>
-                <span className={`sessdot ${STEP_DOTS[s.phase]}`} aria-hidden />
-                <span className="title">{s.no} · {s.step.title}</span>
-                <span className={`tag p-${s.phase.replace(' ', '-')}`}>{s.phase}</span>
-              </button>
-              {s.chips.length > 0 && <ArtChips chips={s.chips} onOpen={onOpen} />}
-            </div>
-          ))}
+    <aside className="artifacts" aria-label="Agents, documents and diagrams">
+      {(agents.active.length > 0 || agents.done.length > 0) && (
+        <section className="artsection" aria-label="Agents">
+          <div className="artkind">Agents</div>
+          {agents.active.map(line)}
+          {agents.done.length > 0 && (
+            <button className="link muted small artmore" aria-expanded={allDone} onClick={() => setAllDone((v) => !v)}>
+              {allDone ? '▾' : '▸'} {agents.done.length} done
+            </button>
+          )}
+          {allDone && agents.done.map(line)}
         </section>
-      ))}
-      {artifacts.loose.length > 0 && (
-        <section className="artwork">
-          <div className="artkind">This chat</div>
-          {artifacts.loose.map((c) => (
-            <button key={c.key} className="artstepline" title={c.title} onClick={() => onOpen(c.open)}>
+      )}
+      {docs.length > 0 && (
+        <section className="artsection" aria-label="Documents and diagrams">
+          <div className="artkind">Documents and diagrams</div>
+          {docs.map((c) => (
+            <button key={c.key} className={`artline2${c.tone ? ` ${c.tone}` : ''}`} title={c.title} onClick={() => onOpen(c.open)}>
               <span className="title">{c.label}</span>
             </button>
           ))}
@@ -83,20 +84,25 @@ export function ArtifactsList({ artifacts, onOpen }: { artifacts: TopicArtifacts
   )
 }
 
-const STEP_DOTS: Record<StepPhase, string> = { todo: '', working: 'green', 'in review': 'amber', merged: 'green', done: 'green' }
+const AGENT_STATE_LABELS: Record<AgentLine['state'], string> = { working: 'working', waiting: 'waits on you', failed: 'failed', done: 'done' }
 
-function ArtChips({ chips, onOpen }: { chips: ArtifactChip[]; onOpen: (target: ArtifactTarget) => void }) {
+/** An agent's line: its role, what it works on, its state and its PR; a click opens its chat. */
+function AgentRow({ agent: a, onOpen }: { agent: AgentLine; onOpen: () => void }) {
   return (
-    <div className="artchips">
-      {chips.map((c) => (
-        <button key={c.key} className={`artchip${c.tone ? ` ${c.tone}` : ''}`} title={c.title} onClick={() => onOpen(c.open)}>{c.label}</button>
-      ))}
+    <div className="agentrow">
+      <button className="agentline" title={`${a.role} · ${a.on} · ${AGENT_STATE_LABELS[a.state]}`} onClick={onOpen}>
+        <span className={`sessdot ${a.state === 'working' ? 'green' : a.state === 'waiting' ? 'amber' : 'grey'}`} aria-hidden />
+        <span className="sessrole">{a.role}</span>
+        <span className="agenton">{a.on}</span>
+        <span className={`agentstate ${a.state}`}>{AGENT_STATE_LABELS[a.state]}</span>
+      </button>
+      {a.prUrl && <button className="link" title={a.prUrl} onClick={() => mag.open(a.prUrl!)}>{prLabel(a.prUrl)}</button>}
     </div>
   )
 }
 
 /** What the drawer's head says for a task's artifact, and whether its window opens with ⧉. */
-export function taskArtifactHead(target: Exclude<ArtifactTarget, { kind: 'canvas' }>, task: Task): { title: string; window: (() => void) | null } {
+export function taskArtifactHead(target: Extract<ArtifactTarget, { taskId: string }>, task: Task): { title: string; window: (() => void) | null } {
   if (target.kind === 'doc') return { title: `Doc · ${task.key}`, window: () => mag.openWindow({ kind: 'doc', taskId: task.id }) }
   if (target.kind === 'review') return { title: task.parentId ? `Review · ${task.key}` : `Review · ${shortTitle(task)}`, window: () => mag.openWindow({ kind: 'review', taskId: task.id }) }
   return { title: `${task.key} · ${shortTitle(task)}`, window: null }
@@ -104,7 +110,7 @@ export function taskArtifactHead(target: Exclude<ArtifactTarget, { kind: 'canvas
 
 /** The body of a task's artifact in the drawer: a work's card, its doc, a PR's review or a step's agent review. */
 export function TaskArtifact({ target, task, state, onOpenKey, onSelect, onDeleted }: {
-  target: Exclude<ArtifactTarget, { kind: 'canvas' }>
+  target: Extract<ArtifactTarget, { taskId: string }>
   task: Task
   state: AppState
   onOpenKey: (key: string) => void

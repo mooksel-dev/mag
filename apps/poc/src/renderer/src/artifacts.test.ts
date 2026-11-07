@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentReview, AgentSession, Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { topicArtifacts, treeWorks, workTarget, type TopicArtifacts } from './artifacts.ts'
+import { topicAgents, topicArtifacts, treeWorks, workTarget, type TopicArtifacts } from './artifacts.ts'
 
 const session = (id: string, extra: Partial<AgentSession> = {}) =>
   ({ id, projectId: 'p', taskId: null, role: 'chat', parentId: null, status: 'idle', items: [], createdAt: 0, ...extra }) as unknown as AgentSession
@@ -37,83 +37,109 @@ const state = (extra: Partial<AppState> = {}): Pick<AppState, 'tasks' | 'session
   ...extra,
 })
 
-/** Each work's line, its chips in [], then its steps' lines; "This chat" last. */
+/** Each work's lines by their labels; the loose ones last. */
 const shape = (a: TopicArtifacts) => [
-  ...a.works.flatMap((w) => [
-    `${w.work.key} [${w.chips.map((c) => c.label).join(', ')}]`,
-    ...w.steps.map((s) => `  ${s.no} · ${s.step.title} · ${s.phase} [${s.chips.map((c) => c.label).join(', ')}]`),
-  ]),
-  ...(a.loose.length ? [`This chat [${a.loose.map((c) => c.label).join(', ')}]`] : []),
+  ...a.works.map((w) => `${w.work.key}: ${w.lines.map((c) => c.label).join(' | ')}`),
+  ...(a.loose.length ? [`loose: ${a.loose.map((c) => c.label).join(' | ')}`] : []),
 ]
 
-test("topicArtifacts: by work, then by step; a step's plan, fact and review are chips on its line", () => {
+test("topicArtifacts: plain titles: the doc is the work's title; a step's plan, fact and review are named after the step (topic-screen-one-new-compact.2)", () => {
   const list = topicArtifacts(topic, state())
-  assert.deepEqual(shape(list), ['W2 [mock]', 'W1 [doc]', '  1 · Step one · todo [plan, fact, review: changes]'])
-  assert.equal(list.count, 7, 'two works and five chips')
-  const step = list.works[1].steps[0]
-  const plan = step.chips[0]
-  assert.equal(plan.title, 'plan-root · 2 diagrams', 'a set is one chip; its title is the tooltip')
+  assert.deepEqual(shape(list), ['W2: Work w2 | mock', 'W1: Work w1 | Plan: Step one | What was built: Step one | Review: Step one'])
+  assert.equal(list.count, 6)
+  const [doc, plan, , review] = list.works[1].lines
+  assert.deepEqual(doc.open, { kind: 'doc', taskId: 'w1' })
+  assert.equal(plan.title, 'plan-root · 2 diagrams', 'a set is one line; its own title is the tooltip')
   assert.deepEqual(plan.open, { kind: 'canvas', id: 'plan-root' })
-  const review = step.chips[2]
   assert.deepEqual([review.open, review.tone], [{ kind: 'review', taskId: 'w1.1' }, 'red'])
-  assert.deepEqual(list.works[1].open, { kind: 'work', taskId: 'w1' })
-  assert.deepEqual(list.works[1].chips[0].open, { kind: 'doc', taskId: 'w1' })
+  // A work without a doc yet: its title opens its card.
+  assert.deepEqual(list.works[0].lines[0].open, { kind: 'work', taskId: 'w2' })
 })
 
 test('topicArtifacts: a session under a topic lists its own part of the tree only', () => {
-  assert.deepEqual(shape(topicArtifacts(child, state())), ['W2 [mock]'])
+  assert.deepEqual(shape(topicArtifacts(child, state())), ['W2: Work w2 | mock'])
 })
 
 test('topicArtifacts: a work without a topic lists its own, with what its owner drew before it; a review is its report', () => {
-  assert.deepEqual(shape(topicArtifacts(null, state(), task('w3', { ownerSessionId: 'o', updatedAt: 30 }))), ['W3 [elsewhere, loose-other]'])
+  assert.deepEqual(shape(topicArtifacts(null, state(), task('w3', { ownerSessionId: 'o', updatedAt: 30 }))), ['W3: Work w3 | elsewhere | loose-other'])
   const r = state().tasks.find((t) => t.id === 'r1')!
   const reviewed = topicArtifacts(null, state(), r)
-  assert.deepEqual(reviewed.works.map((w) => w.open), [{ kind: 'review', taskId: 'r1' }])
+  assert.deepEqual(reviewed.works.map((w) => w.lines.map((l) => [l.label, l.open])), [[['Review: Work r1', { kind: 'review', taskId: 'r1' }]]])
   assert.equal(reviewed.count, 1)
   assert.deepEqual(workTarget(r), { kind: 'review', taskId: 'r1' })
   assert.deepEqual(workTarget(task('w1')), { kind: 'work', taskId: 'w1' })
   assert.deepEqual(topicArtifacts(null, state()), { works: [], loose: [], count: 0 })
 })
 
-test('topicArtifacts: a canvas two works list shows once, on the line of the work it belongs to; a set root linked from another task is not duplicated', () => {
+test('topicArtifacts: a canvas two works list shows once, with the work it belongs to; a set root linked from another task is not duplicated', () => {
   const s = state({ docs: { w1: '[x](canvas:elsewhere)', w2: '[x](canvas:elsewhere) [y](canvas:plan-root)' } })
   const list = topicArtifacts(topic, s)
-  const keys = [...list.works.flatMap((w) => [...w.chips, ...w.steps.flatMap((st) => st.chips)]), ...list.loose].map((c) => c.key)
+  const keys = [...list.works.flatMap((w) => w.lines), ...list.loose].map((c) => c.key)
   assert.equal(keys.filter((k) => k === 'canvas:elsewhere').length, 1)
   assert.equal(keys.filter((k) => k === 'canvas:plan-root').length, 1)
-  // W2's doc links W1.1's plan: it stays on its step's line.
-  assert.deepEqual(shape(list), ['W2 [doc, elsewhere, mock]', 'W1 [doc]', '  1 · Step one · todo [plan, fact, review: changes]'])
+  // W2's doc links W1.1's plan: it stays with its step.
+  assert.deepEqual(shape(list), ['W2: Work w2 | elsewhere | mock', 'W1: Work w1 | Plan: Step one | What was built: Step one | Review: Step one'])
 })
 
-test("topicArtifacts: steps in order with their phase; options on the work's line; what the tree drew outside a work is This chat", () => {
-  const repo = (prState: string) => ({ work: { dir: 'd', feedbackSeenAt: 0, repos: [{ repo: 'r', branch: 'b', worktree: 'w', prUrl: 'https://github.com/o/r/pull/1', prState }] } })
+test("topicArtifacts: options named after the work, steps' lines in step order; what the tree drew outside a work is last", () => {
   const s = state({
     tasks: [
       task('w', { ownerSessionId: 't', status: 'in_progress' }),
-      task('w.1', { parentId: 'w', key: 'W.1', title: 'Model', status: 'done', ...repo('merged'), review: { ...review, verdict: 'merge' } } as Partial<Task>),
-      task('w.2', { parentId: 'w', key: 'W.2', title: 'Notes', status: 'done' }),
-      task('w.3', { parentId: 'w', key: 'W.3', title: 'Rows', status: 'in_progress', ...repo('open') } as Partial<Task>),
-      task('w.4', { parentId: 'w', key: 'W.4', title: 'UI', status: 'in_progress' }),
-      task('w.5', { parentId: 'w', key: 'W.5', title: 'Docs', status: 'todo' }),
+      task('w.1', { parentId: 'w', key: 'W.1', title: 'Model', status: 'done', review: { ...review, verdict: 'merge' } }),
+      task('w.2', { parentId: 'w', key: 'W.2', title: 'Rows', status: 'in_progress', review: { ...review, verdict: 'look' } }),
     ],
     canvases: [
       canvas('optB', { taskId: 'w', role: 'option', option: 'B' }),
       canvas('optA', { taskId: 'w', role: 'option', option: 'A' }),
+      canvas('fact2', { taskId: 'w', role: 'fact', stepId: 'w.2' }),
+      canvas('wplan', { taskId: 'w', role: 'plan' }),
       canvas('sketch', { taskId: null, sessionId: 'c', kind: 'html', diagram: undefined }),
     ],
     docs: {},
   })
   const list = topicArtifacts(topic, s)
   assert.deepEqual(shape(list), [
-    'W [option A, option B]',
-    '  1 · Model · merged [review: merge]',
-    '  2 · Notes · done []',
-    '  3 · Rows · in review []',
-    '  4 · UI · working []',
-    '  5 · Docs · todo []',
-    'This chat [sketch]',
+    'W: Work w | Option A: Work w | Option B: Work w | Plan: Work w | Review: Model | What was built: Rows | Review: Rows',
+    'loose: sketch',
   ])
-  assert.equal(list.works[0].steps[0].chips[0].tone, 'green')
+  assert.deepEqual(list.works[0].lines.filter((l) => l.tone).map((l) => l.tone), ['green', 'amber'])
+})
+
+test("topicAgents: the tree's agents (not its subtopics) and its works' agents; waiting and working first, done ones apart (topic-screen-one-new-compact.2)", () => {
+  const approval = { kind: 'approval', status: 'pending', id: 'a', at: 1 }
+  const sessions = [
+    topic,
+    child,
+    session('dev', { parentId: 't', role: 'developer', title: 'Fix the login', status: 'running', createdAt: 3 }),
+    session('sub', { parentId: 'c', role: null, origin: 'subagent', title: 'Explore', status: 'idle', createdAt: 4, items: [{ kind: 'user', at: 40 }] } as Partial<AgentSession>),
+    session('g', { taskId: 'w1', role: 'groomer', status: 'idle', createdAt: 1 }),
+    session('wd', { taskId: 'w1', stepId: 'w1.1', role: 'developer', status: 'idle', createdAt: 5, items: [approval] } as Partial<AgentSession>),
+    session('wr', { taskId: 'w1', stepId: 'w1.1', role: 'reviewer', status: 'error', createdAt: 6 }),
+    session('x', { taskId: 'w3', role: 'developer', status: 'running', createdAt: 2 }),
+  ]
+  const pr = { work: { dir: 'd', feedbackSeenAt: 0, repos: [
+    { repo: 'r', branch: 'b', worktree: 'w', prUrl: 'https://github.com/o/r/pull/1', prState: 'closed' },
+    { repo: 's', branch: 'b', worktree: 'w', prUrl: 'https://github.com/o/s/pull/2', prState: 'open' },
+  ] } }
+  const tasks = [
+    task('w1', { ownerSessionId: 't' }),
+    task('w1.1', { parentId: 'w1', key: 'W1.1', title: 'Step one', ...pr } as Partial<Task>),
+    task('w3', { ownerSessionId: 'o' }),
+  ]
+  const got = topicAgents(topic, { tasks, sessions })
+  const lines = (ls: typeof got.active) => ls.map((l) => `${l.role} · ${l.on} · ${l.state}${l.prUrl ? ` · ${l.prUrl}` : ''}`)
+  assert.deepEqual(lines(got.active), [
+    'developer · Step one · waiting · https://github.com/o/s/pull/2',
+    'developer · Fix the login · working',
+    'reviewer · Step one · failed · https://github.com/o/s/pull/2',
+  ], "the open PR of the step; the subtopic c is not an agent; another topic's work's agent x is not here")
+  assert.deepEqual(lines(got.done), ['subagent · Explore · done', 'groomer · Work w1 · done'], 'the newest activity first')
+  assert.equal(got.working, 1)
+  assert.deepEqual(got.active.map((l) => l.open), [{ kind: 'agent', sessionId: 'wd' }, { kind: 'select', id: 'dev' }, { kind: 'agent', sessionId: 'wr' }])
+  // A subtopic lists only what is under it.
+  assert.deepEqual(lines(topicAgents(child, { tasks, sessions }).done), ['subagent · Explore · done'])
+  // A work without a topic: its own agents.
+  assert.deepEqual(lines(topicAgents(null, { tasks, sessions }, tasks[2]).active), ['developer · Work w3 · working'])
 })
 
 test('treeWorks: a review made for a session of the tree is its own; open works first', () => {

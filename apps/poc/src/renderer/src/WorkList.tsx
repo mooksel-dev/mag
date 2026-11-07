@@ -5,12 +5,12 @@ import {
   addGroup,
   canCancel,
   cardFilter,
-  cardMatches,
   cardRef,
   flatCards,
   groupKey,
   moveRef,
   parkedTopics,
+  isSubagent,
   removeGroup,
   renameGroup,
   rowMatches,
@@ -20,6 +20,7 @@ import {
   workCards,
   type CardFilter,
   type AgentSession,
+  type SessionNode,
   type ChatRef,
   type Project,
   type SidebarGroup,
@@ -32,12 +33,15 @@ import { ProjectPicker, ProjectSquare } from './Picker'
 import { SearchPalette } from './SearchPalette'
 import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
-import { SessionRows } from './SessionTree'
+import { DraftRow, SubtopicRows } from './SessionTree'
 
 const mag = window.mag
 
-/** What the list has open: a work (a review too) or a topic without a work. */
-export type Selection = { kind: 'work' | 'topic'; id: string }
+/**
+ * What the list has open: a work (a review too), a topic or subtopic (its session id), or the draft of a New subtopic
+ * under a topic or subtopic (its id: the parent's session id).
+ */
+export type Selection = { kind: 'work' | 'topic' | 'draft'; id: string }
 
 /** The selection a card opens. */
 export const cardSelection = (c: WorkCard): Selection => ({ kind: c.kind === 'topic' ? 'topic' : 'work', id: c.id })
@@ -61,6 +65,24 @@ function useFilter(projectId: string): [CardFilter, (f: CardFilter) => void] {
   }
   return [filter, set]
 }
+
+/** Which topics have their subtopics folded (▸), per project; open by default. */
+function useFolded(projectId: string): [Set<string>, (id: string) => void] {
+  const key = `mag.worklist.folded.${projectId}`
+  const [folded, setFolded] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(key) ?? '[]') as string[]) } catch { return new Set() }
+  })
+  const toggle = (id: string) => {
+    const next = new Set(folded)
+    if (!next.delete(id)) next.add(id)
+    setFolded(next)
+    try { localStorage.setItem(key, JSON.stringify([...next])) } catch { /* ignore */ }
+  }
+  return [folded, toggle]
+}
+
+/** Whether a tree of subtopics has `id`. */
+const hasNode = (nodes: SessionNode[], id: string | undefined): boolean => !!id && nodes.some((n) => n.session.id === id || hasNode(n.children, id))
 
 /** Where a drop puts what is dragged: into a group (or the top level) before a key, or at the end. */
 type Drop = { groupId: string | null; before: string | null }
@@ -91,6 +113,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
   const all = workCards(project.id, tasks, state.sessions, now)
   const [filter, setFilter] = useFilter(project.id)
+  const [folded, toggleFold] = useFolded(project.id)
   const [searching, setSearching] = useState(false)
   const sidebar = sidebarRows(project.sidebar ?? [], all, (c) => rowMatches(c, filter))
   const open = all.filter((c) => !c.closed)
@@ -147,37 +170,41 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
     onDragStart: (e: DragEvent) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', key); setMenu(null); setDrag(key) },
     onDragEnd: () => { setDrag(null); setOver(null) },
   })
-  /** A row; a chat's with its works under it (a child moves with its chat, it is not dragged on its own). */
+  /**
+   * A row; a topic's with its subtopics under it, nested, behind its ▸/▾ (topic-screen-one-new-compact.2). Its works and
+   * agents are on its page. A topic is the current row while one of its works is open; a subtopic moves with its topic.
+   */
   const row = (c: WorkCard, groupId: string | null) => {
     const ref = cardRef(c)
-    const one = (k: WorkCard, child: boolean, done = 0) => (
+    const subs = topicKids(c)
+    const sel = selected?.kind === 'topic' ? selected.id : null
+    const draftOf = selected?.kind === 'draft' ? selected.id : null
+    const draftHere = !!draftOf && (draftOf === c.id || hasNode(subs, draftOf))
+    // The open subtopic or draft stays in sight.
+    const open = !folded.has(c.id) || hasNode(subs, sel ?? undefined) || draftHere
+    const one = (
       <Row
-        key={cardRef(k)}
-        card={k}
+        key={ref}
+        card={c}
         now={now}
-        child={child}
-        done={done}
-        on={selected?.id === k.id}
-        menu={menu === cardRef(k)}
-        over={!child && over === ref}
-        drag={child || c.closed ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
-        onMenu={(o) => setMenu(o ? cardRef(k) : null)}
+        on={(selected?.kind !== 'draft' && selected?.id === c.id) || (selected?.kind === 'work' && !!c.children?.some((k) => k.id === selected.id))}
+        menu={menu === ref}
+        over={over === ref}
+        fold={subs.length || draftOf === c.id ? { open, toggle: () => toggleFold(c.id) } : null}
+        drag={c.closed ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
+        onMenu={(o) => setMenu(o ? ref : null)}
         onSelect={onSelect}
-        onGone={() => gone(k)}
+        onGone={() => gone(c)}
       />
     )
-    if (!c.children && !c.sessions) return one(c, false)
-    // One line per topic: a child has its own only while it runs or waits on you (and the open one); done ones are the
-    // row's "N ✓". Under a filter, the matching works show.
-    const shown = topicKids(c, selected?.id ?? null)
-    const works = hiding ? (c.children ?? []).filter((k) => cardMatches(k, filter)) : shown.works
+    if (!subs.length && draftOf !== c.id) return one
     return (
       <div key={ref} className="wlchat">
-        {one(c, false, shown.done)}
-        {(shown.sessions.length > 0 || works.length > 0) && (
-          <div className="wlkids" aria-label={`Under ${c.title}`}>
-            <SessionRows nodes={shown.sessions} selectedId={selected?.kind === 'topic' ? selected.id : null} onSelect={onSelect} />
-            {works.map((k) => one(k, true))}
+        {one}
+        {open && (
+          <div className="wlkids" aria-label={`Subtopics of ${c.title}`}>
+            <SubtopicRows nodes={subs} selectedId={sel} draftOf={draftOf} onSelect={onSelect} />
+            {draftOf === c.id && <DraftRow />}
           </div>
         )}
       </div>
@@ -190,7 +217,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   }
   const empty = !open.length
   return (
-    <nav className="worklist" aria-label="Works">
+    <nav className="worklist" aria-label="Topics">
       <div className="wlhead2">
         <div className="projmenu">
           <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => onPicker(picker ? null : 'open')}>
@@ -203,9 +230,9 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
           ＋ New topic <kbd>⌘N</kbd>
         </button>
-        <button className="wlsearch" aria-haspopup="dialog" aria-expanded={searching} title="Search chats and works by title, summary and messages, archive included" onClick={() => setSearching(true)}>
+        <button className="wlsearch" aria-haspopup="dialog" aria-expanded={searching} title="Search topics by title, summary and messages, archive included" onClick={() => setSearching(true)}>
           <span aria-hidden>⌕</span>
-          <span className="wlsearchtext">Search works and chats</span>
+          <span className="wlsearchtext">Search topics</span>
           <kbd>⌘K</kbd>
         </button>
         {searching && (
@@ -217,7 +244,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           />
         )}
         {open.length > 0 && (
-          <div className="wlfilters" role="tablist" aria-label="Filter works">
+          <div className="wlfilters" role="tablist" aria-label="Filter topics">
             {CARD_FILTERS.map((f) => (
               <button key={f} role="tab" aria-selected={filter === f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>
                 {CARD_FILTER_LABELS[f]} <span className="count">{cardFilter(counted, f).length}</span>
@@ -228,7 +255,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
       </div>
       <div className="wlscroll">
         {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
-        {!all.length && <p className="muted small pad">No works yet. Start one with ＋ New: a discussion opens, and its agent plans the work with you.</p>}
+        {!all.length && <p className="muted small pad">No topics yet. Start one with ＋ New topic: a conversation opens with the agent.</p>}
         {!empty && hiding && !sidebar.entries.length && <p className="muted small pad">Nothing here.</p>}
         {sidebar.entries.map((e) => e.kind === 'row' ? row(e.card, null) : (
           <Group
@@ -380,7 +407,7 @@ function Group({ group: g, open, naming, over, drag, children, onToggle, onRenam
             <span aria-hidden>{open ? '▾' : '▸'}</span> {g.name} <span className="count">{g.rows.length}</span>
           </button>
         )}
-        <button className="wlgbtn" aria-label={`New in ${g.name}`} title={`Ask, start a work or review a PR in ${g.name}`} onClick={onNew}>＋</button>
+        <button className="wlgbtn" aria-label={`New in ${g.name}`} title={`Ask, start a topic or review a PR in ${g.name}`} onClick={onNew}>＋</button>
         <button className="wlgbtn" aria-label={`More for ${g.name}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>⋯</button>
         {menu && (
           <>
@@ -399,20 +426,18 @@ function Group({ group: g, open, naming, over, drag, children, onToggle, onRenam
 }
 
 /**
- * A row on one line (topic-screen-one-new-compact.1): its state dot, title, then "you" when it waits on you, else the
- * count of its done children ("N ✓"), else the time. The status line under it (whose move) only while it works or
- * waits on you. ⋯ on hover and a right-click open its menu; it is dragged to move it.
+ * A row on one line (topic-screen-one-new-compact.1): a topic's ▸/▾ when it has subtopics, its state dot, title, then
+ * "you" when it waits on you, else the time. The status line under it (whose move) only while it works or waits on you.
+ * ⋯ on hover and a right-click open its menu; it is dragged to move it.
  */
-function Row({ card: c, now, child, done, on, menu, over, drag, onMenu, onSelect, onGone }: {
+function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGone }: {
   card: WorkCard
   now: number
-  /** A work under its topic's row: indented, one line; its key in the tooltip. */
-  child: boolean
-  /** A topic's done children. */
-  done: number
   on: boolean
   menu: boolean
   over: boolean
+  /** A topic with subtopics: whether they show, and its toggle. */
+  fold: { open: boolean; toggle: () => void } | null
   drag: DragProps
   onMenu: (open: boolean) => void
   onSelect: (s: Selection) => void
@@ -420,21 +445,22 @@ function Row({ card: c, now, child, done, on, menu, over, drag, onMenu, onSelect
 }) {
   const tone = c.move.who === 'you' ? 'you' : c.move.who === 'agent' ? 'agent' : 'other'
   const you = !c.closed && c.group === 'waiting'
-  const status = !child && !c.closed && (c.group === 'working' || c.group === 'waiting')
+  const status = !c.closed && (c.group === 'working' || c.group === 'waiting')
   const time = threadTime(c.at, now)
   return (
     <div
-      className={`wlrow${child ? ' wlchild' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
+      className={`wlrow${fold ? ' folds' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
       onContextMenu={(e) => { e.preventDefault(); onMenu(true) }}
       {...drag}
     >
+      {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}>{fold.open ? '▾' : '▸'}</button>}
       <button className="wlmain" title={[c.task?.key, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
         <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} aria-hidden />
         <span className="title">{c.title}</span>
-        {you ? <span className="wlbadge amber">you</span> : done > 0 ? <span className="wltime" title={`${done} done`}>{done} ✓</span> : <span className="wltime">{time}</span>}
+        {you ? <span className="wlbadge amber">you</span> : <span className="wltime">{time}</span>}
         {status && <span className={`wlmove ${tone}`}>{c.move.text}</span>}
       </button>
-      <button className="wlmore" aria-label={`More for ${c.title}`} aria-haspopup="menu" aria-expanded={menu} title="Rename, close, delete…" onClick={() => onMenu(!menu)}>⋯</button>
+      <button className="wlmore" aria-label={`More for ${c.title}`} aria-haspopup="menu" aria-expanded={menu} title="New subtopic, rename, close, delete…" onClick={() => onMenu(!menu)}>⋯</button>
       {menu && <RowMenu card={c} onClose={() => onMenu(false)} onSelect={onSelect} onGone={onGone} />}
     </div>
   )
@@ -491,22 +517,25 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
     body = (
       <form className="wlask" onSubmit={(e) => { e.preventDefault(); act(() => mag.cancel(t.id, text.trim() || null))() }}>
         <input autoFocus value={text} placeholder="Why close it? (optional)" aria-label="Reason" onChange={(e) => setText(e.target.value)} />
-        <button className="small primary">Close work</button>
+        <button className="small primary">Close</button>
       </form>
     )
   } else if (c.kind === 'topic' && s) {
     const canBranch = s.agent === 'claude-code' && !!s.nativeSessionId
+    // A subagent, or mag's topic of a PR review, starts nothing under it (startChild refuses).
+    const canSub = !isSubagent(s) && !s.reviewOf
     body = (
       <>
         {reference}
+        {canSub && <button role="menuitem" title="A new conversation under this one; kept once you write in it" onClick={() => { onClose(); onSelect({ kind: 'draft', id: s.id }) }}>New subtopic</button>}
         <button role="menuitem" onClick={() => ask('rename', c.title)}>Rename</button>
-        <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A session under this one that starts with everything said here' : 'Needs a topic with a Claude Code session (send a message first)'} onClick={act(() => mag.startChild(s.id, '', null, true).then((c) => onSelect({ kind: 'topic', id: c.id })))}>Branch</button>
+        <button role="menuitem" disabled={!canBranch} title={canBranch ? 'A subtopic that starts with everything said here' : 'Needs a topic with a Claude Code conversation (send a message first)'} onClick={act(() => mag.startChild(s.id, '', null, true).then((c) => onSelect({ kind: 'topic', id: c.id })))}>Branch</button>
         <hr />
         {c.closed
           ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>
           : <button role="menuitem" onClick={act(() => mag.closeChat(s.id))}>Close (keep history)</button>}
         <button role="menuitem" className="danger" onClick={() => {
-          if (!confirm(`Delete topic "${c.title}"${c.sessions?.length ? ' and the sessions under it' : ''}? Its history is lost.`)) return onClose()
+          if (!confirm(`Delete topic "${c.title}"${c.sessions?.length ? ' with its subtopics and agents' : ''}? Its history is lost.`)) return onClose()
           act(() => mag.deleteChat(s.id).then(onGone))()
         }}>Delete…</button>
       </>
@@ -526,7 +555,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
         <button role="menuitem" className="danger" onClick={() => {
           const q = review
             ? `Delete review ${t.key}? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`
-            : `Delete work ${t.key} "${c.title}"? Its steps, conversations, doc and diagrams go for good; branches and PRs stay.`
+            : `Delete "${c.title}" (${t.key})? Its steps, conversations, doc and diagrams go for good; branches and PRs stay.`
           if (!confirm(q)) return onClose()
           act(() => mag.deleteWork(t.id).then(onGone))()
         }}>Delete…</button>
