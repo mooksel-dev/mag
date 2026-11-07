@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, isLegacy, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Idea, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -14,8 +14,6 @@ interface Data {
   canvases: Record<string, Canvas>
   /** Project activity log, oldest first; kept after its task is deleted. */
   events: ProjectEvent[]
-  /** Ideas of every project (T-55.6), in the order they were added. */
-  ideas: Idea[]
   /** MCP servers agents reported on start; global, since connectors belong to the account. */
   integrations: Integration[]
   /** Window layout; not app state, so not sent to the renderer. */
@@ -25,6 +23,19 @@ interface Data {
   /** Before schemaVersion: migrateToSteps has run (T-28). */
   stepsMigrated?: boolean
 }
+
+/** An idea as stored before ideas-are-parked-topics.1 (T-55.6), until migrateToParkedTopics turns it into a topic. */
+interface LegacyIdea {
+  id: string
+  projectId: string
+  text: string
+  createdAt: number
+  source?: string | null
+  /** The topic that discussed it. */
+  topicId?: string | null
+}
+
+type LegacyData = Data & { ideas?: LegacyIdea[] }
 
 /** A project window that was open, to reopen on start. */
 export interface ProjectWindow {
@@ -98,14 +109,13 @@ export function migrateArch(a: ArchDiagram | LegacyArch | null | undefined): Arc
 
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], ideas: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private file: string) {
     if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
     this.data.events ??= []
-    this.data.ideas ??= []
     this.data.integrations ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
     this.data.ui.windows ??= {}
@@ -164,6 +174,7 @@ export class Store {
     () => this.migrateToReviewResults(),
     () => this.migrateToClosedMark(),
     () => this.migrateToSessionTree(),
+    () => this.migrateToParkedTopics(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -186,6 +197,33 @@ export class Store {
     // Through migrateToSteps.
     if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
     return 0
+  }
+
+  /**
+   * An idea is a parked topic (ideas-are-parked-topics.1): each idea becomes a parked chat topic titled after it, its
+   * text the brief. One with a topic of its own parks that topic, unless the topic has messages: then it stays a live
+   * topic with the brief. The ideas list goes.
+   */
+  private migrateToParkedTopics() {
+    const data = this.data as LegacyData
+    const used = new Set<string>()
+    const talked = (s: AgentSession) => s.items.some((i) => i.kind === 'user' || i.kind === 'job' || i.kind === 'assistant')
+    for (const idea of data.ideas ?? []) {
+      const brief = idea.text.trim()
+      if (!brief || !this.data.projects.some((p) => p.id === idea.projectId)) continue
+      const own = idea.topicId && !used.has(idea.topicId) ? this.data.sessions.find((s) => s.id === idea.topicId && s.projectId === idea.projectId && s.role === 'chat' && !s.taskId && !s.parentId) : undefined
+      const topic = own ?? this.newTopic(idea.projectId, idea.createdAt)
+      used.add(topic.id)
+      topic.brief = brief
+      topic.source = idea.source ?? null
+      if (own && talked(own)) continue
+      topic.title = ideaTitle(brief).slice(0, 60)
+      topic.titleGenerated = true
+      // parkedAt marks a parked topic, so it is never 0 (an old idea without a real time).
+      topic.parkedAt = idea.createdAt || Date.now()
+      topic.closedAt = null
+    }
+    delete data.ideas
   }
 
   /**
@@ -249,7 +287,9 @@ export class Store {
       else if (status === 'backlog' && started(t)) t.status = 'planning'
       else if (status === 'backlog') {
         const text = [t.title, t.description.trim(), ...(t.tickets ?? []).map((x) => x.url)].filter(Boolean).join('\n\n')
-        this.data.ideas.push({ id: id(), projectId: t.projectId, text, createdAt: t.createdAt })
+        const legacy = this.data as LegacyData
+        legacy.ideas ??= []
+        legacy.ideas.push({ id: id(), projectId: t.projectId, text, createdAt: t.createdAt })
         this.data.tasks = this.data.tasks.filter((x) => x.id !== t.id)
         delete this.data.docs[t.id]
       } else continue
@@ -647,31 +687,28 @@ export class Store {
     this.changed()
   }
 
-  addIdea(projectId: string, text: string, source?: string | null): Idea {
+  /**
+   * Parks a new topic, an idea (ideas-are-parked-topics.1): titled after `text` (trimmed, required), which is its brief;
+   * `source`: the work or step key whose agent parked it.
+   */
+  parkTopic(projectId: string, text: string, source?: string | null): AgentSession {
     this.project(projectId)
-    const idea: Idea = { id: id(), projectId, text: ideaText(text), createdAt: Date.now(), ...(source && { source }) }
-    this.data.ideas.push(idea)
+    const brief = ideaText(text)
+    const now = Date.now()
+    const topic = this.newTopic(projectId, now)
+    Object.assign(topic, { title: ideaTitle(brief).slice(0, 60), titleGenerated: true, parkedAt: now, brief, source: source ?? null })
     this.changed()
-    return idea
+    return topic
   }
 
-  idea(ideaId: string) {
-    const i = this.data.ideas.find((x) => x.id === ideaId)
-    if (!i) throw new Error(`No idea ${ideaId}`)
-    return i
-  }
-
-  updateIdea(ideaId: string, patch: { text?: string; topicId?: string | null }) {
-    const idea = this.idea(ideaId)
-    if (patch.text !== undefined) idea.text = ideaText(patch.text)
-    if (patch.topicId !== undefined) idea.topicId = patch.topicId
-    this.changed()
-  }
-
-  deleteIdea(ideaId: string) {
-    this.idea(ideaId)
-    this.data.ideas = this.data.ideas.filter((i) => i.id !== ideaId)
-    this.changed()
+  /** An empty chat topic of the project, run by the project's chat agent. */
+  private newTopic(projectId: string, createdAt: number): AgentSession {
+    const topic: AgentSession = {
+      id: id(), projectId, taskId: null, stepId: null, role: 'chat', agent: resolveChoice(this.project(projectId), 'chat').agent,
+      status: 'idle', title: 'New topic', createdAt, items: [], nativeSessionId: null,
+    }
+    this.data.sessions.push(topic)
+    return topic
   }
 
   createSession(s: Omit<AgentSession, 'id' | 'createdAt' | 'items' | 'nativeSessionId'>): AgentSession {
@@ -715,13 +752,12 @@ export class Store {
 
   /**
    * Removes a session with the sessions under it (its tree, topics-a-tree-of-agent.2); canvases drawn in them and events
-   * stay. An idea one of them discussed has no discussion again.
+   * stay.
    */
   deleteSession(sid: string) {
     this.session(sid)
     const gone = new Set(sessionTree(sid, this.data.sessions).map((s) => s.id))
     this.data.sessions = this.data.sessions.filter((s) => !gone.has(s.id))
-    for (const i of this.data.ideas) if (i.topicId && gone.has(i.topicId)) i.topicId = null
     this.changed()
   }
 }

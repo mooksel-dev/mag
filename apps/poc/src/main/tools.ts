@@ -1,4 +1,4 @@
-import { MAG_MCP_ID, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, projectIdeas, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -864,11 +864,6 @@ async function setArchitecture(store: Store, project: Project, args: Record<stri
   return notes.join(' ')
 }
 
-/** The idea a topic discusses leaves the list once that topic owns a work: the work carries it on. */
-function ideaBecameWork(store: Store, topicId: string) {
-  for (const i of store.data.ideas.filter((x) => x.topicId === topicId)) store.deleteIdea(i.id)
-}
-
 /** Puts a card of the canvas into the run's chat. */
 function showInChat(store: Store, ctx: ToolContext, canvas: Canvas) {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
@@ -911,7 +906,7 @@ function sharedTool(
             tickets: t.tickets?.length ? t.tickets.map((x) => x.url) : undefined,
             cancelReason: t.cancelReason ?? undefined,
           })),
-          ideas: projectIdeas(store.data.ideas, project.id).map((i) => ({ text: i.text, source: i.source ?? undefined })),
+          ideas: parkedTopics(project.id, store.data.sessions).map((s) => ({ text: s.brief ?? s.title ?? '', source: s.source ?? undefined })),
         },
         null,
         2,
@@ -962,7 +957,6 @@ function sharedTool(
       }
       for (const s of steps) store.createTask({ projectId: project.id, parentId: t.id, title: s.title, type: t.type, description: s.note, status: 'todo', startManually: s.startManually })
       const moved = adopted(store, t.id, md)
-      if (owner) ideaBecameWork(store, owner)
       if (plan) return `Created ${t.key}, ready; the user starts it.${moved}`
       return owner
         ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user approves the plan when it is ready.${moved}`
@@ -982,7 +976,6 @@ function sharedTool(
       const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       if (!session || runRole(session) !== 'chat') throw new Error('reopen_work is for a project chat')
       const said = actions.reopen(t.id, String(args.what ?? ''), session.id)
-      ideaBecameWork(store, session.id)
       return `${said} Plan what is left right here: update_doc, diagrams and create_subtask with work: "${t.key}"; its done steps stay. The user approves the plan when it is ready.`
     }
 
@@ -1037,8 +1030,8 @@ function sharedTool(
       // A step's developer or reviewer found it in that step; a groomer or an owner topic in its work.
       const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
       const source = stepId ? store.task(stepId).key : ctx.taskId ? store.task(ctx.taskId).key : null
-      store.addIdea(project.id, String(args.text ?? ''), source)
-      return "Added to the project's ideas; the user decides if it becomes a work. Go on with yours."
+      store.parkTopic(project.id, String(args.text ?? ''), source)
+      return "Added to the project's ideas as a parked topic; the user decides if it becomes a work. Go on with yours."
     }
 
     case 'update_task': {

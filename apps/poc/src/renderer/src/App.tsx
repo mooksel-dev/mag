@@ -33,7 +33,6 @@ import { workTarget } from './artifacts'
 import { ownerSession, TopicConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
-import { IdeasPage } from './Ideas'
 import { Logo } from './Logo'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { useTheme, type ThemeMode } from './useTheme'
@@ -44,12 +43,12 @@ const mag = window.mag
 const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 /** Pages the list's footer opens; they take the place of the conversation. */
 type Page = ListPage
-const PAGE_NAMES: Record<Page, string> = { ideas: 'Ideas', architecture: 'Architecture', settings: 'Settings' }
+const PAGE_NAMES: Record<Page, string> = { architecture: 'Architecture', settings: 'Settings' }
 
 /**
  * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
  * the left, the open topic's screen (or Home) in the rest; what a topic made is in its artifacts list and opens in a
- * drawer (topics-a-tree-of-agent.3). Ideas, Architecture and Settings open from the list's footer.
+ * drawer (topics-a-tree-of-agent.3). Architecture and Settings open from the list's footer.
  */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
@@ -60,8 +59,6 @@ export function App({ projectId }: { projectId: string }) {
   const [selected, setSelected] = useState<Selection | null>(() => {
     try { return JSON.parse(localStorage.getItem(selKey) ?? 'null') as Selection | null } catch { return null }
   })
-  /** The idea open on the Ideas page. */
-  const [ideaId, setIdeaId] = useState<string | null>(null)
   const [theme, setTheme] = useTheme()
   const leftPane = usePaneWidth('left')
   // A group's + opened Home: what it creates goes first in that group.
@@ -154,9 +151,7 @@ export function App({ projectId }: { projectId: string }) {
                 <div className="grow" />
                 <button className="small" onClick={() => setPage(null)}>✕ Close</button>
               </div>
-              {page === 'ideas' ? (
-                <IdeasPage project={project} state={state} ideaId={ideaId} onOpenIdea={setIdeaId} onOpenKey={openKey} onOpenTopic={(id) => select({ kind: 'topic', id })} />
-              ) : page === 'architecture' ? (
+              {page === 'architecture' ? (
                 <Architecture key={project.id} project={project} />
               ) : (
                 <Settings project={project} integrations={state.integrations} />

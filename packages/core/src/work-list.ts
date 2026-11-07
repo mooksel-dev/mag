@@ -347,9 +347,9 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
  * and not the user's topic that a review shows through (legacy). Each has a row; the works it owns are its children.
  */
 function chatTopics(mine: AgentSession[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
-  // A session under a topic is in that topic's tree, not a row (topics-a-tree-of-agent.2).
+  // A session under a topic is in that topic's tree, not a row (topics-a-tree-of-agent.2); a parked one is an idea.
   return mine.filter((s) =>
-    s.role === 'chat' && !s.taskId && !s.parentId && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+    s.role === 'chat' && !s.taskId && !s.parentId && !s.parkedAt && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
 }
 
 const finished = (t: Task) => t.status === 'done' || t.status === 'canceled'
@@ -444,7 +444,7 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
 
 /**
  * The project's rows as cards (`tasks` are the project's), newest created first; done, canceled and closed ones
- * included. Every chat topic is a row, and the works it owns (not reviews) are its `children`; works without a chat
+ * included. Every chat topic is a row (a parked one is not: it is an idea, see parkedTopics), and the works it owns (not reviews) are its `children`; works without a chat
  * owner (groomer, ticket, a deleted topic) and reviews are rows of their own. A work's agents are its own sessions and
  * its owner topic (a review's: its topics). The order means nothing to the sidebar (see sidebarRows): it never moves a row.
  */

@@ -10,6 +10,7 @@ import {
   flatCards,
   groupKey,
   moveRef,
+  parkedTopics,
   removeGroup,
   renameGroup,
   rowMatches,
@@ -18,6 +19,7 @@ import {
   topicKids,
   workCards,
   type CardFilter,
+  type AgentSession,
   type ChatRef,
   type Project,
   type SidebarGroup,
@@ -41,7 +43,7 @@ export type Selection = { kind: 'work' | 'topic'; id: string }
 export const cardSelection = (c: WorkCard): Selection => ({ kind: c.kind === 'topic' ? 'topic' : 'work', id: c.id })
 
 /** Pages the footer opens in place of the conversation. */
-export type ListPage = 'ideas' | 'architecture' | 'settings'
+export type ListPage = 'architecture' | 'settings'
 
 /** A group the user starts something in (its +): Home puts what it creates first in that group. */
 export interface HomeGroup { id: string; name: string }
@@ -94,7 +96,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const open = all.filter((c) => !c.closed)
   // Counts count each row that matches on its own, a chat's works included: "Waiting on you 2" is two things to act on.
   const counted = flatCards(open)
-  const ideas = state.ideas.filter((i) => i.projectId === project.id).length
+  const ideas = parkedTopics(project.id, state.sessions)
   const [showClosed, setShowClosed] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
   const [drag, setDrag] = useState<string | null>(null)
@@ -250,6 +252,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
             ＋ New group
           </button>
         )}
+        {!hiding && <Ideas topics={ideas} projectId={project.id} selectedId={selected?.kind === 'topic' ? selected.id : null} now={now} onSelect={onSelect} />}
         {sidebar.closed.length > 0 && (
           <div className="wlclosed">
             <button className="wlfold" aria-expanded={showClosed} onClick={() => setShowClosed((d) => !d)}>
@@ -260,11 +263,86 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         )}
       </div>
       <div className="wlfoot">
-        <button className={`link${page === 'ideas' ? ' on' : ''}`} onClick={() => onOpenPage('ideas')}>Ideas · {ideas}</button>
         <button className={`link${page === 'architecture' ? ' on' : ''}`} onClick={() => onOpenPage('architecture')}>Architecture</button>
         <button className={`link wlgear${page === 'settings' ? ' on' : ''}`} title="Settings" aria-label="Settings" onClick={() => onOpenPage('settings')}>⚙</button>
       </div>
     </nav>
+  )
+}
+
+/**
+ * The project's ideas (ideas-are-parked-topics.1): its parked topics, a line each, in a section collapsed by default;
+ * a click opens the topic, + Idea parks a new one with the typed text (its first line is the title).
+ */
+function Ideas({ topics, projectId, selectedId, now, onSelect }: {
+  topics: AgentSession[]
+  projectId: string
+  selectedId: string | null
+  now: number
+  onSelect: (s: Selection) => void
+}) {
+  const key = `mag.worklist.ideas.${projectId}`
+  const [open, setOpen] = useState(() => localStorage.getItem(key) === 'open')
+  const [draft, setDraft] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // The open idea stays in sight.
+  const shown = open || topics.some((t) => t.id === selectedId)
+  const toggle = () => {
+    setOpen(!shown)
+    try { localStorage.setItem(key, shown ? 'closed' : 'open') } catch { /* ignore */ }
+  }
+  const add = () => {
+    const text = draft?.trim()
+    if (!text) return
+    mag.addIdea(projectId, text).then((id) => { setDraft(null); setError(null); onSelect({ kind: 'topic', id }) }, (e: Error) => setError(e.message))
+  }
+  return (
+    <div className="wlideas">
+      <button className="wlfold" aria-expanded={shown} onClick={toggle}>
+        {shown ? '▾' : '▸'} Ideas · {topics.length}
+      </button>
+      {shown && (
+        <>
+          {topics.map((t) => (
+            <div
+              key={t.id}
+              className={`row wlidea${selectedId === t.id ? ' on' : ''}`}
+              role="button"
+              tabIndex={0}
+              title={t.brief ?? t.title}
+              onClick={() => onSelect({ kind: 'topic', id: t.id })}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSelect({ kind: 'topic', id: t.id }) }}
+            >
+              <span className="wlideatitle">{t.title}</span>
+              <span className="muted small">{t.source ?? ''} {threadTime(t.parkedAt!, now)}</span>
+            </div>
+          ))}
+          {draft === null ? (
+            <button className="wlfold" onClick={() => setDraft('')}>＋ Idea</button>
+          ) : (
+            <form className="ideaadd" onSubmit={(e) => { e.preventDefault(); add() }}>
+              <textarea
+                autoFocus
+                rows={3}
+                value={draft}
+                placeholder="An idea… The first line is its title."
+                aria-label="New idea"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setDraft(null)
+                  else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add() }
+                }}
+              />
+              {error && <div className="error small">{error}</div>}
+              <div className="ideaaddactions">
+                <button type="submit" className="primary small" disabled={!draft.trim()}>Add</button>
+                <button type="button" className="small" onClick={() => setDraft(null)}>Cancel</button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, ideaContext, ideaPrompt, ideaTitle, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -205,8 +205,8 @@ ${orientation(playbook.reviewRounds)}
   started from a ticket link.
 - The user wants more of a done work ("X is still needed"): reopen_work(key, what) instead of create_work; it is
   back in planning, this topic owns it, and you plan the new steps here as above.
-- Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line. list_tasks shows
-  the ideas; when the user starts a work from one, plan it like any other.
+- Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line; it parks a topic
+  of its own. list_tasks shows the ideas; the user opens one to discuss it, and a work from it is planned like any other.
 - The user asks you to review a teammate's PR (a GitHub PR link, "поревюй <url>"): review_pr(url), then do the job it
   answers with, right here. You own that review: when the user asks for more, revise it and record it again with
   set_pr_review. Nothing you run writes to the PR.
@@ -600,31 +600,6 @@ export class Orchestrator {
     const session = this.store.session(sessionId)
     if (session.taskId || (session.role !== 'chat' && !session.parentId)) throw new Error(`Session ${sessionId} is not a topic or a session under one`)
     return session
-  }
-
-  /** The topic that discusses an idea: its own, created the first time and titled after it. */
-  discussIdea(ideaId: string) {
-    const idea = this.store.idea(ideaId)
-    if (idea.topicId && this.store.data.sessions.some((s) => s.id === idea.topicId)) return idea.topicId
-    const topic = this.store.session(this.newChat(idea.projectId))
-    topic.title = ideaTitle(idea).slice(0, 60)
-    topic.titleGenerated = true
-    this.store.updateIdea(ideaId, { topicId: topic.id })
-    return topic.id
-  }
-
-  /**
-   * Starts a work from an idea; returns the topic that plans and owns it. A discussed idea starts in its own topic and
-   * leaves the list once the work is created there (create_work); one without a discussion in a new topic, at once.
-   */
-  startIdea(ideaId: string) {
-    const idea = this.store.idea(ideaId)
-    const topic = idea.topicId ? this.store.data.sessions.find((s) => s.id === idea.topicId) : undefined
-    if (topic && this.isRunning(topic.id)) throw new Error('The idea\'s topic is still working; start the work when it is done')
-    const sid = topic?.id ?? this.newChat(idea.projectId)
-    if (!topic) this.store.deleteIdea(ideaId)
-    void this.send(sid, ideaPrompt(idea, !!topic), [], 'Start a work from an idea').catch((e) => log.warn('ideas', 'starting a work from an idea failed', e))
-    return sid
   }
 
   /** A project topic, or a session under one (topics-a-tree-of-agent.2): renamed, closed, deleted the same way. */
@@ -1866,8 +1841,9 @@ export class Orchestrator {
     const session = this.store.session(sessionId)
     if (isSubagent(session)) throw new Error('A subagent is read-only: write to the session above it')
     if (this.runs.has(sessionId) || this.preparing.has(sessionId)) throw new Error('Agent is still working')
-    // Writing to a closed topic opens it again.
+    // Writing to a closed topic opens it again; the user's first message in a parked one (an idea) makes it live.
     this.store.reopenSession(sessionId)
+    if (!job && session.parkedAt) session.parkedAt = null
     // Only chats of the session's project: their summaries go into its prompt.
     const tasks = this.store.data.tasks.filter((t) => t.projectId === session.projectId)
     const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId)
@@ -1999,8 +1975,6 @@ export class Orchestrator {
     const [first = homedir(), ...rest] = project.repos
     const arch = project.enforceArchitecture ? `\n\n${ARCH_RULES}` : ''
     if (session.role === 'chat' || !session.taskId) {
-      // A topic opened from an idea discusses it (its text as of the topic's first run).
-      const idea = this.store.data.ideas.find((i) => i.topicId === session.id)
       // A topic that reviews a teammate's PR works in its scratch worktrees, never in the user's checkout.
       const scratch = this.scratches.get(session.id)
       // mag's topic for a teammate's PR review reads only (topics-a-tree-of-agent.1); any other topic is full Claude Code.
@@ -2012,7 +1986,7 @@ export class Orchestrator {
       return {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
-        appendSystemPrompt: prompt + arch + blocks(idea ? ideaContext(idea) : '') + blocks(contextBlocks({ notes: project.notes })),
+        appendSystemPrompt: prompt + arch + blocks(briefContext(session)) + blocks(contextBlocks({ notes: project.notes })),
         // Listed so they run without a card: under -p, a tool neither allowed nor denied goes to approve_tool, which denies
         // all but GitHub writes. Never a merge or a push to a base.
         allowedTools: reads ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
@@ -2534,7 +2508,7 @@ export class Orchestrator {
    */
   private nameChat(session: AgentSession): Promise<void> | undefined {
     if (session.role !== 'chat' || session.titleGenerated || session.status === 'error' || this.naming.has(session.id)) return
-    // A topic mag started with a job (a work from an idea) is named from the job.
+    // A topic mag started with a job is named from the job.
     const first = session.items.find((i) => i.kind === 'user' || i.kind === 'job')
     const reply = session.items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : [])).join('\n\n')
     if ((first?.kind !== 'user' && first?.kind !== 'job') || !reply) return

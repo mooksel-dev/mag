@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { approvalCommand, approvalName, workSections, ideaContext, ideaPrompt, ideaText, ideaTitle, projectIdeas, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { approvalCommand, approvalName, workSections, briefContext, ideaText, ideaTitle, parkedTopics, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -207,21 +207,25 @@ test('taskChangeEvents: a done work back in planning is reopened (T-55.6)', () =
   assert.deepEqual(texts(task('t', 'done'), task('t', 'planning')), ['status:Reopened'])
 })
 
-test('ideas: per project, newest first; a text is required; the prompt that starts a work from one (T-55.6)', () => {
-  const idea = (id: string, projectId: string, createdAt: number) => ({ id, projectId, text: id, createdAt })
-  assert.deepEqual(projectIdeas([idea('a', 'p', 1), idea('b', 'q', 2), idea('c', 'p', 3)], 'p').map((i) => i.id), ['c', 'a'])
+test('ideas are parked topics: per project, newest parked first; a text is required; the brief in the prompt (ideas-are-parked-topics.1)', () => {
+  const topic = (id: string, projectId: string, parkedAt: number | null, patch: Partial<AgentSession> = {}): AgentSession =>
+    ({ id, projectId, taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [], createdAt: 0, parkedAt, ...patch })
+  const sessions = [
+    topic('a', 'p', 1), topic('b', 'q', 2), topic('c', 'p', 3), topic('live', 'p', null), topic('d', 'p', 3),
+    topic('child', 'p', 4, { parentId: 'a' }), topic('work', 'p', 4, { taskId: 't', role: 'developer' }),
+  ]
+  assert.deepEqual(parkedTopics('p', sessions).map((s) => s.id), ['d', 'c', 'a'])
   assert.equal(ideaText('  cache rates \n'), 'cache rates')
   assert.throws(() => ideaText(' '), /An idea needs a text/)
-  assert.match(ideaPrompt({ text: 'dup retry', source: 'T-3.1' }), /idea \(found in T-3\.1\):\n\ndup retry\n\n.*reopen_work/s)
-  assert.ok(!ideaPrompt({ text: 'x' }).includes('found in'))
-  assert.match(ideaPrompt({ text: 'x' }, true), /^Let's start a work from the idea we discussed here:\n\nx\n/)
-  assert.match(ideaContext({ text: 'dup retry', source: 'T-3.1' }), /^## The idea this topic discusses\n.*\(found in T-3\.1\).*\n\ndup retry$/s)
+  assert.match(briefContext({ brief: 'dup retry', source: 'T-3.1' }), /^## The idea this topic is about\n.*\(found in T-3\.1\).*\n\ndup retry$/s)
+  assert.ok(!briefContext({ brief: 'x' }).includes('found in'))
+  assert.equal(briefContext({ brief: null }), '')
 })
 
 test('ideaTitle: the first non-empty line, cut', () => {
-  assert.equal(ideaTitle({ text: '\n  Cache rates  \nwhy: the API is slow' }), 'Cache rates')
-  const long = ideaTitle({ text: 'x'.repeat(300) })
+  assert.equal(ideaTitle('\n  Cache rates  \nwhy: the API is slow'), 'Cache rates')
+  const long = ideaTitle('x'.repeat(300))
   assert.equal(long.length, 100)
   assert.ok(long.endsWith('…'))
-  assert.equal(ideaTitle({ text: 'y'.repeat(100) }), 'y'.repeat(100))
+  assert.equal(ideaTitle('y'.repeat(100)), 'y'.repeat(100))
 })
