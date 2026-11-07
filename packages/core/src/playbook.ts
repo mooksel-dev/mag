@@ -236,7 +236,7 @@ Then draw with show_diagram (no role, so it joins the fact set) only what the in
 needs: a scenario, or the logic of a method whose logic is nontrivial. mag answers each save with its check: fix the
 blockers, and answer each warning with a fix or a reason.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
-server, a CLI like acli or gh through Bash, the web. Bash is for reading only. Change nothing in the tracker (no
+server, a CLI like acli or gh through Bash, the web. Through Bash you only read the tracker. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks: the tracker is the team's, and what lands there speaks
 for the user. If you cannot read a ticket, say what is missing (e.g. no
 Atlassian MCP, acli not logged in).

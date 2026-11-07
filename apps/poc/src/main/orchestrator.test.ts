@@ -291,8 +291,41 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.ok(spec.allowedTools?.includes('Bash'))
   assert.ok(spec.allowedTools?.includes('mcp__claude_ai_Atlassian'))
   assert.ok(!spec.disallowedTools?.includes('Bash'))
-  assert.ok(spec.disallowedTools?.includes('Edit'))
   assert.match(spec.appendSystemPrompt ?? '', /create_work/)
+})
+
+test('a topic is full Claude Code: edits, free Bash and worktrees run without a card; only merge and push to a base are denied (topics-a-tree-of-agent.1)', async () => {
+  const { store, orch, project } = setup()
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'fix the typo in the README')
+  const spec = specs.at(-1)!
+  for (const t of ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'EnterWorktree', 'ExitWorktree', 'WebSearch', 'mcp__mag']) assert.ok(spec.allowedTools?.includes(t), t)
+  for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'EnterWorktree']) assert.ok(!spec.disallowedTools?.includes(t), t)
+  assert.equal(spec.readOnly, false)
+  assert.equal(spec.cwd, project.repos[0])
+  // Every deny rule is a merge or a push to a base; other pushes and PR writes ask on the card.
+  assert.ok(spec.disallowedTools?.every((r) => r.includes('pr merge') || / push .*main/.test(r)), JSON.stringify(spec.disallowedTools))
+  for (const c of ['gh pr merge 4', 'git push origin main', 'git -C /r push origin HEAD:main']) assert.ok(anyMatches(spec.disallowedTools, c), c)
+  for (const c of ['git push origin fix-typo', 'gh pr comment 4 -b x']) assert.ok(anyMatches(spec.askTools, c) && !anyMatches(spec.disallowedTools, c), c)
+  for (const c of ['npm test', 'git commit -m x', 'git worktree add ../w']) assert.ok(!anyMatches(spec.askTools, c) && !anyMatches(spec.disallowedTools, c), c)
+  const prompt = spec.appendSystemPrompt ?? ''
+  assert.match(prompt, /You work like Claude Code in the repo[\s\S]*enter a worktree \(EnterWorktree\);\s+when it is unclear which, ask the user/)
+  assert.doesNotMatch(prompt, /never change code|Bash is for reading only/)
+})
+
+test("mag's topic for a teammate's PR review stays read only (topics-a-tree-of-agent.1)", async () => {
+  const { store, orch, project } = setup()
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  chat.reviewOf = 'some-review-work'
+  await orch.send(chat.id, 'look again')
+  const spec = specs.at(-1)!
+  for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) assert.ok(spec.disallowedTools?.includes(t), t)
+  for (const t of ['Edit', 'Write', 'EnterWorktree']) assert.ok(!spec.allowedTools?.includes(t), t)
+  assert.ok(spec.allowedTools?.includes('Bash'))
+  assert.equal(spec.readOnly, true)
+  assert.ok(anyMatches(spec.askTools, 'gh pr review 4 --comment -b x'), 'it still publishes after the Allow')
+  assert.match(spec.appendSystemPrompt ?? '', /Bash is for reading only, and you never change code: this topic reviews a teammate's PR/)
+  assert.doesNotMatch(spec.appendSystemPrompt ?? '', /You work like Claude Code/)
 })
 
 test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {
@@ -1316,7 +1349,7 @@ test('architect: Bash and the web to check what it reads; no edits and nothing t
   assert.doesNotMatch(spec.appendSystemPrompt ?? '', /usually 5-20|"method\(args\): Result/)
 })
 
-test('every role has the web; only the developer may write (prompts-use-the-models-to.2)', async () => {
+test('every role has the web; only the developer and a topic may write (prompts-use-the-models-to.2, topics-a-tree-of-agent.1)', async () => {
   await developing()
   const dev = specs.at(-1)!
   for (const t of ['WebSearch', 'WebFetch']) assert.ok(dev.allowedTools?.includes(t), `developer ${t}`)
@@ -1329,7 +1362,7 @@ test('every role has the web; only the developer may write (prompts-use-the-mode
   await tick()
   for (const [role, spec] of [['chat', chatSpec], ['groomer', specs.at(-1)!]] as const) {
     for (const t of ['WebSearch', 'WebFetch']) assert.ok(spec.allowedTools?.includes(t), `${role} ${t}`)
-    assert.equal(spec.readOnly, true, role)
+    assert.equal(spec.readOnly, role === 'groomer', role)
     assert.equal(spec.cwd, project.repos[0], `${role}: no review, no scratch`)
   }
 })
