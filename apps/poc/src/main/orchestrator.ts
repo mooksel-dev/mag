@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -546,7 +546,8 @@ export class Orchestrator {
    * session with a topic's tools, or a preset (CHILD_ROLES). `fork`: it starts as a fork of the parent's agent session,
    * with all of its context, the parent staying as it is (Claude Code only; the Branch of a topic). `brief`, if any, is
    * its first message: the user's own (`by` user), or a job from the parent's agent (`by` agent) that says whom to
-   * report to. Without a brief the child waits for the user's first message. Returns the child, its run started.
+   * report to; a general child with one is named after its first turn, as a topic is (nameChat). Without a brief the
+   * child waits for the user's first message. Returns the child, its run started.
    */
   startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent'): AgentSession {
     const parent = this.treeSession(parentId)
@@ -567,7 +568,7 @@ export class Orchestrator {
       agent,
       status: 'idle',
       title: (text ? text.replace(/\s+/g, ' ') : `Branch of ${parent.title ?? 'a topic'}`).slice(0, 60),
-      titleGenerated: true,
+      titleGenerated: !text || role !== null,
       forkOf: fork ? parent.nativeSessionId : null,
       parentId: parent.id,
     })
@@ -2505,11 +2506,12 @@ export class Orchestrator {
   }
 
   /**
-   * After a chat's turn: a short generated title in place of the first message, once it lands; a failed naming runs
-   * again after the next turn. A title the user gave (or mag set) meanwhile stays. Resolves when the naming run ends.
+   * After a chat's or a subtopic's turn: a short generated title in place of the first message, once it lands; a failed
+   * naming runs again after the next turn. A title the user gave (or mag set) meanwhile stays. Resolves when the naming
+   * run ends.
    */
   private nameChat(session: AgentSession): Promise<void> | undefined {
-    if (session.role !== 'chat' || session.titleGenerated || session.status === 'error' || this.naming.has(session.id)) return
+    if ((session.role !== 'chat' && !isSubtopic(session)) || session.titleGenerated || session.status === 'error' || this.naming.has(session.id)) return
     // A topic mag started with a job is named from the job.
     const first = session.items.find((i) => i.kind === 'user' || i.kind === 'job')
     const reply = session.items.flatMap((i) => (i.kind === 'assistant' ? [i.text] : [])).join('\n\n')
@@ -2545,7 +2547,7 @@ export class Orchestrator {
    * one after another, so a backlog does not start a process each at once.
    */
   async nameUntitled() {
-    for (const s of this.store.data.sessions) if (s.role === 'chat' && !s.taskId && s.status !== 'running') await this.nameChat(s)
+    for (const s of this.store.data.sessions) if ((s.role === 'chat' || isSubtopic(s)) && !s.taskId && s.status !== 'running') await this.nameChat(s)
   }
 
   /**

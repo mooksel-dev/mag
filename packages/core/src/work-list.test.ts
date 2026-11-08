@@ -6,6 +6,7 @@ import {
   cardFilter,
   cardMove,
   cardMatches,
+  countedCards,
   emptyResult,
   flatCards,
   headerWork,
@@ -171,7 +172,7 @@ test('workCards: a chat whose works are all finished and that is idle is done; a
   assert.deepEqual([line(back), back.closed], ['waiting:c:amber you: Continue planning via r', false])
 })
 
-test('workCards: reviews, groomer and ticket works and works of a deleted topic stay top-level rows', () => {
+test('workCards: groomer and ticket works and works of a deleted topic stay top-level rows; a review the topic asked for is its child', () => {
   const tasks = [
     task('groomed'),
     task('orphan', { ownerSessionId: 'deleted' }),
@@ -179,8 +180,8 @@ test('workCards: reviews, groomer and ticket works and works of a deleted topic 
     task('mine', { ownerSessionId: 'c' }),
   ]
   const got = cards(tasks, [session('c'), session('g', { taskId: 'groomed', role: 'groomer' })])
-  assert.deepEqual(got.map((c) => c.id).sort(), ['c', 'groomed', 'orphan', 'rv'])
-  assert.deepEqual(kids(got.find((c) => c.id === 'c')!), ['mine'])
+  assert.deepEqual(got.map((c) => c.id).sort(), ['c', 'groomed', 'orphan'])
+  assert.deepEqual(kids(got.find((c) => c.id === 'c')!).sort(), ['mine', 'rv'])
 })
 
 test('ownedWorks and headerWork: open first, then the newest; the header on the work waiting on the user', () => {
@@ -408,7 +409,7 @@ test('workCards: a review: its stage and whose move in each state; its topic is 
   for (const [name, t, s, stage, want] of REVIEW_CASES()) {
     const got = cards([t], [s])
     assert.deepEqual(got.map(line), [want], name)
-    assert.deepEqual([got[0].kind, got[0].title, got[0].stage, got[0].progress], ['review', 'Charge cards', stage, 'PR #12 · @ann'], name)
+    assert.deepEqual([got[0].kind, got[0].title, got[0].stage, got[0].progress], ['review', 'Review: Charge cards', stage, 'PR #12 · @ann'], name)
   }
 })
 
@@ -456,6 +457,62 @@ test('cardFilter: waiting = that group, working = green dots, reviews = review r
   assert.deepEqual(ids('waiting'), ['asks'])
   assert.deepEqual(ids('working'), ['runs', 'rv'])
   assert.deepEqual(ids('reviews'), ['rv', 'rv2'])
+})
+
+/** A review the topic `by` (or a session under it) asked for: no topic of mag's own. */
+const asked = (by: string, patch: Partial<Task> = {}, review: ResultPatch = {}) => reviewTask({ ownerSessionId: by, ...patch }, review)
+const topicC = (patch: Partial<AgentSession> = {}) => session('c', { titleGenerated: true, title: 'Billing', ...patch })
+
+test('workCards: a review a topic asked for is no row: the topic carries its state, and the header still finds its card', () => {
+  const waiting = asked('c', {}, ready)
+  const got = cards([waiting], [topicC()])
+  assert.deepEqual(got.map(line), ['waiting:c:amber you: Publish the review via rv'])
+  assert.deepEqual(got[0].children!.map((k) => [k.id, k.kind, k.title]), [['rv', 'review', 'Charge cards']])
+  assert.equal(workCard(waiting, [waiting], [topicC()], NOW)!.id, 'rv')
+  const running = cards([asked('c')], [topicC({ status: 'running', runStartedAt: NOW - 4 * MIN })])
+  assert.deepEqual(running.map(line), ['working:c:green agent: agent · 4 min'])
+})
+
+test('workCards: a review a subtopic asked for belongs to the topic at the top of its tree', () => {
+  const got = cards([asked('sub', {}, ready)], [topicC(), session('sub', { role: null, parentId: 'c' })])
+  assert.deepEqual(got.map(line), ['waiting:c:amber you: Publish the review via rv'])
+})
+
+test('workCards: what a review waits for stays on the topic while another session of its tree runs; an approval of the topic comes first', () => {
+  const running = session('other', { role: null, parentId: 'c', status: 'running', runStartedAt: NOW - MIN })
+  const sub = session('sub', { role: null, parentId: 'c' })
+  assert.equal(line(cards([asked('sub', {}, ready)], [topicC(), sub, running])[0]), 'waiting:c:amber you: Publish the review via rv')
+  const approval = { kind: 'approval' as const, id: 'a1', tool: 'Bash', input: {}, status: 'pending' as const, at: NOW }
+  const asks = topicC({ items: [approval] as AgentSession['items'] })
+  assert.match(line(cards([asked('c', {}, ready)], [asks])[0]), /^waiting:c:amber you: Allow /)
+})
+
+test('workCards: a review with no stage yet reads by its move on the topic', () => {
+  assert.deepEqual(cards([asked('c')], [topicC()]).map(line), ['working:c:grey other: Waits for the agent · rv'])
+})
+
+test('workCards: a finished review does not finish the topic that asked for it', () => {
+  const got = cards([asked('c', { status: 'done', updatedAt: NOW })], [topicC()])
+  assert.deepEqual([line(got[0]), got[0].closed], ['topics:c:grey other: Discussion · no work yet', false])
+})
+
+test('Reviews filter: a topic with a review it asked for shows and counts once; a closed one no longer does', () => {
+  const all = cards([asked('c', {}, ready)], [topicC()])
+  assert.ok(rowMatches(all[0], 'reviews'))
+  assert.deepEqual(cardFilter(countedCards(all), 'reviews').map((c) => c.id), ['rv'])
+  assert.deepEqual(cardFilter(countedCards(all), 'waiting').map((c) => c.id), ['rv'])
+  const closed = cards([asked('c', { status: 'done', closedAt: NOW })], [topicC()])
+  assert.equal(rowMatches(closed[0], 'reviews'), false)
+  assert.deepEqual(cardFilter(countedCards(closed), 'reviews'), [])
+  // A closed topic is in Closed with its closed review, as a closed review's row is.
+  const both = cards([asked('c', { status: 'done', closedAt: NOW })], [topicC({ closedAt: NOW })])
+  assert.ok(rowMatches(both[0], 'reviews'))
+})
+
+test("workCards: a review with mag's own topic keeps its row, even run again from a user's topic; so does one whose topic is gone", () => {
+  const again = reviewTask({ ownerSessionId: 'c' }, ready)
+  assert.deepEqual(cards([again], [topicC(), rt()]).map((c) => [c.id, c.kind, c.title]), [['c', 'topic', 'Billing'], ['rv', 'review', 'Review: Charge cards']])
+  assert.deepEqual(cards([asked('gone', {}, ready)]).map((c) => [c.id, c.title]), [['rv', 'Review: Charge cards']])
 })
 
 test('cardMove: the same line for a work given its inbox item, so the header bar can reuse it', () => {

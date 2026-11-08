@@ -2171,6 +2171,47 @@ test("startChild from an agent: a general child gets the brief as a job naming w
   assert.deepEqual(s.orch.treeOf(topic.id).map((x) => x.id), [topic.id, child.id, grandchild.id])
 })
 
+test('startChild: a general child with a brief is named after its first turn, as a topic is; a preset and a Branch keep their titles', async () => {
+  const s = setup()
+  const { topic } = await liveTopic(s)
+  const child = s.orch.startChild(topic.id, 'Review the PR https://github.com/o/r/pull/1 and report')
+  await tick()
+  assert.equal(child.titleGenerated, false)
+  const live = opened.at(-1)!
+  const before = runs.length
+  live.emit({ type: 'message', text: 'Looks fine.' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(runs.length, before + 1, 'one naming run')
+  assert.ok(runs.at(-1)!.spec.prompt.includes('Review the PR https://github.com/o/r/pull/1'))
+  runs.at(-1)!.emit({ type: 'message', text: 'PR review of r#1' })
+  runs.at(-1)!.emit({ type: 'turn.done', ok: true })
+  runs.at(-1)!.end()
+  await tick()
+  assert.deepEqual([child.title, child.titleGenerated], ['PR review of r#1', true])
+
+  assert.equal(s.orch.startChild(topic.id, 'Read the auth module', 'reviewer').titleGenerated, true)
+  assert.deepEqual([s.orch.startChild(topic.id, '').title, s.orch.startChild(topic.id, '').titleGenerated], ['Branch of Design the login', true])
+})
+
+test('nameUntitled: a subtopic whose naming failed is named at start; an agent under a topic is not', async () => {
+  const { store, orch, project } = setup()
+  const items = (text: string) => [{ kind: 'job' as const, title: 'Brief', text, at: 1 }, { kind: 'assistant' as const, text: 'reply', at: 2 }]
+  const parent = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Parent', titleGenerated: true })
+  const kid = (role: null | 'developer', text: string) => store.createSession({ projectId: project.id, taskId: null, role, agent: 'claude-code', status: 'idle', title: text, parentId: parent.id }).items.push(...items(text))
+  kid('developer', 'fix the typo')
+  kid(null, 'check the logs')
+  const before = runs.length
+  const done = orch.nameUntitled()
+  await tick()
+  assert.equal(runs.length, before + 1)
+  assert.ok(runs.at(-1)!.spec.prompt.includes('check the logs'))
+  runs.at(-1)!.emit({ type: 'message', text: 'Logs' })
+  runs.at(-1)!.end()
+  await done
+  assert.equal(runs.length, before + 1)
+})
+
 test('startChild presets: a developer changes code but never writes to GitHub, a reviewer only reads; others are refused (topics-a-tree-of-agent.2)', async () => {
   const s = setup()
   const { topic } = await liveTopic(s)
