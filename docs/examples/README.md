@@ -1,14 +1,14 @@
 # Examples
 
-## System view of a change: Finance Hub
+## System view of a change: Money Hub
 
 The reference for describing an architecture change at the system level.
 
-- `finance-hub-deployment.html`: the hand-drawn canvas an agent made after the component renderer drew every app in one
+- `money-hub-deployment.html`: the hand-drawn canvas an agent made after the component renderer drew every app in one
   row. It answers what the user asked: who calls whom, where each part runs (device, AWS OUs, VPC, outside), and the
-  main flows numbered, with a table of steps. AWS account IDs are redacted.
-- `finance-hub-architecture.json`: the same view as a `show_diagram` component diagram. `boundaries` become the frames,
-  each use's `flow` and `step` number the arrows, and `async` arrows are dashed. `ftm-hub` holds its modules in
+  main flows numbered, with a table of steps. The company, its domains and its repositories are made up.
+- `money-hub-architecture.json`: the same view as a `show_diagram` component diagram. `boundaries` become the frames,
+  each use's `flow` and `step` number the arrows, and `async` arrows are dashed. `fin-hub` holds its modules in
   `children`, so clicking it opens the app's level, drawn the same way. `system-view.test.ts` checks that it validates
   without warnings.
 

@@ -17,8 +17,8 @@
 .dg .n text{font-size:10.5px;font-weight:700;text-anchor:middle}
 .dg .n.rd circle{stroke:var(--accent,#6b5cff)} .dg .n.ig circle{stroke:var(--text,#888)} .dg .n.al circle{stroke:var(--danger,#d0544e)}
 </style>
-<h2>Finance Hub — deployment &amp; flows</h2>
-<p class="muted small">Left to right: the device, the Web Backend AWS accounts, the Identity AWS accounts (where FTM runs), and outside systems. <span class="tag green">green</span> new · <span class="tag amber">amber</span> changed · grey unchanged. Arrows: <b style="color:var(--accent)">1–6 tab read path</b>, <b>A–F ingest path</b>, <b style="color:var(--danger)">G alerts</b>, dashed = route not decided.</p>
+<h2>Money Hub — deployment &amp; flows</h2>
+<p class="muted small">Left to right: the device, the Web Backend AWS accounts, the Identity AWS accounts (where FIN runs), and outside systems. <span class="tag green">green</span> new · <span class="tag amber">amber</span> changed · grey unchanged. Arrows: <b style="color:var(--accent)">1–6 tab read path</b>, <b>A–F ingest path</b>, <b style="color:var(--danger)">G alerts</b>, dashed = route not decided.</p>
 <div class="dg"><svg viewBox="0 0 1240 830" xmlns="http://www.w3.org/2000/svg">
 <defs>
 <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--accent,#6b5cff)"/></marker>
@@ -30,49 +30,49 @@
 <rect class="zone" x="10" y="40" width="195" height="300" rx="10"/>
 <text class="zl" x="22" y="62">User device</text>
 <rect class="zone" x="10" y="370" width="195" height="150" rx="10"/>
-<text class="zl" x="22" y="392">Aura AI</text><text class="s" x="22" y="407">account TBD</text>
+<text class="zl" x="22" y="392">Acme AI</text><text class="s" x="22" y="407">account TBD</text>
 
 <rect class="zone" x="220" y="40" width="255" height="480" rx="10"/>
 <text class="zl" x="232" y="62">AWS · Web Backend OU</text>
-<text class="s" x="232" y="77">aurasvc dev / test / prod · web-backend-plumbing</text>
+<text class="s" x="232" y="77">acme dev / test / prod · web-backend-infra</text>
 
 <rect class="zone" x="490" y="40" width="575" height="760" rx="10"/>
-<text class="zl" x="502" y="62">AWS · Identity OU — FTM lives here</text>
-<text class="s" x="502" y="77">identity dev / test / prod · identity-plumbing · us-east-1</text>
+<text class="zl" x="502" y="62">AWS · Identity OU — FIN lives here</text>
+<text class="s" x="502" y="77">identity dev / test / prod · identity-infra · us-east-1</text>
 
 <rect class="zone" x="1078" y="40" width="152" height="760" rx="10"/>
 <text class="zl" x="1090" y="62">Outside</text>
 
 <!-- device -->
 <rect class="box mod" x="25" y="90" width="165" height="70" rx="8"/>
-<text class="b" x="35" y="112">Aura mobile app</text><text class="s" x="35" y="128">lisa · React Native</text><text class="s" x="35" y="143">RTK Query + GraphQL</text>
+<text class="b" x="35" y="112">Acme mobile app</text><text class="s" x="35" y="128">mobile-app · React Native</text><text class="s" x="35" y="143">RTK Query + GraphQL</text>
 <rect class="box" x="25" y="425" width="165" height="60" rx="8"/>
-<text class="b" x="35" y="447">Ask Aura agent</text><text class="s" x="35" y="463">budget tools caller</text>
+<text class="b" x="35" y="447">Ask Acme agent</text><text class="s" x="35" y="463">budget tools caller</text>
 
 <!-- web backend -->
 <rect class="box" x="235" y="95" width="225" height="45" rx="8"/>
-<text class="b" x="245" y="114">API Gateway</text><text class="s" x="245" y="129">graph.aurasvc.io</text>
+<text class="b" x="245" y="114">API Gateway</text><text class="s" x="245" y="129">graph.acme.example</text>
 <rect class="box mod" x="235" y="165" width="225" height="80" rx="8"/>
-<text class="b" x="245" y="186">graphql-layer Lambda</text><text class="s" x="245" y="202">coach-krupt · type-graphql</text><text class="s" x="245" y="217">+ finance-hub entity</text><text class="s" x="245" y="232">+ FinanceHubAPI datasource</text>
+<text class="b" x="245" y="186">graphql-layer Lambda</text><text class="s" x="245" y="202">gateway-repo · type-graphql</text><text class="s" x="245" y="217">+ money-hub entity</text><text class="s" x="245" y="232">+ MoneyHubAPI datasource</text>
 <rect class="box" x="235" y="400" width="225" height="90" rx="8"/>
-<text class="b" x="245" y="421">al-sneed</text><text class="s" x="245" y="437">Lambdas + SQS feed_ingest</text><text class="s" x="245" y="452">→ push / feed</text><text class="s" x="245" y="467">+ new hub alert types</text>
+<text class="b" x="245" y="421">notifier</text><text class="s" x="245" y="437">Lambdas + SQS feed_ingest</text><text class="s" x="245" y="452">→ push / feed</text><text class="s" x="245" y="467">+ new hub alert types</text>
 
 <!-- identity: gateway -->
 <rect class="box" x="505" y="92" width="545" height="48" rx="8"/>
-<text class="b" x="515" y="112">API Gateway  identity.aurasvc.io/ftm/*</text><text class="s" x="515" y="128">CUSTOM authorizer (JWT) · Plaid webhook route has no auth</text>
+<text class="b" x="515" y="112">API Gateway  identity.acme.example/fin/*</text><text class="s" x="515" y="128">CUSTOM authorizer (JWT)</text>
 
 <!-- lambdas -->
 <rect class="box mod" x="505" y="170" width="125" height="90" rx="8"/>
-<text class="b" x="515" y="191">ftm ingest</text><text class="s" x="515" y="207">Lambdas</text><text class="s" x="515" y="222">730d history</text><text class="s" x="515" y="237">/transactions/sync</text><text class="s" x="515" y="252">item health</text>
+<text class="b" x="515" y="191">fin ingest</text><text class="s" x="515" y="207">Lambdas</text><text class="s" x="515" y="222">730d history</text><text class="s" x="515" y="237">/transactions/sync</text><text class="s" x="515" y="252">item health</text>
 <rect class="box mod" x="640" y="170" width="125" height="90" rx="8"/>
-<text class="b" x="650" y="191">ftm query</text><text class="s" x="650" y="207">Lambdas · in VPC</text><text class="s" x="650" y="222">populator +</text><text class="s" x="650" y="237">modified events</text>
+<text class="b" x="650" y="191">fin query</text><text class="s" x="650" y="207">Lambdas · in VPC</text><text class="s" x="650" y="222">populator +</text><text class="s" x="650" y="237">modified events</text>
 <rect class="box" x="775" y="170" width="115" height="90" rx="8"/>
-<text class="b" x="785" y="191">ftm alert</text><text class="s" x="785" y="207">legacy thresholds</text>
+<text class="b" x="785" y="191">fin alert</text><text class="s" x="785" y="207">legacy thresholds</text>
 
 <rect class="zone" x="900" y="158" width="150" height="160" rx="10" style="stroke:var(--green,#2e9d5b)"/>
-<text class="b" x="910" y="176">ftm hub (NEW)</text>
+<text class="b" x="910" y="176">fin hub (NEW)</text>
 <rect class="box new" x="910" y="185" width="130" height="55" rx="8"/>
-<text class="b" x="920" y="205">hub API Lambda</text><text class="s" x="920" y="221">in VPC · /ftm/hub/*</text>
+<text class="b" x="920" y="205">hub API Lambda</text><text class="s" x="920" y="221">in VPC · /fin/hub/*</text>
 <rect class="box new" x="910" y="250" width="130" height="58" rx="8"/>
 <text class="b" x="920" y="270">hub worker Lambda</text><text class="s" x="920" y="286">recurring, card-on-file</text><text class="s" x="920" y="300">alerts, daily tick</text>
 
@@ -80,22 +80,22 @@
 <rect class="box mod" x="505" y="370" width="262" height="100" rx="8"/>
 <text class="b" x="515" y="391">DynamoDB</text><text class="s" x="515" y="407">ingest: transaction-events, item-events</text><text class="s" x="515" y="422">item-view (+ errorCode, lastSuccessfulUpdate)</text><text class="s" x="515" y="437">thresholds-config · alert tables</text><text class="s" x="515" y="452">stream → SNS</text>
 <rect class="box" x="780" y="370" width="270" height="45" rx="8"/>
-<text class="b" x="790" y="390">SNS identity topic</text><text class="s" x="790" y="405">owned by identity-plumbing</text>
+<text class="b" x="790" y="390">SNS identity topic</text><text class="s" x="790" y="405">owned by identity-infra</text>
 <rect class="box mod" x="780" y="435" width="270" height="55" rx="8"/>
 <text class="b" x="790" y="455">SQS queues (filter policies)</text><text class="s" x="790" y="471">ingest · query populator · hub worker (NEW)</text>
 
 <rect class="zone" x="630" y="640" width="420" height="150" rx="10"/>
 <text class="zl" x="642" y="660">VPC · private subnets</text>
 <rect class="box mod" x="645" y="672" width="390" height="100" rx="8"/>
-<text class="b" x="655" y="693">DocumentDB Elastic  ftm-query-docdb</text><text class="s" x="655" y="710">ftm.transactions — existing read model</text><text class="s" x="655" y="726">ftm_hub.* — NEW: streams, budgets, card_on_file, alerts</text><text class="s" x="655" y="742">owned by ftm query terraform</text>
+<text class="b" x="655" y="693">DocumentDB Elastic  fin-query-docdb</text><text class="s" x="655" y="710">fin.transactions — existing read model</text><text class="s" x="655" y="726">fin_hub.* — NEW: streams, budgets, card_on_file, alerts</text><text class="s" x="655" y="742">owned by fin query terraform</text>
 
 <!-- outside -->
 <rect class="box" x="1088" y="92" width="132" height="60" rx="8"/>
-<text class="b" x="1098" y="114">Plaid</text><text class="s" x="1098" y="130">transactions API</text>
+<text class="b" x="1098" y="114">BankLink</text><text class="s" x="1098" y="130">transactions API</text>
 <rect class="box" x="1088" y="190" width="132" height="65" rx="8"/>
 <text class="b" x="1098" y="211">Breach monitoring</text><text class="s" x="1098" y="227">dark web / merchant</text><text class="s" x="1098" y="242">source TBD</text>
 <rect class="box" x="1088" y="365" width="132" height="75" rx="8"/>
-<text class="b" x="1098" y="386">Aura Platform (AP)</text><text class="s" x="1098" y="402">event webhooks</text><text class="s" x="1098" y="417">account TBD</text>
+<text class="b" x="1098" y="386">Acme Platform (AP)</text><text class="s" x="1098" y="402">event webhooks</text><text class="s" x="1098" y="417">account TBD</text>
 
 <!-- read path -->
 <path class="f rd" d="M190,117 L235,117" marker-end="url(#mr)"/>
@@ -138,17 +138,17 @@
 
 <table class="table small">
 <tr><th>#</th><th>Flow</th><th>Protocol / auth</th></tr>
-<tr><td><b>1–2</b></td><td>The mobile app sends <code>financeHubOverview</code>, <code>…Spending</code>, <code>…Income</code>, <code>…Bills</code> and <code>…CardShield</code> to the GraphQL gateway.</td><td>GraphQL over HTTPS · Bearer user JWT</td></tr>
-<tr><td><b>3</b></td><td>The graphql-layer Lambda calls the FTM REST API through <code>IDENTITY_API_ORIGIN</code>. This crosses from the Web Backend accounts into the Identity accounts over the public domain.</td><td>REST <code>GET /ftm/hub/*</code> · the same Bearer is forwarded</td></tr>
+<tr><td><b>1–2</b></td><td>The mobile app sends <code>moneyHubOverview</code>, <code>…Spending</code>, <code>…Income</code>, <code>…Bills</code> and <code>…CardGuard</code> to the GraphQL gateway.</td><td>GraphQL over HTTPS · Bearer user JWT</td></tr>
+<tr><td><b>3</b></td><td>The graphql-layer Lambda calls the FIN REST API through <code>IDENTITY_API_ORIGIN</code>. This crosses from the Web Backend accounts into the Identity accounts over the public domain.</td><td>REST <code>GET /fin/hub/*</code> · the same Bearer is forwarded</td></tr>
 <tr><td><b>4</b></td><td>The Identity API Gateway checks the token, then calls the hub API Lambda.</td><td>CUSTOM authorizer · AWS_PROXY</td></tr>
-<tr><td><b>5</b></td><td>The hub API reads <code>ftm.transactions</code> and <code>ftm_hub.*</code> in DocumentDB, and the item view in DynamoDB for connection state. Month totals are computed on read.</td><td>Mongo driver inside the VPC · DynamoDB SDK</td></tr>
-<tr><td><b>6</b></td><td>The hub reads breach records for Card Shield.</td><td>source TBD</td></tr>
-<tr><td><b>A</b></td><td>Plaid sends webhooks through the gateway to ingest. Ingest pulls with <code>/transactions/sync</code>.</td><td>HTTPS · the webhook has no auth or signature (idea filed)</td></tr>
+<tr><td><b>5</b></td><td>The hub API reads <code>fin.transactions</code> and <code>fin_hub.*</code> in DocumentDB, and the item view in DynamoDB for connection state. Month totals are computed on read.</td><td>Mongo driver inside the VPC · DynamoDB SDK</td></tr>
+<tr><td><b>6</b></td><td>The hub reads breach records for Card Guard.</td><td>source TBD</td></tr>
+<tr><td><b>A</b></td><td>BankLink sends webhooks through the gateway to ingest. Ingest pulls with <code>/transactions/sync</code>.</td><td>HTTPS</td></tr>
 <tr><td><b>B–D</b></td><td>Ingest appends to the DynamoDB event stores. The table stream goes to the SNS identity topic, and filter policies fan it out to the SQS queues.</td><td>AWS internal, same account</td></tr>
-<tr><td><b>E</b></td><td>The query populator upserts <code>ftm.transactions</code>. It now also handles <code>FtmTransactionModified</code>.</td><td>SQS → Lambda → DocumentDB</td></tr>
-<tr><td><b>F</b></td><td>The hub worker (NEW) gets transaction and item events. It recomputes the user's streams, card-on-file and alerts into <code>ftm_hub.*</code>.</td><td>SQS → Lambda → DocumentDB</td></tr>
-<tr><td><b>G</b></td><td>The hub worker publishes <code>FtmHubAlertCreated</code> to SNS. AP turns it into an event webhook, which lands in al-sneed's <code>feed_ingest</code> SQS for push and feed.</td><td>SNS → AP → cross-account SQS (AP roles). The SNS → AP bridge is a guess.</td></tr>
-<tr><td><b>H</b></td><td>Ask Aura calls the budget tools <code>proposeBudget</code> and <code>calculateBudget</code>.</td><td>Route TBD: through the gateway or straight to <code>/ftm/hub</code></td></tr>
+<tr><td><b>E</b></td><td>The query populator upserts <code>fin.transactions</code>. It now also handles <code>FinTransactionModified</code>.</td><td>SQS → Lambda → DocumentDB</td></tr>
+<tr><td><b>F</b></td><td>The hub worker (NEW) gets transaction and item events. It recomputes the user's streams, card-on-file and alerts into <code>fin_hub.*</code>.</td><td>SQS → Lambda → DocumentDB</td></tr>
+<tr><td><b>G</b></td><td>The hub worker publishes <code>FinHubAlertCreated</code> to SNS. AP turns it into an event webhook, which lands in notifier's <code>feed_ingest</code> SQS for push and feed.</td><td>SNS → AP → cross-account SQS (AP roles). The SNS → AP bridge is a guess.</td></tr>
+<tr><td><b>H</b></td><td>Ask Acme calls the budget tools <code>proposeBudget</code> and <code>calculateBudget</code>.</td><td>Route TBD: through the gateway or straight to <code>/fin/hub</code></td></tr>
 </table>
 
-<div class="callout amber small"><b>Not verified (not checked out):</b> <code>identity-plumbing</code> and <code>web-backend-plumbing</code> own the account IDs per env, the VPCs, both API Gateways and their authorizers, the SNS topic and <code>IDENTITY_API_ORIGIN</code>. The account IDs above come from FTM's <code>inject_test_data.yaml</code>, and the dev account isn't known. If you check those two repos out, I'll confirm the IDs.</div>
+<div class="callout amber small"><b>Not verified (not checked out):</b> <code>identity-infra</code> and <code>web-backend-infra</code> own the account IDs per env, the VPCs, both API Gateways and their authorizers, the SNS topic and <code>IDENTITY_API_ORIGIN</code>. The account IDs above come from FIN's <code>inject_test_data.yaml</code>, and the dev account isn't known. If you check those two repos out, I'll confirm the IDs.</div>

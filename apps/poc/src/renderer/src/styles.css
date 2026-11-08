@@ -187,7 +187,8 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbox .inside .link { padding: 0; font-size: 11px; }
 .archlane.ports { background: none; border: 1px dashed var(--line); }
 .archbox.on { box-shadow: 0 0 0 2px var(--text); }
-.archgraph { position: relative; flex: none; max-width: 100%; }
+.archdiagram.framed { overflow-x: auto; }
+.archgraph { position: relative; flex: none; }
 .archframe { position: absolute; border: 1px solid var(--line); border-radius: 10px; background: var(--arch-lane); }
 .archframe.depth-1, .archframe.depth-3 { background: var(--surface); }
 .archframe.ports { background: none; border-style: dashed; }
@@ -207,7 +208,7 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archflowhead { font-weight: 600; padding: 0; }
 .archflowhead.on { text-decoration: underline; }
 .archflow table { margin-top: 4px; }
-.archflow td code { margin-right: 6px; }
+.archflow td code { display: inline-block; margin-right: 6px; overflow-wrap: anywhere; }
 .archstepcell { width: 36px; }
 .archbox.dim { opacity: .3; }
 .archbox .flag { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; background: var(--arch-error); color: #fff; font-size: 11px; font-weight: 700; }

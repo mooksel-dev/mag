@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeDiagram, type DataDiagram } from '@mag/core'
-import { DATA_ROW, GROUP_HEAD, clipToShape, fieldNotes, fieldKey, indexText, layoutData, layoutGraph, measureNode, movePath, pathOf, wrap } from './graphLayout.ts'
+import { DATA_ROW, FRAME_HEAD, GROUP_HEAD, clipToShape, fieldNotes, fieldKey, indexText, layoutData, layoutFramed, layoutGraph, measureNode, movePath, pathOf, wrap } from './graphLayout.ts'
 
 test('wrap: breaks on words, keeps a long word whole', () => {
   assert.deepEqual(wrap('check the open pull request', 10), ['check the', 'open pull', 'request'])
@@ -146,4 +146,25 @@ test('layoutData: entities stand in the box of their module, indexes are rows af
   assert.equal(indexText(d.entities[0].indexes![0]), 'unique (user_id)')
   // The relation leaves from its field's row, in the coordinates of the whole diagram.
   assert.ok(Math.abs(l.relations[0].points[0].y - (jobs.rows[0].y + DATA_ROW / 2)) < 1)
+})
+
+test('layoutFramed: boxes sit in nested frames, callers above what they call, an empty frame is left out', async () => {
+  const boxes = [
+    { id: 'app', w: 190, h: 64, frame: 'device' },
+    { id: 'api', w: 190, h: 64, frame: 'aws' },
+    { id: 'db', w: 240, h: 90, frame: 'vpc' },
+    { id: 'loose', w: 190, h: 64 },
+  ]
+  const frames = [{ id: 'device' }, { id: 'aws' }, { id: 'vpc', parent: 'aws' }, { id: 'empty' }]
+  const edges = [{ from: 'app', to: 'api' }, { from: 'api', to: 'db' }, { from: 'app', to: 'gone' }]
+  const l = await layoutFramed(boxes, frames, edges)
+  assert.deepEqual(l.frames.map((f) => f.id).sort(), ['aws', 'device', 'vpc'])
+  assert.equal(l.frames.find((f) => f.id === 'vpc')!.depth, 1)
+  const inFrame = (f: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+    b.x >= f.x && b.y >= f.y + FRAME_HEAD && b.x + b.w <= f.x + f.w && b.y + b.h <= f.y + f.h
+  const at = (id: string) => l.boxes.get(id)!
+  for (const b of boxes.filter((x) => x.frame)) assert.ok(inFrame(l.frames.find((f) => f.id === b.frame)!, { ...at(b.id), w: b.w, h: b.h }), `${b.id} is in its frame`)
+  const vpc = l.frames.find((f) => f.id === 'vpc')!
+  assert.ok(inFrame(l.frames.find((f) => f.id === 'aws')!, vpc), 'the VPC is in its account')
+  assert.ok(at('app').y < at('api').y && at('api').y < at('db').y, 'callers above what they call')
 })

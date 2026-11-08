@@ -6,7 +6,7 @@ import type { PlanOverlay } from '@mag/diff/types'
 import { paintPlan, type Painted } from '../planOverlay'
 import { DiffLegend } from './DiffLegend'
 import { FlowchartView } from './Graph'
-import { FRAME_HEAD, layoutFramed, type FramedLayout } from '../graphLayout'
+import { layoutFramed, type FramedLayout } from '../graphLayout'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'app', label: 'App layer', hint: 'UI, handlers, workers' },
@@ -312,7 +312,8 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
       const next = new Map<string, Box>()
       for (const [id, el] of els.current) {
         const r = el.getBoundingClientRect()
-        next.set(id, { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height })
+        // A graph level scrolls sideways; arrows are drawn in the coordinates of its content.
+        next.set(id, { x: r.left - o.left + root.scrollLeft, y: r.top - o.top + root.scrollTop, w: r.width, h: r.height })
       }
       setBoxes(next)
       if (framed)
@@ -426,7 +427,7 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
   }
 
   return (
-    <div className="archdiagram" ref={wrap}>
+    <div className={`archdiagram${framed ? ' framed' : ''}`} ref={wrap}>
       {framed ? (
         <div className="archgraph" style={{ width: layout?.w ?? 0, height: layout?.h ?? 0, visibility: layout ? 'visible' : 'hidden' }}>
           {layout?.frames.map((f) => {
@@ -547,7 +548,7 @@ function FlowSteps({ all, edges, flowDefs, on, onPick }: { all: DNode[]; edges: 
     .map((f) => ({
       flow: f,
       steps: edges
-        .flatMap((e) => (e.steps ?? []).filter((x) => x.flow === f.id).map((x) => ({ step: x.step, edge: e })))
+        .flatMap((e) => (e.steps ?? []).filter((x) => x.flow === f.id).map((x) => ({ step: x.step, calls: x.calls, edge: e })))
         .sort((a, b) => byStep.compare(a.step, b.step)),
     }))
     .filter((r) => r.steps.length)
@@ -563,11 +564,11 @@ function FlowSteps({ all, edges, flowDefs, on, onPick }: { all: DNode[]; edges: 
           {flow.note && <span className="muted small"> {flow.note}</span>}
           <table className="table small">
             <tbody>
-              {steps.map(({ step, edge }) => (
+              {steps.map(({ step, calls, edge }) => (
                 <tr key={`${step}:${edge.from}>${edge.to}`} className={edge.diff ? `d-${edge.diff}` : undefined}>
                   <td className="archstepcell"><span className="archstep static">{step}</span></td>
                   <td>{name(edge.from)} → {name(edge.to)}{edge.async && <span className="muted"> · async</span>}</td>
-                  <td>{edge.calls.map((c) => <code key={c}>{c}</code>)}</td>
+                  <td>{calls.map((c) => <code key={c}>{c}</code>)}</td>
                 </tr>
               ))}
             </tbody>

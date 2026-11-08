@@ -1,6 +1,6 @@
 {
   "type": "component",
-  "summary": "System level. The mobile app (lisa) talks only GraphQL to the gateway (coach-krupt graphql-layer at graph.aurasvc.io), which calls FTM REST. We add a third FTM app, ftm hub, that serves the Finance Hub tabs and computes recurring, card-on-file and alerts; the gateway gets a finance-hub entity proxying it; ingest changes to fetch deeper history, update transactions and keep connection health.",
+  "summary": "System level. The mobile app (mobile-app) talks only GraphQL to the gateway (gateway-repo graphql-layer at graph.acme.example), which calls FIN REST. We add a third FIN app, fin hub, that serves the Money Hub tabs and computes recurring, card-on-file and alerts; the gateway gets a money-hub entity proxying it; ingest changes to fetch deeper history, update transactions and keep connection health.",
   "boundaries": [
     {
       "id": "device",
@@ -8,8 +8,8 @@
       "kind": "device"
     },
     {
-      "id": "aura-ai",
-      "name": "Aura AI",
+      "id": "acme-ai",
+      "name": "Acme AI",
       "kind": "runtime",
       "note": "account TBD"
     },
@@ -17,13 +17,13 @@
       "id": "web-backend",
       "name": "AWS · Web Backend OU",
       "kind": "AWS accounts",
-      "note": "aurasvc dev / test / prod · web-backend-plumbing"
+      "note": "acme dev / test / prod · web-backend-infra"
     },
     {
       "id": "identity",
       "name": "AWS · Identity OU",
       "kind": "AWS accounts",
-      "note": "identity dev / test / prod · identity-plumbing · us-east-1"
+      "note": "identity dev / test / prod · identity-infra · us-east-1"
     },
     {
       "id": "identity-vpc",
@@ -41,35 +41,35 @@
     {
       "id": "read",
       "name": "Tab read path",
-      "note": "mobile → GraphQL gateway → FTM REST → hub API → DocumentDB",
+      "note": "mobile → GraphQL gateway → FIN REST → hub API → DocumentDB",
       "diff": "add"
     },
     {
       "id": "ingest",
       "name": "Ingest path",
-      "note": "Plaid → ingest → DynamoDB → SNS → SQS → populator and hub worker",
+      "note": "BankLink → ingest → DynamoDB → SNS → SQS → populator and hub worker",
       "diff": "mod"
     },
     {
       "id": "alerts",
       "name": "Alerts",
-      "note": "hub → SNS → AP → al-sneed; the SNS → AP bridge is a guess",
+      "note": "hub → SNS → AP → notifier; the SNS → AP bridge is a guess",
       "diff": "add"
     },
     {
       "id": "budget",
-      "name": "Ask Aura budget tools",
+      "name": "Ask Acme budget tools",
       "note": "route TBD",
       "diff": "add"
     }
   ],
   "modules": [
     {
-      "id": "lisa",
-      "name": "Aura mobile app (lisa)",
+      "id": "mobile-app",
+      "name": "Acme mobile app (mobile-app)",
       "kind": "React Native, RTK Query + GraphQL",
       "diff": "mod",
-      "description": "New Finance Hub screens; query.gql + generated hooks, like the transactions feature.",
+      "description": "New Money Hub screens; query.gql + generated hooks, like the transactions feature.",
       "uses": [
         {
           "to": "graph-gateway",
@@ -81,19 +81,19 @@
               "text": "linkedFinancialItems()"
             },
             {
-              "text": "financeHubOverview(month)"
+              "text": "moneyHubOverview(month)"
             },
             {
-              "text": "financeHubSpending()"
+              "text": "moneyHubSpending()"
             },
             {
-              "text": "financeHubIncome(month)"
+              "text": "moneyHubIncome(month)"
             },
             {
-              "text": "financeHubBills(pattern)"
+              "text": "moneyHubBills(pattern)"
             },
             {
-              "text": "financeHubCardShield()"
+              "text": "moneyHubCardGuard()"
             }
           ],
           "flow": "read",
@@ -103,16 +103,16 @@
       "boundary": "device"
     },
     {
-      "id": "ask-aura",
-      "name": "Ask Aura",
+      "id": "ask-acme",
+      "name": "Ask Acme",
       "kind": "chat agent",
       "description": "Builds the budget in chat.",
       "uses": [
         {
-          "to": "ftm-hub",
+          "to": "fin-hub",
           "calls": [
             {
-              "text": "POST /ftm/hub/budget/proposal"
+              "text": "POST /fin/hub/budget/proposal"
             }
           ],
           "diff": "add",
@@ -120,11 +120,11 @@
           "step": "1"
         }
       ],
-      "boundary": "aura-ai"
+      "boundary": "acme-ai"
     },
     {
       "id": "graph-gateway",
-      "name": "API Gateway graph.aurasvc.io",
+      "name": "API Gateway graph.acme.example",
       "kind": "API Gateway",
       "boundary": "web-backend",
       "description": "Public GraphQL endpoint of the app.",
@@ -143,39 +143,39 @@
     },
     {
       "id": "graphql-layer",
-      "name": "GraphQL gateway (coach-krupt graphql-layer)",
-      "kind": "type-graphql, graph.aurasvc.io",
+      "name": "GraphQL gateway (gateway-repo graphql-layer)",
+      "kind": "type-graphql, graph.acme.example",
       "diff": "mod",
-      "description": "Existing TransactionsAPI datasource proxies /ftm. New: finance-hub entity + FinanceHubAPI datasource, thin pass-through.",
+      "description": "Existing TransactionsAPI datasource proxies /fin. New: money-hub entity + MoneyHubAPI datasource, thin pass-through.",
       "uses": [
         {
           "to": "identity-gateway",
           "calls": [
             {
-              "text": "GET /ftm/hub/overview",
+              "text": "GET /fin/hub/overview",
               "diff": "add"
             },
             {
-              "text": "GET /ftm/hub/spending",
+              "text": "GET /fin/hub/spending",
               "diff": "add"
             },
             {
-              "text": "GET /ftm/hub/income",
+              "text": "GET /fin/hub/income",
               "diff": "add"
             },
             {
-              "text": "GET /ftm/hub/bills",
+              "text": "GET /fin/hub/bills",
               "diff": "add"
             },
             {
-              "text": "GET /ftm/hub/card-shield",
+              "text": "GET /fin/hub/card-guard",
               "diff": "add"
             },
             {
-              "text": "GET /ftm/transactions"
+              "text": "GET /fin/transactions"
             },
             {
-              "text": "GET /ftm/items"
+              "text": "GET /fin/items"
             }
           ],
           "flow": "read",
@@ -185,8 +185,8 @@
       "boundary": "web-backend"
     },
     {
-      "id": "al-sneed",
-      "name": "al-sneed",
+      "id": "notifier",
+      "name": "notifier",
       "kind": "Lambdas + SQS feed_ingest",
       "uses": [],
       "description": "Push and feed notifications.",
@@ -195,16 +195,16 @@
     },
     {
       "id": "identity-gateway",
-      "name": "API Gateway identity.aurasvc.io/ftm",
+      "name": "API Gateway identity.acme.example/fin",
       "kind": "API Gateway",
       "boundary": "identity",
-      "description": "CUSTOM authorizer (JWT); the Plaid webhook route has no auth.",
+      "description": "CUSTOM authorizer (JWT).",
       "uses": [
         {
-          "to": "ftm-hub",
+          "to": "fin-hub",
           "calls": [
             {
-              "text": "GET /ftm/hub/*"
+              "text": "GET /fin/hub/*"
             }
           ],
           "diff": "add",
@@ -212,21 +212,21 @@
           "step": "4"
         },
         {
-          "to": "ftm-query",
+          "to": "fin-query",
           "calls": [
             {
-              "text": "GET /ftm/transactions"
+              "text": "GET /fin/transactions"
             }
           ]
         },
         {
-          "to": "ftm-ingest",
+          "to": "fin-ingest",
           "calls": [
             {
-              "text": "GET /ftm/items"
+              "text": "GET /fin/items"
             },
             {
-              "text": "POST /ftm/items/webhook"
+              "text": "POST /fin/items/webhook"
             }
           ],
           "flow": "ingest",
@@ -235,11 +235,11 @@
       ]
     },
     {
-      "id": "ftm-ingest",
-      "name": "ftm ingest (existing)",
+      "id": "fin-ingest",
+      "name": "fin ingest (existing)",
       "kind": "Lambda",
       "diff": "mod",
-      "description": "Plaid link and webhooks. Changes: 730 days history, /transactions/sync, item health.",
+      "description": "BankLink link and webhooks. Changes: 730 days history, /transactions/sync, item health.",
       "interface": [
         {
           "text": "linkItem(publicToken): Item - requests 730 days",
@@ -256,7 +256,7 @@
       ],
       "uses": [
         {
-          "to": "plaid",
+          "to": "banklink",
           "calls": [
             {
               "text": "/transactions/get"
@@ -284,17 +284,17 @@
       "boundary": "identity"
     },
     {
-      "id": "ftm-query",
-      "name": "ftm query (existing)",
+      "id": "fin-query",
+      "name": "fin query (existing)",
       "kind": "Lambda",
       "diff": "mod",
-      "description": "Keeps ftm.transactions; legacy transaction list. Change: applies modified events.",
+      "description": "Keeps fin.transactions; legacy transaction list. Change: applies modified events.",
       "uses": [
         {
           "to": "documentdb",
           "calls": [
             {
-              "text": "upsert ftm.transactions"
+              "text": "upsert fin.transactions"
             }
           ],
           "flow": "ingest",
@@ -304,8 +304,8 @@
       "boundary": "identity-vpc"
     },
     {
-      "id": "ftm-alert",
-      "name": "ftm alert (existing)",
+      "id": "fin-alert",
+      "name": "fin alert (existing)",
       "kind": "Lambda",
       "boundary": "identity",
       "description": "Legacy threshold alerts; unchanged.",
@@ -321,11 +321,11 @@
       ]
     },
     {
-      "id": "ftm-hub",
-      "name": "ftm hub (new FTM app)",
+      "id": "fin-hub",
+      "name": "fin hub (new FIN app)",
       "kind": "Lambda: API + worker",
       "diff": "add",
-      "path": "finance-hub/ftm/apps/hub",
+      "path": "money-hub/fin/apps/hub",
       "description": "Tab APIs and derived data: recurring streams, card-on-file, budgets, alerts. Click to see its modules.",
       "uses": [],
       "boundary": "identity-vpc",
@@ -336,7 +336,7 @@
           "layer": "app",
           "diff": "add",
           "path": "apps/hub/src/app/api",
-          "description": "REST /ftm/hub/*: one endpoint per tab, composes services into Screen<T>.",
+          "description": "REST /fin/hub/*: one endpoint per tab, composes services into Screen<T>.",
           "interface": [
             {
               "text": "getOverview(month): Screen<Overview>",
@@ -355,7 +355,7 @@
               "diff": "add"
             },
             {
-              "text": "getCardShield(): Screen<CardShield>",
+              "text": "getCardGuard(): Screen<CardGuard>",
               "diff": "add"
             },
             {
@@ -404,7 +404,7 @@
               ]
             },
             {
-              "to": "card-shield-service",
+              "to": "card-guard-service",
               "calls": [
                 {
                   "text": "getMerchants(user)",
@@ -460,7 +460,7 @@
               ]
             },
             {
-              "to": "card-shield-service",
+              "to": "card-guard-service",
               "calls": [
                 {
                   "text": "recompute(user)",
@@ -603,11 +603,11 @@
           ]
         },
         {
-          "id": "card-shield-service",
-          "name": "card shield service",
+          "id": "card-guard-service",
+          "name": "card guard service",
           "layer": "service",
           "diff": "add",
-          "path": "apps/hub/src/core/services/card-shield",
+          "path": "apps/hub/src/core/services/card-guard",
           "description": "Card-on-file merchants per account, joined with breaches.",
           "interface": [
             {
@@ -718,7 +718,7 @@
           "layer": "client",
           "diff": "add",
           "path": "apps/hub/src/core/clients/transactions",
-          "description": "Reads ftm.transactions (DocumentDB, filled by ftm query).",
+          "description": "Reads fin.transactions (DocumentDB, filled by fin query).",
           "interface": [
             {
               "text": "findByUser(user, period, filter): Transaction[]",
@@ -730,7 +730,7 @@
               "to": "documentdb",
               "calls": [
                 {
-                  "text": "read ftm.transactions"
+                  "text": "read fin.transactions"
                 }
               ],
               "diff": "add",
@@ -769,7 +769,7 @@
               "to": "documentdb",
               "calls": [
                 {
-                  "text": "readWrite ftm_hub.*"
+                  "text": "readWrite fin_hub.*"
                 }
               ],
               "diff": "add"
@@ -834,7 +834,7 @@
           "layer": "client",
           "diff": "add",
           "path": "apps/hub/src/core/clients/alerts",
-          "description": "Publishes FtmHubAlertCreated to SNS.",
+          "description": "Publishes FinHubAlertCreated to SNS.",
           "interface": [
             {
               "text": "publish(alert): void",
@@ -846,7 +846,7 @@
               "to": "sns-identity",
               "calls": [
                 {
-                  "text": "publish FtmHubAlertCreated"
+                  "text": "publish FinHubAlertCreated"
                 }
               ],
               "diff": "add",
@@ -914,10 +914,10 @@
           "async": true
         },
         {
-          "to": "aura-platform",
+          "to": "acme-platform",
           "calls": [
             {
-              "text": "FtmHubAlertCreated"
+              "text": "FinHubAlertCreated"
             }
           ],
           "diff": "add",
@@ -926,7 +926,7 @@
           "async": true
         }
       ],
-      "description": "Owned by identity-plumbing.",
+      "description": "Owned by identity-infra.",
       "boundary": "identity"
     },
     {
@@ -937,7 +937,7 @@
       "description": "ingest, query populator, hub worker (new).",
       "uses": [
         {
-          "to": "ftm-query",
+          "to": "fin-query",
           "calls": [
             {
               "text": "transaction events"
@@ -966,12 +966,12 @@
       "name": "DocumentDB Elastic",
       "kind": "database",
       "uses": [],
-      "description": "ftm.transactions (existing); ftm_hub.* (new). Owned by ftm query terraform.",
+      "description": "fin.transactions (existing); fin_hub.* (new). Owned by fin query terraform.",
       "boundary": "identity-vpc"
     },
     {
-      "id": "plaid",
-      "name": "Plaid",
+      "id": "banklink",
+      "name": "BankLink",
       "kind": "3rd-party API",
       "uses": [
         {
@@ -998,14 +998,14 @@
       "boundary": "outside"
     },
     {
-      "id": "aura-platform",
-      "name": "Aura Platform (AP)",
+      "id": "acme-platform",
+      "name": "Acme Platform (AP)",
       "kind": "event webhooks",
       "boundary": "outside",
-      "description": "Bridges SNS events to al-sneed; account TBD.",
+      "description": "Bridges SNS events to notifier; account TBD.",
       "uses": [
         {
-          "to": "al-sneed",
+          "to": "notifier",
           "calls": [
             {
               "text": "event webhook → SQS feed_ingest"

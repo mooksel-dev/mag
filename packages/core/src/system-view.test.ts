@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { diagramWarnings, edgesAt, normalizeDiagram, validateDiagram, type ComponentDiagram } from './index.ts'
 
-// docs/examples/finance-hub-architecture.json: the system view of a change drawn well, with boundaries, numbered flows
+// docs/examples/money-hub-architecture.json: the system view of a change drawn well, with boundaries, numbered flows
 // and the inside of the new app one click down.
-const EXAMPLE = () => normalizeDiagram(JSON.parse(readFileSync(new URL('../../../docs/examples/finance-hub-architecture.json', import.meta.url), 'utf8'))) as ComponentDiagram
+const EXAMPLE = () => normalizeDiagram(JSON.parse(readFileSync(new URL('../../../docs/examples/money-hub-architecture.json', import.meta.url), 'utf8'))) as ComponentDiagram
 
 const SMALL = (): ComponentDiagram => ({
   type: 'component',
@@ -49,11 +49,20 @@ test('normalizeDiagram keeps boundaries and flows, a numeric step becomes a labe
 
 test('edgesAt carries the steps of the uses behind an arrow; inner steps fold into their module', () => {
   const top = edgesAt(SMALL().modules, null)
-  assert.deepEqual(top.find((e) => e.from === 'app')?.steps, [{ flow: 'read', step: '1' }])
+  assert.deepEqual(top.find((e) => e.from === 'app')?.steps, [{ flow: 'read', step: '1', calls: ['GET /x'] }])
   const db = top.find((e) => e.from === 'api' && e.to === 'db')!
-  assert.deepEqual(db.steps, [{ flow: 'read', step: '2' }])
+  assert.deepEqual(db.steps, [{ flow: 'read', step: '2', calls: [] }])
   assert.equal(db.async, true)
   assert.equal(top.find((e) => e.from === 'app')?.async, undefined)
+})
+
+test('edgesAt: two steps on one arrow keep their own calls', () => {
+  const d = SMALL()
+  d.modules[0].uses.push({ to: 'api', calls: [{ text: 'POST /y' }], flow: 'read', step: '3' })
+  assert.deepEqual(edgesAt(d.modules, null).find((e) => e.from === 'app')?.steps, [
+    { flow: 'read', step: '1', calls: ['GET /x'] },
+    { flow: 'read', step: '3', calls: ['POST /y'] },
+  ])
 })
 
 test('diagramWarnings: layered modules beside systems on the top level, many systems without boundaries, a flow with no step', () => {
