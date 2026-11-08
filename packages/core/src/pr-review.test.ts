@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, treeReviews, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -156,8 +156,17 @@ test('reviewTopic: the topic mag created for a review; legacy by its first job; 
 
 test('reviewOfTopic: the open review a topic owns', () => {
   const tasks = [review('old', { status: 'done' }), task('w', { ownerSessionId: 'topic' }), review('r')]
-  assert.equal(reviewOfTopic(tasks, 'topic')?.id, 'r')
-  assert.equal(reviewOfTopic(tasks, 'other'), undefined)
+  assert.equal(reviewOfTopic(tasks, 'topic', [topic('idle')])?.id, 'r')
+  assert.equal(reviewOfTopic(tasks, 'other', [topic('idle')]), undefined)
+})
+
+test('treeReviews: the open reviews of a topic and the sessions under it, its own first; a subtopic sees only its own part', () => {
+  const sub = (id: string, parentId: string): AgentSession => ({ ...topic('idle'), id, role: null, parentId })
+  const sessions = [topic('idle'), sub('s1', 'topic'), sub('s2', 's1'), { ...topic('idle'), id: 'other' }]
+  const tasks = [review('deep', { ownerSessionId: 's2' }), review('mine'), review('done', { ownerSessionId: 's1', status: 'done' }), review('theirs', { ownerSessionId: 'other' })]
+  assert.deepEqual(treeReviews(tasks, 'topic', sessions).map((t) => t.id), ['mine', 'deep'])
+  assert.equal(reviewOfTopic(tasks, 'topic', sessions)?.id, 'mine')
+  assert.deepEqual(treeReviews(tasks, 's1', sessions).map((t) => t.id), ['deep'])
 })
 
 test('migratePrReview: a report moves to v2 with its direction call and draft, a verdict alone to v1, none to no result', () => {

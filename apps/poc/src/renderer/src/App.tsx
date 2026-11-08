@@ -127,7 +127,7 @@ export function App({ projectId }: { projectId: string }) {
   const work = selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null
   const owner = work && ownerSession(work, sessions)
   const shownTopic = pickedTopic ?? (owner && isTopic(owner) ? owner : null)
-  const shownReview = pickedTopic && reviewOfTopic(tasks, pickedTopic.id)
+  const shownReview = pickedTopic && reviewOfTopic(tasks, pickedTopic.id, sessions)
   const initial = work ? workTarget(work) : shownReview ? workTarget(shownReview) : null
   // A New subtopic draft under a topic or subtopic that still exists (topic-screen-one-new-compact.2).
   const draftParent = selected?.kind === 'draft' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null

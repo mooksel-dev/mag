@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, ideaTitle, isLegacy, isSubtopic, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 
@@ -175,6 +175,7 @@ export class Store {
     () => this.migrateToClosedMark(),
     () => this.migrateToSessionTree(),
     () => this.migrateToParkedTopics(),
+    () => this.migrateBriefTitles(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -197,6 +198,18 @@ export class Store {
     // Through migrateToSteps.
     if (this.data.stepsMigrated || tasks.some((t) => t.parentId && t.work?.repos)) return 4
     return 0
+  }
+
+  /**
+   * A subtopic an agent started was titled with the start of its brief, and marked as titled. Marked as untitled now, so
+   * nameUntitled names it; a title that is no part of the brief is the user's and stays.
+   */
+  private migrateBriefTitles() {
+    const flat = (text: string) => text.replace(/\s+/g, ' ')
+    for (const s of this.data.sessions) {
+      const first = s.items.find((i) => i.kind === 'user' || i.kind === 'job')
+      if (isSubtopic(s) && s.titleGenerated && s.title && first?.kind === 'job' && first.title.startsWith('Brief from') && flat(first.text).includes(s.title)) s.titleGenerated = false
+    }
   }
 
   /**

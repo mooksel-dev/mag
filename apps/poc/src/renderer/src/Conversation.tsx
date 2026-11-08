@@ -6,6 +6,7 @@ import {
   ownedWorks,
   prRepoName,
   reviewTopic,
+  treeReviews,
   runRole,
   isSubagent,
   isSubtopic,
@@ -91,14 +92,17 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const review = topic ? tasks.find((t) => isReview(t) && (t.id === topic.reviewOf || reviewTopic(t, state.sessions)?.id === topic.id)) : work && isReview(work) ? work : undefined
   // The conversation: the topic, else the work's owner (its groomer, or a review's topic that is gone).
   const chat = topic ?? (work ? ownerSession(work, state.sessions) : null)
-  // The works whose cards wait at the end of the conversation: those this session owns, the one opened first.
-  const reviews = topic ? tasks.filter((t) => isReview(t) && t !== review && t.ownerSessionId === topic.id && t.status === 'in_progress') : []
+  // The works whose cards wait at the end of the conversation: those this session owns and the reviews of its tree, whose state its row carries; the one opened first.
+  const reviews = topic ? treeReviews(tasks, topic.id, state.sessions).filter((t) => t !== review) : []
   const owned = topic ? [...(review ? [review] : []), ...reviews, ...ownedWorks(topic.id, tasks)] : work ? [work] : []
   const cardsOf = work && owned.some((t) => t.id === work.id) ? [work, ...owned.filter((t) => t.id !== work.id)] : owned
   const waiting = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).find((c) => c.card?.move.who === 'you')
   // An answer goes into the composer.
   const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
-  const cards = cardsOf.length ? <>{cardsOf.map((t, i) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={i > 0} />)}</> : undefined
+  // A review a session under this topic asked for is answered there: its agent is the one that asked.
+  const askedBelow = (t: Task) => (topic && reviews.includes(t) && t.ownerSessionId !== topic.id ? state.sessions.find((s) => s.id === t.ownerSessionId) : undefined)
+  const answer = (t: Task) => { const s = askedBelow(t); return s ? () => onSelect({ kind: 'topic', id: s.id }) : focus }
+  const cards = cardsOf.length ? <>{cardsOf.map((t, i) => <WorkCards key={t.id} work={t} owner={askedBelow(t) ?? chat} state={state} onAnswer={answer(t)} label={i > 0} />)}</> : undefined
   const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const pr = review?.prReview?.pr
   // A work or review closed or deleted from its card: back to the topic without it (gone with it too: Home).
@@ -132,7 +136,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
               Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted topic'}
             </div>
           )}
-          {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1} />}
+          {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={answer(waiting.t)} keyed={cardsOf.length > 1} />}
         </header>
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">

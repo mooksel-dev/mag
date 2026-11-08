@@ -4,7 +4,7 @@
 // of its own (reviews-prybraty-spysok-pr-i.1); it records findings by level with a verdict.
 // Nothing goes to GitHub without the user's button.
 
-import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
+import { repoNames, sessionTree, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
 import { reportLine, type ChecksVerdict, type ReviewReport } from './review-report.ts'
 
 /** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit. */
@@ -294,9 +294,14 @@ export function reviewTopic(task: Pick<Task, 'id' | 'ownerSessionId' | 'prReview
   return task.prReview && first?.kind === 'user' && first.text.startsWith(legacyJob(task.prReview.pr.url)) ? owner : undefined
 }
 
-/** The open review a topic owns, if any. */
-export function reviewOfTopic(tasks: Task[], sessionId: string): Task | undefined {
-  return tasks.find((t) => isReview(t) && t.status === 'in_progress' && t.ownerSessionId === sessionId)
+/** The open reviews a session or a session under it asked for (its row carries them, so its page shows them), its own first. */
+export function treeReviews(tasks: Task[], sessionId: string, sessions: AgentSession[]): Task[] {
+  return sessionTree(sessionId, sessions).flatMap((s) => tasks.filter((t) => isReview(t) && t.status === 'in_progress' && t.ownerSessionId === s.id))
+}
+
+/** The open review a topic's tree owns, if any. */
+export function reviewOfTopic(tasks: Task[], sessionId: string, sessions: AgentSession[]): Task | undefined {
+  return treeReviews(tasks, sessionId, sessions)[0]
 }
 
 /** The name a PR's repository goes by: the project's name for it, else (outside the project) its repo part. */
