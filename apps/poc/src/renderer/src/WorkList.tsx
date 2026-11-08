@@ -6,7 +6,7 @@ import {
   canCancel,
   cardFilter,
   cardRef,
-  flatCards,
+  countedCards,
   groupKey,
   moveRef,
   parkedTopics,
@@ -118,7 +118,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   const sidebar = sidebarRows(project.sidebar ?? [], all, (c) => rowMatches(c, filter))
   const open = all.filter((c) => !c.closed)
   // Counts count each row that matches on its own, a chat's works included: "Waiting on you 2" is two things to act on.
-  const counted = flatCards(open)
+  const counted = countedCards(all)
   const ideas = parkedTopics(project.id, state.sessions)
   const [showClosed, setShowClosed] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)

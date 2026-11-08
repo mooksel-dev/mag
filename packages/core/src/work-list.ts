@@ -79,7 +79,7 @@ export interface WorkCard {
   session?: AgentSession
   /** A chat: its own state, without its children's (what a filter matches it by). */
   own?: { group: WorkGroup; dot: CardDot }
-  /** A chat: the works it owns (and the sessions under it own), newest created first. */
+  /** A chat: the works it owns and the reviews it asked for (and the sessions under it), newest created first. */
   children?: WorkCard[]
   /** A topic: the sessions under it (topics-a-tree-of-agent.2), each with its own; in the order they were started. */
   sessions?: SessionNode[]
@@ -397,6 +397,8 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
   const runningChild = flatNodes(tree).find((n) => n.session.status === 'running')?.session
   const running = s.status === 'running' || !!runningChild
   const open = children.filter((c) => c.group !== 'done')
+  // Only works finish a topic: a review it asked for is one thing it did.
+  const works = children.filter((c) => c.kind === 'work')
   const ownGroup: WorkGroup = approval ? 'waiting' : running ? 'working' : 'topics'
   const childMove = (c: AgentSession) => {
     const m = agentMove(c, false, now)
@@ -407,16 +409,21 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     : s.status === 'running' ? agentMove(s, false, now) : runningChild ? childMove(runningChild) : { who: 'other', text: 'Discussion · no work yet' }
   const idle = !approval && !running
   // No child open: a discussion without works is done once closed; one with works, once they all are finished.
-  const done = idle && !open.length && (children.length > 0 || !!s.closedAt)
+  const done = idle && !open.length && (works.length > 0 || !!s.closedAt)
   const closed = idle && !open.length && !!s.closedAt
   const group: WorkGroup = done ? 'done' : [ownGroup, ...open.map((c) => c.group)].reduce((a, b) => (URGENCY[b] > URGENCY[a] ? b : a))
   const waiting = open.find((c) => c.group === 'waiting')
-  const move: CardMove = !idle
-    ? ownMove
-    : waiting ? { ...waiting.move, text: `${waiting.move.text} via ${waiting.task!.key}` }
-    : open.length ? { who: open[0].move.who, text: `${open[0].stage} · ${open[0].task!.key}` }
+  const via = (c: WorkCard): CardMove => ({ ...c.move, text: `${c.move.text} via ${c.task!.key}` })
+  // A review has no row of its own to say what it waits for, so a run elsewhere in the tree does not hide it.
+  const review = approval ? undefined : open.find((c) => c.kind === 'review' && c.group === 'waiting')
+  const move: CardMove = review
+    ? via(review)
+    : !idle ? ownMove
+    : waiting ? via(waiting)
+    // A review can have no stage yet (see reviewStage).
+    : open.length ? { who: open[0].move.who, text: `${open[0].stage ?? open[0].move.text} · ${open[0].task!.key}` }
     : closed ? { who: 'other', text: 'Closed' }
-    : children.length ? { who: 'other', text: 'Done' }
+    : works.length ? { who: 'other', text: 'Done' }
     : ownMove
   // Green while the chat or any open child has an agent running.
   const dot: CardDot = group === 'waiting' ? 'amber' : group !== 'done' && (running || open.some((c) => c.dot === 'green')) ? 'green' : 'grey'
@@ -444,9 +451,11 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
 
 /**
  * The project's rows as cards (`tasks` are the project's), newest created first; done, canceled and closed ones
- * included. Every chat topic is a row (a parked one is not: it is an idea, see parkedTopics), and the works it owns (not reviews) are its `children`; works without a chat
- * owner (groomer, ticket, a deleted topic) and reviews are rows of their own. A work's agents are its own sessions and
- * its owner topic (a review's: its topics). The order means nothing to the sidebar (see sidebarRows): it never moves a row.
+ * included. Every chat topic is a row (a parked one is not: it is an idea, see parkedTopics), and the works it owns and
+ * the reviews it asked for (it or a session under it, review_pr) are its `children`; works without a chat owner (groomer,
+ * ticket, a deleted topic) and reviews with mag's own topic are rows of their own, a review's titled "Review: ". A work's
+ * agents are its own sessions and its owner topic (a review's: its topics). The order means nothing to the sidebar (see
+ * sidebarRows): it never moves a row.
  */
 export function workCards(projectId: string, tasks: Task[], sessions: AgentSession[], now: number): WorkCard[] {
   const items = inbox(projectId, tasks, sessions)
@@ -460,11 +469,11 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
     // A chat's approval is on the chat's row, not on a work's.
     const item = finished(task) ? undefined : items.find((i) => i.task?.id === task.id)
     const c = taskCard(task, item, mine, tasks, now)
-    // A work a session under a topic owns is the topic's too.
-    const root = !isReview(task) && task.ownerSessionId ? rootSession(task.ownerSessionId, mine)?.id : undefined
+    // A work a session under a topic owns is the topic's too, and so is a review it asked for; mag's own topic of a review is not one to go under.
+    const root = task.ownerSessionId && !(isReview(task) && reviewTopic(task, mine)) ? rootSession(task.ownerSessionId, mine)?.id : undefined
     const chat = root && chatIds.has(root) ? root : null
     if (chat) children.set(chat, [...(children.get(chat) ?? []), c])
-    else out.push(c)
+    else out.push(isReview(task) ? { ...c, title: `Review: ${c.title}` } : c)
   }
   for (const s of chats) {
     const tree = sessionNodes(s.id, mine)
@@ -677,7 +686,15 @@ export function cardFilter(cards: WorkCard[], filter: CardFilter): WorkCard[] {
   return cards.filter((c) => cardMatches(c, filter))
 }
 
+/** A review closed under a topic still open: the topic is no longer about it, as a closed review's own row leaves the list. */
+const closedUnder = (row: WorkCard, kid: WorkCard) => kid.kind === 'review' && kid.closed && !row.closed
+
 /** A row a filter shows: it matches, or one of its children does; under it, only the matching children show. */
 export function rowMatches(c: WorkCard, filter: CardFilter): boolean {
-  return cardMatches(c, filter) || !!c.children?.some((k) => cardMatches(k, filter))
+  return cardMatches(c, filter) || !!c.children?.some((k) => !closedUnder(c, k) && cardMatches(k, filter))
+}
+
+/** What the sidebar's filter counts count: each open row and its children, as one list. */
+export function countedCards(cards: WorkCard[]): WorkCard[] {
+  return cards.filter((c) => !c.closed).flatMap((c) => [c, ...(c.children ?? []).filter((k) => !closedUnder(c, k))])
 }
