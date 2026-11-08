@@ -121,6 +121,10 @@ export interface ArchEdge {
   diff?: DiffMark
   /** Diagrams only: the change of each call that has one, by its text. */
   callDiff?: Record<string, DiffMark>
+  /** Diagrams only: the flow steps of the uses behind the arrow, in order of appearance, each with the calls of its use. */
+  steps?: { flow: string; step: string; calls: string[] }[]
+  /** Diagrams only: every use behind the arrow is fire and forget. */
+  async?: boolean
 }
 
 /**
@@ -177,6 +181,9 @@ export function edgesAt<N extends TreeNode<N>>(nodes: N[], parentId: string | nu
       }
       const m = useDiff(n, u, byId.get(u.to))
       marks.get(k)!.push(m)
+      const { flow, step, async } = u as { flow?: string; step?: string; async?: boolean }
+      if (flow && step) e.steps = [...(e.steps ?? []), { flow, step, calls: u.calls.map(callText) }]
+      e.async = (marks.get(k)!.length === 1 || e.async === true) && async === true
       for (const c of u.calls) {
         const text = callText(c)
         if (!e.calls.includes(text)) e.calls.push(text)
@@ -188,6 +195,7 @@ export function edgesAt<N extends TreeNode<N>>(nodes: N[], parentId: string | nu
   for (const [k, e] of edges) {
     const m = combine(marks.get(k)!)
     if (m) e.diff = m
+    if (!e.async) delete e.async
   }
   return [...edges.values()]
 }

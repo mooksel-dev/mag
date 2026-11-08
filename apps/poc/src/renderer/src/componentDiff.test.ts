@@ -29,6 +29,11 @@ test('modules without a change of their own or inside fold into the unchanged ro
   assert.deepEqual([...folded], ['db', 'idle'])
 })
 
+test('a level in boundaries folds nothing: unchanged neighbours stay in their frames', () => {
+  const framed = { ...diagram, boundaries: [{ id: 'aws', name: 'AWS' }], modules: diagram.modules.map((n) => (n.id === 'db' ? { ...n, boundary: 'aws' } : n)) }
+  assert.deepEqual([...unchangedAt(framed, framed.modules)], [])
+})
+
 test('a module with only a line moved out of it still changes', () => {
   const out = movedOut(diagram)
   assert.deepEqual([...out].sort(), ['old', 'svc'])

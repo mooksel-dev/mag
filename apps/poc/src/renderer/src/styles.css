@@ -187,6 +187,29 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbox .inside .link { padding: 0; font-size: 11px; }
 .archlane.ports { background: none; border: 1px dashed var(--line); }
 .archbox.on { box-shadow: 0 0 0 2px var(--text); }
+.archdiagram.framed { overflow-x: auto; }
+.archgraph { position: relative; flex: none; }
+.archframe { position: absolute; border: 1px solid var(--line); border-radius: 10px; background: var(--arch-lane); }
+.archframe.depth-1, .archframe.depth-3 { background: var(--surface); }
+.archframe.ports { background: none; border-style: dashed; }
+.archframe.diff-add { border-color: var(--diff-add); border-width: 2px; }
+.archframe.diff-mod { border-color: var(--diff-mod); border-width: 2px; }
+.archframe.diff-del { border-color: var(--diff-del); border-style: dashed; }
+.archframehead { position: absolute; top: 6px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; font-size: 12px; line-height: 1.35; overflow: hidden; max-height: 34px; }
+.archframehead .name { font-weight: 600; }
+.archframehead .kind { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.archframehead .note { flex-basis: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archarrows path.async { stroke-dasharray: 2 4; }
+.archstep { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; display: grid; place-items: center; background: var(--text); color: var(--surface); font-size: 11px; font-weight: 700; white-space: nowrap; cursor: default; }
+.archstep.beside { transform: translate(calc(-100% - 36px), -50%); }
+.archstep.static { position: static; transform: none; display: inline-grid; }
+.archflows { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; position: relative; z-index: 1; }
+.archflow.dim { opacity: .4; }
+.archflowhead { font-weight: 600; padding: 0; }
+.archflowhead.on { text-decoration: underline; }
+.archflow table { margin-top: 4px; }
+.archflow td code { display: inline-block; margin-right: 6px; overflow-wrap: anywhere; }
+.archstepcell { width: 36px; }
 .archbox.dim { opacity: .3; }
 .archbox .flag { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; background: var(--arch-error); color: #fff; font-size: 11px; font-weight: 700; }
 .archarrows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }

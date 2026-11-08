@@ -201,7 +201,7 @@ export function Comparison({ view, hunks, foldDeviations }: {
       {plan && (
         <div className="factplan">
           <div className="muted small">{plan.title} (v{plan.version}) against the fact</div>
-          <ComponentView key={plan.id} modules={plan.diagram.modules} diff summary={plan.diagram.summary} overlay={plan.overlay} />
+          <ComponentView key={plan.id} modules={plan.diagram.modules} boundaries={plan.diagram.boundaries} flowDefs={plan.diagram.flows} diff summary={plan.diagram.summary} overlay={plan.overlay} />
         </div>
       )}
       {deviations.length > 0 && foldDeviations ? (

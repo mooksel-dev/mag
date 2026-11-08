@@ -85,8 +85,12 @@ export function moveEdges(d: ComponentDiagram, parentId: string | null): MoveEdg
   return [...out.values()]
 }
 
-/** The modules of one level that fold into the "Без змін" row of a diff; a module with a flow of a method keeps its box. */
+/**
+ * The modules of one level that fold into the "Без змін" row of a diff; a module with a flow of a method keeps its box.
+ * A level in boundaries folds nothing: it answers where each part runs, and a chip has no place in a frame.
+ */
 export function unchangedAt(d: ComponentDiagram, nodes: DNode[], flows: FlowItem[] = []): Set<string> {
+  if (nodes.some((n) => n.boundary)) return new Set()
   const out = movedOut(d)
   const flowed = new Set(flows.map((f) => parseFlowRef(f.diagram.of)!.module))
   const ids = new Set<string>()

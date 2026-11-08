@@ -32,7 +32,7 @@ export function DiagramView({ diagram, focus, siblings, onSelect, onFlow }: {
     case 'component':
       return (
         <div className="diagramview">
-          <ComponentView modules={diagram.modules} diff summary={diagram.summary} focus={focus} flows={flows} onSelect={onSelect} onFlow={onFlow} />
+          <ComponentView modules={diagram.modules} boundaries={diagram.boundaries} flowDefs={diagram.flows} diff summary={diagram.summary} focus={focus} flows={flows} onSelect={onSelect} onFlow={onFlow} />
         </div>
       )
     case 'sequence':
