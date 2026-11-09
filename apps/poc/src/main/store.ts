@@ -552,6 +552,13 @@ export class Store {
     return canvas
   }
 
+  /** Removes a canvas for good; a link to it in a chat or a doc shows as its title (right-panel-only-what-is.1). */
+  deleteCanvas(canvasId: string) {
+    if (!this.data.canvases[canvasId]) throw new Error(`No canvas ${canvasId}`)
+    delete this.data.canvases[canvasId]
+    this.changed()
+  }
+
   /**
    * The canvases among `ids` that belong to no task yet (drawn in the project chat) move into the task: a doc that
    * links them makes them part of its work. Returns the ones moved.

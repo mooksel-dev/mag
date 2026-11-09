@@ -268,6 +268,19 @@ test('deleteSession removes only the session; project canvases and events stay',
   assert.throws(() => store.deleteSession(s.id), /No session/)
 })
 
+test('deleteCanvas removes that canvas and persists; a canvas that is gone is an error (right-panel-only-what-is.1)', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const store = new Store(path)
+  const p = store.createProject('p')
+  const c = store.saveCanvas({ projectId: p.id, taskId: null, sessionId: null, title: 'mock', kind: 'html', html: '<p>' })
+  const other = store.saveCanvas({ projectId: p.id, taskId: null, sessionId: null, title: 'other', kind: 'html', html: '<p>' })
+  store.deleteCanvas(c.id)
+  assert.deepEqual(store.canvasList().map((x) => x.id), [other.id])
+  assert.throws(() => store.deleteCanvas(c.id), /No canvas/)
+  store.flush()
+  assert.deepEqual(Object.keys(new Store(path).data.canvases), [other.id])
+})
+
 test('closeSession keeps the history and persists; reopenSession opens it again', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   const store = new Store(file)

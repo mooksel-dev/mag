@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, approvalCommand, backgroundLabel, canvasDocument, chatCommands, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
+import { TASK_KEY_RE, approvalCommand, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
@@ -44,19 +44,22 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
  * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams and [title](canvas:<id>) links as
  * canvases (canvas:<id>#<node> focuses a node of a diagram): a link alone on its line shows the canvas in place, one
  * inside text is a link that opens it (see openCanvasLink). `canvases`: the ones it may show; a link to another id
- * stays a link. Agent output is sanitized: it may echo repo or web content.
+ * was deleted and shows as its title (without `canvases` it stays a link). Agent output is sanitized: it may echo repo
+ * or web content.
  */
 export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { text: string; onOpenTask?: (key: string) => void; canvases?: CanvasRef[]; className?: string }) {
   const theme = useAppliedTheme()
   const ref = useRef<HTMLDivElement>(null)
   const opener = useContext(CanvasOpener)
+  // As a string, so only a change in what this text links parses it again.
+  const gone = canvases ? linkedCanvasIds(text).filter((id) => !canvases.some((c) => c.id === id)).join(' ') : ''
   // Canvases are React siblings of the HTML chunks, never portals into them: React must own every node it removes.
   const segments = useMemo(
     () =>
-      mdSegments(text, (s) => s.replace(KEY_LINK, '$1[$2](#task:$2)')).map((seg) =>
+      mdSegments(text, (s) => s.replace(KEY_LINK, '$1[$2](#task:$2)'), new Set(gone.split(' '))).map((seg) =>
         seg.kind === 'md' ? { ...seg, html: DOMPurify.sanitize(marked.parse(seg.text, { async: false }) as string) } : seg,
       ),
-    [text],
+    [text, gone],
   )
   useEffect(() => {
     let cancelled = false
@@ -263,6 +266,8 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
               )
             }
             case 'canvas':
+              // Deleted since: its title stays, as text.
+              if (!shown.some((c) => c.id === i.canvas.id)) return <div key={n} className="msg agent">{i.canvas.title}</div>
               return <CanvasCard key={n} canvas={i.canvas} latest={lastCanvasAt.get(i.canvas.id) === n} />
             case 'result':
               // An ok end is an event (foldEvents); only a failed turn shows.

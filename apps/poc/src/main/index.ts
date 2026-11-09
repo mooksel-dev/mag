@@ -294,6 +294,7 @@ app.whenReady().then(async () => {
     const c = store.data.canvases[id]
     return c ? { kind: c.kind, html: c.html, diagram: c.diagram } : null
   })
+  handle('canvas:delete', (_, id: string) => store.deleteCanvas(id))
   // A review of a teammate's PR shows its fact the way a step does.
   handle('step:fact', (_, stepId: string) => {
     const step = store.task(stepId)

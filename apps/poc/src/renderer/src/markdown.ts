@@ -20,9 +20,10 @@ export function parseCanvasHref(href: string): { id: string; node?: string } | n
  * Splits `text` at canvas links outside fenced and inline code. `prose` rewrites the text outside code (e.g. task-key
  * links). A canvas link alone on its line (from its first column, nothing after it) becomes a card segment: the card is
  * block-level. A link inside a sentence, a list item or a quote stays in the text as a link to `canvasHref`, so the
- * paragraph or list it is in stays whole.
+ * paragraph or list it is in stays whole. A link to an id in `gone` (a deleted canvas) is its title as plain text, on
+ * its own line too.
  */
-export function mdSegments(text: string, prose: (s: string) => string = (s) => s): MdSegment[] {
+export function mdSegments(text: string, prose: (s: string) => string = (s) => s, gone: ReadonlySet<string> = new Set()): MdSegment[] {
   const out: MdSegment[] = []
   let md = ''
   const flush = () => {
@@ -37,6 +38,10 @@ export function mdSegments(text: string, prose: (s: string) => string = (s) => s
       const [link, title, id, node] = m
       md += prose(part.slice(at, m.index))
       at = m.index + link.length
+      if (gone.has(id)) {
+        md += title || id
+        continue
+      }
       const rest = part.slice(at)
       const lineEnd = rest.indexOf('\n')
       // Nothing before it on its line, and only spaces after it up to the line's end (not code on the same line).

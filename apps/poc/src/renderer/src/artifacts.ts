@@ -1,7 +1,6 @@
 import {
   isReview,
   isSubtopic,
-  sessionActivity,
   sessionRole,
   sessionState,
   sessionTree,
@@ -20,8 +19,8 @@ import type { AppState } from '../../preload/api'
 
 /**
  * What a topic made (topics-a-tree-of-agent.3): the cards, docs, reviews and diagrams of the topic's tree and of the
- * works its sessions own. They show in the chat that made them and in the topic's Documents and diagrams; each opens in
- * the screen's drawer. Plain titles (topic-screen-one-new-compact.2): a work's doc is its title, a step's plan, fact and
+ * unfinished works its sessions own (right-panel-only-what-is.1). They show in the chat that made them and in the
+ * topic's Documents and diagrams; each opens in the screen's drawer. Plain titles (topic-screen-one-new-compact.2): a work's doc is its title, a step's plan, fact and
  * review are "Plan: <step>", "What was built: <step>" and "Review: <step>"; what the tree drew outside any work is last.
  * The agents working within a topic are topicAgents.
  */
@@ -46,6 +45,8 @@ export interface ArtifactChip {
   /** A review's verdict: merge green, look amber, changes red. */
   tone?: 'green' | 'amber' | 'red'
   open: ArtifactTarget
+  /** The canvases its Delete removes (a diagram set is one line, so all of it); absent: not offered. */
+  deletes?: string[]
 }
 
 /** A work (or a teammate's PR review) with its lines: its doc (else its card) and options, then its steps' in order. */
@@ -65,13 +66,16 @@ export interface TopicArtifacts {
 type ArtifactState = Pick<AppState, 'tasks' | 'sessions' | 'canvases' | 'docs'>
 type CanvasItem = AppState['canvases'][number]
 
+/** A work no one acts on any more: done, canceled, or closed (a review has no other end). */
+const finished = (t: Task) => t.status === 'done' || t.status === 'canceled' || !!t.closedAt
+
 /**
  * The works a topic's tree owns, open ones first, then the newest: those a session of the tree owns, and the reviews
  * a session of it was made for (`reviewOf`).
  */
 export function treeWorks(tree: AgentSession[], tasks: Task[]): Task[] {
   const ids = new Set(tree.map((s) => s.id))
-  const done = (t: Task) => Number(t.status === 'done' || t.status === 'canceled')
+  const done = (t: Task) => Number(finished(t))
   return tasks
     .filter((t) => !t.parentId && ((!!t.ownerSessionId && ids.has(t.ownerSessionId)) || tree.some((s) => s.reviewOf === t.id)))
     .sort((a, b) => done(a) - done(b) || b.createdAt - a.createdAt)
@@ -84,10 +88,10 @@ const CHIP_ORDER = ['doc', 'option', 'plan', 'fact', 'canvas', 'review'] as cons
 type ChipKind = (typeof CHIP_ORDER)[number]
 
 /** The line of a canvas (a diagram set by its root) on the line of `name` (a step's or a work's title): by its role, else its title. */
-function canvasChip(c: CanvasItem, count: number, name: string | null): { kind: ChipKind; chip: ArtifactChip } {
+function canvasChip(c: CanvasItem, count: number, name: string | null, deletes: string[] | undefined): { kind: ChipKind; chip: ArtifactChip } {
   const n = count > 1 ? ` · ${count} diagrams` : ''
   const title = `${c.title}${n}`
-  const chip = (kind: ChipKind, label: string) => ({ kind, chip: { key: `canvas:${c.id}`, label, title, open: { kind: 'canvas', id: c.id } as ArtifactTarget } })
+  const chip = (kind: ChipKind, label: string) => ({ kind, chip: { key: `canvas:${c.id}`, label, title, open: { kind: 'canvas', id: c.id } as ArtifactTarget, ...(deletes && { deletes }) } })
   const of = (what: string) => (name ? `${what}: ${name}` : what)
   if (c.kind === 'diagram' && c.role === 'option' && c.option) return chip('option', of(`Option ${c.option}`))
   if (c.kind === 'diagram' && c.role === 'plan') return chip('plan', of('Plan'))
@@ -100,12 +104,13 @@ const byOrder = (a: { kind: ChipKind; chip: ArtifactChip }, b: { kind: ChipKind;
   CHIP_ORDER.indexOf(a.kind) - CHIP_ORDER.indexOf(b.kind) || (a.kind === 'option' && b.kind === 'option' ? a.chip.label.localeCompare(b.chip.label) : 0)
 
 /**
- * The artifacts of `topic`'s tree (the topic, or a session under it, and everything below it) and of the works it owns,
- * by work (open ones first, then the newest) and then by step in order; `work`: a work shown without a topic (its owner
- * is its groomer, or nobody), listed alone or with the topic's. A work's first line is its doc, titled as the work (no
- * doc: its card; a teammate's PR review: its report). A diagram set is one line (its root, else its first diagram), with
- * its step when it has a step of a listed work, else with its work (the work it belongs to, or the one whose doc links
- * it); a canvas listed by two works shows once.
+ * The artifacts of `topic`'s tree (the topic, or a session under it, and everything below it) and of the unfinished
+ * works it owns, the newest first and then by step in order; `work`: a work shown without a topic (its owner is its
+ * groomer, or nobody), listed even when finished: this panel is the way to its doc. A work's first line is its doc,
+ * titled as the work (no doc: its card; a teammate's PR review: its report). A work lists only its own canvases, not
+ * another work's its doc links. A diagram set is one line (its root, else its first diagram), with its step when it has
+ * a step of a listed work, else with its work; a canvas listed by two works shows once. Any canvas line can be deleted
+ * except the fact of an open step or work: its review works from it.
  */
 export function topicArtifacts(topic: AgentSession | null, state: ArtifactState, work: Task | null = null): TopicArtifacts {
   const empty: TopicArtifacts = { works: [], loose: [], count: 0 }
@@ -113,7 +118,7 @@ export function topicArtifacts(topic: AgentSession | null, state: ArtifactState,
   if (!projectId) return empty
   const tasks = state.tasks.filter((t) => t.projectId === projectId)
   const tree = topic ? sessionTree(topic.id, state.sessions) : []
-  const works = treeWorks(tree, tasks)
+  const works = treeWorks(tree, tasks).filter((w) => !finished(w))
   if (work && !works.some((w) => w.id === work.id)) works.push(work)
   const canvases = state.canvases.filter((c) => c.projectId === projectId)
   type Chips = { kind: ChipKind; chip: ArtifactChip }[]
@@ -141,7 +146,7 @@ export function topicArtifacts(topic: AgentSession | null, state: ArtifactState,
       const r = step.review
       if (r) add(step.id, { kind: 'review', chip: { key: `review:${step.id}`, label: `Review: ${step.title}`, title: `Agent review of ${step.key} · ${r.verdict} · round ${r.round}`, tone: TONES[r.verdict], open: { kind: 'review', taskId: step.id } } })
     }
-    list(taskDiagrams(w, state.docs[w.id], canvases), w)
+    list(taskDiagrams(w, undefined, canvases), w)
     list(workCanvases(w, canvases), w)
   }
   // What the tree drew outside any work.
@@ -162,7 +167,9 @@ export function topicArtifacts(topic: AgentSession | null, state: ArtifactState,
     const root = setRoot(set) ?? set[0]
     // A canvas the topic drew before its work existed is that work's (workCanvases); outside any work, loose.
     const at = lineOf(root, by)
-    const chip = canvasChip(root, set.length, at ? names.get(at) ?? null : null)
+    const owner = at ? tasks.find((t) => t.id === at) : undefined
+    const inUse = root.role === 'fact' && !!owner && !finished(owner)
+    const chip = canvasChip(root, set.length, at ? names.get(at) ?? null : null, inUse ? undefined : set.map((m) => m.id))
     if (at) add(at, chip)
     else loose.push(chip.chip)
   }
@@ -172,8 +179,8 @@ export function topicArtifacts(topic: AgentSession | null, state: ArtifactState,
   return { works: out, loose, count }
 }
 
-/** Where an agent stands, as its line says: working, waits on you (an approval), failed, or done (stopped, idle). */
-export type AgentLineState = 'working' | 'waiting' | 'failed' | 'done'
+/** Where a live agent stands, as its line says: working, waits on you (an approval), or failed. */
+export type AgentLineState = 'working' | 'waiting' | 'failed'
 
 /** One agent on a topic's Agents list. */
 export interface AgentLine {
@@ -192,19 +199,19 @@ export interface AgentLine {
 export interface TopicAgents {
   /** Waiting on you, then working, then failed; the earliest started first within a state. */
   active: AgentLine[]
-  /** The rest (stopped or idle): the newest first. */
-  done: AgentLine[]
   /** How many work now (not waiting on you). */
   working: number
 }
 
-const AGENT_STATES: Record<SessionState, AgentLineState> = { running: 'working', waiting: 'waiting', error: 'failed', idle: 'done', closed: 'done' }
-const AGENT_ORDER: AgentLineState[] = ['waiting', 'working', 'failed', 'done']
+/** An idle or closed agent is finished: it has no line. */
+const AGENT_STATES: Partial<Record<SessionState, AgentLineState>> = { running: 'working', waiting: 'waiting', error: 'failed' }
+const AGENT_ORDER: AgentLineState[] = ['waiting', 'working', 'failed']
 
 /**
- * The agents working within `topic` (a topic or a subtopic, and everything under it), topic-screen-one-new-compact.2:
- * the role presets and Claude Code subagents of its tree (not its subtopics: those are on the left), and the agents of
- * the works the tree owns (groomer, developers, reviewers); `work`, a work shown without a topic, adds its own.
+ * The live agents within `topic` (a topic or a subtopic, and everything under it), topic-screen-one-new-compact.2,
+ * right-panel-only-what-is.1: the role presets and Claude Code subagents of its tree (not its subtopics: those are on
+ * the left), and the agents of the works the tree owns (groomer, developers, reviewers); `work`, a work shown without
+ * a topic, adds its own. Live is working, waiting on you or failed; one that failed on a finished work is history.
  */
 export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 'tasks' | 'sessions'>, work: Task | null = null): TopicAgents {
   const projectId = topic?.projectId ?? work?.projectId
@@ -213,28 +220,29 @@ export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 't
   const works = treeWorks(tree, tasks)
   if (work && !works.some((w) => w.id === work.id)) works.push(work)
   const byId = new Map(tasks.map((t) => [t.id, t]))
-  const line = (s: AgentSession, w: Task | null): AgentLine => {
+  const line = (s: AgentSession, w: Task | null): AgentLine[] => {
+    const state = AGENT_STATES[sessionState(s)]
+    if (!state || (state === 'failed' && w && finished(w))) return []
     const step = s.stepId ? byId.get(s.stepId) : undefined
     const repos = (step ?? w)?.work?.repos.filter((r) => r.prUrl) ?? []
     const pr = repos.find((r) => r.prState === 'open') ?? repos[0]
-    return {
+    return [{
       session: s,
       role: w ? (s.role ?? 'agent') : sessionRole(s),
       // An agent has no generated title to wait for: its title is its brief.
       on: step?.title ?? (w ? shortTitle(w) : s.title?.trim() || sessionRole(s)),
-      state: AGENT_STATES[sessionState(s)],
+      state,
       prUrl: pr?.prUrl ?? w?.prReview?.pr.url ?? null,
       open: w ? { kind: 'agent', sessionId: s.id } : { kind: 'select', id: s.id },
-    }
+    }]
   }
   const lines = [
-    ...tree.filter((s) => s.id !== topic!.id && !isSubtopic(s)).map((s) => line(s, null)),
-    ...works.flatMap((w) => state.sessions.filter((s) => s.taskId === w.id && s.role !== 'chat').map((s) => line(s, w))),
+    ...tree.filter((s) => s.id !== topic!.id && !isSubtopic(s)).flatMap((s) => line(s, null)),
+    ...works.flatMap((w) => state.sessions.filter((s) => s.taskId === w.id && s.role !== 'chat').flatMap((s) => line(s, w))),
   ]
   const rank = (l: AgentLine) => AGENT_ORDER.indexOf(l.state)
   return {
-    active: lines.filter((l) => l.state !== 'done').sort((a, b) => rank(a) - rank(b) || a.session.createdAt - b.session.createdAt),
-    done: lines.filter((l) => l.state === 'done').sort((a, b) => sessionActivity(b.session) - sessionActivity(a.session)),
+    active: lines.sort((a, b) => rank(a) - rank(b) || a.session.createdAt - b.session.createdAt),
     working: lines.filter((l) => l.state === 'working').length,
   }
 }
