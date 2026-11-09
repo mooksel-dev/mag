@@ -10,7 +10,7 @@ import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
 
 /** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
-const NO_CONTROL: Pick<ToolActions, 'startChild' | 'sessionInTree' | 'stop' | 'approve' | 'approveAndStart' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'send' | 'stopAgents' | 'closeChat' | 'closeWork' | 'deleteChat' | 'deleteWork' | 'restore'> = {
+const NO_CONTROL: Pick<ToolActions, 'startChild' | 'sessionInTree' | 'stop' | 'approve' | 'approveAndStart' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'messageStepAgent' | 'send' | 'stopAgents' | 'closeChat' | 'closeWork' | 'deleteChat' | 'deleteWork' | 'restore'> = {
   approve: () => {},
   closeChat: async () => {},
   closeWork: () => {},
@@ -22,6 +22,9 @@ const NO_CONTROL: Pick<ToolActions, 'startChild' | 'sessionInTree' | 'stop' | 'a
   startStep: async () => {},
   restartReview: async () => {},
   agentOf: () => null,
+  messageStepAgent: async () => {
+    throw new Error('no developer')
+  },
   send: async () => {},
   stopAgents: async () => [],
   startChild: () => { throw new Error('Not ready') },
@@ -122,7 +125,7 @@ test('create_work tickets and add_ticket: links only, any tracker, a ticket in s
   const { store, project, tools } = setup()
   const ctx = { projectId: project.id }
   const jira = 'https://acme.atlassian.net/browse/abc-12'
-  assert.equal(await tools(ctx, 'create_work', { title: 'X', description: 'd', tickets: [{ url: jira }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }] }), 'Created ABC-12 in planning; nobody owns it yet: start_grooming plans it.')
+  assert.equal(await tools(ctx, 'create_work', { title: 'X', description: 'd', tickets: [{ url: jira }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }] }), 'Created ABC-12 in planning; nobody owns it yet: start_grooming plans it, if the user asks for a groomer.')
   const x = store.data.tasks.find((t) => t.key === 'ABC-12')!
   assert.equal(x.type, 'dev', 'type defaults to dev')
   assert.deepEqual(x.tickets, [{ url: jira, key: 'ABC-12' }, { url: 'https://github.com/o/r/issues/5', key: 'r#5' }])
@@ -637,6 +640,14 @@ test("a project chat gets the buttons' tools, each only on the user's word (chat
   assert.deepEqual(chat.map((t) => t.name), names)
   for (const t of chat) assert.match(t.description, /Only when the user has asked for exactly this in this conversation/)
   assert.ok(!toolsFor('task', 'developer').some((t) => names.includes(t.name)))
+})
+
+test('a groomer gets start_step, restart_review, message_agent and stop_agent, for its own work; approving and starting stay out (roles-start-only-when-asked.1)', () => {
+  const control = ['start_step', 'restart_review', 'message_agent', 'stop_agent']
+  const groomer = toolsFor('task', 'groomer')
+  for (const name of control) assert.match(groomer.find((t) => t.name === name)!.description, /Only when the user has asked.*Only on the work you own\.$/)
+  for (const name of ['approve_plan', 'start_work']) assert.ok(!groomer.some((t) => t.name === name), name)
+  for (const role of ['developer', 'reviewer']) assert.ok(!toolsFor('task', role).some((t) => control.includes(t.name)), role)
 })
 
 test('a project chat gets list_chats, close_chats, delete_chats and restore_chat; delete only on the user\'s yes; task runs do not (chat-archives-and-deletes-topics.1)', () => {

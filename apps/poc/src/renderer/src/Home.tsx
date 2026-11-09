@@ -79,8 +79,13 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
     switch (route.kind) {
       case 'review':
         return opened(await mag.startReview(project.id, route.url, format))
-      case 'ticket':
-        return opened(await mag.workFromTicket(project.id, route.url))
+      case 'ticket': {
+        const r = await mag.workFromTicket(project.id, route.url)
+        if ('error' in r) throw new Error(r.error)
+        onCreated?.(`topic:${r.topicId}`)
+        onSelect({ kind: 'topic', id: r.topicId })
+        return
+      }
       case 'ask': {
         const id = await mag.newChat(project.id)
         onCreated?.(`topic:${id}`)
@@ -128,7 +133,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
         <div className="hints">
           <span>Words → discussion</span>
           <span>github.com/…/pull/N → review (v1 / v2)</span>
-          <span>ticket link → work</span>
+          <span>ticket link → discussion</span>
           <button type="button" disabled={busy} title="Open a review exported from another mag (.zip), read only; or drop the .zip on the composer" onClick={() => void importReview()}>
             drop a review .zip → import
           </button>

@@ -9,7 +9,7 @@ import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
 import { changes as factChanges, draftListing, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepFact, stepSet } from './fact.ts'
-import { MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
+import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
   taskId?: string
@@ -66,10 +66,12 @@ export interface ToolActions {
   restartReview(taskId: string): Promise<void>
   /** The session a message to a work or a step goes to: of `role`, else the one that worked last. */
   agentOf(taskId: string, role?: MessagedRole): AgentSession | null
+  /** message_agent on a step with no developer session: starts one with `text`; throws when it did not start. */
+  messageStepAgent(stepId: string, text: string): Promise<AgentSession>
   /** A message to a session, as the user's in its chat (`job`: as mag's card with this title); resumes it. */
   send(sessionId: string, text: string, job?: string): Promise<void>
   /** Stops the agents of a work or a step in a turn; returns those stopped. */
-  stopAgents(taskId: string): Promise<AgentSession[]>
+  stopAgents(taskId: string, except?: string): Promise<AgentSession[]>
   /** The user's Close of a topic; refused while it owns an open work. */
   closeChat(sessionId: string): Promise<void>
   /** The user's Close of a done work or a review. */
@@ -960,7 +962,7 @@ function sharedTool(
       if (plan) return `Created ${t.key}, ready; the user starts it.${moved}`
       return owner
         ? `Created ${t.key}; you own it and plan it here: pass work: "${t.key}" to the owner tools (update_doc, show_diagram, place_diagram, create_subtask…). The user approves the plan when it is ready.${moved}`
-        : `Created ${t.key} in planning; nobody owns it yet: start_grooming plans it.${moved}`
+        : `Created ${t.key} in planning; nobody owns it yet: start_grooming plans it, if the user asks for a groomer.${moved}`
     }
 
     case 'add_ticket': {
@@ -1206,17 +1208,21 @@ function sharedTool(
 
 /**
  * A project chat does what the user's buttons do, when the user asks it (chat-keruie-robotamy-i-ahentamy.1): approve,
- * start a work or a step, restart a review, write to an agent, stop one. Each calls the orchestrator method its button
- * does, so the checks are the same; each done action is a line in the project's log.
+ * start a work or a step, restart a review, write to an agent, stop one. A groomer does the same with
+ * GROOMER_CONTROL_TOOLS, on the work it owns only (roles-start-only-when-asked.1). Each calls the orchestrator method
+ * its button does, so the checks are the same; each done action is a line in the project's log.
  */
 async function controlTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>, byKey: (key: unknown) => Task): Promise<string> {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-  if (!session || runRole(session) !== 'chat') throw new Error(`${name} is for a project chat`)
+  const caller = session ? runRole(session) : undefined
+  const groomer = caller === 'groomer' && (GROOMER_CONTROL_TOOLS as readonly string[]).includes(name)
+  if (!session || (caller !== 'chat' && !groomer)) throw new Error(`${name} is for a project chat`)
   const t = byKey(args.key)
   const work = t.parentId ? store.task(t.parentId) : t
+  if (groomer && work.ownerSessionId !== session.id) throw new Error(`${work.key} is not the work you own: ${name} works only on that one`)
   const logged = (what: string, of: Task = t) => {
-    store.logEvent({ projectId: project.id, taskId: work.id, taskKey: of.key, kind: 'chat', text: `chat: ${what} ${of.key} at the user's request` })
-    log.info('tools', `chat ${session.id}: ${what} ${of.key}`)
+    store.logEvent({ projectId: project.id, taskId: work.id, taskKey: of.key, kind: 'chat', text: `${caller}: ${what} ${of.key} at the user's request` })
+    log.info('tools', `${caller} ${session.id}: ${what} ${of.key}`)
   }
   /** A step key names the current step of its work; the actions on a step work on that one. */
   const current = () => {
@@ -1261,11 +1267,20 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
     }
 
     case 'message_agent': {
-      const role = typeof args.role === 'string' && args.role.trim() ? args.role.trim() : undefined
-      if (role && !(MESSAGED_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${MESSAGED_ROLES.join(', ')}`)
+      const asked = typeof args.role === 'string' && args.role.trim() ? args.role.trim() : undefined
+      if (asked && !(MESSAGED_ROLES as readonly string[]).includes(asked)) throw new Error(`role must be one of ${MESSAGED_ROLES.join(', ')}`)
+      if (groomer && asked === 'groomer') throw new Error(`You are the groomer of ${work.key}: write to its developer or reviewer`)
       const text = String(args.text ?? '').trim()
       if (!text) throw new Error('text is required')
-      const agent = actions.agentOf(t.id, role as MessagedRole | undefined)
+      // A groomer in this very turn is the agent that worked last: without a role it means the developer.
+      const role = (asked ?? (groomer ? 'developer' : undefined)) as MessagedRole | undefined
+      const agent = actions.agentOf(t.id, role)
+      const step = t.parentId ? t : currentStep(work.id, store.data.tasks)
+      if (!agent && step && (!role || role === 'developer')) {
+        await actions.messageStepAgent(step.id, text)
+        logged('started the developer of', step)
+        return `Started the developer of ${step.key} with this message.`
+      }
       if (!agent) throw new Error(`${t.key} has no ${role ?? 'agent'} to write to${role ? '' : ` (${MESSAGED_ROLES.join(', ')})`}`)
       await actions.send(agent.id, text)
       logged(`wrote to the ${agent.role} of`)
@@ -1273,7 +1288,8 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
     }
 
     case 'stop_agent': {
-      const stopped = await actions.stopAgents(t.id)
+      // Never the caller: a groomer is one of its work's agents, in this very turn.
+      const stopped = await actions.stopAgents(t.id, session.id)
       if (!stopped.length) throw new Error(`No agent of ${t.key} is working`)
       logged('stopped')
       return `Stopped the ${[...new Set(stopped.map((s) => s.role))].join(', ')} of ${t.key}.`

@@ -683,7 +683,7 @@ export const TOOL_DEFS = [
     scope: 'project',
     reviewer: 'also',
     description:
-      "Start a child session of yours for a part of the job worth its own session (a long run, research, a prototype, work in parallel): it works on the brief on its own, the user sees it under this topic and can write to it, and it reports back to you with message_session. role: none for a general session with a topic's tools; developer to change code (in a worktree, no GitHub writes); reviewer to read and report only. fork: true starts it with all of this conversation (Claude Code only; the user's \"branch this topic\"). Answers with its session id.",
+      "Start a child session of yours for a part of the job worth its own session (a long run, research, a prototype, work in parallel): it works on the brief on its own, the user sees it under this topic and can write to it, and it reports back to you with message_session. role: none for a general session with a topic's tools; developer to change code (in a worktree, no GitHub writes); reviewer to read and report only. Pass a role only when the user named it; otherwise ask which role to use, or start with none. fork: true starts it with all of this conversation (Claude Code only; the user's \"branch this topic\"). Answers with its session id.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -868,7 +868,7 @@ export const TOOL_DEFS = [
   {
     name: 'start_grooming',
     scope: 'project',
-    description: 'Start a separate groomer agent on a work in planning (or re-plan a ready one not started yet): only for a work nobody planned in a conversation, e.g. one started from a ticket link. The groomer becomes its owner. It works in the background and pings the user with questions; the user approves its plan, and the work is ready to start. A work you discussed here you plan yourself.',
+    description: 'Start a separate groomer agent on a work in planning (or re-plan a ready one not started yet): only when the user asked for a groomer in this conversation. The groomer becomes its owner. It works in the background and pings the user with questions; the user approves its plan, and the work is ready to start. A work you discussed here you plan yourself.',
     inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
   },
   {
@@ -917,7 +917,7 @@ export const TOOL_DEFS = [
   {
     name: 'message_agent',
     scope: 'project',
-    description: `Write to an agent of a work or a step, as the user writes in its chat: its session resumes with the text (also how you answer its question). Without role: the agent that worked last. ${ASKED}`,
+    description: `Write to an agent of a work or a step, as the user writes in its chat: its session resumes with the text (also how you answer its question). Without role: the agent that worked last (for a groomer, the developer). A current step with no developer session yet gets one, started with the text, if its work is approved. ${ASKED}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1061,6 +1061,9 @@ export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
  */
 export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_inventory', 'set_pr_review', 'decide_direction'] as const
 
+/** A project chat's buttons a groomer also gets, on the work it owns (roles-start-only-when-asked.1); approving and starting a work stay out. */
+export const GROOMER_CONTROL_TOOLS = ['start_step', 'restart_review', 'message_agent', 'stop_agent'] as const
+
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 
 export type ToolScope = 'task' | 'project' | 'any'
@@ -1068,7 +1071,10 @@ export type ToolScope = 'task' | 'project' | 'any'
 /** The tools a run sees, as the MCP server lists them: by scope and role; a project chat gets the owner tools with work. */
 export function toolsFor(scope: 'task' | 'project', role: string | undefined): { name: string; description: string; inputSchema: object }[] {
   const owner = scope === 'project' && role === 'chat'
-  return TOOL_DEFS.filter((t) => (t.scope === 'any' || t.scope === scope || (owner && (OWNER_TOOLS as readonly string[]).includes(t.name))) && toolForRole(t, role)).map((t) => {
+  const groomer = scope === 'task' && role === 'groomer'
+  const control = (name: string) => groomer && (GROOMER_CONTROL_TOOLS as readonly string[]).includes(name)
+  return TOOL_DEFS.filter((t) => (t.scope === 'any' || t.scope === scope || control(t.name) || (owner && (OWNER_TOOLS as readonly string[]).includes(t.name))) && toolForRole(t, role)).map((t) => {
+    if (control(t.name)) return { name: t.name, description: `${t.description} Only on the work you own.`, inputSchema: t.inputSchema }
     if (!owner || !(OWNER_TOOLS as readonly string[]).includes(t.name)) return { name: t.name, description: t.description, inputSchema: t.inputSchema }
     const schema = t.inputSchema as { properties: Record<string, unknown>; required?: readonly string[] }
     const optional = t.scope === 'any'

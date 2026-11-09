@@ -292,6 +292,7 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.ok(spec.allowedTools?.includes('mcp__claude_ai_Atlassian'))
   assert.ok(!spec.disallowedTools?.includes('Bash'))
   assert.match(spec.appendSystemPrompt ?? '', /create_work/)
+  assert.match(spec.appendSystemPrompt ?? '', /Pass a role only when the user\n  named it; otherwise ask which role to use, or start with none/)
 })
 
 test('a topic is full Claude Code: edits, free Bash and worktrees run without a card; only merge and push to a base are denied (topics-a-tree-of-agent.1)', async () => {
@@ -378,6 +379,8 @@ test('groomer prompt: frame + the playbook\'s plan, then decisions and notes as 
   await tick()
   const prompt = specs.at(-1)!.appendSystemPrompt!
   assert.ok(prompt.startsWith('You own this work in "mag"'))
+  assert.match(prompt, /Asked to change code, say you do not edit it and offer to run the step's developer/)
+  assert.match(prompt, /Never tell the user to open a step or\npress a button/)
   assert.ok(prompt.includes(DEFAULT_PLAYBOOK.plan))
   const decisions = prompt.indexOf('## Decisions\n- all PRs are draft\n## login.1\n- touch only core\n## login.2\n- keep the old API')
   const notes = prompt.indexOf('## Project notes\nuse pnpm')
@@ -1384,7 +1387,7 @@ test('reopen: only a done work with steps; asked by a topic, it is back in plann
   assert.equal(store.data.events.filter((e) => e.taskId === task.id).at(-1)!.text, 'Reopened')
 })
 
-test('reopen from the app: the owner topic is told what is needed; without an owner a groomer plans it (T-55.6)', async () => {
+test('reopen from the app: the owner topic is told what is needed; without an owner nothing starts and the need waits for the user (T-55.6, roles-start-only-when-asked.1)', async () => {
   const s = setup()
   const { store, orch, task, project } = s
   const topic = orch.newChat(project.id)
@@ -1397,11 +1400,33 @@ test('reopen from the app: the owner topic is told what is needed; without an ow
 
   const t = setup()
   doneWork(t)
-  assert.match(t.orch.reopen(t.task.id, 'docs'), /a groomer plans the rest/)
-  const groomer = t.store.data.sessions.find((x) => x.role === 'groomer')!
-  assert.equal(t.store.task(t.task.id).ownerSessionId, groomer.id)
-  // Not the user's answer: the groomer's checkpoint still waits for one.
-  assert.deepEqual(groomer.items.map((i) => i.kind), ['notice'])
+  t.store.data.docs[t.task.id] = '# Problem\nX\n'
+  assert.match(t.orch.reopen(t.task.id, 'docs'), /waits for the user to groom it/)
+  assert.equal(t.store.data.sessions.length, 0, 'no agent starts by itself')
+  const reopened = t.store.task(t.task.id)
+  assert.deepEqual([reopened.status, reopened.ownerSessionId ?? null], ['planning', null])
+  assert.match(reopened.needsInput!, /More needed: docs/)
+  // The user's Groom, later, has no message: the groomer finds the need in the doc.
+  assert.equal(t.store.data.docs[t.task.id], '# Problem\nX\n\n## More needed\ndocs\n')
+  t.orch.groom(t.task.id)
+  await tick()
+  assert.equal(t.store.task(t.task.id).ownerSessionId, t.store.data.sessions.find((x) => x.role === 'groomer')!.id)
+})
+
+test('a ticket link opens a topic with the link as its first message; no work and no groomer (roles-start-only-when-asked.1)', async () => {
+  const { store, orch, project } = setup()
+  const works = store.data.tasks.length
+  const id = await orch.topicFromTicket(project.id, ' https://acme.atlassian.net/browse/API-7 ')
+  const topic = store.session(id)
+  assert.equal(topic.role, 'chat')
+  assert.deepEqual(topic.items.map((i) => (i.kind === 'user' ? i.text : i.kind)), ['https://acme.atlassian.net/browse/API-7'])
+  assert.equal(opened.at(-1)!.sent.at(-1), 'https://acme.atlassian.net/browse/API-7')
+  assert.equal(store.data.tasks.length, works)
+  assert.ok(!store.data.sessions.some((s) => s.role === 'groomer'))
+
+  const sessions = store.data.sessions.length
+  await assert.rejects(orch.topicFromTicket(project.id, 'API-7'), /Not a ticket link: API-7/)
+  assert.equal(store.data.sessions.length, sessions, 'no topic for what is no link')
 })
 
 test('reopen from the app while the owner works: the user is asked to tell it (T-55.6)', async () => {
@@ -1883,8 +1908,9 @@ function chatControls(s: ReturnType<typeof setup>) {
     startStep: (id: string) => s.orch.startStep(id),
     restartReview: (id: string) => s.orch.reviewTask(id),
     agentOf: (id: string, role?: MessagedRole) => s.orch.agentOf(id, role),
+    messageStepAgent: (id: string, text: string) => s.orch.messageStepAgent(id, text),
     send: (id: string, text: string) => s.orch.send(id, text),
-    stopAgents: (id: string) => s.orch.stopAgents(id),
+    stopAgents: (id: string, except?: string) => s.orch.stopAgents(id, except),
     closeChat: (id: string) => s.orch.closeChat(id),
     closeWork: (id: string) => s.orch.closeWork(id),
     deleteChat: (id: string) => s.orch.deleteChat(id),
@@ -1996,6 +2022,75 @@ test('message_agent: the agent that worked last, or of the role; its session res
   assert.equal(s.orch.agentOf(step.id)?.id, session.id, 'a step: its own agents')
   assert.equal(s.orch.agentOf(task.id, 'groomer')?.id, groomer.id)
   assert.deepEqual(logged(), ["login: chat: wrote to the developer of login at the user's request"])
+})
+
+test('message_agent on a step with no developer session starts one with the text (roles-start-only-when-asked.1)', async () => {
+  const s = setup()
+  const { store, project, task } = s
+  const { call, logged } = chatControls(s)
+  const one = store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'done', repos: [] })
+  const two = store.createTask({ projectId: project.id, title: 'two', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  const devOf = (id: string) => store.data.sessions.find((x) => x.stepId === id && x.role === 'developer')
+
+  await assert.rejects(call('message_agent', { key: 'login.2', text: 'Fix it' }), /login is planning; only ready or in progress works are developed/)
+  store.updateTask(task.id, { status: 'ready' })
+  await assert.rejects(call('message_agent', { key: 'login.1', text: 'Fix it' }), /login\.1 is done; the current step of login is login\.2/)
+  await assert.rejects(call('message_agent', { key: 'login.2', text: 'Fix it', role: 'reviewer' }), /login\.2 has no reviewer to write to/)
+  store.updateProject(project.id, { repos: [] })
+  await assert.rejects(call('message_agent', { key: 'login.2', text: 'Fix it' }), /The developer of login\.2 did not start: Project has no repository; the message was not delivered/)
+  store.updateProject(project.id, { repos: [s.dir] })
+  assert.equal(devOf(one.id), undefined)
+  assert.deepEqual(logged(), [])
+
+  assert.equal(await call('message_agent', { key: 'login', text: 'Fix it', role: 'developer' }), 'Started the developer of login.2 with this message.')
+  const dev = devOf(two.id)!
+  assert.equal(dev.status, 'running')
+  assert.equal(store.task(two.id).status, 'in_progress')
+  assert.deepEqual(dev.items.at(-1), { kind: 'user', text: 'Fix it', at: dev.items.at(-1)!.at })
+  assert.equal(opened.at(-1)!.sent[0], 'Implement step login.2 of login. Start with get_task and get_doc.\n\nFix it')
+  assert.deepEqual(logged(), ["login.2: chat: started the developer of login.2 at the user's request"])
+
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  assert.equal(await call('message_agent', { key: 'login.2', text: 'And the docs' }), 'Sent to the developer of login.2; it goes on with it.')
+  assert.equal(store.data.sessions.filter((x) => x.stepId === two.id).length, 1, 'a developer it has goes on')
+})
+
+test("a groomer runs its own work's agents, never another work's and never itself (roles-start-only-when-asked.1)", async () => {
+  const s = setup()
+  const { store, orch, project, task } = s
+  const { call, logged } = chatControls(s)
+  const step = store.createTask({ projectId: project.id, title: 'one', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  const other = store.createTask({ projectId: project.id, title: 'Other', type: 'dev', description: '', status: 'ready' })
+  orch.groom(task.id)
+  await tick()
+  const groomer = store.data.sessions.find((x) => x.role === 'groomer')!
+  assert.equal(groomer.status, 'running')
+  store.updateTask(task.id, { status: 'ready' })
+
+  for (const name of ['start_step', 'restart_review', 'stop_agent']) await assert.rejects(call(name, { key: other.key }, groomer.id), /is not the work you own/, name)
+  await assert.rejects(call('message_agent', { key: other.key, text: 'x' }, groomer.id), /is not the work you own/)
+  await assert.rejects(call('approve_plan', { key: 'login' }, groomer.id), /approve_plan is for a project chat/)
+  await assert.rejects(call('start_work', { key: 'login' }, groomer.id), /start_work is for a project chat/)
+  await assert.rejects(call('message_agent', { key: 'login', text: 'x', role: 'groomer' }, groomer.id), /You are the groomer of login/)
+  await assert.rejects(call('stop_agent', { key: 'login' }, groomer.id), /No agent of login is working/, 'the groomer itself does not count')
+
+  // Without a role, the work's key: the groomer is the last to have worked, and still the developer is meant.
+  assert.equal(await call('message_agent', { key: 'login', text: 'Fix it' }, groomer.id), 'Started the developer of login.1 with this message.')
+  const dev = store.data.sessions.find((x) => x.stepId === step.id)!
+  assert.equal(dev.status, 'running')
+  // Its one continue is used: a turn that ends without a PR stops as before.
+  store.updateTask(step.id, { autoFix: { ci: 0, conflict: 0, continue: 1 } })
+
+  assert.equal(await call('stop_agent', { key: 'login' }, groomer.id), 'Stopped the developer of login.')
+  await tick()
+  assert.notEqual(dev.status, 'running')
+  assert.equal(groomer.status, 'running', 'its own turn goes on')
+  assert.deepEqual(logged(), ["login.1: groomer: started the developer of login.1 at the user's request", "login: groomer: stopped login at the user's request"])
+
+  // A groomer that no longer owns the work has no say over it.
+  store.updateTask(task.id, { ownerSessionId: 'someone-else' })
+  await assert.rejects(call('stop_agent', { key: 'login' }, groomer.id), /is not the work you own/)
 })
 
 test('stop_agent: stops the agents of a work in a turn, as Stop (chat-keruie-robotamy-i-ahentamy.1)', async () => {
