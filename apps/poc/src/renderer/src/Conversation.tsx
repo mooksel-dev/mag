@@ -83,7 +83,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const rightPane = usePaneWidth('right')
   const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
   const agents = useMemo(() => topicAgents(topic, state, topic ? null : work), [topic, work, state])
-  const hasPanel = artifacts.count > 0 || agents.active.length + agents.done.length > 0
+  const hasPanel = artifacts.count > 0 || agents.active.length > 0
   // null: the default, shown while an agent works or waits on you; the user's toggle wins.
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null)
   const listShown = panelChoice ?? agents.active.some((a) => a.state !== 'failed')

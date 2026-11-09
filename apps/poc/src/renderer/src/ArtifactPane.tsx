@@ -1,4 +1,4 @@
-import { Fragment, useContext, useState } from 'react'
+import { Fragment, useContext, useEffect, useState } from 'react'
 import {
   agentState,
   currentStep,
@@ -24,7 +24,7 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
-import type { AgentLine, ArtifactTarget, TopicAgents, TopicArtifacts } from './artifacts'
+import type { AgentLine, ArtifactChip, ArtifactTarget, TopicAgents, TopicArtifacts } from './artifacts'
 import { MoveButton } from './Cards'
 import { CanvasOpener, Chat, Markdown } from './Chat'
 import { FactPanel } from './FactPanel'
@@ -43,9 +43,10 @@ import { RowMenu, type MenuCard, type Selection } from './WorkList'
 const mag = window.mag
 
 /**
- * The topic's panel (topic-screen-one-new-compact.2): Agents, every agent working within the topic or subtopic, those
- * waiting on you and working first, the done ones folded into "N done"; then Documents and diagrams with plain titles.
- * A tree's agent opens as its own page, a work's agent in the drawer; a document or diagram in the drawer.
+ * The topic's panel (topic-screen-one-new-compact.2, right-panel-only-what-is.1), only what is live: Agents, those
+ * working, waiting on you or failed within the topic or subtopic; then Documents and diagrams with plain titles, of
+ * its unfinished works and what it drew outside any work. A tree's agent opens as its own page, a work's agent in the
+ * drawer; a document or diagram in the drawer.
  */
 export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
   agents: TopicAgents
@@ -53,38 +54,64 @@ export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
   onOpen: (target: ArtifactTarget) => void
   onSelect: (s: Selection) => void
 }) {
-  const [allDone, setAllDone] = useState(false)
   const docs = [...artifacts.works.flatMap((w) => w.lines), ...artifacts.loose]
   const line = (a: AgentLine) => <AgentRow key={a.session.id} agent={a} onOpen={() => (a.open.kind === 'select' ? onSelect({ kind: 'topic', id: a.open.id }) : onOpen(a.open))} />
   return (
     <aside className="artifacts" aria-label="Agents, documents and diagrams">
-      {(agents.active.length > 0 || agents.done.length > 0) && (
+      {agents.active.length > 0 && (
         <section className="artsection" aria-label="Agents">
           <div className="artkind">Agents</div>
           {agents.active.map(line)}
-          {agents.done.length > 0 && (
-            <button className="link muted small artmore" aria-expanded={allDone} onClick={() => setAllDone((v) => !v)}>
-              {allDone ? '▾' : '▸'} {agents.done.length} done
-            </button>
-          )}
-          {allDone && agents.done.map(line)}
         </section>
       )}
       {docs.length > 0 && (
         <section className="artsection" aria-label="Documents and diagrams">
           <div className="artkind">Documents and diagrams</div>
-          {docs.map((c) => (
-            <button key={c.key} className={`artline2${c.tone ? ` ${c.tone}` : ''}`} title={c.title} onClick={() => onOpen(c.open)}>
-              <span className="title">{c.label}</span>
-            </button>
-          ))}
+          {docs.map((c) => <ArtifactRow key={c.key} chip={c} onOpen={() => onOpen(c.open)} />)}
         </section>
       )}
     </aside>
   )
 }
 
-const AGENT_STATE_LABELS: Record<AgentLine['state'], string> = { working: 'working', waiting: 'waits on you', failed: 'failed', done: 'done' }
+/** A line of Documents and diagrams; one that can be deleted has ⋯ → Delete…, which asks first. */
+function ArtifactRow({ chip: c, onOpen }: { chip: ArtifactChip; onOpen: () => void }) {
+  const [menu, setMenu] = useState(false)
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menu])
+  const ids = c.deletes
+  const remove = () => {
+    setMenu(false)
+    if (!ids || !confirm(`Delete "${c.label}"${ids.length > 1 ? ` with its ${ids.length} diagrams` : ''}? It goes for good; links to it show as plain text.`)) return
+    Promise.all(ids.map((id) => mag.deleteCanvas(id))).catch((e: Error) => alert(e.message))
+  }
+  return (
+    <div className="artrow">
+      <button className={`artline2${c.tone ? ` ${c.tone}` : ''}`} title={c.title} onClick={onOpen}>
+        <span className="title">{c.label}</span>
+      </button>
+      {ids && (
+        <span className="menu">
+          <button className="iconbtn" aria-label={`More for ${c.label}`} aria-haspopup="menu" aria-expanded={menu} title="Delete…" onClick={() => setMenu(!menu)}>⋯</button>
+          {menu && (
+            <>
+              <div className="menuscrim" onClick={() => setMenu(false)} />
+              <div className="menulist wlmenu headmenu small" role="menu" aria-label={`${c.label}: actions`}>
+                <button role="menuitem" className="danger" onClick={remove}>Delete…</button>
+              </div>
+            </>
+          )}
+        </span>
+      )}
+    </div>
+  )
+}
+
+const AGENT_STATE_LABELS: Record<AgentLine['state'], string> = { working: 'working', waiting: 'waits on you', failed: 'failed' }
 
 /** An agent's line: its role, what it works on, its state and its PR; a click opens its chat. */
 function AgentRow({ agent: a, onOpen }: { agent: AgentLine; onOpen: () => void }) {

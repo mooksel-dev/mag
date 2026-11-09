@@ -72,6 +72,15 @@ test('mdSegments: prose rewrite applies outside code only', () => {
   ])
 })
 
+test('mdSegments: a link to a deleted canvas is its title as plain inline text (right-panel-only-what-is.1)', () => {
+  const gone = new Set(['a', 'n'])
+  assert.deepEqual(mdSegments('see [A](canvas:a) and [B](canvas:b)', undefined, gone), [{ kind: 'md', text: 'see A and [B](#canvas:b)' }])
+  // Alone on its line it is no card; the next link on its own line still is.
+  assert.deepEqual(mdSegments('[A](canvas:a#node)\n[B](canvas:b)', undefined, gone), [{ kind: 'md', text: 'A\n' }, { kind: 'canvas', id: 'b', title: 'B' }])
+  assert.deepEqual(mdSegments('x [](canvas:n) y', undefined, gone), [{ kind: 'md', text: 'x n y' }])
+  assert.deepEqual(mdSegments('`[A](canvas:a)`', undefined, gone), [{ kind: 'md', text: '`[A](canvas:a)`' }], 'code stays as written')
+})
+
 test('mdSegments: canvas:<id>#<node> links a node of a diagram', () => {
   assert.deepEqual(mdSegments('[Store](canvas:c1#task-store)\n[All](canvas:c1)'), [
     { kind: 'canvas', id: 'c1', title: 'Store', node: 'task-store' },

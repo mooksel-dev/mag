@@ -810,6 +810,11 @@ body.resizing iframe { pointer-events: none; }
 .artifacts { flex: none; width: var(--right-w); min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
 .artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
 .artsection { display: flex; flex-direction: column; gap: 2px; }
+.artrow { display: flex; align-items: center; border-radius: var(--r); }
+.artrow:hover { background: var(--hover); }
+.artrow .artline2 { flex: 1; min-width: 0; }
+.artrow .artline2:hover { background: none; }
+.artrow .iconbtn { width: 22px; height: 22px; }
 .artline2, .agentline { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: none; border-radius: var(--r); background: none; text-align: left; font-weight: 400; }
 .artline2:hover, .agentrow:hover { background: var(--hover); }
 .artline2 .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

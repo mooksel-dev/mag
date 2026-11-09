@@ -61,6 +61,7 @@ const api: MagApi = {
   closeWork: (taskId) => ipcRenderer.invoke('task:close', taskId),
   restore: (kind, id) => ipcRenderer.invoke('sidebar:restore', kind, id),
   getCanvas: (id) => ipcRenderer.invoke('canvas:get', id),
+  deleteCanvas: (id) => ipcRenderer.invoke('canvas:delete', id),
   stepFact: (stepId) => ipcRenderer.invoke('step:fact', stepId),
   stepHunk: (stepId, repo, base, head, hunk) => ipcRenderer.invoke('step:hunk', stepId, repo, base, head, hunk),
   saveAttachment: (f) => ipcRenderer.invoke('attach:save', f),

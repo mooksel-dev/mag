@@ -197,6 +197,8 @@ export interface MagApi {
   restore(kind: 'work' | 'topic', id: string): Promise<void>
   /** A canvas's content: the HTML page or the diagram. */
   getCanvas(id: string): Promise<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null>
+  /** Deletes a canvas for good; links to it show as its title. */
+  deleteCanvas(id: string): Promise<void>
   /** Copy a pasted blob (bytes) or a dropped file (path) into the app's attachments. */
   saveAttachment(f: { name: string; bytes?: Uint8Array; path?: string }): Promise<Attachment>
   /** Absolute path of a dropped File, if it has one. */
