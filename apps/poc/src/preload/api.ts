@@ -148,10 +148,10 @@ export interface MagApi {
   /** Runs the agent review of the current step's PRs again (after a failed one). */
   review(taskId: string): Promise<void>
   /**
-   * A new work about the ticket a link names (any https link); a groomer plans it in the background and owns it.
+   * A new topic with the ticket link (any https link) as its first message; its agent asks what to do.
    * Something that is not a link comes back as `error`.
    */
-  workFromTicket(projectId: string, url: string): Promise<{ taskId: string } | { error: string }>
+  workFromTicket(projectId: string, url: string): Promise<{ topicId: string } | { error: string }>
   /** Add a ticket to a top-level task by its link; something that is not a link comes back as `error`. */
   addTicket(taskId: string, url: string): Promise<{ ok: true } | { error: string }>
   /** Drop one of the task's tickets, by its URL. */

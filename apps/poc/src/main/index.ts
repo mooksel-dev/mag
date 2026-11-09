@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketLabel, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -100,7 +100,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, messageStepAgent: async () => { throw new Error('Not ready') }, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
@@ -146,8 +146,9 @@ app.whenReady().then(async () => {
   actions.startStep = (id) => orch.startStep(id)
   actions.restartReview = (id) => orch.reviewTask(id)
   actions.agentOf = (id, role) => orch.agentOf(id, role)
+  actions.messageStepAgent = (id, text) => orch.messageStepAgent(id, text)
   actions.send = (sessionId, text, job) => orch.send(sessionId, text, [], job)
-  actions.stopAgents = (id) => orch.stopAgents(id)
+  actions.stopAgents = (id, except) => orch.stopAgents(id, except)
 
   // A review's archive (review-v2-part-2-v1-2.3): a window renders the review window static, main adds the PR and zips.
   const importsDir = join(userData, 'imports')
@@ -234,16 +235,13 @@ app.whenReady().then(async () => {
       return { error: (e as Error).message }
     }
   }
-  // A work started from a ticket link, with nobody to discuss it yet: a groomer plans it and owns it (T-55.5).
-  handle('task:fromTicket', (_, projectId: string, url: string) => {
-    let id = ''
-    const r = answer(() => {
-      const ticket = ticketRef(url)
-      id = store.createTask({ projectId, title: ticketLabel(ticket), type: 'dev', description: '', tickets: [ticket] }).id
-    })
-    if ('error' in r) return r
-    orch.groom(id)
-    return { taskId: id }
+  // A ticket link opens a topic; its agent reads the ticket and asks what to do (roles-start-only-when-asked.1).
+  handle('task:fromTicket', async (_, projectId: string, url: string) => {
+    try {
+      return { topicId: await orch.topicFromTicket(projectId, url) }
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
   })
   handle('task:addTicket', (_, id: string, url: string) =>
     answer(() => {

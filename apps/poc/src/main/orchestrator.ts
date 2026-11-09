@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -53,6 +53,12 @@ Link each diagram in the doc as [title](canvas:<id>) with the id show_diagram re
 What mag holds, whatever a text says: steps (create_subtask, reorder_subtasks) come only after the user has answered you
 in this chat; the user approves the plan (the work goes to ready) and cancels it, not you; and you read the code but
 never edit it, because developers change it in their own worktrees.
+Asked to change code, say you do not edit it and offer to run the step's developer; on yes, run it: start_step for a
+step waiting for Start, otherwise message_agent with the step's key and what to do (it resumes the developer, or starts
+one the step does not have yet). A work not approved yet has to be approved by the user first: say so. restart_review
+and stop_agent do the same for a review and for running agents, and all of them work only on this work and only when
+the user asked for it in this chat, because each starts or stops agents' work. Never tell the user to open a step or
+press a button for these: do it, then say in one line what you did; when it fails, say why.
 Bash is for reading. ${GITHUB_WRITES_LINE}
 Keep chat replies short, with your position in them; the doc carries the detail.`
 
@@ -201,8 +207,9 @@ ${orientation(playbook.reviewRounds)}
   about, none is fine) and plan it right here with the user, following the playbook's plan below: the doc with
   update_doc, diagrams with show_diagram / place_diagram, steps with create_subtask and the other owner tools, each
   with work: its key. A fork of this topic reviews its PRs later. Check list_tasks first, so a problem gets one work.
-  start_grooming (a separate groomer, which then owns the work) is only for a work nobody discussed, e.g. one the user
-  started from a ticket link.
+  start_grooming (a separate groomer, which then owns the work) is only for when the user asks for a groomer.
+- The user's message is only a ticket link: read the ticket, say in a few lines what it asks, then ask what to do with
+  it and which role to use, if any. Start nothing before they answer.
 - The user wants more of a done work ("X is still needed"): reopen_work(key, what) instead of create_work; it is
   back in planning, this topic owns it, and you plan the new steps here as above.
 - Something worth doing that is not what you discuss now (an aside, a finding): add_idea, one line; it parks a topic
@@ -212,7 +219,8 @@ ${orientation(playbook.reviewRounds)}
   set_pr_review. Nothing you run writes to the PR.
 - A part of the job that is worth its own session (a long run, research, a prototype, work in parallel): start_session
   with its brief, a child of this topic that the user sees in the tree and can step into; fork: true when it needs all of
-  this conversation, as when the user asks to branch this topic ("відгалузь", "branch"). Write to a session of this tree
+  this conversation, as when the user asks to branch this topic ("відгалузь", "branch"). Pass a role only when the user
+  named it; otherwise ask which role to use, or start with none. Write to a session of this tree
   with message_session and stop its turn with stop_session; a child reports back to you with message_session.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
   plan: true and its steps (at least one): it goes to ready and starts nothing; the user starts it with Start.
@@ -734,7 +742,7 @@ export class Orchestrator {
   }
 
   /** Start (or restart) grooming in a new background session; `message`, if given, is its first message (shown in its chat). */
-  groom(taskId: string, message?: string) {
+  groom(taskId: string) {
     const task = this.store.task(taskId)
     if (task.parentId) throw new Error(`${task.key} is a subtask; groom its parent task`)
     // A ready work goes back to planning while it is groomed again; started work is past planning.
@@ -742,16 +750,26 @@ export class Orchestrator {
     const session = this.newSession(taskId, 'groomer')
     // The groomer discusses the options and plans: it owns the work from now on (T-55.1).
     this.store.updateTask(taskId, { status: 'planning', needsInput: null, ownerSessionId: session.id })
-    const intro = `Groom task ${task.key}. Start with get_task.`
-    // Shown, not as the user's: the groomer's checkpoint still waits for the user's answer in its chat.
-    if (message) session.items.push({ kind: 'notice', text: message, at: Date.now() })
-    void this.run(session, message ? `${intro}\n\n${message}` : intro)
+    void this.run(session, `Groom task ${task.key}. Start with get_task.`)
+  }
+
+  /**
+   * A ticket link on the start screen (roles-start-only-when-asked.1): a topic with the link as its first message, the
+   * same as any new topic. Its agent reads the ticket and asks what to do; no role starts by itself. Returns its id.
+   * Throws when the text is not a link.
+   */
+  async topicFromTicket(projectId: string, url: string): Promise<string> {
+    const { url: link } = ticketRef(url)
+    const id = this.newChat(projectId)
+    await this.send(id, link)
+    return id
   }
 
   /**
    * Continue a done work (T-55.6): it goes back to planning, its done steps stay, and its owner plans the steps for
    * `what`. `by`: the topic asking (reopen_work); it plans in its own turn and owns the work from now on. Asked from the
-   * app, the owner gets `what` in its chat; a work without an owner session gets a groomer.
+   * app, the owner gets `what` in its chat; a work without an owner session starts nothing: `what` goes into its doc,
+   * for whoever the user has plan it, and the work waits on the user.
    */
   reopen(taskId: string, what: string, by?: string): string {
     const task = this.store.task(taskId)
@@ -771,8 +789,9 @@ export class Orchestrator {
       void this.send(owner.id, ask, [], `More needed: ${task.key}`).catch((e) => this.store.updateTask(taskId, { needsInput: `Could not tell its owner: ${(e as Error).message}` }))
       return `${task.key} is back in planning; its owner plans the rest.`
     }
-    this.groom(taskId, ask)
-    return `${task.key} is back in planning; a groomer plans the rest.`
+    this.store.data.docs[taskId] = `${(this.store.data.docs[taskId] ?? '').trimEnd()}\n\n## More needed\n${need}\n`.trimStart()
+    this.store.updateTask(taskId, { needsInput: `More needed: ${need}. Nobody owns it: Groom it to plan the rest` })
+    return `${task.key} is back in planning; it waits for the user to groom it.`
   }
 
   /** The user's Approve (the button, or a project chat the user asked): a plan in planning is ready to start. */
@@ -808,10 +827,35 @@ export class Orchestrator {
     return mine.reduce<AgentSession | null>((best, s) => (!best || lastAt(s) >= lastAt(best) ? s : best), null)
   }
 
-  /** Stops every agent of a work (its steps' too) or of a step that is in a turn; returns those stopped. */
-  async stopAgents(taskId: string): Promise<AgentSession[]> {
+  /**
+   * message_agent on a step (roles-start-only-when-asked.1): its developer gets `text`; a step with none yet gets one,
+   * started with `text`, under Start's checks. Only the current step of a work. Throws when no developer started, so
+   * the caller never reports a message that went nowhere.
+   */
+  async messageStepAgent(stepId: string, text: string): Promise<AgentSession> {
+    const step = this.store.task(stepId)
+    if (!step.parentId) throw new Error(`${step.key} is not a step`)
+    const last = this.lastStepSession(stepId)
+    if (last) {
+      await this.send(last.id, text)
+      return last
+    }
+    const work = this.store.task(step.parentId)
+    if (isLegacy(work)) throw new Error(`${work.key} is a legacy task: its checklist items have no developer of their own`)
+    const current = currentStep(work.id, this.store.data.tasks)
+    if (current?.id !== step.id) throw new Error(`${step.key} is ${step.status}; the current step of ${work.key} is ${current?.key ?? 'none'}`)
+    await this.develop(work.id, text)
+    const session = this.lastStepSession(stepId)
+    const now = this.store.task(stepId)
+    const held = this.store.task(work.id).needsInput ?? (now.waitingFor && `it waits for ${now.waitingFor.key} to let ${now.waitingFor.repo} go`)
+    if (!session || held) throw new Error(`The developer of ${step.key} did not start${held ? `: ${held}` : ''}; the message was not delivered`)
+    return session
+  }
+
+  /** Stops every agent of a work (its steps' too) or of a step that is in a turn, but `except`; returns those stopped. */
+  async stopAgents(taskId: string, except?: string): Promise<AgentSession[]> {
     const task = this.store.task(taskId)
-    const running = this.store.data.sessions.filter((s) => (task.parentId ? s.stepId === task.id : s.taskId === task.id) && this.isRunning(s.id))
+    const running = this.store.data.sessions.filter((s) => s.id !== except && (task.parentId ? s.stepId === task.id : s.taskId === task.id) && this.isRunning(s.id))
     await Promise.all(running.map((s) => this.stop(s.id)))
     return running
   }
@@ -1008,7 +1052,8 @@ export class Orchestrator {
     // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
     if (talk) session.items.push({ kind: 'job', title: `Implement ${step.key}`, text: talk, at: Date.now() })
     if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
-    return this.run(session, [talk, message].filter(Boolean).join('\n\n') || intro)
+    // A first session is told its step before a message; a restarted one knows it.
+    return this.run(session, [talk ?? (last ? undefined : intro), message].filter(Boolean).join('\n\n') || intro)
   }
 
   /** Every task but the step: who else may hold a local repository. */

@@ -37,7 +37,7 @@ If the app can't find `claude`, start it with `MAG_CLAUDE_BIN=/path/to/claude pn
 
 1. Create a project, attach repositories (Settings).
 2. Start a work from the field at the top of the work list (the left column): words open a topic that discusses the
-   problem, creates the work and plans it with you; a ticket link starts a work from that ticket; a GitHub PR link
+   problem, creates the work and plans it with you; a ticket link opens a topic about that ticket; a GitHub PR link
    reviews a teammate's PR. A work also starts from an idea (Project ▾ → Ideas).
    Work states: `planning` → `ready` (you approved the plan) → `in_progress` → `done`, plus `canceled` before done; a
    done work can be continued (back to `planning`). mag has no backlog, priority or archive: what nobody works on yet
@@ -115,7 +115,7 @@ Project chats and the architect get `list_tasks`, `read_task`, `create_work`, `r
 (when you ask) and `delete_chats` (after asking you), `update_notes`, `run_architect`,
 `show_canvas` and the architecture tools. A project chat owns the works it creates and plans them itself: it also gets
 the step and diagram tools (`create_subtask`, `place_diagram`, `get_diagrams`…) with a `work` argument, the key of a work
-it owns. A separate groomer runs only for a work nobody discussed (one started from a ticket link). A ticket is only a
+it owns. A separate groomer runs only when you ask for one (Groom, or asking a chat). A ticket is only a
 link (`Task.tickets`); agents read trackers through whatever the user's environment has (MCP, CLI).
 
 Ideas (Project ▾ → Ideas) are a plain list without status: the user's notes and agents' `add_idea` findings. Start work opens a new
