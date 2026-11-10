@@ -6,14 +6,14 @@ import { RowMenu, type Selection } from './WorkList'
 
 const mag = window.mag
 
-const STATE_LABELS: Record<SessionState, string> = { running: 'working', waiting: 'waiting on you', idle: 'idle', error: 'failed', closed: 'closed' }
+const STATE_LABELS: Record<SessionState, string> = { running: 'agent working', waiting: 'waits on you', idle: 'idle', error: 'failed', closed: 'closed' }
 
 /**
  * A topic's subtopics in the sidebar (topic-screen-one-new-compact.2): one line each with its state dot, nested by
- * depth; a click opens it, ⋯ on hover or a right-click opens the topic's menu (New subtopic, Rename, Branch, Close,
+ * depth under a guide line; a click opens it, ⋯ on hover or a right-click opens the topic's menu (New subtopic, Rename, Branch, Close,
  * Delete). The draft of a New subtopic under one of them (`draftOf`) shows as its last line.
  */
-export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, depth = 0 }: {
+export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone }: {
   nodes: SessionNode[]
   selectedId: string | null
   /** The session a New subtopic draft is open under, if any. */
@@ -21,7 +21,6 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, dep
   onSelect: (s: Selection) => void
   /** A subtopic was deleted from its menu. */
   onGone: (s: AgentSession) => void
-  depth?: number
 }) {
   const [menu, setMenu] = useState<string | null>(null)
   return (
@@ -35,7 +34,6 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, dep
             <div className={`wlrow wlsub${on ? ' on' : ''}${menu === s.id ? ' menuopen' : ''}`} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.id) }}>
               <button
                 className="wlsess"
-                style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}
                 aria-current={on ? 'true' : undefined}
                 title={`${title} · ${STATE_LABELS[n.state]}`}
                 onClick={() => onSelect({ kind: 'topic', id: s.id })}
@@ -53,8 +51,12 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, dep
                 />
               )}
             </div>
-            {n.children.length > 0 && <SubtopicRows nodes={n.children} selectedId={selectedId} draftOf={draftOf} onSelect={onSelect} onGone={onGone} depth={depth + 1} />}
-            {draftOf === s.id && <DraftRow depth={depth + 1} />}
+            {(n.children.length > 0 || draftOf === s.id) && (
+              <div className="wlkids">
+                <SubtopicRows nodes={n.children} selectedId={selectedId} draftOf={draftOf} onSelect={onSelect} onGone={onGone} />
+                {draftOf === s.id && <DraftRow />}
+              </div>
+            )}
           </div>
         )
       })}
@@ -63,9 +65,9 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone, dep
 }
 
 /** The line of a New subtopic draft: it has no session yet. */
-export function DraftRow({ depth = 0 }: { depth?: number }) {
+export function DraftRow() {
   return (
-    <div className="wlsess on wldraft" aria-current="true" style={depth ? { paddingLeft: 8 + depth * 14 } : undefined}>
+    <div className="wlsess on wldraft" aria-current="true">
       <span className="sessdot grey" aria-hidden />
       <span className="title">New subtopic</span>
     </div>

@@ -452,6 +452,10 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
   const you = !c.closed && c.group === 'waiting'
   const status = !c.closed && (c.group === 'working' || c.group === 'waiting')
   const time = threadTime(c.at, now)
+  const state = c.closed ? 'closed' : DOT_LABELS[c.dot]
+  // Not a topic of yours: a work started from a ticket (its groomer plans it) or a PR review mag opened a topic for.
+  const tag = c.kind === 'review' ? { label: 'PR', why: 'A PR review: mag opened this conversation for it' } : c.kind === 'work' ? { label: c.task?.key && !c.title.startsWith(c.task.key) ? c.task.key : 'work', why: 'A work started from a ticket or Home: its owner agent plans it here' } : null
+  const title = c.kind === 'review' ? c.title.replace(/^Review: /, '') : c.title
   return (
     <div
       className={`wlrow${fold ? ' folds' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
@@ -459,9 +463,9 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
       {...drag}
     >
       {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}>{fold.open ? '▾' : '▸'}</button>}
-      <button className="wlmain" title={[c.task?.key, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
+      <button className="wlmain" title={[state, tag?.why, c.task?.key, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
         <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} aria-hidden />
-        <span className="title">{c.title}</span>
+        <span className="title">{tag && <span className="wltag">{tag.label}</span>}{title}</span>
         {you ? <span className="wlbadge amber">you</span> : <span className="wltime">{time}</span>}
         {status && <span className={`wlmove ${tone}`}>{c.move.text}</span>}
       </button>
@@ -470,6 +474,9 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
     </div>
   )
 }
+
+/** What a row's dot means, in its tooltip. */
+const DOT_LABELS: Record<WorkCard['dot'], string> = { green: 'an agent is working', amber: 'waits on you', grey: 'idle' }
 
 /** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
 export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed' | 'sessions'>
