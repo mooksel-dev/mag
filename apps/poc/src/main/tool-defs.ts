@@ -956,7 +956,7 @@ export const TOOL_DEFS = [
   {
     name: 'delete_chats',
     scope: 'project',
-    description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, and its owner topic unless that owns another work (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. The topic of an open work or of a review is refused: delete that work instead, never its topic alone. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… (also for an owner topic that went with its work earlier in the batch). This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
+    description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, its owner topic staying (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. A topic that owns an open work is refused until that work is closed or deleted. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
     inputSchema: {
       type: 'object',
       properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
@@ -1062,8 +1062,8 @@ export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
  */
 export const OWNER_TOOLS = ['get_diagrams', 'place_diagram', 'update_doc', 'set_needs_input', 'answer_developer', 'create_subtask', 'update_subtask', 'delete_subtask', 'reorder_subtasks', 'show_diagram', 'show_canvas', 'get_pr_changes', 'set_inventory', 'set_pr_review', 'decide_direction'] as const
 
-/** A project chat's buttons a groomer also gets, on the work it owns (roles-start-only-when-asked.1); approving and starting a work stay out. */
-export const GROOMER_CONTROL_TOOLS = ['start_step', 'restart_review', 'message_agent', 'stop_agent'] as const
+/** A project chat's buttons a groomer also gets, on the work it grooms or owns (roles-start-only-when-asked.1): all of them, as the user asks. */
+export const GROOMER_CONTROL_TOOLS = ['approve_plan', 'start_work', 'start_step', 'restart_review', 'message_agent', 'stop_agent'] as const
 
 const WORK_ARG = { type: 'string', description: 'The key of the work this topic owns, e.g. ABC-12.' }
 
@@ -1075,7 +1075,10 @@ export function toolsFor(scope: 'task' | 'project', role: string | undefined): {
   const groomer = scope === 'task' && role === 'groomer'
   const control = (name: string) => groomer && (GROOMER_CONTROL_TOOLS as readonly string[]).includes(name)
   return TOOL_DEFS.filter((t) => (t.scope === 'any' || t.scope === scope || control(t.name) || (owner && (OWNER_TOOLS as readonly string[]).includes(t.name))) && toolForRole(t, role)).map((t) => {
-    if (control(t.name)) return { name: t.name, description: `${t.description} Only on the work you own.`, inputSchema: t.inputSchema }
+    if (control(t.name)) {
+      const schema = t.inputSchema as { properties: Record<string, unknown>; required?: readonly string[] }
+      return { name: t.name, description: `${t.description} On your work only; key defaults to it.`, inputSchema: { ...schema, required: (schema.required ?? []).filter((r) => r !== 'key') } }
+    }
     if (!owner || !(OWNER_TOOLS as readonly string[]).includes(t.name)) return { name: t.name, description: t.description, inputSchema: t.inputSchema }
     const schema = t.inputSchema as { properties: Record<string, unknown>; required?: readonly string[] }
     const optional = t.scope === 'any'

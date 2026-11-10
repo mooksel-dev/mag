@@ -532,8 +532,8 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
     )
   } else if (c.kind === 'topic' && s && !(s.reviewOf && t)) {
     const canBranch = s.agent === 'claude-code' && !!s.nativeSessionId
-    // A subagent, or mag's topic of a PR review, starts nothing under it (startChild refuses).
-    const canSub = !isSubagent(s) && !s.reviewOf
+    // A subagent starts nothing under it (startChild refuses).
+    const canSub = !isSubagent(s)
     body = (
       <>
         {reference}

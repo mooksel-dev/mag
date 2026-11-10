@@ -169,9 +169,6 @@ What makes the tree useful:
 Skim the structure first (Glob), then read the key files. Be concise everywhere.`
 
 /** mag's topic for a teammate's PR review only reads (topics-a-tree-of-agent.1); its tools hold it, this says so. */
-const REVIEW_TOPIC_LINE = `This topic reviews a teammate's PR: here you only read. Bash is for reading only, and you never change code or
-enter a worktree, whatever the lines above say about working in the repo.`
-
 /**
  * What a child session with a preset is (topics-a-tree-of-agent.2), after a topic's prompt: its tools hold it, this says
  * so. Neither writes to GitHub: the session that started it, or the user, publishes.
@@ -565,7 +562,6 @@ export class Orchestrator {
   startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent', subtopic = by === 'user'): AgentSession {
     const parent = this.treeSession(parentId)
     if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
-    if (rootSession(parent.id, this.store.data.sessions)?.reviewOf) throw new Error("mag's topic of a PR review only reads: it starts no sessions")
     if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
     const text = brief.trim()
     const agent = this.choice(parent.projectId, runRole({ role })).agent
@@ -730,22 +726,16 @@ export class Orchestrator {
     const work = this.store.task(taskId)
     if (work.parentId) throw new Error(`${work.key} is a step; delete its work`)
     if (isReview(work)) return this.deleteReview(taskId)
-    const sessions = this.store.data.sessions
-    const owner = sessions.find((s) => s.id === work.ownerSessionId && s.role === 'chat' && !s.taskId)
-    // The owner topic goes with its tree, so it stays while a session of that tree owns another work.
-    const tree = owner ? this.treeOf(owner.id) : []
-    const ids = new Set(tree.map((s) => s.id))
-    const ownsOther = this.store.data.tasks.some((t) => t.id !== taskId && !t.parentId && !!t.ownerSessionId && ids.has(t.ownerSessionId))
-    const gone = [...sessions.filter((s) => s.taskId === taskId), ...(owner && !ownsOther ? tree : [])]
+    // Only the work's own sessions go: the topic that owns it is the user's conversation and stays.
+    const gone = this.store.data.sessions.filter((s) => s.taskId === taskId)
     if (gone.some((s) => this.isRunning(s.id))) throw new Error(`An agent of ${work.key} is still working; stop it first, then delete the work`)
     const steps = subtasksOf(taskId, this.store.data.tasks)
     await Promise.all(gone.map((s) => this.closeLive(s.id)))
     for (const t of [work, ...steps]) await this.removeWork(t.work)
     for (const s of steps) this.store.deleteTask(s.id)
     this.store.deleteTask(taskId)
-    if (owner && !ownsOther) await this.deleteChat(owner.id, taskId)
     this.wakeWaiting(steps.map((s) => s.key))
-    log.info('agent', `${work.key}: work deleted`, { steps: steps.length, topic: !!owner && !ownsOther })
+    log.info('agent', `${work.key}: work deleted`, { steps: steps.length })
   }
 
   /** Start (or restart) grooming in a new background session; `message`, if given, is its first message (shown in its chat). */
@@ -2030,12 +2020,10 @@ export class Orchestrator {
     if (session.role === 'chat' || !session.taskId) {
       // A topic that reviews a teammate's PR works in its scratch worktrees, never in the user's checkout.
       const scratch = this.scratches.get(session.id)
-      // mag's topic for a teammate's PR review reads only (topics-a-tree-of-agent.1); any other topic is full Claude Code.
-      const review = !!session.reviewOf
-      // A child with a preset (topics-a-tree-of-agent.2): a reviewer reads only; neither writes to GitHub.
+      // Every topic is full Claude Code, a review's too. A child with a preset (topics-a-tree-of-agent.2): a reviewer reads only; neither writes to GitHub.
       const preset = session.role === 'developer' || session.role === 'reviewer' ? session.role : null
-      const reads = review || preset === 'reviewer'
-      const prompt = chatPrompt(project, this.paths.logsDir) + (review ? blocks(REVIEW_TOPIC_LINE) : '') + (preset ? blocks(CHILD_ROLE_LINES[preset]) : '')
+      const reads = preset === 'reviewer'
+      const prompt = chatPrompt(project, this.paths.logsDir) + (preset ? blocks(CHILD_ROLE_LINES[preset]) : '')
       return {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
@@ -2323,12 +2311,11 @@ export class Orchestrator {
   }
 
   /**
-   * Its subagents become children: a session of a topic's tree. A work's sessions and mag's topic of a PR review have
-   * no tree shown, so their subagents' calls stay in their transcript, as before.
+   * Its subagents become children: a session of a topic's tree. A work's sessions have no tree shown, so their
+   * subagents' calls stay in their transcript, as before.
    */
   private hasSubagents(session: AgentSession): boolean {
-    if (session.taskId || (session.role !== 'chat' && !session.parentId)) return false
-    return !rootSession(session.id, this.store.data.sessions)?.reviewOf
+    return !session.taskId && (session.role === 'chat' || !!session.parentId)
   }
 
   /**

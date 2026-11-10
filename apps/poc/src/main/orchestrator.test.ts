@@ -315,18 +315,18 @@ test('a topic is full Claude Code: edits, free Bash and worktrees run without a 
   assert.doesNotMatch(prompt, /never change code|Bash is for reading only|reviews a teammate's PR: here you only read/)
 })
 
-test("mag's topic for a teammate's PR review stays read only (topics-a-tree-of-agent.1)", async () => {
+test("mag's topic of a teammate's PR review is a topic like any other: full Claude Code, GitHub writes after the Allow", async () => {
   const { store, orch, project } = setup()
   const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const plain = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   chat.reviewOf = 'some-review-work'
   await orch.send(chat.id, 'look again')
   const spec = specs.at(-1)!
-  for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) assert.ok(spec.disallowedTools?.includes(t), t)
-  for (const t of ['Edit', 'Write', 'EnterWorktree']) assert.ok(!spec.allowedTools?.includes(t), t)
-  assert.ok(spec.allowedTools?.includes('Bash'))
-  assert.equal(spec.readOnly, true)
-  assert.ok(anyMatches(spec.askTools, 'gh pr review 4 --comment -b x'), 'it still publishes after the Allow')
-  assert.match(spec.appendSystemPrompt ?? '', /This topic reviews a teammate's PR: here you only read\. Bash is for reading only, and you never change code/)
+  await orch.send(plain.id, 'hi')
+  const like = specs.at(-1)!
+  assert.deepEqual([spec.allowedTools, spec.disallowedTools, !!spec.readOnly], [like.allowedTools, like.disallowedTools, !!like.readOnly])
+  assert.ok(anyMatches(spec.askTools, 'gh pr review 4 --comment -b x'), 'it publishes after the Allow')
+  assert.doesNotMatch(spec.appendSystemPrompt ?? '', /here you only read/)
 })
 
 test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {
@@ -758,7 +758,7 @@ test('reopen of a closed done work clears its closed mark', () => {
   assert.equal(store.task(task.id).closedAt, null)
 })
 
-test('deleteWork: steps, sessions, docs and the owner topic go; refused while an agent runs; an owner of another work stays; a review as deleteReview', async () => {
+test('deleteWork: steps, sessions and docs go, the owner topic stays; refused while an agent runs; a review as deleteReview', async () => {
   const { store, orch, project } = setup()
   const newWork = (owner: string) => {
     const work = store.createTask({ projectId: project.id, title: 'w', type: 'dev', description: '', status: 'in_progress', ownerSessionId: owner })
@@ -781,15 +781,9 @@ test('deleteWork: steps, sessions, docs and the owner topic go; refused while an
   await orch.deleteWork(work.id)
   assert.equal(opened.at(-1)!.closed, true)
   assert.equal(store.data.tasks.some((t) => t.id === work.id || t.id === step.id), false)
-  assert.equal(store.data.sessions.some((s) => s.id === dev.id || s.id === owner), false)
+  assert.equal(store.data.sessions.some((s) => s.id === dev.id), false)
+  assert.ok(store.data.sessions.some((s) => s.id === owner), 'the topic it was asked in stays')
   assert.equal(store.data.docs[work.id], undefined)
-
-  // The owner topic stays while it owns another work.
-  const shared = orch.newChat(project.id)
-  const one = newWork(shared).work
-  newWork(shared)
-  await orch.deleteWork(one.id)
-  assert.ok(store.data.sessions.some((s) => s.id === shared))
 
   const review = store.createTask({ projectId: project.id, title: 'app#7: Charge', type: 'review', description: '', status: 'in_progress' })
   await orch.deleteWork(review.id)
@@ -2069,10 +2063,10 @@ test("a groomer runs its own work's agents, never another work's and never itsel
   assert.equal(groomer.status, 'running')
   store.updateTask(task.id, { status: 'ready' })
 
-  for (const name of ['start_step', 'restart_review', 'stop_agent']) await assert.rejects(call(name, { key: other.key }, groomer.id), /is not the work you own/, name)
-  await assert.rejects(call('message_agent', { key: other.key, text: 'x' }, groomer.id), /is not the work you own/)
-  await assert.rejects(call('approve_plan', { key: 'login' }, groomer.id), /approve_plan is for a project chat/)
-  await assert.rejects(call('start_work', { key: 'login' }, groomer.id), /start_work is for a project chat/)
+  for (const name of ['approve_plan', 'start_work', 'start_step', 'restart_review', 'stop_agent']) await assert.rejects(call(name, { key: other.key }, groomer.id), /is not the work you groom/, name)
+  await assert.rejects(call('message_agent', { key: other.key, text: 'x' }, groomer.id), /is not the work you groom/)
+  // Without key: its own work.
+  await assert.rejects(call('stop_agent', {}, groomer.id), /No agent of login is working/)
   await assert.rejects(call('message_agent', { key: 'login', text: 'x', role: 'groomer' }, groomer.id), /You are the groomer of login/)
   await assert.rejects(call('stop_agent', { key: 'login' }, groomer.id), /No agent of login is working/, 'the groomer itself does not count')
 
@@ -2089,9 +2083,9 @@ test("a groomer runs its own work's agents, never another work's and never itsel
   assert.equal(groomer.status, 'running', 'its own turn goes on')
   assert.deepEqual(logged(), ["login.1: groomer: started the developer of login.1 at the user's request", "login: groomer: stopped login at the user's request"])
 
-  // A groomer that no longer owns the work has no say over it.
+  // The work it grooms stays its own, whichever topic owns it.
   store.updateTask(task.id, { ownerSessionId: 'someone-else' })
-  await assert.rejects(call('stop_agent', { key: 'login' }, groomer.id), /is not the work you own/)
+  await assert.rejects(call('stop_agent', { key: 'login' }, groomer.id), /No agent of login is working/)
 })
 
 test('stop_agent: stops the agents of a work in a turn, as Stop (chat-keruie-robotamy-i-ahentamy.1)', async () => {
@@ -2171,7 +2165,7 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
   assert.equal(await call('restore_chat', { target: idle }), `${idle}: not closed`)
   assert.equal(await call('restore_chat', { target: gone.key }), `${gone.key}: refused: ${gone.key} is canceled; a canceled work cannot be restored`)
 
-  // The calling topic owns a work: deleting that work would delete this topic with it.
+  // The calling topic owns a work: deleting that work leaves this topic.
   const mine = store.createTask({ projectId: project.id, title: 'Mine', type: 'dev', description: '', status: 'done', ownerSessionId: topic.id })
   const review = store.createTask({ projectId: project.id, title: 'app#7: x', type: 'review', description: '', status: 'in_progress' })
   const mags = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', reviewOf: review.id })
@@ -2180,14 +2174,14 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
     `${owner}: refused: it is the topic of login; delete login instead`,
     `${mags.id}: refused: it is the topic of ${review.key}; delete ${review.key} instead`,
     `${done.key}: deleted`,
-    `${doneOwner}: no such topic or work in this project`,
+    `${doneOwner}: deleted`,
     `${review.key}: deleted`,
-    `${mine.key}: refused: deleting it deletes this topic too; the user does it with the button`,
+    `${mine.key}: deleted`,
     `${topic.id}: refused: this is the topic you are in; the user does it with the button`,
   ])
   assert.ok(!store.data.tasks.some((t) => t.id === done.id || t.id === review.id))
   assert.ok(!store.data.sessions.some((x) => x.id === doneOwner || x.id === mags.id))
-  assert.ok(store.data.tasks.some((t) => t.id === mine.id) && store.data.sessions.some((x) => x.id === topic.id || x.id === owner))
+  assert.ok(!store.data.tasks.some((t) => t.id === mine.id) && store.data.sessions.some((x) => x.id === topic.id), 'a work of this topic goes, the topic stays')
   assert.ok(store.data.sessions.some((x) => x.id === owner), 'the owner of an open work stays')
 })
 
@@ -2333,11 +2327,11 @@ test('startChild presets: a developer changes code but never writes to GitHub, a
   assert.match(readFileSync(rev.mcpConfigPath!, 'utf8'), /"MAG_ROLE":"reviewer"/)
 
   assert.throws(() => s.orch.startChild(topic.id, 'x', 'groomer' as 'developer'), /role must be one of developer, reviewer/)
-  // A work's sessions have no tree; mag's topic of a PR review only reads.
+  // A work's sessions have no tree.
   const dev2 = s.store.createSession({ projectId: s.project.id, taskId: s.task.id, role: 'developer', agent: 'claude-code', status: 'idle' })
   assert.throws(() => s.orch.startChild(dev2.id, 'x'), /not a topic or a session under one/)
   const review = s.store.createSession({ projectId: s.project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', reviewOf: s.task.id })
-  assert.throws(() => s.orch.startChild(review.id, 'x'), /only reads: it starts no sessions/)
+  assert.equal(s.orch.startChild(review.id, 'x', 'reviewer').parentId, review.id, "mag's topic of a review starts sessions as any topic")
 })
 
 test("tree tools: start_session, message_session and stop_session reach only the caller's topic tree (topics-a-tree-of-agent.2)", async () => {
@@ -2384,7 +2378,7 @@ test("tree tools: start_session, message_session and stop_session reach only the
   assert.equal(await call(topic.id, 'stop_session', { session_id: child.id }), `${child.id} is not in a turn.`)
 })
 
-test('deleteWork keeps its owner topic while a session under it owns another work (topics-a-tree-of-agent.2)', async () => {
+test('deleteWork keeps its owner topic and the sessions under it, whatever they own (topics-a-tree-of-agent.2)', async () => {
   const s = setup()
   const { topic } = await liveTopic(s)
   const child = s.orch.startChild(topic.id, 'Plan billing')
@@ -2396,11 +2390,8 @@ test('deleteWork keeps its owner topic while a session under it owns another wor
   await s.orch.deleteWork(s.task.id)
   assert.ok(s.store.data.sessions.some((x) => x.id === topic.id) && s.store.data.sessions.some((x) => x.id === child.id))
   assert.equal(s.store.task(billing.id).ownerSessionId, child.id)
-  // Once nothing else in the tree owns a work, the owner goes with its tree.
   await s.orch.deleteWork(billing.id)
-  const other = s.store.createTask({ projectId: s.project.id, title: 'Other', type: 'dev', description: '', ownerSessionId: topic.id })
-  await s.orch.deleteWork(other.id)
-  assert.equal(s.store.data.sessions.some((x) => x.id === topic.id || x.id === child.id), false)
+  assert.ok(s.store.data.sessions.some((x) => x.id === topic.id) && s.store.data.sessions.some((x) => x.id === child.id))
 })
 
 test('deleteChat and closeChat take the sessions under a topic with it (topics-a-tree-of-agent.2)', async () => {
