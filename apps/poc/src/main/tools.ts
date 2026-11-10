@@ -39,7 +39,7 @@ export interface ToolActions {
   /** The owner's answer to its step developer's waiting question; the developer goes on with it. */
   answerDeveloper(stepId: string, text: string): Promise<void>
   /** start_session (topics-a-tree-of-agent.2): a child of `parentId`, its brief from the parent's agent; started. */
-  startChild(parentId: string, brief: string, role: ChildRole | null, fork: boolean): AgentSession
+  startChild(parentId: string, brief: string, role: ChildRole | null, fork: boolean, subtopic: boolean): AgentSession
   /** The tree tools' target: a session of the caller's topic tree; throws for any other. */
   sessionInTree(callerId: string, targetId: string): AgentSession
   /** stop_session: stops the session's turn, as the user's Stop. */
@@ -1003,10 +1003,11 @@ function sharedTool(
       if (role !== null && !(CHILD_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
       const brief = typeof args.brief === 'string' ? args.brief : ''
       const fork = args.fork === true
+      const subtopic = args.subtopic === true && role === null
       if (!brief.trim() && !fork) throw new Error('brief is required: what the session does, standing on its own')
-      const child = actions.startChild(caller.id, brief, role as ChildRole | null, fork)
+      const child = actions.startChild(caller.id, brief, role as ChildRole | null, fork, subtopic)
       log.info('tools', `session ${caller.id}: started ${child.id}`, { role, fork })
-      return `Started session ${child.id} "${child.title}"${role ? ` (${role})` : ''}${fork ? ', a fork of this one' : ''}, under this one; the user sees it in the topic's tree. ${brief.trim() ? 'It reports back to you with message_session.' : 'It waits for the user\'s first message.'}`
+      return `Started session ${child.id} "${child.title}"${role ? ` (${role})` : ''}${fork ? ', a fork of this one' : ''}, under this one; ${subtopic ? 'the user sees it as a subtopic' : "it is one of the topic's agents: the user sees its state and log there, and talks to you, not to it"}. ${brief.trim() ? 'It reports back to you with message_session.' : 'It waits for the user\'s first message.'}`
     }
 
     case 'message_session': {

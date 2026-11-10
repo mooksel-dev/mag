@@ -221,8 +221,9 @@ ${orientation(playbook.reviewRounds)}
   answers with, right here. You own that review: when the user asks for more, revise it and record it again with
   set_pr_review. Nothing you run writes to the PR.
 - A part of the job that is worth its own session (a long run, research, a prototype, work in parallel): start_session
-  with its brief, a child of this topic that the user sees in the tree and can step into; fork: true when it needs all of
-  this conversation, as when the user asks to branch this topic ("відгалузь", "branch"). Pass a role only when the user
+  with its brief: one of this topic's agents, whose state and log the user sees here; the user talks to you about it,
+  and you talk to it. Never make a topic or subtopic on your own: subtopic: true only when the user asks for a subtopic
+  or to branch this topic ("відгалузь", "branch"), with fork: true when it needs all of this conversation. Pass a role only when the user
   named it; otherwise ask which role to use, or start with none. Write to a session of this tree
   with message_session and stop its turn with stop_session; a child reports back to you with message_session.
 - If the work is fully discussed already, create_work with the complete doc (following the project's doc template),
@@ -561,7 +562,7 @@ export class Orchestrator {
    * report to; a general child with one is named after its first turn, as a topic is (nameChat). Without a brief the
    * child waits for the user's first message. Returns the child, its run started.
    */
-  startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent'): AgentSession {
+  startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent', subtopic = by === 'user'): AgentSession {
     const parent = this.treeSession(parentId)
     if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
     if (rootSession(parent.id, this.store.data.sessions)?.reviewOf) throw new Error("mag's topic of a PR review only reads: it starts no sessions")
@@ -580,9 +581,11 @@ export class Orchestrator {
       agent,
       status: 'idle',
       title: (text ? text.replace(/\s+/g, ' ') : `Branch of ${parent.title ?? 'a topic'}`).slice(0, 60),
-      titleGenerated: !text || role !== null,
+      titleGenerated: !text || role !== null || !subtopic,
       forkOf: fork ? parent.nativeSessionId : null,
       parentId: parent.id,
+      // The user's subtopic, or the agent's job: then it is the topic's agent, not a line in the sidebar.
+      ...(role === null && !subtopic && { agentJob: true }),
     })
     log.info('agent', 'child session started', { session: child.id, parent: parent.id, role, fork, by })
     if (text) {
@@ -1587,8 +1590,8 @@ export class Orchestrator {
    * work (type review, in progress at once, no steps) is the PR's open one if it has one, else a new one. `format`
    * (review-v2-part-2-v1-2.1): the result this run records, the project's default without one; the review keeps one
    * result per format and shows this one. `by`: the project topic that asks (review_pr); it runs the review and gets
-   * the job back to do in its turn. Without it (the work list, Run v1 / Run v2) the topic that ran this format before
-   * does it, else a new one of mag's for the format, so v2 never sees what a v1 run read first.
+   * the job back to do in its turn. Without it (Run v1 / Run v2) the review's topic does it, the one that ran this format
+   * before first; only a review from Home, the user's New topic, gets a new topic, a topic like any other.
    */
   async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
@@ -1607,9 +1610,9 @@ export class Orchestrator {
     const f = format ?? projectReviewFormat(project)
     const before = prev?.prReview?.results[f]
     // The topic that ran this format before, while it is there; never the other format's.
-    const own = before && this.store.data.sessions.find((s) => s.id === before.sessionId)
-    const owner = by ?? own?.id
-    if (owner && !by && this.isRunning(owner)) throw new Error(`The ${f} review of ${prev!.key} is still working; ask it there`)
+    const topicOf = (id: string | null | undefined) => (id ? this.store.data.sessions.find((s) => s.id === id && s.role === 'chat' && !s.taskId) : undefined)
+    const owner = by ?? topicOf(before?.sessionId)?.id ?? topicOf(prev?.ownerSessionId)?.id
+    if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is working; ask it there`)
     const sessionId = owner ?? this.newChat(projectId)
     const title = `${name}#${info.number}: ${info.title}`
     const base: PrReview = prev?.prReview ?? { pr, results: {}, shown: f, posted: null }
@@ -1618,13 +1621,11 @@ export class Orchestrator {
       ? (this.store.updateTask(prev.id, { title, status: 'in_progress', needsInput: null, closedAt: null, ownerSessionId: sessionId, prReview }), this.store.task(prev.id))
       : this.store.createTask({ projectId, title, type: 'review', description: info.url, status: 'in_progress', ownerSessionId: sessionId })
     if (!prev) this.store.updateTask(work.id, { prReview })
-    // mag's own topic for the review's format: Delete review takes it along; the work list shows it as the review.
+    // A review from Home: its new topic is named after the PR.
     if (!owner) {
       const topic = this.store.session(sessionId)
-      topic.title = `Review ${name}#${info.number} · ${f}`
+      topic.title = `Review ${name}#${info.number}`
       topic.titleGenerated = true
-      topic.reviewOf = work.id
-      topic.reviewFormat = f
     }
     log.info('agent', `${work.key}: ${f} review of ${info.url} at ${info.head.slice(0, 12)}`, { by: by ? 'topic' : 'app' })
     const now = this.store.task(work.id)

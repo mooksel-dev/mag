@@ -228,24 +228,20 @@ export class Store {
   }
 
   /**
-   * Every work and review is a topic's: the sidebar lists only topics. A work without a chat topic for owner (a
-   * groomer's, a ticket's from before) gets a topic of its own that owns it, closed when the work is finished; its
-   * groomer stays as one of its agents. A review without one gets a topic of mag's for it (reviewOf).
+   * A work is its topic's: the sidebar lists only topics. A work without a chat topic for owner (one started from a
+   * ticket before) is owned by the conversation the user had about it, its latest groomer's: that session becomes the
+   * work's topic, its history and agent session kept. Nothing new is made: a work nobody talked about stays as it is.
    */
   private migrateToTopicOwners() {
     const topicIds = new Set(this.data.sessions.filter((s) => s.role === 'chat' && !s.taskId).map((s) => s.id))
-    const reviewTopics = new Set(this.data.sessions.flatMap((s) => (s.reviewOf ? [s.reviewOf] : [])))
     for (const t of this.data.tasks) {
-      if (t.parentId || (t.ownerSessionId && topicIds.has(t.ownerSessionId)) || reviewTopics.has(t.id)) continue
-      if (!this.data.projects.some((p) => p.id === t.projectId)) continue
-      const topic = this.newTopic(t.projectId, t.createdAt)
-      topic.title = t.title.slice(0, 60)
-      topic.titleGenerated = true
+      if (t.parentId || t.type === 'review' || (t.ownerSessionId && topicIds.has(t.ownerSessionId))) continue
+      const groomer = this.data.sessions.filter((s) => s.taskId === t.id && s.role === 'groomer').at(-1)
+      if (!groomer) continue
+      Object.assign(groomer, { role: 'chat', taskId: null, stepId: null, parentId: null, title: t.title.slice(0, 60), titleGenerated: true })
       const finished = t.status === 'done' || t.status === 'canceled' || !!t.closedAt
-      topic.closedAt = finished ? (t.closedAt ?? t.updatedAt) : null
-      if (t.type === 'review') topic.reviewOf = t.id
-      else topic.items.push({ kind: 'notice', text: `This topic owns ${t.key} now: its planning conversation is under Agents.`, at: Date.now() })
-      t.ownerSessionId = topic.id
+      groomer.closedAt = finished ? (t.closedAt ?? t.updatedAt) : null
+      t.ownerSessionId = groomer.id
     }
   }
 

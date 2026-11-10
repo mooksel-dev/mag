@@ -683,13 +683,14 @@ export const TOOL_DEFS = [
     scope: 'project',
     reviewer: 'also',
     description:
-      "Start a child session of yours for a part of the job worth its own session (a long run, research, a prototype, work in parallel): it works on the brief on its own, the user sees it under this topic and can write to it, and it reports back to you with message_session. role: none for a general session with a topic's tools; developer to change code (in a worktree, no GitHub writes); reviewer to read and report only. Pass a role only when the user named it; otherwise ask which role to use, or start with none. fork: true starts it with all of this conversation (Claude Code only; the user's \"branch this topic\"). Answers with its session id.",
+      "Start a child session of yours for a part of the job worth its own session (a long run, research, a prototype, work in parallel): it works on the brief on its own as one of this topic's agents (the user sees its state and log, and talks to you about it, not to it), and it reports back to you with message_session. subtopic: true only when the user asked for a new subtopic or to branch this topic: then it is a conversation of the user's under this topic. role: none for a general session with a topic's tools; developer to change code (in a worktree, no GitHub writes); reviewer to read and report only. Pass a role only when the user named it; otherwise ask which role to use, or start with none. fork: true starts it with all of this conversation (Claude Code only; the user's \"branch this topic\"). Answers with its session id.",
     inputSchema: {
       type: 'object',
       properties: {
         brief: { type: 'string', description: 'What it does, standing on its own: the goal, where, what to report. Empty only with fork, for a branch the user goes on in.' },
         role: { type: 'string', enum: ['developer', 'reviewer'], description: 'A preset; leave it out for a general session.' },
         fork: { type: 'boolean', description: 'Start with all of this conversation instead of only the brief.' },
+        subtopic: { type: 'boolean', description: 'true only when the user asked for a subtopic or a branch: the user talks in it. Leave it out for a job of yours.' },
       },
       required: ['brief'],
     },

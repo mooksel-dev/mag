@@ -530,39 +530,34 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })
 
-test('topic-owners migration: a work or review without a chat topic gets one that owns it, closed when it is finished; owned ones stay', () => {
+test("topic-owners migration: a work without a chat topic is owned by its groomer's conversation, now a topic; nothing new is made", () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
-  const base = { projectId: 'p', role: 'chat', agent: 'codex', nativeSessionId: 'n', status: 'idle', items: [], createdAt: 1 }
+  const base = { projectId: 'p', agent: 'codex', nativeSessionId: 'n', status: 'idle', items: [{ kind: 'user', text: 'plan it', at: 2 }], createdAt: 1 }
   const work = { projectId: 'p', parentId: null, description: '', status: 'planning', needsInput: null, work: null, closedAt: null, nextSubNo: 1, createdAt: 5, updatedAt: 6 }
   writeFileSync(file, JSON.stringify({
     projects: [{ id: 'p', name: 'p', repos: [], agents: { chat: { agent: 'codex' } } }], docs: {}, canvases: {}, events: [], integrations: [], schemaVersion: 9,
     sessions: [
-      { ...base, id: 'mine', taskId: null, title: 'Mine' },
-      { ...base, id: 'groomer', taskId: 'g', role: 'groomer', title: 'Groomer' },
-      { ...base, id: 'magrev', taskId: null, title: 'Review #3', reviewOf: 'r2' },
+      { ...base, id: 'mine', taskId: null, role: 'chat', title: 'Mine' },
+      { ...base, id: 'old-g', taskId: 'g', role: 'groomer', title: 'Groomer 1', createdAt: 0 },
+      { ...base, id: 'groomer', taskId: 'g', stepId: null, role: 'groomer', title: 'Groomer' },
+      { ...base, id: 'done-g', taskId: 'old', role: 'groomer', title: 'Groomer' },
+      { ...base, id: 'dev', taskId: 'g', role: 'developer', title: 'Dev' },
     ],
     tasks: [
       { ...work, id: 'owned', key: 'A-1', title: 'Owned', ownerSessionId: 'mine' },
       { ...work, id: 'g', key: 'A-2', title: 'Groomed', ownerSessionId: 'groomer' },
       { ...work, id: 'old', key: 'A-3', title: 'Old', status: 'done' },
-      { ...work, id: 's', key: 'A-2.1', title: 'Step', parentId: 'g' },
+      { ...work, id: 'none', key: 'A-4', title: 'Nobody talked' },
       { ...work, id: 'r1', key: 'R-1', title: 'PR 1', type: 'review', status: 'in_progress' },
-      { ...work, id: 'r2', key: 'R-2', title: 'PR 3', type: 'review', status: 'in_progress', ownerSessionId: 'magrev' },
     ],
   }))
   const store = new Store(file)
-  const owner = (id: string) => store.data.sessions.find((s) => s.id === store.task(id).ownerSessionId)
-  assert.equal(store.task('owned').ownerSessionId, 'mine')
-  assert.equal(store.task('r2').ownerSessionId, 'magrev')
-  assert.equal(store.task('s').ownerSessionId, undefined, 'a step has no owner of its own')
-  const fresh = ['g', 'old', 'r1'].map((id) => owner(id)!)
-  assert.deepEqual(fresh.map((s) => [s.role, s.taskId, s.parentId ?? null, s.title, s.titleGenerated, s.closedAt, s.reviewOf ?? null]), [
-    ['chat', null, null, 'Groomed', true, null, null],
-    ['chat', null, null, 'Old', true, 6, null],
-    ['chat', null, null, 'PR 1', true, null, 'r1'],
-  ])
-  assert.match((fresh[0].items[0] as { text: string }).text, /owns A-2/)
-  assert.equal(store.session('groomer').taskId, 'g', 'its groomer stays an agent of the work')
+  assert.equal(store.data.sessions.length, 5, 'no session is made')
+  assert.deepEqual(['owned', 'g', 'old', 'none', 'r1'].map((id) => store.task(id).ownerSessionId ?? null), ['mine', 'groomer', 'done-g', null, null])
+  const topic = (id: string) => { const s = store.session(id); return [s.role, s.taskId, s.title, s.closedAt ?? null, s.items.length, s.nativeSessionId] }
+  assert.deepEqual(topic('groomer'), ['chat', null, 'Groomed', null, 1, 'n'])
+  assert.deepEqual(topic('done-g'), ['chat', null, 'Old', 6, 1, 'n'])
+  assert.deepEqual([store.session('old-g').role, store.session('dev').role], ['groomer', 'developer'], 'an earlier groomer and the developers stay agents of the work')
   assert.equal(store.data.schemaVersion, 10)
   store.flush()
 })

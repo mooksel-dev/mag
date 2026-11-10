@@ -898,6 +898,8 @@ export interface AgentSession {
    * runs.
    */
   origin?: 'mag' | 'subagent'
+  /** A general child its parent's agent started for a job (start_session): an agent of the topic, not a subtopic. */
+  agentJob?: boolean
   /** A subagent: the id of the parent's Agent tool call that started it (the CLI's tool_use id). */
   toolUseId?: string | null
   /** A project topic mag created for a review of a PR: that review's id. A topic that asked for it (review_pr) has none. */

@@ -99,8 +99,8 @@ export interface SessionNode {
 }
 
 /** The label of a child session's role: subagent for one read from its parent's stream. */
-export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin'>): string =>
-  s.origin === 'subagent' ? 'subagent' : s.role === null ? 'general' : s.role === 'chat' ? 'topic' : s.role
+export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin' | 'agentJob'>): string =>
+  s.origin === 'subagent' ? 'subagent' : s.role === null ? (s.agentJob ? 'agent' : 'general') : s.role === 'chat' ? 'topic' : s.role
 
 const pendingApproval = (s: AgentSession) => s.items.some((i) => i.kind === 'approval' && i.status === 'pending')
 
@@ -496,8 +496,8 @@ export function flatCards(cards: WorkCard[]): WorkCard[] {
  * one (no role, a Branch or New subtopic) or a branched topic of before the tree. Not an agent: a role's preset or a
  * Claude Code subagent.
  */
-export const isSubtopic = (s: Pick<AgentSession, 'role' | 'origin' | 'parentId'>): boolean =>
-  !!s.parentId && s.origin !== 'subagent' && (s.role === null || s.role === 'chat')
+export const isSubtopic = (s: Pick<AgentSession, 'role' | 'origin' | 'parentId' | 'agentJob'>): boolean =>
+  !!s.parentId && s.origin !== 'subagent' && !s.agentJob && (s.role === null || s.role === 'chat')
 
 /** The subtopics of a tree, nested by depth: an agent and everything under it are left out. */
 export const subtopicNodes = (nodes: SessionNode[]): SessionNode[] =>
