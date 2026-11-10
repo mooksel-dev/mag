@@ -746,7 +746,6 @@ body.resizing iframe { pointer-events: none; }
 .sessdot.red { background: var(--danger-fg); }
 .agentsbtn { display: inline-flex; align-items: center; gap: 8px; }
 .agentcount { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
-.wltag { display: inline-block; margin-right: 5px; vertical-align: 1px; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--faint); font-size: var(--fs-xs); font-weight: 400; line-height: 15px; }
 .sessrole { flex: none; font-size: var(--fs-xs); color: var(--faint); }
 /* Another work of the same chat: its cards in the conversation under its key and title. */
 .cardsof { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); font-size: var(--fs-sm); color: var(--muted); }

@@ -405,11 +405,13 @@ const REVIEW_CASES = (): [string, Task, AgentSession, string | null, string][] =
   ['closed', reviewTask({ status: 'done', updatedAt: NOW }), rt(), 'Done', 'done:rv:grey other: Closed'],
 ]
 
-test('workCards: a review: its stage and whose move in each state; its topic is not a topic of its own', () => {
+test("workCards: a review: its stage and whose move in each state; mag's topic of it is its row, the review its child", () => {
   for (const [name, t, s, stage, want] of REVIEW_CASES()) {
     const got = cards([t], [s])
-    assert.deepEqual(got.map(line), [want], name)
-    assert.deepEqual([got[0].kind, got[0].title, got[0].stage, got[0].progress], ['review', 'Review: Charge cards', stage, 'PR #12 · @ann'], name)
+    assert.deepEqual(got.map((c) => [c.kind, c.id]), [['topic', 'rt']], name)
+    const review = got[0].children![0]
+    assert.equal(line(review), want, name)
+    assert.deepEqual([review.kind, review.title, review.stage, review.progress], ['review', 'Charge cards', stage, 'PR #12 · @ann'], name)
   }
 })
 
@@ -443,7 +445,7 @@ test('workCards: newest created first, whatever the state; byActivity (Home): gr
   assert.deepEqual(byActivity(all.filter((c) => c.group === 'working')).map((c) => c.id), ['dev', 'ci'])
 })
 
-test('cardFilter: waiting = that group, working = green dots, reviews = review rows with done ones', () => {
+test("cardFilter: waiting = that group, working = green dots, reviews = review rows with done ones; a review under mag's topic counts as a child", () => {
   const tasks = [
     task('asks', { needsInput: 'Pick' }),
     task('runs'),
@@ -455,8 +457,9 @@ test('cardFilter: waiting = that group, working = green dots, reviews = review r
   const ids = (f: Parameters<typeof cardFilter>[1]) => cardFilter(all, f).map((c) => c.id).sort()
   assert.equal(cardFilter(all, 'all').length, 5)
   assert.deepEqual(ids('waiting'), ['asks'])
-  assert.deepEqual(ids('working'), ['runs', 'rv'])
-  assert.deepEqual(ids('reviews'), ['rv', 'rv2'])
+  assert.deepEqual(ids('working'), ['rt', 'runs'])
+  assert.deepEqual(ids('reviews'), ['rv2'])
+  assert.deepEqual(cardFilter(countedCards(all), 'reviews').map((c) => c.id).sort(), ['rv', 'rv2'])
 })
 
 /** A review the topic `by` (or a session under it) asked for: no topic of mag's own. */
@@ -509,9 +512,10 @@ test('Reviews filter: a topic with a review it asked for shows and counts once; 
   assert.ok(rowMatches(both[0], 'reviews'))
 })
 
-test("workCards: a review with mag's own topic keeps its row, even run again from a user's topic; so does one whose topic is gone", () => {
-  const again = reviewTask({ ownerSessionId: 'c' }, ready)
-  assert.deepEqual(cards([again], [topicC(), rt()]).map((c) => [c.id, c.kind, c.title]), [['c', 'topic', 'Billing'], ['rv', 'review', 'Review: Charge cards']])
+test("workCards: a review run again from a user's topic is that topic's; mag's topic of it stays a topic; one with no topic left keeps its row", () => {
+  const rerun = reviewTask({ ownerSessionId: 'c' }, ready)
+  const got = cards([rerun], [topicC(), rt()])
+  assert.deepEqual(got.map((c) => [c.id, c.kind, (c.children ?? []).map((k) => k.id)]), [['c', 'topic', ['rv']], ['rt', 'topic', []]])
   assert.deepEqual(cards([asked('gone', {}, ready)]).map((c) => [c.id, c.title]), [['rv', 'Review: Charge cards']])
 })
 
