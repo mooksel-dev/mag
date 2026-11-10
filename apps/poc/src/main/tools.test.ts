@@ -642,11 +642,14 @@ test("a project chat gets the buttons' tools, each only on the user's word (chat
   assert.ok(!toolsFor('task', 'developer').some((t) => names.includes(t.name)))
 })
 
-test('a groomer gets start_step, restart_review, message_agent and stop_agent, for its own work; approving and starting stay out (roles-start-only-when-asked.1)', () => {
-  const control = ['start_step', 'restart_review', 'message_agent', 'stop_agent']
+test('a groomer gets every button of its own work, key defaulting to it (roles-start-only-when-asked.1)', () => {
+  const control = ['approve_plan', 'start_work', 'start_step', 'restart_review', 'message_agent', 'stop_agent']
   const groomer = toolsFor('task', 'groomer')
-  for (const name of control) assert.match(groomer.find((t) => t.name === name)!.description, /Only when the user has asked.*Only on the work you own\.$/)
-  for (const name of ['approve_plan', 'start_work']) assert.ok(!groomer.some((t) => t.name === name), name)
+  for (const name of control) {
+    const t = groomer.find((x) => x.name === name)!
+    assert.match(t.description, /Only when the user has asked.*On your work only; key defaults to it\.$/)
+    assert.ok(!((t.inputSchema as { required?: string[] }).required ?? []).includes('key'), name)
+  }
   for (const role of ['developer', 'reviewer']) assert.ok(!toolsFor('task', role).some((t) => control.includes(t.name)), role)
 })
 

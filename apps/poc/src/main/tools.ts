@@ -1218,9 +1218,11 @@ async function controlTool(store: Store, actions: ToolActions, project: Project,
   const caller = session ? runRole(session) : undefined
   const groomer = caller === 'groomer' && (GROOMER_CONTROL_TOOLS as readonly string[]).includes(name)
   if (!session || (caller !== 'chat' && !groomer)) throw new Error(`${name} is for a project chat`)
-  const t = byKey(args.key)
+  // A groomer's own work: the one it grooms (or owns); key defaults to it.
+  const mine = groomer && session.taskId ? store.task(session.taskId) : null
+  const t = byKey(args.key ?? mine?.key)
   const work = t.parentId ? store.task(t.parentId) : t
-  if (groomer && work.ownerSessionId !== session.id) throw new Error(`${work.key} is not the work you own: ${name} works only on that one`)
+  if (groomer && work.id !== mine?.id && work.ownerSessionId !== session.id) throw new Error(`${work.key} is not the work you groom: ${name} works only on ${mine?.key ?? 'that one'}`)
   const logged = (what: string, of: Task = t) => {
     store.logEvent({ projectId: project.id, taskId: work.id, taskKey: of.key, kind: 'chat', text: `${caller}: ${what} ${of.key} at the user's request` })
     log.info('tools', `${caller} ${session.id}: ${what} ${of.key}`)
@@ -1346,11 +1348,9 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
     if (t?.parentId) return { none: `no such topic or work (${t.key} is a step: pass its work)` }
     return t ? { work: t } : { none: 'no such topic or work in this project' }
   }
-  /** Deleting a work deletes its owner topic (deleteWork) or mag's topics of a review (deleteReview) too. */
+  /** Deleting a review deletes mag's topics of it (deleteReview) too; deleting a work leaves its topic. */
   const deletesSelf = (t: Task) =>
-    isReview(t)
-      ? reviewTopic(t, sessions())?.id === self || sessions().some((s) => s.reviewOf === t.id && s.id === self)
-      : !!t.ownerSessionId && holdsSelf(t.ownerSessionId) && !store.data.tasks.some((x) => x.id !== t.id && x.ownerSessionId === t.ownerSessionId)
+    isReview(t) && (reviewTopic(t, sessions())?.id === self || sessions().some((s) => s.reviewOf === t.id && s.id === self))
   /**
    * The work a topic is part of, as the sidebar hides it (rowTopics): the owner of an open work or review, or a review's
    * topic. It goes with that work's Close or Delete, never on its own: deleting it would leave the work without its owner.
