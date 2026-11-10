@@ -82,7 +82,7 @@ test('T-26 migration: groomed and planned become todo (ready since T-55.7), in_r
   assert.equal(t('rev').status, 'in_progress')
   assert.equal(t('rev').work?.repos[0].prState, 'open')
   assert.deepEqual([t('d').status, t('s').status, t('q').status], ['done', 'todo', 'ready'])
-  assert.deepEqual(store.data.sessions.map((s) => [s.brief, !!s.parkedAt]), [['b', true]], 'the backlog task is an idea, a parked topic now (T-55.7)')
+  assert.deepEqual(store.data.sessions.filter((s) => s.brief).map((s) => [s.brief, !!s.parkedAt]), [['b', true]], 'the backlog task is an idea, a parked topic now (T-55.7)')
 
   store.flush()
   const again = new Store(file)
@@ -406,7 +406,7 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
   assert.deepEqual(store.data.sessions.filter((s) => s.id !== 'empty' && s.id !== 'talked').map((s) => [s.role, s.taskId, s.agent, s.titleGenerated, s.items.length]), [['chat', null, 'codex', true, 0], ['chat', null, 'codex', true, 0]])
   assert.equal(store.session('talked').items.length, 2, 'its history stays')
   assert.equal('ideas' in store.data, false)
-  assert.equal(store.data.schemaVersion, 9)
+  assert.equal(store.data.schemaVersion, 10)
   store.flush()
   const again = new Store(file)
   assert.equal('ideas' in JSON.parse(readFileSync(file, 'utf8')), false)
@@ -417,7 +417,8 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   const store = new Store(file)
   const p = store.createProject('p')
-  const task = store.createTask({ projectId: p.id, title: 'Fix restart', type: 'dev', description: '' })
+  const topic = store.createSession({ projectId: p.id, taskId: null, stepId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const task = store.createTask({ projectId: p.id, title: 'Fix restart', type: 'dev', description: '', ownerSessionId: topic.id })
   const step = store.createTask({ projectId: p.id, parentId: task.id, title: 's1', type: 'dev', description: '' })
   store.createTask({ projectId: p.id, parentId: task.id, title: 's2', type: 'dev', description: '' })
   const work = { repos: [{ repo: '/src/mag', branch: 'mag/fix-restart-1', worktree: '/w/mag', prUrl: 'https://github.com/o/r/pull/66', prState: 'open' as const, checkError: null }], dir: '/w/s1', feedbackSeenAt: 5 }
@@ -431,7 +432,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 9, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 10, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -440,7 +441,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file)
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 9)
+      assert.equal(again.data.schemaVersion, 10)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -473,7 +474,7 @@ test('session-tree migration: branchOf becomes parentId; a branch of a deleted t
   const shape = () => store.data.sessions.map((x) => [x.id, x.parentId ?? null, 'branchOf' in x])
   assert.deepEqual(shape(), [['root', null, false], ['branch', 'root', false], ['orphan', null, false], ['plain', null, false]])
   assert.equal(store.session('branch').forkOf, 'root-native')
-  assert.equal(store.data.schemaVersion, 9)
+  assert.equal(store.data.schemaVersion, 10)
   store.flush()
   assert.deepEqual(new Store(file).data.sessions.map((x) => [x.id, x.parentId ?? null]), [['root', null], ['branch', 'root'], ['orphan', null], ['plain', null]])
 })
@@ -524,7 +525,39 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 9)
+  assert.equal(store.data.schemaVersion, 10)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
+})
+
+test("topic-owners migration: a work without a chat topic is owned by its groomer's conversation, now a topic; nothing new is made", () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', agent: 'codex', nativeSessionId: 'n', status: 'idle', items: [{ kind: 'user', text: 'plan it', at: 2 }], createdAt: 1 }
+  const work = { projectId: 'p', parentId: null, description: '', status: 'planning', needsInput: null, work: null, closedAt: null, nextSubNo: 1, createdAt: 5, updatedAt: 6 }
+  writeFileSync(file, JSON.stringify({
+    projects: [{ id: 'p', name: 'p', repos: [], agents: { chat: { agent: 'codex' } } }], docs: {}, canvases: {}, events: [], integrations: [], schemaVersion: 9,
+    sessions: [
+      { ...base, id: 'mine', taskId: null, role: 'chat', title: 'Mine' },
+      { ...base, id: 'old-g', taskId: 'g', role: 'groomer', title: 'Groomer 1', createdAt: 0 },
+      { ...base, id: 'groomer', taskId: 'g', stepId: null, role: 'groomer', title: 'Groomer' },
+      { ...base, id: 'done-g', taskId: 'old', role: 'groomer', title: 'Groomer' },
+      { ...base, id: 'dev', taskId: 'g', role: 'developer', title: 'Dev' },
+    ],
+    tasks: [
+      { ...work, id: 'owned', key: 'A-1', title: 'Owned', ownerSessionId: 'mine' },
+      { ...work, id: 'g', key: 'A-2', title: 'Groomed', ownerSessionId: 'groomer' },
+      { ...work, id: 'old', key: 'A-3', title: 'Old', status: 'done' },
+      { ...work, id: 'none', key: 'A-4', title: 'Nobody talked' },
+      { ...work, id: 'r1', key: 'R-1', title: 'PR 1', type: 'review', status: 'in_progress' },
+    ],
+  }))
+  const store = new Store(file)
+  assert.equal(store.data.sessions.length, 5, 'no session is made')
+  assert.deepEqual(['owned', 'g', 'old', 'none', 'r1'].map((id) => store.task(id).ownerSessionId ?? null), ['mine', 'groomer', 'done-g', null, null])
+  const topic = (id: string) => { const s = store.session(id); return [s.role, s.taskId, s.title, s.closedAt ?? null, s.items.length, s.nativeSessionId] }
+  assert.deepEqual(topic('groomer'), ['chat', null, 'Groomed', null, 1, 'n'])
+  assert.deepEqual(topic('done-g'), ['chat', null, 'Old', 6, 1, 'n'])
+  assert.deepEqual([store.session('old-g').role, store.session('dev').role], ['groomer', 'developer'], 'an earlier groomer and the developers stay agents of the work')
+  assert.equal(store.data.schemaVersion, 10)
+  store.flush()
 })

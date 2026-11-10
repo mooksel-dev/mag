@@ -133,7 +133,7 @@ app.whenReady().then(async () => {
   actions.reopen = (id, what, by) => orch.reopen(id, what, by)
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
-  actions.startChild = (parentId, brief, role, fork) => orch.startChild(parentId, brief, role, fork)
+  actions.startChild = (parentId, brief, role, fork, subtopic) => orch.startChild(parentId, brief, role, fork, 'agent', subtopic)
   actions.sessionInTree = (callerId, targetId) => orch.sessionInTree(callerId, targetId)
   actions.stop = (id) => orch.stop(id)
   actions.reviewPr = (projectId, url, by, format) => orch.reviewPr(projectId, url, by, format)

@@ -179,8 +179,8 @@ export function topicArtifacts(topic: AgentSession | null, state: ArtifactState,
   return { works: out, loose, count }
 }
 
-/** Where a live agent stands, as its line says: working, waits on you (an approval), or failed. */
-export type AgentLineState = 'working' | 'waiting' | 'failed'
+/** Where an agent stands, as its line says: working, waits on you (an approval), failed, or done (idle or closed). */
+export type AgentLineState = 'working' | 'waiting' | 'failed' | 'done'
 
 /** One agent on a topic's Agents list. */
 export interface AgentLine {
@@ -201,17 +201,20 @@ export interface TopicAgents {
   active: AgentLine[]
   /** How many work now (not waiting on you). */
   working: number
+  /** How many wait on you. */
+  waiting: number
+  /** The finished ones (idle, closed, or failed on a finished work), the latest started first. */
+  finished: AgentLine[]
 }
 
-/** An idle or closed agent is finished: it has no line. */
-const AGENT_STATES: Partial<Record<SessionState, AgentLineState>> = { running: 'working', waiting: 'waiting', error: 'failed' }
+const AGENT_STATES: Record<SessionState, AgentLineState> = { running: 'working', waiting: 'waiting', error: 'failed', idle: 'done', closed: 'done' }
 const AGENT_ORDER: AgentLineState[] = ['waiting', 'working', 'failed']
 
 /**
  * The live agents within `topic` (a topic or a subtopic, and everything under it), topic-screen-one-new-compact.2,
  * right-panel-only-what-is.1: the role presets and Claude Code subagents of its tree (not its subtopics: those are on
  * the left), and the agents of the works the tree owns (groomer, developers, reviewers); `work`, a work shown without
- * a topic, adds its own. Live is working, waiting on you or failed; one that failed on a finished work is history.
+ * a topic, adds its own. Live is working, waiting on you or failed; one that failed on a finished work is done.
  */
 export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 'tasks' | 'sessions'>, work: Task | null = null): TopicAgents {
   const projectId = topic?.projectId ?? work?.projectId
@@ -221,8 +224,8 @@ export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 't
   if (work && !works.some((w) => w.id === work.id)) works.push(work)
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const line = (s: AgentSession, w: Task | null): AgentLine[] => {
-    const state = AGENT_STATES[sessionState(s)]
-    if (!state || (state === 'failed' && w && finished(w))) return []
+    const live = AGENT_STATES[sessionState(s)]
+    const state = live === 'failed' && w && finished(w) ? 'done' : live
     const step = s.stepId ? byId.get(s.stepId) : undefined
     const repos = (step ?? w)?.work?.repos.filter((r) => r.prUrl) ?? []
     const pr = repos.find((r) => r.prState === 'open') ?? repos[0]
@@ -241,9 +244,12 @@ export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 't
     ...works.flatMap((w) => state.sessions.filter((s) => s.taskId === w.id && s.role !== 'chat').flatMap((s) => line(s, w))),
   ]
   const rank = (l: AgentLine) => AGENT_ORDER.indexOf(l.state)
+  const active = lines.filter((l) => l.state !== 'done')
   return {
-    active: lines.sort((a, b) => rank(a) - rank(b) || a.session.createdAt - b.session.createdAt),
-    working: lines.filter((l) => l.state === 'working').length,
+    active: active.sort((a, b) => rank(a) - rank(b) || a.session.createdAt - b.session.createdAt),
+    working: active.filter((l) => l.state === 'working').length,
+    waiting: active.filter((l) => l.state === 'waiting').length,
+    finished: lines.filter((l) => l.state === 'done').sort((a, b) => b.session.createdAt - a.session.createdAt),
   }
 }
 

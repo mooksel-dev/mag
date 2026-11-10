@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type PrReview } from '@mag/core'
+import { CODE_CHECKS, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -1826,7 +1826,7 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
   }
 })
 
-test('v1 and v2 side by side: each format in its own topic, both results kept, the inventory reused at the same head, the prompt per format (review-v2-part-2-v1-2.1)', async () => {
+test('v1 and v2 side by side: both in the review\'s one topic, both results kept, the inventory reused at the same head, the prompt per format (review-v2-part-2-v1-2.1)', async () => {
   const { dir, store, orch, project } = setup()
   const remote = gitRepo(join(dir, 'remote'))
   git(remote, 'checkout', '-q', '-b', 'feature')
@@ -1844,13 +1844,13 @@ test('v1 and v2 side by side: each format in its own topic, both results kept, t
     await until(() => !orch.isRunning(id))
   }
   try {
-    // The project's format preselects it: v1 here, in mag's own topic for v1.
+    // The project's format preselects it: v1 here, from Home: a new topic, a topic like any other.
     store.updateProject(project.id, { reviewFormat: 'v1' })
     const first = await orch.reviewPr(project.id, url)
     const work = store.task(first.taskId)
     const t1 = store.session(first.sessionId)
     lives.set(t1.id, opened.at(-1)!)
-    assert.deepEqual([t1.reviewFormat, t1.reviewOf, t1.title, work.prReview!.shown], ['v1', work.id, 'Review remote#7 · v1', 'v1'])
+    assert.deepEqual([t1.reviewFormat, t1.reviewOf, t1.title, t1.role, work.ownerSessionId, work.prReview!.shown], [undefined, undefined, 'Review remote#7', 'chat', t1.id, 'v1'])
     assert.equal(opened.at(-1)!.sent.at(-1), first.job)
     assert.match(first.job, /you own the v1 review of /)
     assert.match(first.job, /7\. Record it with set_pr_review: the findings/)
@@ -1858,19 +1858,20 @@ test('v1 and v2 side by side: each format in its own topic, both results kept, t
     assert.match(first.job, /Call set_pr_review with the verdict and the findings/)
     assert.doesNotMatch(first.job, /decide_direction|Direction, before you read/)
     assert.match(first.job, /The fact, by the project's playbook:\nThe fact is the change inventory/)
-    await assert.rejects(orch.runReviewFormat(work.id, 'v1'), /The v1 review of .* is still working/)
+    await assert.rejects(orch.runReviewFormat(work.id, 'v1'), /The topic of .* is working; ask it there/)
     // The v1 run writes the inventory and its result.
     await orch.reviewFactOf(work.id)
     store.saveCanvas({ projectId: project.id, taskId: work.id, sessionId: t1.id, title: 'fact', kind: 'diagram', diagram: { type: 'component', summary: '', modules: [] }, placement: { role: 'fact', option: null, stepId: null, repo: 'acme/remote', planOf: null }, root: true, inventory: { summary: ['charge'], units: [], noise: [] } })
     await endTurn(t1.id)
     orch.setPrReview(work.id, t1.id, { problem: 'p1', approach: 'a1', verdict: 'approve', findings: [] })
 
-    // Run v2: a fresh topic of its own; at the same head it reads the v1 run's inventory instead of writing one.
+    // Run v2: in the same topic, no new one; at the same head it reads the v1 run's inventory instead of writing one.
+    const topics = store.data.sessions.length
     await orch.runReviewFormat(work.id, 'v2')
     const t2 = store.session(store.task(work.id).ownerSessionId!)
-    lives.set(t2.id, opened.at(-1)!)
-    assert.notEqual(t2.id, t1.id)
-    assert.deepEqual([t2.reviewFormat, t2.reviewOf, store.task(work.id).prReview!.shown], ['v2', work.id, 'v2'])
+    assert.equal(t2.id, t1.id)
+    assert.equal(store.data.sessions.length, topics, 'no topic is made')
+    assert.equal(store.task(work.id).prReview!.shown, 'v2')
     const job2 = opened.at(-1)!.sent.at(-1)!
     assert.match(job2, /you own the v2 review of /)
     assert.match(job2, /Direction, before you read/)
@@ -2269,7 +2270,7 @@ test("startChild from an agent: a general child gets the brief as a job naming w
 test('startChild: a general child with a brief is named after its first turn, as a topic is; a preset and a Branch keep their titles', async () => {
   const s = setup()
   const { topic } = await liveTopic(s)
-  const child = s.orch.startChild(topic.id, 'Review the PR https://github.com/o/r/pull/1 and report')
+  const child = s.orch.startChild(topic.id, 'Review the PR https://github.com/o/r/pull/1 and report', null, false, 'agent', true)
   await tick()
   assert.equal(child.titleGenerated, false)
   const live = opened.at(-1)!
@@ -2286,6 +2287,9 @@ test('startChild: a general child with a brief is named after its first turn, as
   assert.deepEqual([child.title, child.titleGenerated], ['PR review of r#1', true])
 
   assert.equal(s.orch.startChild(topic.id, 'Read the auth module', 'reviewer').titleGenerated, true)
+  // A job of the topic's agent is its agent, not a subtopic: it keeps its brief for a title.
+  const job = s.orch.startChild(topic.id, 'Run the load test')
+  assert.deepEqual([job.agentJob, job.titleGenerated, isSubtopic(job)], [true, true, false])
   assert.deepEqual([s.orch.startChild(topic.id, '').title, s.orch.startChild(topic.id, '').titleGenerated], ['Branch of Design the login', true])
 })
 
@@ -2339,7 +2343,7 @@ test('startChild presets: a developer changes code but never writes to GitHub, a
 test("tree tools: start_session, message_session and stop_session reach only the caller's topic tree (topics-a-tree-of-agent.2)", async () => {
   const s = setup()
   const actions = {
-    startChild: (p: string, brief: string, role: 'developer' | 'reviewer' | null, fork: boolean) => s.orch.startChild(p, brief, role, fork),
+    startChild: (p: string, brief: string, role: 'developer' | 'reviewer' | null, fork: boolean, subtopic: boolean) => s.orch.startChild(p, brief, role, fork, 'agent', subtopic),
     sessionInTree: (caller: string, target: string) => s.orch.sessionInTree(caller, target),
     send: (id: string, text: string, job?: string) => s.orch.send(id, text, [], job),
     stop: (id: string) => s.orch.stop(id),

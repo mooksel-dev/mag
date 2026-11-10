@@ -199,11 +199,14 @@ test("topicAgents: the live agents of the tree (not its subtopics) and of its wo
   assert.deepEqual(lines(topicAgents(null, { tasks, sessions }, tasks[2]).active), ['developer · Work w3 · working'])
 })
 
-test('topicAgents: on a finished work an agent still running is live, one that failed is history; none live: an empty list', () => {
+test('topicAgents: on a finished work an agent still running is live, one that failed is finished; idle ones are finished, counted apart', () => {
   const tasks = [task('w', { ownerSessionId: 't', status: 'done' })]
   const sessions = [topic, session('run', { taskId: 'w', role: 'reviewer', status: 'running' }), session('bad', { taskId: 'w', role: 'developer', status: 'error' })]
-  assert.deepEqual(topicAgents(topic, { tasks, sessions }).active.map((l) => l.session.id), ['run'])
-  assert.deepEqual(topicAgents(topic, { tasks, sessions: [topic, session('g', { taskId: 'w', role: 'groomer' })] }), { active: [], working: 0 })
+  const agents = topicAgents(topic, { tasks, sessions })
+  assert.deepEqual(agents.active.map((l) => l.session.id), ['run'])
+  assert.deepEqual(agents.finished.map((l) => [l.session.id, l.state]), [['bad', 'done']])
+  const idle = topicAgents(topic, { tasks, sessions: [topic, session('g', { taskId: 'w', role: 'groomer' })] })
+  assert.deepEqual({ active: idle.active, working: idle.working, waiting: idle.waiting, finished: idle.finished.map((l) => l.session.id) }, { active: [], working: 0, waiting: 0, finished: ['g'] })
 })
 
 test('treeWorks: a review made for a session of the tree is its own; open works first', () => {

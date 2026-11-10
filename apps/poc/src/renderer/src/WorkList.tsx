@@ -4,6 +4,7 @@ import {
   CARD_FILTER_LABELS,
   addGroup,
   canCancel,
+  isReview,
   cardFilter,
   cardRef,
   countedCards,
@@ -452,6 +453,7 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
   const you = !c.closed && c.group === 'waiting'
   const status = !c.closed && (c.group === 'working' || c.group === 'waiting')
   const time = threadTime(c.at, now)
+  const state = c.closed ? 'closed' : DOT_LABELS[c.dot]
   return (
     <div
       className={`wlrow${fold ? ' folds' : ''}${on ? ' on' : ''}${menu ? ' menuopen' : ''}${over ? ' over' : ''}`}
@@ -459,7 +461,7 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
       {...drag}
     >
       {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}>{fold.open ? '▾' : '▸'}</button>}
-      <button className="wlmain" title={[c.task?.key, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
+      <button className="wlmain" title={[state, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
         <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} aria-hidden />
         <span className="title">{c.title}</span>
         {you ? <span className="wlbadge amber">you</span> : <span className="wltime">{time}</span>}
@@ -470,6 +472,9 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
     </div>
   )
 }
+
+/** What a row's dot means, in its tooltip. */
+const DOT_LABELS: Record<WorkCard['dot'], string> = { green: 'an agent is working', amber: 'waits on you', grey: 'idle' }
 
 /** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
 export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed' | 'sessions'>
@@ -525,7 +530,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
         <button className="small primary">Close</button>
       </form>
     )
-  } else if (c.kind === 'topic' && s) {
+  } else if (c.kind === 'topic' && s && !(s.reviewOf && t)) {
     const canBranch = s.agent === 'claude-code' && !!s.nativeSessionId
     // A subagent, or mag's topic of a PR review, starts nothing under it (startChild refuses).
     const canSub = !isSubagent(s) && !s.reviewOf
@@ -546,7 +551,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
       </>
     )
   } else if (t) {
-    const review = c.kind === 'review'
+    const review = isReview(t)
     // Open: canceled with a reason (final). Done or a review: closed with all it has, Restore brings it back.
     const close = c.closed
       ? t.status !== 'canceled' && <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('work', t.id))}>Restore</button>

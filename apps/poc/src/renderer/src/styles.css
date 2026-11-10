@@ -729,7 +729,8 @@ body.resizing iframe { pointer-events: none; }
 .wlgroup > .wlrow, .wlgroup > .wlgempty { margin-left: 10px; }
 .wlgroup > .wlchat { margin-left: 10px; }
 /* A topic's subtopics under its row, nested (topic-screen-one-new-compact.2); its ▸/▾ at the row's left, in a column every top-level row keeps. */
-.wlkids { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 2px; }
+.wlkids { margin-left: 11px; border-left: 1px solid color-mix(in srgb, var(--faint) 45%, transparent); padding-left: 4px; }
+.wlkids .wlkids { margin-left: 10px; }
 .wlrow .wlmain { padding-left: 20px; }
 .wlcaret { position: absolute; left: 2px; top: 5px; z-index: 1; width: 16px; height: 18px; padding: 0; border: none; border-radius: var(--r-sm); background: none; color: var(--faint); font-size: 10px; line-height: 1; }
 .wlcaret:hover { color: var(--text); background: var(--surface); }
@@ -741,6 +742,10 @@ body.resizing iframe { pointer-events: none; }
 .sessdot { flex: none; width: 7px; height: 7px; border-radius: 4px; background: var(--badge); }
 .sessdot.green { background: var(--green-fg); }
 .sessdot.amber { background: var(--amber-fg); }
+.sessdot.grey { background: var(--faint); opacity: .55; }
+.sessdot.red { background: var(--danger-fg); }
+.agentsbtn { display: inline-flex; align-items: center; gap: 8px; }
+.agentcount { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
 .sessrole { flex: none; font-size: var(--fs-xs); color: var(--faint); }
 /* Another work of the same chat: its cards in the conversation under its key and title. */
 .cardsof { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); font-size: var(--fs-sm); color: var(--muted); }

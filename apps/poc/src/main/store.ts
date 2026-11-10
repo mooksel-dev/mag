@@ -175,6 +175,7 @@ export class Store {
     () => this.migrateToClosedMark(),
     () => this.migrateToSessionTree(),
     () => this.migrateToParkedTopics(),
+    () => this.migrateToTopicOwners(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -224,6 +225,24 @@ export class Store {
       topic.closedAt = null
     }
     delete data.ideas
+  }
+
+  /**
+   * A work is its topic's: the sidebar lists only topics. A work without a chat topic for owner (one started from a
+   * ticket before) is owned by the conversation the user had about it, its latest groomer's: that session becomes the
+   * work's topic, its history and agent session kept. Nothing new is made: a work nobody talked about stays as it is.
+   */
+  private migrateToTopicOwners() {
+    const topicIds = new Set(this.data.sessions.filter((s) => s.role === 'chat' && !s.taskId).map((s) => s.id))
+    for (const t of this.data.tasks) {
+      if (t.parentId || t.type === 'review' || (t.ownerSessionId && topicIds.has(t.ownerSessionId))) continue
+      const groomer = this.data.sessions.filter((s) => s.taskId === t.id && s.role === 'groomer').at(-1)
+      if (!groomer) continue
+      Object.assign(groomer, { role: 'chat', taskId: null, stepId: null, parentId: null, title: t.title.slice(0, 60), titleGenerated: true })
+      const finished = t.status === 'done' || t.status === 'canceled' || !!t.closedAt
+      groomer.closedAt = finished ? (t.closedAt ?? t.updatedAt) : null
+      t.ownerSessionId = groomer.id
+    }
   }
 
   /**

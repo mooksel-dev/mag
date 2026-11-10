@@ -43,8 +43,8 @@ import { RowMenu, type MenuCard, type Selection } from './WorkList'
 const mag = window.mag
 
 /**
- * The topic's panel (topic-screen-one-new-compact.2, right-panel-only-what-is.1), only what is live: Agents, those
- * working, waiting on you or failed within the topic or subtopic; then Documents and diagrams with plain titles, of
+ * The topic's panel (topic-screen-one-new-compact.2, right-panel-only-what-is.1): Agents of the topic or subtopic, those
+ * working, waiting on you or failed, the finished ones folded under them; then Documents and diagrams with plain titles, of
  * its unfinished works and what it drew outside any work. A tree's agent opens as its own page, a work's agent in the
  * drawer; a document or diagram in the drawer.
  */
@@ -56,12 +56,21 @@ export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
 }) {
   const docs = [...artifacts.works.flatMap((w) => w.lines), ...artifacts.loose]
   const line = (a: AgentLine) => <AgentRow key={a.session.id} agent={a} onOpen={() => (a.open.kind === 'select' ? onSelect({ kind: 'topic', id: a.open.id }) : onOpen(a.open))} />
+  const [showDone, setShowDone] = useState(false)
+  const total = agents.active.length + agents.finished.length
   return (
     <aside className="artifacts" aria-label="Agents, documents and diagrams">
-      {agents.active.length > 0 && (
+      {total > 0 && (
         <section className="artsection" aria-label="Agents">
-          <div className="artkind">Agents</div>
+          <div className="artkind">Agents · {total}</div>
           {agents.active.map(line)}
+          {!agents.active.length && <p className="muted small">None running now.</p>}
+          {agents.finished.length > 0 && (
+            <>
+              <button className="wlfold" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>{showDone ? '▾' : '▸'} Finished · {agents.finished.length}</button>
+              {showDone && agents.finished.map(line)}
+            </>
+          )}
         </section>
       )}
       {docs.length > 0 && (
@@ -111,7 +120,7 @@ function ArtifactRow({ chip: c, onOpen }: { chip: ArtifactChip; onOpen: () => vo
   )
 }
 
-const AGENT_STATE_LABELS: Record<AgentLine['state'], string> = { working: 'working', waiting: 'waits on you', failed: 'failed' }
+const AGENT_STATE_LABELS: Record<AgentLine['state'], string> = { working: 'working', waiting: 'waits on you', failed: 'failed', done: 'done' }
 
 /** An agent's line: its role, what it works on, its state and its PR; a click opens its chat. */
 function AgentRow({ agent: a, onOpen }: { agent: AgentLine; onOpen: () => void }) {

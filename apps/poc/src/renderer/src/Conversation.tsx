@@ -83,7 +83,8 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const rightPane = usePaneWidth('right')
   const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
   const agents = useMemo(() => topicAgents(topic, state, topic ? null : work), [topic, work, state])
-  const hasPanel = artifacts.count > 0 || agents.active.length > 0
+  const agentCount = agents.active.length + agents.finished.length
+  const hasPanel = artifacts.count > 0 || agentCount > 0
   // null: the default, shown while an agent works or waits on you; the user's toggle wins.
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null)
   const listShown = panelChoice ?? agents.active.some((a) => a.state !== 'failed')
@@ -124,7 +125,11 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             <div className="grow" />
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
-            {hasPanel && <button className={`small${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The agents working here, and the documents and diagrams made here" onClick={() => (drawer.open ? (drawer.close(), setPanelChoice(true)) : setPanelChoice(!listShown))}>{agents.working ? `Agents · ${agents.working} working` : 'Agents'}</button>}
+            {hasPanel && (
+              <button className={`small agentsbtn${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The agents of this topic, and the documents and diagrams made here" onClick={() => (drawer.open ? (drawer.close(), setPanelChoice(true)) : setPanelChoice(!listShown))}>
+                <AgentCounts agents={agents} total={agentCount} />
+              </button>
+            )}
             <HeadMenu card={menu} onSelect={onSelect} onGone={onDeleted} />
           </div>
           {topic?.parentId && (
@@ -169,6 +174,20 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         </div>
       </section>
     </CanvasOpener.Provider>
+  )
+}
+
+/** The Agents button: how many agents the topic has, and how many work, wait on you or failed. */
+function AgentCounts({ agents, total }: { agents: ReturnType<typeof topicAgents>; total: number }) {
+  if (!total) return <>Artifacts</>
+  const failed = agents.active.filter((a) => a.state === 'failed').length
+  return (
+    <>
+      Agents {total}
+      {agents.working > 0 && <span className="agentcount" title={`${agents.working} working`}><span className="sessdot green" aria-hidden />{agents.working}</span>}
+      {agents.waiting > 0 && <span className="agentcount" title={`${agents.waiting} wait on you`}><span className="sessdot amber" aria-hidden />{agents.waiting}</span>}
+      {failed > 0 && <span className="agentcount" title={`${failed} failed`}><span className="sessdot red" aria-hidden />{failed}</span>}
+    </>
   )
 }
 

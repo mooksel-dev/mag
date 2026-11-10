@@ -99,8 +99,8 @@ export interface SessionNode {
 }
 
 /** The label of a child session's role: subagent for one read from its parent's stream. */
-export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin'>): string =>
-  s.origin === 'subagent' ? 'subagent' : s.role === null ? 'general' : s.role === 'chat' ? 'topic' : s.role
+export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin' | 'agentJob'>): string =>
+  s.origin === 'subagent' ? 'subagent' : s.role === null ? (s.agentJob ? 'agent' : 'general') : s.role === 'chat' ? 'topic' : s.role
 
 const pendingApproval = (s: AgentSession) => s.items.some((i) => i.kind === 'approval' && i.status === 'pending')
 
@@ -343,13 +343,12 @@ const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
   group === 'waiting' ? 'amber' : group !== 'done' && move.who === 'agent' ? 'green' : 'grey'
 
 /**
- * The project chat topics of `mine`: a user's discussion, not an agent's session, not the topic mag created for a review
- * and not the user's topic that a review shows through (legacy). Each has a row; the works it owns are its children.
+ * The project chat topics of `mine`, mag's topics of reviews included: not an agent's session. Each has a row; the works
+ * and reviews it owns are its children.
  */
-function chatTopics(mine: AgentSession[], tasks: Task[], sessions: AgentSession[]): AgentSession[] {
+function chatTopics(mine: AgentSession[]): AgentSession[] {
   // A session under a topic is in that topic's tree, not a row (topics-a-tree-of-agent.2); a parked one is an idea.
-  return mine.filter((s) =>
-    s.role === 'chat' && !s.taskId && !s.parentId && !s.parkedAt && !s.reviewOf && !tasks.some((t) => isReview(t) && reviewTopic(t, sessions)?.id === s.id))
+  return mine.filter((s) => s.role === 'chat' && !s.taskId && !s.parentId && !s.parkedAt)
 }
 
 const finished = (t: Task) => t.status === 'done' || t.status === 'canceled'
@@ -443,6 +442,8 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     createdAt: s.createdAt,
     closed,
     session: s,
+    // mag's topic of a review closes and deletes as that review.
+    ...(s.reviewOf && { task: children.find((c) => c.id === s.reviewOf)?.task }),
     own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'green' : 'grey' },
     ...(children.length ? { children } : {}),
     ...(tree.length ? { sessions: tree } : {}),
@@ -461,7 +462,7 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
   const items = inbox(projectId, tasks, sessions)
   const mine = sessions.filter((s) => s.projectId === projectId)
   const works = tasks.filter((t) => !t.parentId && t.projectId === projectId)
-  const chats = chatTopics(mine, tasks, sessions)
+  const chats = chatTopics(mine)
   const chatIds = new Set(chats.map((s) => s.id))
   const out: WorkCard[] = []
   const children = new Map<string, WorkCard[]>()
@@ -469,8 +470,8 @@ export function workCards(projectId: string, tasks: Task[], sessions: AgentSessi
     // A chat's approval is on the chat's row, not on a work's.
     const item = finished(task) ? undefined : items.find((i) => i.task?.id === task.id)
     const c = taskCard(task, item, mine, tasks, now)
-    // A work a session under a topic owns is the topic's too, and so is a review it asked for; mag's own topic of a review is not one to go under.
-    const root = task.ownerSessionId && !(isReview(task) && reviewTopic(task, mine)) ? rootSession(task.ownerSessionId, mine)?.id : undefined
+    // A work a session under a topic owns is the topic's too, and so is a review it asked for or mag opened a topic for.
+    const root = (task.ownerSessionId ? rootSession(task.ownerSessionId, mine) : undefined)?.id ?? (isReview(task) ? reviewTopic(task, mine)?.id : undefined)
     const chat = root && chatIds.has(root) ? root : null
     if (chat) children.set(chat, [...(children.get(chat) ?? []), c])
     else out.push(isReview(task) ? { ...c, title: `Review: ${c.title}` } : c)
@@ -495,8 +496,8 @@ export function flatCards(cards: WorkCard[]): WorkCard[] {
  * one (no role, a Branch or New subtopic) or a branched topic of before the tree. Not an agent: a role's preset or a
  * Claude Code subagent.
  */
-export const isSubtopic = (s: Pick<AgentSession, 'role' | 'origin' | 'parentId'>): boolean =>
-  !!s.parentId && s.origin !== 'subagent' && (s.role === null || s.role === 'chat')
+export const isSubtopic = (s: Pick<AgentSession, 'role' | 'origin' | 'parentId' | 'agentJob'>): boolean =>
+  !!s.parentId && s.origin !== 'subagent' && !s.agentJob && (s.role === null || s.role === 'chat')
 
 /** The subtopics of a tree, nested by depth: an agent and everything under it are left out. */
 export const subtopicNodes = (nodes: SessionNode[]): SessionNode[] =>
@@ -610,7 +611,7 @@ function searchTopics(sessions: AgentSession[], works: Task[], tasks: Task[]): A
   const owners = new Set(works.filter((t) => !finished(t)).map((t) => t.ownerSessionId))
   // Sessions under a topic are found on their own too, as branched topics were (topics-a-tree-of-agent.2).
   const under = sessions.filter((s) => s.parentId && !s.taskId)
-  return [...chatTopics(sessions, tasks, sessions), ...under].filter((s) => !owners.has(s.id))
+  return [...chatTopics(sessions), ...under].filter((s) => !owners.has(s.id))
 }
 
 /** ~120 characters of `text` around `at`, on one line. */
