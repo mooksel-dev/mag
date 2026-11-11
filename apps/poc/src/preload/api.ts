@@ -209,7 +209,7 @@ export interface MagApi {
   /** Allow or deny a pending tool call (an approval chat item): an integration's, or a GitHub write. */
   decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
   /** An integration card's Enable: Ask / Auto: the project's mode for the card's role; the agent repeats its last step. */
-  enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'auto'): Promise<void>
+  enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto'): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */
   openWindow(target: WindowTarget): Promise<void>
   /** Project this window shows; null in the Welcome window. */

@@ -825,14 +825,17 @@ test('develop: worktrees only for the step\'s repos; add_repo adds one mid-step 
   await orch.develop(task.id)
   const work = store.task(step.id).work!
   assert.deepEqual(work.repos.map((r) => [r.repo, r.branch]), [[api, 'mag/login-1']])
+  assert.equal(work.dir, join(api, '.mag', 'worktrees', 'login.1'), "the step's dir is in its first repository's .mag, not in mag's app data")
+  assert.equal(work.repos[0].worktree, join(work.dir, 'api'))
   assert.ok(existsSync(work.repos[0].worktree))
+  assert.match(readFileSync(join(api, '.git', 'info', 'exclude'), 'utf8'), /^\/\.mag\/$/m, '.mag is git-ignored in the repository')
   const spec = specs.at(-1)!
   assert.ok(spec.addDirs?.includes(app), 'the other repo stays readable in its main checkout')
   assert.match(spec.appendSystemPrompt!, new RegExp(`never change them there: ${app}\\. To change one, call add_repo`))
 
   await assert.rejects(orch.addRepo(step.id, 'web'), /web is not a repository of the project; one of app, api/)
   const added = await orch.addRepo(step.id, 'app')
-  assert.equal(added.worktree, join(work.dir, 'app'))
+  assert.equal(added.worktree, join(app, '.mag', 'worktrees', 'login.1', 'app'), "another repository's worktree is in its own .mag")
   assert.ok(existsSync(added.worktree))
   const now = store.task(step.id)
   assert.deepEqual(now.work!.repos.map((r) => r.repo), [api, app])
@@ -925,7 +928,7 @@ test('develop: a local repository works in the main checkout on the step branch 
   await orch.develop(task.id, undefined, [app])
   assert.deepEqual(store.task(task.id).localRepos, [app])
   const work = store.task(step.id).work!
-  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local]), [[app, app, true], [api, join(work.dir, 'api'), false]])
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local]), [[app, app, true], [api, join(api, '.mag', 'worktrees', 'login.1', 'api'), false]])
   assert.equal(git(app, 'branch', '--show-current'), 'mag/login-1')
   assert.equal(sessions().length, 1)
   const spec = specs.at(-1)!
@@ -1062,7 +1065,7 @@ test('develop: a restart with local_repos moves an untouched worktree to the mai
 
   await orch.develop(task.id, undefined, [app])
   const work = store.task(step.id).work!
-  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local, r.base]), [[app, app, true, 'main'], [api, join(work.dir, 'api'), false, 'main']])
+  assert.deepEqual(work.repos.map((r) => [r.repo, r.worktree, !!r.local, r.base]), [[app, app, true, 'main'], [api, join(api, '.mag', 'worktrees', 'login.1', 'api'), false, 'main']])
   assert.equal(existsSync(first.repos[0].worktree), false, 'the worktree is gone')
   assert.equal(git(app, 'branch', '--show-current'), 'mag/login-1', 'the local check ran on a restart')
   assert.equal(sessions().length, 1, 'the same session resumes')

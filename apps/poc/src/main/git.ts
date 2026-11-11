@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parsePrUrl, type Mergeable, type PostReview, type PrDetails, type TaskWork } from '@mag/core'
 import type { FileDiff, Hunk } from '@mag/diff'
@@ -33,9 +33,24 @@ export async function defaultBranch(repo: string, fallback: string): Promise<str
   return ref.replace(/^origin\//, '') || fallback
 }
 
+/** Where mag keeps its worktrees of a repository: `.mag/` in its checkout, git-ignored there. */
+export const magDir = (repo: string) => join(repo, '.mag')
+
+/** `.mag/` in the repository's info/exclude, once: mag's worktrees never show in its git status, and nothing is committed. */
+export async function excludeMagDir(repo: string) {
+  const common = await run('git', ['rev-parse', '--git-common-dir'], repo).catch(() => '')
+  if (!common) return
+  const file = join(isAbsolute(common) ? common : join(repo, common), 'info', 'exclude')
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  if (text.split('\n').some((l) => l.trim() === '.mag/' || l.trim() === '/.mag/')) return
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}/.mag/\n`)
+}
+
 /** Create (or reuse) a worktree for the task branch, starting from the freshest base. */
 export async function prepareWorktree(repo: string, base: string, branch: string, dir: string) {
   if (existsSync(dir)) return
+  if (dir.startsWith(magDir(repo))) await excludeMagDir(repo)
   const info = await repoInfo(repo)
   if (!info.git) throw new Error(`${repo} is not a git repository. Run git init there and add a GitHub remote (e.g. gh repo create).`)
   if (!(await ok(run('git', ['rev-parse', '--verify', 'HEAD'], repo)))) throw new Error(`${repo} has no commits yet. Make an initial commit on ${base}.`)
@@ -68,6 +83,7 @@ export async function scratchWorktree(repo: string, ref: string, dir: string) {
   rmSync(dir, { recursive: true, force: true })
   await ok(run('git', ['worktree', 'prune'], repo))
   mkdirSync(dirname(dir), { recursive: true })
+  await excludeMagDir(repo)
   await run('git', ['worktree', 'add', '--detach', dir, sha], repo)
 }
 

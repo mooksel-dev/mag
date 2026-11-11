@@ -21,7 +21,7 @@ export type CardButton =
   | { kind: 'open_pr'; label: string; url: string; primary?: boolean }
   | { kind: 'fact'; label: string; canvasId: string }
   | { kind: 'review_window'; label: string; taskId: string }
-  | { kind: 'enable'; label: string; mode: 'ask' | 'auto'; primary?: boolean }
+  | { kind: 'enable'; label: string; mode: 'ask' | 'reads' | 'auto'; primary?: boolean }
 
 export interface CardModel {
   title: string
@@ -199,10 +199,12 @@ export function integrationCard(item: Pick<IntegrationItem, 'server' | 'role' | 
     stats: [],
     rows: item.why ? [{ lead: 'The agent wants it to', text: item.why }] : [],
     details: [],
-    buttons: on ? [] : [...(canAsk ? [{ kind: 'enable' as const, label: 'Enable: Ask', mode: 'ask' as const }] : []), { kind: 'enable', label: 'Auto', mode: 'auto', primary: true }],
+    buttons: on ? [] : canAsk
+      ? [{ kind: 'enable', label: 'Enable: reads auto, writes ask', mode: 'reads', primary: true }, { kind: 'enable', label: 'Ask each', mode: 'ask' }, { kind: 'enable', label: 'Auto', mode: 'auto' }]
+      : [{ kind: 'enable', label: 'Auto', mode: 'auto', primary: true }],
     note: on
       ? 'The agent repeats its last step with it.'
-      : `${canAsk ? 'Ask: each call waits for you. ' : ''}Auto: allowed. Saved in Project → Integrations for every ${item.role} run.`,
+      : `${canAsk ? 'Reads auto: reads run, posts and changes wait for you. Ask each: every call waits. ' : ''}Auto: all allowed. Saved in Project → Integrations for every ${item.role} run.`,
   }
 }
 

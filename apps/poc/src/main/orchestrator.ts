@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, magDir, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
@@ -428,6 +428,9 @@ const GITHUB_WRITES = [
 const NO_PR_WRITES = [...NEVER_MERGE, ...GITHUB_WRITES]
 const noPushTo = (bases: string[]) =>
   bases.flatMap((base) => [`* ${base}`, `* ${base} *`, `*:${base}`, `*:${base} *`, `*refs/heads/${base}*`].flatMap((rest) => bashRules('git', `push ${rest}`)))
+
+/** A step's worktrees outside its dir (in another repository's .mag): the developer gets them as added dirs. */
+const outsideDir = (work: TaskWork) => work.repos.filter((r) => !r.local && dirname(r.worktree) !== work.dir).map((r) => r.worktree)
 
 /** A topic's root session: Claude Code's tools, writes and worktrees included (topics-a-tree-of-agent.1). */
 const CHAT_TOOLS = ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'EnterWorktree', 'ExitWorktree', 'mcp__mag']
@@ -1016,7 +1019,7 @@ export class Orchestrator {
     if (localRepos) this.store.updateProject(project.id, { lastLocalRepos: local })
     // The user chose Wait: the step starts once the other step lets the repository go (see wakeWaiting).
     if (!last && step.waitingFor && localHolder(step.waitingFor.repo, this.others(step.id))) return
-    const dir = step.work?.dir ?? stepDir(this.paths.worktreesDir, project.id, step.key)
+    const dir = step.work?.dir ?? this.newStepDir(project, step)
     for (const r of switched) {
       await removeWorktree(r.repo, r.worktree)
       rmSync(r.worktree, { recursive: true, force: true })
@@ -1231,11 +1234,27 @@ export class Orchestrator {
     }
   }
 
-  /** Removes a task's or step's worktrees, then its dir once empty. A main checkout (local) stays as it is, on its branch. */
+  /**
+   * Removes a task's or step's worktrees, then its dirs once empty (a worktree in another repository's .mag has a dir of
+   * its own there). A main checkout (local) stays as it is, on its branch.
+   */
   private async removeWork(work: TaskWork | null) {
     if (!work) return
-    for (const r of work.repos) if (!r.local) await removeWorktree(r.repo, r.worktree)
+    for (const r of work.repos) {
+      if (r.local) continue
+      await removeWorktree(r.repo, r.worktree)
+      if (dirname(r.worktree) !== work.dir) rmdir(dirname(r.worktree), () => {})
+    }
     rmdir(work.dir, () => {})
+  }
+
+  /**
+   * A new step's dir, the developer's cwd: in the .mag of the step's first repository (the project's first for a step
+   * without one), never in mag's app data, so it is found and cleaned with the repository.
+   */
+  private newStepDir(project: Project, step: Task): string {
+    const repo = stepRepos(step, project)[0] ?? project.repos[0]
+    return repo ? join(magDir(repo), 'worktrees', step.key) : stepDir(this.paths.worktreesDir, project.id, step.key)
   }
 
   /**
@@ -1245,6 +1264,9 @@ export class Orchestrator {
    * to the project's.
    */
   private workFor(prev: TaskWork | null, project: Project, dir: string, branch: string, repos: string[], localRepos: string[] = [], bases: Record<string, string> = {}): TaskWork {
+    // A dir in a repository's .mag: each repository's worktree goes in its own .mag (see newStepDir); an older dir holds them all.
+    const inRepo = project.repos.some((r) => dir.startsWith(`${magDir(r)}/`))
+    const place = (repo: string, name: string) => (inRepo && !dir.startsWith(`${magDir(repo)}/`) ? join(magDir(repo), 'worktrees', basename(dir), name) : join(dir, name))
     // Before T-22 the task dir was the task's only worktree; nothing else fits in there.
     if (prev?.repos.some((r) => r.worktree === prev.dir)) return prev
     const known = (prev?.repos ?? []).map((w) => (!w.base && bases[w.repo] ? { ...w, base: bases[w.repo] } : w))
@@ -1253,7 +1275,7 @@ export class Orchestrator {
     const added = fresh.map((repo, i): RepoWork => ({
       ...(localRepos.includes(repo)
         ? { repo, branch, worktree: repo, local: true, prUrl: null, prState: null, checkError: null }
-        : { repo, branch, worktree: join(dir, names[i]), prUrl: null, prState: null, checkError: null }),
+        : { repo, branch, worktree: place(repo, names[i]), prUrl: null, prState: null, checkError: null }),
       ...(bases[repo] && { base: bases[repo] }),
     }))
     return { repos: [...known, ...added], dir, feedbackSeenAt: prev?.feedbackSeenAt ?? 0 }
@@ -1930,12 +1952,12 @@ export class Orchestrator {
    * the card enabled, and the same session told to repeat its last step. Its run and live process end first: their
    * permission rules are the old ones. The architect has no chat to ask in, so only auto there.
    */
-  async enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'auto') {
+  async enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto') {
     const session = this.store.session(sessionId)
     const item = session.items.find((i): i is Extract<ChatItem, { kind: 'integration' }> => i.kind === 'integration' && i.id === itemId)
     if (!item) throw new Error('No such integration card')
-    if (mode !== 'ask' && mode !== 'auto') throw new Error('mode must be ask or auto')
-    if (mode === 'ask' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
+    if (mode !== 'ask' && mode !== 'reads' && mode !== 'auto') throw new Error('mode must be ask, reads or auto')
+    if (mode !== 'auto' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
     const project = this.store.project(session.projectId)
     const integrations = project.integrations ?? {}
     this.store.updateProject(project.id, { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } })
@@ -2050,7 +2072,7 @@ export class Orchestrator {
       const scratch = this.scratches.get(session.id)
       return {
         cwd: scratch ? this.scratchRoot(session) : (work?.dir ?? first),
-        addDirs: work ? [...project.repos, ...(scratch ? [work.dir] : [])] : rest,
+        addDirs: work ? [...project.repos, ...(scratch ? [work.dir, ...outsideDir(work)] : [])] : rest,
         // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job and the decisions are in the message.
         appendSystemPrompt:
           `You are the first reviewer of a step's PRs in "mag", before the user. You read the code and may run it in your scratch worktree, but you never change the PRs: the developer fixes what you find, in their branch.` +
@@ -2069,7 +2091,7 @@ export class Orchestrator {
         cwd: work.dir,
         // Repositories without a worktree (not in the step's repos, or a pre-T-22 task) stay readable from their main
         // checkout; the step works in its local ones there.
-        addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r && w.worktree !== r)), this.paths.attachmentsDir],
+        addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r && w.worktree !== r)), ...outsideDir(work), this.paths.attachmentsDir],
         appendSystemPrompt:
           (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +
           ticketLine(project, task) +
@@ -2111,8 +2133,10 @@ export class Orchestrator {
   }
 
   /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */
+  /** A session's scratch worktrees: in the .mag of the project's first repository. */
   private scratchRoot(session: AgentSession) {
-    return join(this.paths.worktreesDir, session.projectId, 'scratch', session.id)
+    const repo = this.store.project(session.projectId).repos[0]
+    return repo ? join(magDir(repo), 'scratch', session.id) : join(this.paths.worktreesDir, session.projectId, 'scratch', session.id)
   }
 
   /**

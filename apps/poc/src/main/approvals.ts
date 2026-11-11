@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { approvalName, integrationMode, integrationOf, runRole, type AgentSession, type ChatItem } from '@mag/core'
+import { ASKING_MODES, approvalName, integrationMode, integrationOf, readsOnly, runRole, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
 import { ASKING_ROLES } from './tool-defs.ts'
 import { blockedPush, projectBases } from './git-push.ts'
@@ -63,6 +63,8 @@ export class Approvals {
     const asked = session && this.asked(session, toolName)
     // Anything else stays denied, as it was before the prompt tool existed.
     if (!session || !asked) return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
+    // Reads of an integration on reads run at once; its writes get the card.
+    if (asked.server && asked.reads && readsOnly(asked.tool)) return allow(args.input)
     // A push whose target the deny rules cannot see (bare `git push` in a checkout on main) never reaches the card.
     const command = toolName === 'Bash' && typeof args.input === 'object' && args.input ? (args.input as { command?: unknown }).command : undefined
     const blocked = typeof command === 'string' ? blockedPush(command, projectBases(this.store.project(session.projectId), this.store.data.tasks)) : null
@@ -71,7 +73,7 @@ export class Approvals {
 
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined
-    const item = this.item(session, useId) ?? this.add(session, { id: useId ?? randomUUID(), ...asked, input: args.input ?? {} })
+    const item = this.item(session, useId) ?? this.add(session, { id: useId ?? randomUUID(), tool: asked.tool, ...(asked.server && { server: asked.server }), input: args.input ?? {} })
     clearTimeout(this.expiry.get(item.id))
     if (item.status === 'pending') await this.wait(item.id, ctx.signal)
     if (item.status === 'pending') {
@@ -86,9 +88,12 @@ export class Approvals {
    * What the session may ask the user for: an integration in ask mode for its role, or any tool in a role that asks;
    * else null (denied).
    */
-  private asked(session: AgentSession, toolName: string): Pick<ApprovalItem, 'tool' | 'server'> | null {
+  private asked(session: AgentSession, toolName: string): (Pick<ApprovalItem, 'tool' | 'server'> & { reads?: boolean }) | null {
     const found = integrationOf(toolName, this.store.data.integrations)
-    if (found) return integrationMode(this.store.project(session.projectId), runRole(session), found.integration.id) === 'ask' ? { tool: found.tool, server: found.integration.name } : null
+    if (found) {
+      const mode = integrationMode(this.store.project(session.projectId), runRole(session), found.integration.id)
+      return ASKING_MODES.includes(mode) ? { tool: found.tool, server: found.integration.name, reads: mode === 'reads' } : null
+    }
     return toolName && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
   }
 
