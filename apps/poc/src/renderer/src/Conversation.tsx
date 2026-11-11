@@ -98,7 +98,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const cardsOf = work && owned.some((t) => t.id === work.id) ? [work, ...owned.filter((t) => t.id !== work.id)] : owned
   const waiting = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).find((c) => c.card?.move.who === 'you')
   // An answer goes into the composer.
-  const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
+  const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLElement>('.screenmain .richinput')?.focus())
   const cards = cardsOf.length ? <>{cardsOf.map((t) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={cardsOf.length > 1} />)}</> : undefined
   const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const pr = review?.prReview?.pr

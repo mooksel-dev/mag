@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -12,6 +12,7 @@ import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 import { foldEvents, type EventItem } from './conversationCards'
 import { IntegrationCard } from './Cards'
 import { SearchPalette } from './SearchPalette'
+import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -591,7 +592,9 @@ export function Composer({
   /** The project's chats to reference: "@" or the @ button pick one (SearchPalette) as a chip; `self` is this chat. */
   refsFrom?: { tasks: Task[]; sessions: AgentSession[]; self?: ChatRef }
 }) {
+  /** The message as markdown, what is sent; `plain` its text, what a /command is read from. */
   const [text, setText] = useState('')
+  const [plain, setPlain] = useState('')
   const [files, setFiles] = useState<Attachment[]>([])
   const [refs, setRefs] = useState<ChatRef[]>([])
   /** The palette is open; `at`: where the "@" that opened it is in the text (null: the button). */
@@ -600,18 +603,15 @@ export function Composer({
   const [sel, setSel] = useState(0)
   const [menuClosed, setMenuClosed] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
-  const ta = useRef<HTMLTextAreaElement>(null)
+  const ta = useRef<RichInputHandle>(null)
   const menu = useRef<HTMLDivElement>(null)
 
-  // "/" + a name being typed (no space yet) opens the menu, filtered by prefix.
-  const isCommand = commands.length > 0 && text.startsWith('/')
-  const typed = isCommand ? /^\/(\S*)$/.exec(text)?.[1] : undefined
+  // "/" + a name being typed (no space yet) opens the menu, filtered by prefix. A command is sent as typed.
+  const isCommand = commands.length > 0 && plain.startsWith('/')
+  const typed = isCommand ? /^\/(\S*)$/.exec(plain.trimEnd() === plain ? plain : '')?.[1] : undefined
   const matches = typed === undefined ? [] : commands.filter((c) => c.startsWith(typed))
   const menuOpen = matches.length > 0 && !menuClosed
-  const pick = (name: string) => {
-    setText(`/${name} `)
-    ta.current?.focus()
-  }
+  const pick = (name: string) => ta.current?.setMarkdown(`/${name} `)
   useEffect(() => {
     setSel(0)
     setMenuClosed(false)
@@ -619,14 +619,6 @@ export function Composer({
   useEffect(() => {
     menu.current?.children[sel]?.scrollIntoView({ block: 'nearest' })
   }, [sel])
-
-  // Grow with the content; CSS caps it at 40vh and scrolls. Clearing the text after send shrinks it back.
-  useLayoutEffect(() => {
-    const el = ta.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px` // + borders (box-sizing: border-box)
-  }, [text])
 
   const canRef = !!refsFrom
   const selfKey = refsFrom?.self && `${refsFrom.self.kind}:${refsFrom.self.id}`
@@ -638,18 +630,10 @@ export function Composer({
     // The target changes only with the chat it is; add uses setters and a ref.
   }, [canRef, selfKey])
   const pickRef = (ref: ChatRef) => {
-    const at = picking?.at
     // The "@" that opened the palette gives way to the chip.
-    if (at != null && text[at] === '@') setText(text.slice(0, at) + text.slice(at + 1))
+    if (picking?.at != null) ta.current?.dropCharBefore('@')
     if (!(refsFrom?.self?.kind === ref.kind && refsFrom.self.id === ref.id)) setRefs((x) => uniqueRefs([...x, ref]))
     ta.current?.focus()
-  }
-  const onText = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value
-    const at = e.target.selectionStart - 1
-    // "@" typed at the start or after a space opens the palette.
-    if (canRef && value.length === text.length + 1 && value[at] === '@' && (at === 0 || /\s/.test(value[at - 1]))) setPicking({ at })
-    setText(value)
   }
 
   const add = async (list: FileList | File[]) => {
@@ -671,39 +655,41 @@ export function Composer({
       console.error(err)
       return
     }
+    ta.current?.clear()
     setText('')
+    setPlain('')
     if (!isCommand) {
       setFiles([])
       setRefs([])
     }
   }
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return
+  // Enter sends, except in a code block or a list item with text (a new line or item there; ⌘↵ sends anyway).
+  const onKey: KeyHandler = (e, at) => {
+    if (e.isComposing) return false
     if (menuOpen) {
       const exact = typed !== undefined && commands.includes(typed)
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         setSel((i) => (i + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length)
-        return
+        return true
       }
       if (e.key === 'Escape') {
-        e.preventDefault()
         setMenuClosed(true)
-        return
+        return true
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !exact)) {
-        e.preventDefault()
         pick(matches[Math.min(sel, matches.length - 1)])
-        return
+        return true
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      void submit()
-    }
+    if (e.key !== 'Enter' || e.shiftKey) return false
+    if (!(e.metaKey || e.ctrlKey) && (at.inCode || (at.inList && !at.emptyItem))) return false
+    if (/^```[\w+#-]*$/.test(plain.split('\n').at(-1) ?? '')) return false
+    void submit()
+    return true
   }
 
-  const keys = `↵ to send, ⇧↵ for a new line, paste or drop screenshots${commands.length ? ', / for commands' : ''}${refsFrom ? ', @ to reference a chat' : ''}`
+  const keys = `↵ to send, ⇧↵ for a new line, \`\`\`↵ for code, paste or drop screenshots${commands.length ? ', / for commands' : ''}${refsFrom ? ', @ to reference a chat' : ''}`
   return (
     <form
       className="composer"
@@ -732,19 +718,14 @@ export function Composer({
       <div className={`composerbox ${drag ? 'drag' : ''}`}>
         {refsFrom && refs.length > 0 && <RefChips refs={refs} tasks={refsFrom.tasks} sessions={refsFrom.sessions} onRemove={(r) => setRefs((x) => x.filter((y) => y !== r))} />}
         {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
-        <textarea
+        <RichInput
           ref={ta}
-          value={text}
-          onChange={onText}
-          onPaste={(e) => {
-            const imgs = Array.from(e.clipboardData.files)
-            if (imgs.length) { e.preventDefault(); void add(imgs) }
-          }}
-          onKeyDown={onKeyDown}
           placeholder={busy && !queue ? 'Wait for the agent to finish…' : placeholder}
-          rows={2}
-          aria-label="Message"
           autoFocus={autoFocus}
+          onChange={(md, txt) => { setText(md); setPlain(txt) }}
+          onKey={onKey}
+          onFiles={(imgs) => void add(imgs)}
+          onAt={canRef ? () => setPicking({ at: 0 }) : undefined}
         />
         <div className="composerbar">
           <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>＋</button>
