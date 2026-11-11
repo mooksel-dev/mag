@@ -48,6 +48,12 @@ const api: MagApi = {
   addIdea: (projectId, text) => ipcRenderer.invoke('idea:add', projectId, text),
   checkPrs: () => ipcRenderer.invoke('pr:checkNow'),
   open: (target) => ipcRenderer.invoke('shell:open', target),
+  runCommand: (runId, sessionId, command, onOutput) => {
+    const listener = (_: unknown, id: string, chunk: string) => { if (id === runId) onOutput(chunk) }
+    ipcRenderer.on('command:output', listener)
+    return ipcRenderer.invoke('command:run', runId, sessionId, command).finally(() => ipcRenderer.removeListener('command:output', listener))
+  },
+  stopCommand: (runId) => ipcRenderer.invoke('command:stop', runId),
   runArchitect: (projectId) => ipcRenderer.invoke('arch:run', projectId),
   listAgents: () => ipcRenderer.invoke('agents:list'),
   repoInfo: (path) => ipcRenderer.invoke('repo:info', path),

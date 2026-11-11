@@ -40,6 +40,68 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
   }
 }
 
+/** Where ▶ Run of a command block runs (its chat's session) and how its output goes to the agent; null: no Run. */
+export const CommandRunner = createContext<{ sessionId: string; send: (text: string) => Promise<void> } | null>(null)
+
+const SHELL_LANGS = ['bash', 'sh', 'shell', 'zsh', 'console', 'terminal']
+
+/** A console block's command lines without their "$ " prompts; other blocks as they are. */
+const commandOf = (code: string) => (/^\s*\$ /.test(code) ? code.split('\n').filter((l) => /^\s*\$ /.test(l)).map((l) => l.replace(/^\s*\$ /, '')).join('\n') : code).trim()
+
+let runSeq = 0
+
+/**
+ * ▶ Run on each shell block under `root` (topic-run-commands): it runs in the user's shell, its output under the block as
+ * it comes, ■ stops it, and Send to agent sends the command with its output and exit code to the chat.
+ */
+function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (text: string) => Promise<void> }) {
+  for (const code of Array.from(root.querySelectorAll<HTMLElement>('pre > code'))) {
+    const pre = code.parentElement!
+    if (pre.dataset.run || !SHELL_LANGS.some((l) => code.classList.contains(`language-${l}`))) continue
+    pre.dataset.run = '1'
+    const command = commandOf(code.textContent ?? '')
+    if (!command) continue
+    const bar = document.createElement('div')
+    bar.className = 'runbar'
+    const run = document.createElement('button')
+    run.type = 'button'
+    run.className = 'small runbtn'
+    run.textContent = '▶ Run'
+    run.title = "Run it in your shell, in the project's first repository"
+    bar.append(run)
+    pre.after(bar)
+    let id: string | null = null
+    run.onclick = async () => {
+      if (id) return void mag.stopCommand(id)
+      id = `run-${++runSeq}-${Date.now()}`
+      bar.querySelector('.runout')?.remove()
+      bar.querySelector('.runsend')?.remove()
+      const out = document.createElement('pre')
+      out.className = 'runout'
+      bar.append(out)
+      run.textContent = '■ Stop'
+      let text = ''
+      const result = await mag.runCommand(id, runner.sessionId, command, (chunk) => { text += chunk; out.textContent = text; out.scrollTop = out.scrollHeight }).catch((e: Error) => ({ code: null, cwd: '', error: e.message }))
+      id = null
+      run.textContent = '▶ Run again'
+      const status = document.createElement('span')
+      status.className = `muted small runstatus${result.code === 0 ? '' : ' failed'}`
+      status.textContent = 'error' in result ? result.error : result.code === 0 ? 'done' : `exit ${result.code ?? 'stopped'}`
+      const send = document.createElement('button')
+      send.type = 'button'
+      send.className = 'small runsend'
+      send.textContent = 'Send to agent'
+      send.onclick = () => {
+        send.disabled = true
+        const tail = text.length > 20_000 ? `…\n${text.slice(-20_000)}` : text
+        void runner.send(`I ran:\n\`\`\`bash\n${command}\n\`\`\`\n${status.textContent}${'cwd' in result && result.cwd ? ` in ${result.cwd}` : ''}:\n\`\`\`\n${tail.trim() || '(no output)'}\n\`\`\``)
+      }
+      bar.querySelector('.runstatus')?.remove()
+      run.after(status, send)
+    }
+  }
+}
+
 /** Colors the code blocks under `root` (not mermaid): by their language, else by a guess; a huge one stays plain. */
 async function highlightCode(root: HTMLElement, cancelled: () => boolean) {
   const blocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code:not(.language-mermaid):not(.hljs)')).filter((c) => (c.textContent ?? '').length < 50_000)
@@ -65,6 +127,7 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
   const theme = useAppliedTheme()
   const ref = useRef<HTMLDivElement>(null)
   const opener = useContext(CanvasOpener)
+  const runner = useContext(CommandRunner)
   // As a string, so only a change in what this text links parses it again.
   const gone = canvases ? linkedCanvasIds(text).filter((id) => !canvases.some((c) => c.id === id)).join(' ') : ''
   // Canvases are React siblings of the HTML chunks, never portals into them: React must own every node it removes.
@@ -79,10 +142,11 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
     let cancelled = false
     if (ref.current) {
       void renderMermaid(ref.current, theme, () => cancelled)
+      if (runner) addRunButtons(ref.current, runner)
       void highlightCode(ref.current, () => cancelled)
     }
     return () => { cancelled = true }
-  }, [segments, theme])
+  }, [segments, theme, runner])
   return (
     <div
       ref={ref}
@@ -248,8 +312,11 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   // Runs of events render as one collapsible line; n = index of the (first) item, used as key.
   const lines = foldEvents(session.items)
   const who = name ?? (session.role ? AGENT_NAMES[session.role] ?? session.role : 'agent')
+  // ▶ Run in a conversation the user writes in; its output goes to this chat's agent.
+  const runner = useMemo(() => (readOnly ? null : { sessionId: session.id, send: (text: string) => mag.send(session.id, text, [], []) }), [session.id, readOnly])
 
   return (
+    <CommandRunner.Provider value={runner}>
     <div className="chatbox">
       <div className="items">
         {lines.map((line, k) => {
@@ -313,6 +380,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
         refsFrom={tasks && { tasks, sessions: sessions.filter((s) => s.projectId === session.projectId), self: self ?? { kind: 'topic', id: session.id } }}
       />}
     </div>
+    </CommandRunner.Provider>
   )
 }
 

@@ -117,6 +117,9 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .md h2 { font-size: 15px; margin: 14px 0 6px; }
 .md pre { background: var(--subtle); padding: 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .md pre code { white-space: inherit; }
+.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: -4px 0 var(--sp-2); }
+.runbar .runout { flex-basis: 100%; margin: 0; max-height: 320px; overflow-y: auto; font-size: 12px; }
+.runstatus.failed { color: var(--danger-fg); }
 .md { min-width: 0; max-width: 100%; }
 /* highlight.js tokens, in the theme's colors. */
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag { color: var(--accent); }
