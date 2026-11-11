@@ -56,3 +56,15 @@ export function mdSegments(text: string, prose: (s: string) => string = (s) => s
   flush()
   return out
 }
+
+/**
+ * The composer's markdown as the user meant it: the editor's serializer writes a line break as "\\" + newline and
+ * escapes `, *, _ and the like in plain text (a path like a_b, three backticks typed as text). Outside code, a break is
+ * a newline and those escapes go; code is left as it is.
+ */
+export function plainMarkdown(md: string): string {
+  return md
+    .split(/(^```[^\n]*\n[\s\S]*?^```$|(?<!\\)`[^`\n]+`)/m)
+    .map((part, i) => (i % 2 ? part : part.replace(/\\\n/g, '\n').replace(/\\([\\`*_{}[\]()#+\-.!>~|<])/g, '$1')))
+    .join('')
+}
