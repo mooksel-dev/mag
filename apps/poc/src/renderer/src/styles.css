@@ -115,9 +115,19 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .canvasslot { display: block; margin: 10px 0; }
 .md h1 { font-size: 17px; margin: 18px 0 6px; }
 .md h2 { font-size: 15px; margin: 14px 0 6px; }
-.md pre { background: var(--subtle); padding: 10px; border-radius: 8px; overflow: auto; }
+.md pre { background: var(--subtle); padding: 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.md pre code { white-space: inherit; }
+.md { min-width: 0; max-width: 100%; }
+/* highlight.js tokens, in the theme's colors. */
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag { color: var(--accent); }
+.hljs-string, .hljs-regexp, .hljs-attr .hljs-string, .hljs-addition { color: var(--green-fg); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--amber-fg); }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--faint); font-style: italic; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: var(--text); font-weight: 600; }
+.hljs-type, .hljs-title.class_, .hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable.language_ { color: var(--violet-fg); }
+.hljs-deletion { color: var(--danger-fg); }
 .chatbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.items { flex: 1; overflow: auto; padding: var(--sp-4) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--fs-md); line-height: var(--lh); }
+.items { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--sp-4) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--fs-md); line-height: var(--lh); }
 /* Never shrink chat items: an item with overflow: hidden (canvas cards) would collapse to 0 px in a long thread. */
 .items > * { flex: none; }
 .msg { padding: var(--sp-2) var(--sp-3); border-radius: var(--r); white-space: pre-wrap; max-width: 92%; }
@@ -147,7 +157,7 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .jobhead { display: flex; flex-direction: column; gap: 2px; width: 100%; border: none; background: none; padding: 6px 12px; text-align: left; }
 .jobhead .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jobtext { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; max-height: 420px; overflow: auto; }
-.reply { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.reply { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; max-width: 100%; }
 .turnmeta { font-size: 11px; color: var(--muted); padding: 0 4px; visibility: hidden; }
 .reply:hover .turnmeta { visibility: visible; }
 

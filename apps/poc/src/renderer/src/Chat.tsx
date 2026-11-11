@@ -40,8 +40,22 @@ async function renderMermaid(root: HTMLElement, theme: 'light' | 'dark', cancell
   }
 }
 
+/** Colors the code blocks under `root` (not mermaid): by their language, else by a guess; a huge one stays plain. */
+async function highlightCode(root: HTMLElement, cancelled: () => boolean) {
+  const blocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code:not(.language-mermaid):not(.hljs)')).filter((c) => (c.textContent ?? '').length < 50_000)
+  if (!blocks.length) return
+  const { default: hljs } = await import('highlight.js/lib/common')
+  if (cancelled()) return
+  for (const code of blocks) {
+    const lang = /\blanguage-([\w+#-]+)/.exec(code.className)?.[1]
+    // An unknown language is guessed, as a block without one is.
+    if (lang && !hljs.getLanguage(lang)) code.classList.remove(`language-${lang}`)
+    hljs.highlightElement(code)
+  }
+}
+
 /**
- * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams and [title](canvas:<id>) links as
+ * Markdown with task keys (T-12, T-12.3) as links, ```mermaid blocks as diagrams, other code blocks colored and [title](canvas:<id>) links as
  * canvases (canvas:<id>#<node> focuses a node of a diagram): a link alone on its line shows the canvas in place, one
  * inside text is a link that opens it (see openCanvasLink). `canvases`: the ones it may show; a link to another id
  * was deleted and shows as its title (without `canvases` it stays a link). Agent output is sanitized: it may echo repo
@@ -63,7 +77,10 @@ export function Markdown({ text, onOpenTask, canvases, className = 'md' }: { tex
   )
   useEffect(() => {
     let cancelled = false
-    if (ref.current) void renderMermaid(ref.current, theme, () => cancelled)
+    if (ref.current) {
+      void renderMermaid(ref.current, theme, () => cancelled)
+      void highlightCode(ref.current, () => cancelled)
+    }
     return () => { cancelled = true }
   }, [segments, theme])
   return (
