@@ -282,4 +282,7 @@ export interface MagApi {
   lastCrash(): Promise<CrashReport | null>
   dismissCrash(): Promise<void>
   openLogs(): Promise<void>
+  /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */
+  runCommand(runId: string, sessionId: string, command: string, onOutput: (chunk: string) => void): Promise<{ code: number | null; cwd: string }>
+  stopCommand(runId: string): Promise<void>
 }

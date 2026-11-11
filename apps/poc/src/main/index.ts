@@ -22,6 +22,8 @@ import { startAppMenu } from './menu'
 import { startAttention } from './attention'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
+import { runShell, type ShellRun } from './core/clients/shell/index.ts'
+import { homedir } from 'node:os'
 
 // Apps launched from Finder get a minimal PATH; take the login shell's so git, gh and claude resolve.
 try {
@@ -276,6 +278,21 @@ app.whenReady().then(async () => {
     if (/^https:\/\//.test(url)) return shell.openExternal(url)
     return shell.openPath(url)
   })
+  // ▶ Run on a command block of a chat: the user's own run, in the project's first repository; output streams back.
+  const commandRuns = new Map<string, ShellRun>()
+  handle('command:run', async (e, runId: string, sessionId: string, command: string) => {
+    const session = store.data.sessions.find((s) => s.id === sessionId)
+    const cwd = (session && store.data.projects.find((p) => p.id === session.projectId)?.repos[0]) || homedir()
+    log.info('ipc', 'user runs a command from a chat', { session: sessionId, cwd })
+    const run = runShell(command, cwd, (chunk) => { if (!e.sender.isDestroyed()) e.sender.send('command:output', runId, chunk) })
+    commandRuns.set(runId, run)
+    try {
+      return { ...(await run.done), cwd }
+    } finally {
+      commandRuns.delete(runId)
+    }
+  })
+  handle('command:stop', (_, runId: string) => commandRuns.get(runId)?.stop())
   handle('arch:run', (_, projectId: string) => orch.architect(projectId))
   handle('agents:list', () => orch.agents())
   handle('repo:info', (_, path: string) => repoInfo(path))
