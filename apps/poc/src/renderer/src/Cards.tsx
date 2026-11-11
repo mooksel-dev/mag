@@ -29,7 +29,7 @@ const mag = window.mag
 /**
  * What the work needs from the user, as cards at the end of its owner conversation (ux-odna-rozmova-na-robotu.2):
  * the questions with recommendations, the plan with Approve & Start, the merge, a failed agent or check, a step that
- * waits for Start, local checks, and approvals of its agents (their chats are logs). `label`: another work of the same
+ * waits for Start, local checks, and approvals of its agents (their chats are logs). `label`: one of several works of the same
  * chat (work-list-the-left-column.3): its cards under a thin divider with its key and title, none when nothing waits.
  */
 export function WorkCards({ work, owner, state, onAnswer, label = false }: {

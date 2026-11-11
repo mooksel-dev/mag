@@ -29,12 +29,19 @@ export interface ApprovalTimings {
 const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
 
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
+const allow = (input: unknown) => JSON.stringify({ behavior: 'allow', updatedInput: input ?? {} })
+
+/** What speaks for the user on GitHub: a PR's review, comment or change, a gh api write. Only these wait for the card. */
+export const publishesToGithub = (command: string): boolean =>
+  /\bgh\b[^|;&]*\bpr\s+(review|comment|close|edit|ready|reopen)\b/.test(command) ||
+  /\bgh\b[^|;&]*\bapi\b[^|;&]*\s(-X|--method|-f|-F|--field|--raw-field|--input)\b/.test(command)
 
 /**
- * Tool calls that wait for the user: ask-mode integration calls, and the Bash calls of a chat, owner or groomer that
- * matched an ask rule (their GitHub writes, chat-publishes-to-github-prs.2). The permission prompt tool parks each call
- * as an approval chat item until the user allows or denies it on its card in the work's conversation or the chat.
- * Requests long-poll; the MCP server repeats them while pending.
+ * Tool calls that wait for the user: ask-mode integration calls, and what a chat, owner or groomer publishes on GitHub
+ * for the user (chat-publishes-to-github-prs.2). The permission prompt tool parks each as an approval chat item until
+ * the user allows or denies it on its card. Anything else such a session asks for runs at once, as Claude Code would for
+ * the user (a push of its branch, a file outside the repo): mag never holds back what the CLI can do. A push to a base
+ * branch is denied. Requests long-poll; the MCP server repeats them while pending.
  */
 export class Approvals {
   /** Wake-ups of the polls waiting per approval id. */
@@ -60,6 +67,7 @@ export class Approvals {
     const command = toolName === 'Bash' && typeof args.input === 'object' && args.input ? (args.input as { command?: unknown }).command : undefined
     const blocked = typeof command === 'string' ? blockedPush(command, projectBases(this.store.project(session.projectId), this.store.data.tasks)) : null
     if (blocked) return deny(blocked)
+    if (!asked.server && !(typeof command === 'string' && publishesToGithub(command))) return allow(args.input)
 
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined
@@ -75,13 +83,13 @@ export class Approvals {
   }
 
   /**
-   * What the session may ask the user for: an integration in ask mode for its role, or Bash in a role that asks
-   * (Claude Code sends Bash here only when it matched one of the run's ask rules); else null.
+   * What the session may ask the user for: an integration in ask mode for its role, or any tool in a role that asks;
+   * else null (denied).
    */
   private asked(session: AgentSession, toolName: string): Pick<ApprovalItem, 'tool' | 'server'> | null {
     const found = integrationOf(toolName, this.store.data.integrations)
     if (found) return integrationMode(this.store.project(session.projectId), runRole(session), found.integration.id) === 'ask' ? { tool: found.tool, server: found.integration.name } : null
-    return toolName === 'Bash' && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
+    return toolName && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
   }
 
   /** The user's answer; wakes the waiting poll and logs it. */

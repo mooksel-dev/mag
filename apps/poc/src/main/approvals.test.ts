@@ -22,7 +22,7 @@ function setup(mode: 'off' | 'ask' | 'auto' = 'ask') {
 const args = { tool_name: TOOL, input: { code: 'zones.list()' }, tool_use_id: 'tu1' }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-test('request denies at once what is not an ask-mode integration', async () => {
+test('request denies at once an integration not in ask mode; another tool of a chat runs at once, of a developer stays denied', async () => {
   for (const mode of ['off', 'auto'] as const) {
     const { session, approvals } = setup(mode)
     const answer = JSON.parse(await approvals.request({ sessionId: session.id }, args))
@@ -30,6 +30,9 @@ test('request denies at once what is not an ask-mode integration', async () => {
     assert.equal(session.items.length, 0)
   }
   const { session, approvals } = setup()
+  assert.deepEqual(JSON.parse(await approvals.request({ sessionId: session.id }, { ...args, tool_name: 'WebFetch' })), { behavior: 'allow', updatedInput: args.input })
+  assert.equal(session.items.length, 0, 'no card')
+  session.role = 'developer'
   assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, { ...args, tool_name: 'WebFetch' })).behavior, 'deny')
   assert.equal(JSON.parse(await approvals.request({}, args)).behavior, 'deny', 'no session')
 })
@@ -98,12 +101,18 @@ test('a Bash call (a GitHub write that matched an ask rule) asks in chat and gro
     assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, bash)).behavior, 'deny', role)
     assert.equal(session.items.length, 0, role)
   }
-  // Only Bash: another built-in tool from a chat is not asked about.
+  // What does not publish runs at once, as Claude Code would for the user: an edit or a command outside the repo.
   const { session, approvals } = setup()
-  assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, { ...bash, tool_name: 'Edit' })).behavior, 'deny')
+  const edit = { tool_name: 'Edit', input: { file_path: '/elsewhere/x.md' }, tool_use_id: 'te' }
+  assert.deepEqual(JSON.parse(await approvals.request({ sessionId: session.id }, edit)), { behavior: 'allow', updatedInput: edit.input })
+  for (const command of ['rm /home/u/.claude/memory/x.md', 'gh pr create --title t', 'gh pr view 4 --json state', 'gh api repos/o/r/pulls/4'])
+    assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, { ...bash, input: { command } })).behavior, 'allow', command)
+  for (const command of ['gh api -X POST repos/o/r/issues/4/comments -f body=x', 'gh -R o/r pr review 4 --approve', 'gh pr edit 4 --title t'])
+    assert.deepEqual(JSON.parse(await approvals.request({ sessionId: session.id }, { ...bash, input: { command }, tool_use_id: command })), { pending: true }, command)
+  assert.equal(session.items.length, 3, 'a card for each post only')
 })
 
-test("a push whose target is not named, or is a work's base, is denied without a card; a named branch asks (topics-a-tree-of-agent.1)", async () => {
+test("a push whose target is not named, or is a work's base, is denied without a card; a named branch runs at once (topics-a-tree-of-agent.1)", async () => {
   const { store, session, approvals } = setup()
   // Another work's repository has a base of its own.
   const work = store.createTask({ projectId: session.projectId, title: 'w', type: 'dev', description: '', status: 'in_progress' })
@@ -115,6 +124,6 @@ test("a push whose target is not named, or is a work's base, is denied without a
     assert.match(answer.message, /does not name the branch|pushes to the base branch develop/, c)
   }
   assert.equal(session.items.length, 0, 'no card for a blocked push')
-  assert.deepEqual(JSON.parse(await push('git push -u origin fix-typo', 'ok')), { pending: true })
-  assert.equal(session.items.length, 1)
+  assert.deepEqual(JSON.parse(await push('git push -u origin fix-typo', 'ok')), { behavior: 'allow', updatedInput: { command: 'git push -u origin fix-typo' } })
+  assert.equal(session.items.length, 0, 'no card for a push of its branch')
 })

@@ -99,7 +99,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const waiting = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).find((c) => c.card?.move.who === 'you')
   // An answer goes into the composer.
   const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLTextAreaElement>('.screenmain textarea')?.focus())
-  const cards = cardsOf.length ? <>{cardsOf.map((t, i) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={i > 0} />)}</> : undefined
+  const cards = cardsOf.length ? <>{cardsOf.map((t) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={cardsOf.length > 1} />)}</> : undefined
   const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const pr = review?.prReview?.pr
   // A work or review closed or deleted from its card: back to the topic without it (gone with it too: Home).

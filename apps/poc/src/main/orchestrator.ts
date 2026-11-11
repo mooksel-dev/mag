@@ -33,10 +33,10 @@ const stanceLine = (playbook: Playbook) => `How you lead and argue, by the proje
  * What a chat, owner or groomer may write to GitHub (chat-publishes-to-github-prs.2, Decision 3): only what the user
  * asked for, after their Allow on mag's card; the ask rules (GITHUB_WRITES) hold it, this says when and how.
  */
-const GITHUB_WRITES_LINE = `Writes to GitHub (gh pr comment, review or edit, gh api with a write method, git push) you run
-only when the user asked for them in this conversation: mag shows the user the exact command on a card and runs it
-after their Allow. Say in one line what you are about to post, then run it; start what you post with "${AGENT_MARK}".
-Merges and pushes to a base branch stay blocked.`
+const GITHUB_WRITES_LINE = `What you post on GitHub for the user (gh pr comment, review or edit, gh api with a write method) you run
+only when the user asked for it in this conversation: mag shows the user the exact command on a card and runs it after
+their Allow. Say in one line what you are about to post, then run it; start what you post with "${AGENT_MARK}". A push of
+your own branch and gh pr create run at once. Merges and pushes to a base branch stay blocked.`
 
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
 const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
@@ -434,6 +434,8 @@ const CHAT_TOOLS = ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Grep'
 
 /** An approval may wait for the user for days; the prompt tool call must not time out first. */
 const APPROVAL_TOOL_TIMEOUT_MS = String(7 * 24 * 60 * 60 * 1000)
+/** The call's timeout, and Claude Code's idle timeout of an MCP call (30 min by default), which a waiting card has no progress for. */
+const APPROVAL_ENV = { MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS, CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS }
 
 /** A live process with no turn and no background task closes after this; the next message resumes the session. */
 const LIVE_IDLE_MS = 10 * 60_000
@@ -2105,7 +2107,7 @@ export class Orchestrator {
 
   /** A chat's, owner's or groomer's GitHub writes ask through approve_tool, which may wait for the user for days. */
   private askingGithubWrites(): Pick<RunSpec, 'askTools' | 'permissionPromptTool' | 'env'> {
-    return { askTools: GITHUB_WRITES, permissionPromptTool: APPROVE_TOOL, env: { MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS } }
+    return { askTools: GITHUB_WRITES, permissionPromptTool: APPROVE_TOOL, env: APPROVAL_ENV }
   }
 
   /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */
@@ -2200,7 +2202,7 @@ export class Orchestrator {
       ...(off && { appendSystemPrompt: `${spec.appendSystemPrompt ?? ''}${blocks(off)}` }),
       allowedTools: [...(spec.allowedTools ?? []), ...rules.allowed],
       disallowedTools: [...(spec.disallowedTools ?? []), ...rules.disallowed, ...(canAsk ? [] : rules.ask)],
-      ...(ask.length && { permissionPromptTool: APPROVE_TOOL, env: { ...spec.env, MCP_TOOL_TIMEOUT: APPROVAL_TOOL_TIMEOUT_MS } }),
+      ...(ask.length && { permissionPromptTool: APPROVE_TOOL, env: { ...spec.env, ...APPROVAL_ENV } }),
     }
   }
 

@@ -1475,8 +1475,9 @@ test('a topic asks before it writes to a PR: review, comment, close, edit, gh ap
   assert.ok(spec.allowedTools?.includes('Bash'))
   assert.equal(spec.permissionPromptTool, 'mcp__mag__approve_tool')
   assert.equal(spec.env?.MCP_TOOL_TIMEOUT, String(7 * 24 * 60 * 60 * 1000))
+  assert.equal(spec.env?.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT, String(7 * 24 * 60 * 60 * 1000), 'a waiting card outlives the CLI idle timeout')
   assert.equal(spec.permissionMode, undefined, 'no auto mode: it never asks under -p (step 1)')
-  assert.match(spec.appendSystemPrompt ?? '', /Writes to GitHub[\s\S]*only when the user asked for them in this conversation: mag shows the user the exact command on a card/)
+  assert.match(spec.appendSystemPrompt ?? '', /What you post on GitHub for the user[\s\S]*only when the user asked for it in this conversation: mag shows the user the exact command on a card[\s\S]*A push of\s+your own branch and gh pr create run at once/)
   // With leading options too: `git push:*` alone matches a prefix only.
   for (const c of ['gh pr comment 4 -b "[mag] ok"', 'gh -R acme/api pr comment 4 -b x', 'gh api -X POST repos/acme/api/pulls/4/comments', 'gh api repos/acme/api/pulls/4/comments -f body=x', 'git push origin feature', 'git -C /r push origin feature', 'git -C /r push'])
     assert.ok(anyMatches(spec.askTools, c), c)
