@@ -255,7 +255,7 @@ function AgentSettings({ project }: { project: Project }) {
   )
 }
 
-const MODES: [IntegrationMode, string][] = [['off', 'Off'], ['ask', 'Ask'], ['auto', 'Auto']]
+const MODES: [IntegrationMode, string][] = [['off', 'Off'], ['ask', 'Ask each'], ['reads', 'Reads auto'], ['auto', 'Auto']]
 
 /** Roles integration modes apply to. */
 const INTEGRATION_ROLES = SETTABLE_ROLES
@@ -280,7 +280,7 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
                 ) : (
                   <select key={role} value={integrationMode(project, role, i.id)} aria-label={`${i.name} for ${ROLE_LABELS[role] ?? role}`} onChange={(e) => set(role, i.id, e.target.value as IntegrationMode)}>
                     {MODES.map(([m, label]) => (
-                      <option key={m} value={m} disabled={m === 'ask' && role === 'architect'}>{label}</option>
+                      <option key={m} value={m} disabled={(m === 'ask' || m === 'reads') && role === 'architect'}>{label}</option>
                     ))}
                   </select>
                 ),
@@ -291,7 +291,7 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
       ) : (
         <span className="muted small">Run any Claude Code agent to detect integrations.</span>
       )}
-      <span className="muted small">Off hides the integration from the agent, Ask waits for your Allow in the work's conversation, Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
+      <span className="muted small">Off hides the integration from the agent; Ask each waits for your Allow on every call; Reads auto runs reads and waits for your Allow on posts and changes; Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
     </div>
   )
 }

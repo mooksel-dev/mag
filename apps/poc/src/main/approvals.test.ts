@@ -3,12 +3,13 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readsOnly } from '@mag/core'
 import { Approvals } from './approvals.ts'
 import { Store } from './store.ts'
 
 const TOOL = 'mcp__claude_ai_Cloudflare__execute'
 
-function setup(mode: 'off' | 'ask' | 'auto' = 'ask') {
+function setup(mode: 'off' | 'ask' | 'reads' | 'auto' = 'ask') {
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-approvals-')), 'db.json'))
   const project = store.createProject('p')
   store.updateProject(project.id, { integrations: { chat: { claude_ai_Cloudflare: mode } } })
@@ -126,4 +127,21 @@ test("a push whose target is not named, or is a work's base, is denied without a
   assert.equal(session.items.length, 0, 'no card for a blocked push')
   assert.deepEqual(JSON.parse(await push('git push -u origin fix-typo', 'ok')), { behavior: 'allow', updatedInput: { command: 'git push -u origin fix-typo' } })
   assert.equal(session.items.length, 0, 'no card for a push of its branch')
+})
+
+test('reads: a read of the integration runs at once, a write waits on its card; readsOnly tells them by name', async () => {
+  const { store, session, approvals, approval } = setup('reads')
+  const call = (tool: string, id: string) => approvals.request({ sessionId: session.id }, { tool_name: `mcp__claude_ai_Cloudflare__${tool}`, input: { q: 1 }, tool_use_id: id })
+  assert.deepEqual(JSON.parse(await call('search_docs', 'r1')), { behavior: 'allow', updatedInput: { q: 1 } })
+  assert.equal(session.items.length, 0, 'no card for a read')
+  assert.deepEqual(JSON.parse(await call('execute', 'w1')), { pending: true })
+  assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'w1', tool: 'execute', server: 'Cloudflare', input: { q: 1 }, status: 'pending', at: 0 })
+  void store
+})
+
+test('readsOnly: a read word and no write word', () => {
+  for (const t of ['slack_search_public', 'slack_read_thread', 'find', 'list-collections', 'aggregate', 'get_design_context', 'getJiraIssue', 'searchConfluenceUsingCql'])
+    assert.equal(readsOnly(t), true, t)
+  for (const t of ['slack_send_message', 'slack_schedule_message', 'insert-many', 'update-many', 'drop-collection', 'use_figma', 'createConfluencePage', 'add_comment_to_issue', 'mystery'])
+    assert.equal(readsOnly(t), false, t)
 })

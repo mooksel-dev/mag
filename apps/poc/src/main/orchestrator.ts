@@ -1940,12 +1940,12 @@ export class Orchestrator {
    * the card enabled, and the same session told to repeat its last step. Its run and live process end first: their
    * permission rules are the old ones. The architect has no chat to ask in, so only auto there.
    */
-  async enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'auto') {
+  async enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto') {
     const session = this.store.session(sessionId)
     const item = session.items.find((i): i is Extract<ChatItem, { kind: 'integration' }> => i.kind === 'integration' && i.id === itemId)
     if (!item) throw new Error('No such integration card')
-    if (mode !== 'ask' && mode !== 'auto') throw new Error('mode must be ask or auto')
-    if (mode === 'ask' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
+    if (mode !== 'ask' && mode !== 'reads' && mode !== 'auto') throw new Error('mode must be ask, reads or auto')
+    if (mode !== 'auto' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
     const project = this.store.project(session.projectId)
     const integrations = project.integrations ?? {}
     this.store.updateProject(project.id, { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } })

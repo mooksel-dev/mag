@@ -242,7 +242,7 @@ export function MergeCard({ card, canvases }: { card: CardModel; canvases: Canva
 export function IntegrationCard({ sessionId, item }: { sessionId: string; item: IntegrationItem }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const enable = (mode: 'ask' | 'auto') => {
+  const enable = (mode: 'ask' | 'reads' | 'auto') => {
     setBusy(true)
     setError(null)
     mag.enableIntegration(sessionId, item.id, mode).catch((e) => setError(String((e as Error).message ?? e))).finally(() => setBusy(false))
@@ -258,7 +258,7 @@ const VERDICT_CLASS = { good: 'ok', warn: 'look', bad: 'bad', neutral: '' } as c
  */
 export function StructuredCard({ card, onEnable, onFact, busy, error }: {
   card: CardModel
-  onEnable?: (mode: 'ask' | 'auto') => void
+  onEnable?: (mode: 'ask' | 'reads' | 'auto') => void
   /** Plan ↔ fact: opens the fact's canvas. */
   onFact?: (canvasId: string) => void
   busy?: boolean

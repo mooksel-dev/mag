@@ -176,6 +176,7 @@ export class Store {
     () => this.migrateToSessionTree(),
     () => this.migrateToParkedTopics(),
     () => this.migrateToTopicOwners(),
+    () => this.migrateToReadsAuto(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -225,6 +226,19 @@ export class Store {
       topic.closedAt = null
     }
     delete data.ideas
+  }
+
+  /**
+   * An integration on auto goes to reads (reads run at once, posts and changes wait for the user's Allow): what posts
+   * for the user is asked first by default. The architect keeps auto: it has no chat to ask in.
+   */
+  private migrateToReadsAuto() {
+    for (const p of this.data.projects) {
+      for (const [role, modes] of Object.entries(p.integrations ?? {})) {
+        if (role === 'architect' || !modes) continue
+        for (const [id, mode] of Object.entries(modes)) if (mode === 'auto') modes[id] = 'reads'
+      }
+    }
   }
 
   /**

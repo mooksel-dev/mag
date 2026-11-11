@@ -746,8 +746,26 @@ export function resolveChoice(project: Pick<Project, 'agents'>, role: AgentRole)
   return choices.find((c) => c && agentAllowed(role, c.agent).ok) ?? DEFAULT_CHOICE
 }
 
-/** off = hidden from the agent, ask = each call waits for the user, auto = allowed. */
-export type IntegrationMode = 'off' | 'ask' | 'auto'
+/**
+ * off = hidden from the agent, ask = each call waits for the user, reads = a read runs at once and a write (a post, an
+ * update, a delete) waits for the user, auto = allowed.
+ */
+export type IntegrationMode = 'off' | 'ask' | 'reads' | 'auto'
+
+/** The modes a run asks the user in: it needs a chat to ask in. */
+export const ASKING_MODES: readonly IntegrationMode[] = ['ask', 'reads']
+
+const WRITE_WORDS = new Set(['send', 'post', 'create', 'update', 'delete', 'insert', 'drop', 'remove', 'rename', 'add', 'set', 'edit', 'write', 'upload', 'publish', 'comment', 'reply', 'react', 'schedule', 'draft', 'move', 'archive', 'invite', 'transition', 'assign', 'use', 'run', 'execute'])
+const READ_WORDS = new Set(['get', 'list', 'search', 'read', 'fetch', 'find', 'query', 'view', 'describe', 'count', 'aggregate', 'explain', 'lookup', 'show', 'whoami', 'schema', 'metadata', 'screenshot', 'logs', 'status'])
+
+/**
+ * Whether an integration tool only reads, by the words of its name (slack_search_public, list-collections): any write
+ * word makes it a write; one with no read word is taken for a write too, so it asks.
+ */
+export function readsOnly(tool: string): boolean {
+  const words = tool.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z]+/).filter(Boolean)
+  return !words.some((w) => WRITE_WORDS.has(w)) && words.some((w) => READ_WORDS.has(w))
+}
 
 /** An MCP server the agent CLI brings along (e.g. a claude.ai connector). */
 export interface Integration {
@@ -775,7 +793,7 @@ export function integrationRules(
   for (const i of known) {
     if (i.id === MAG_MCP_ID) continue
     const mode = integrationMode(project, role, i.id)
-    rules[mode === 'auto' ? 'allowed' : mode === 'ask' ? 'ask' : 'disallowed'].push(`mcp__${i.id}`)
+    rules[mode === 'auto' ? 'allowed' : ASKING_MODES.includes(mode) ? 'ask' : 'disallowed'].push(`mcp__${i.id}`)
   }
   return rules
 }
@@ -789,7 +807,7 @@ export function offIntegrationsBlock(project: Pick<Project, 'integrations'>, rol
   const off = known.filter((i) => {
     if (i.id === MAG_MCP_ID) return false
     const mode = integrationMode(project, role, i.id)
-    return mode === 'off' || (mode === 'ask' && !canAsk)
+    return mode === 'off' || (ASKING_MODES.includes(mode) && !canAsk)
   })
   if (!off.length) return ''
   const how = canAsk

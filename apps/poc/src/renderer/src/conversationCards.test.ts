@@ -81,12 +81,12 @@ test('factCard: deviations tagged, what the inventory leaves out to check by han
   assert.deepEqual([review.title, review.verdict?.label, review.rows[0].text], ['Fact of the PR', 'does not cover the PR yet', 'No inventory of the changes yet'])
 })
 
-test('integrationCard: off with Enable: Ask and Auto, only Auto without a chat to ask in; the enabled state has no buttons', () => {
+test('integrationCard: off with Enable: reads auto first, Ask each and Auto; only Auto without a chat to ask in; the enabled state has no buttons', () => {
   const off = integrationCard({ server: 'claude.ai Slack', role: 'developer', why: 'read the thread', status: 'off' }, true)
   assert.equal(off.title, 'claude.ai Slack is off for the developer role')
   assert.deepEqual(off.verdict, { label: 'off', tone: 'warn' })
   assert.deepEqual(off.rows, [{ lead: 'The agent wants it to', text: 'read the thread' }])
-  assert.deepEqual(off.buttons.map((b) => b.kind === 'enable' && [b.label, b.mode]), [['Enable: Ask', 'ask'], ['Auto', 'auto']])
+  assert.deepEqual(off.buttons.map((b) => b.kind === 'enable' && [b.label, b.mode]), [['Enable: reads auto, writes ask', 'reads'], ['Ask each', 'ask'], ['Auto', 'auto']])
   const arch = integrationCard({ server: 'claude.ai Slack', role: 'architect', why: '', status: 'off' }, false)
   assert.deepEqual(arch.buttons.map((b) => b.label), ['Auto'])
   assert.deepEqual(arch.rows, [])
