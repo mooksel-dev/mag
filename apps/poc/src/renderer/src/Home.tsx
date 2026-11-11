@@ -6,7 +6,7 @@ import {
   chatCommands,
   composerRoute,
   flatCards,
-  projectReviewFormat,
+  DEFAULT_REVIEW_FORMAT,
   resolveChoice,
   workCards,
   type Attachment,
@@ -44,8 +44,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The format a review of a PR starts with (review-v2-part-2-v1-2.1): the project's, unless the user picks the other.
-  const [format, setFormat] = useState<ReviewFormat>(projectReviewFormat(project))
-  useEffect(() => setFormat(projectReviewFormat(project)), [project.reviewFormat]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [format, setFormat] = useState<ReviewFormat>(DEFAULT_REVIEW_FORMAT)
 
   /** Runs one call that opens a work; its error stays under the composer and keeps the text (by throwing). */
   const run = async (call: () => Promise<void>) => {

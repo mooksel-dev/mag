@@ -1,3 +1,4 @@
+import { FALLBACK_BASE } from '@mag/core'
 // The fact of a step's PRs against its plan (T-57.4, reworked in T-58): a step is one caller of the fact service. Here
 // a step becomes what the service reads: its repositories' changes since they left the base branch, over local git,
 // against its plan; and the fact as the step records it and Diff shows it. A review of a teammate's PR
@@ -82,7 +83,7 @@ const repoDir = (r: TaskWork['repos'][number]) => (!r.local && existsSync(r.work
  * into it (a merged step's).
  */
 export async function branchTarget(project: Project, r: RepoWork, name: string, at: string, head: string): Promise<ChangeTarget> {
-  const base = r.base ?? project.baseBranch
+  const base = r.base ?? FALLBACK_BASE
   const from = await revParse(at, `origin/${base}`).catch(() => revParse(at, base))
   return { repo: r.repo, name, at, base: await forkPoint(at, from, head), head }
 }

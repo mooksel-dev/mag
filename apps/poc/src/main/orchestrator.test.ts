@@ -433,7 +433,7 @@ test('playbook: a project\'s own section replaces the default in the prompt; the
 
 test('step developer: the playbook\'s step, the decisions of the work and its own step only; merge and push to base blocked (T-55.2)', async () => {
   const { store, orch, project, task } = setup()
-  store.updateProject(project.id, { playbook: { step: 'OUR STEP' }, baseBranch: 'dev' })
+  store.updateProject(project.id, { playbook: { step: 'OUR STEP' } })
   store.data.docs[task.id] = DOC
   store.updateTask(task.id, { status: 'ready' })
   store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
@@ -444,7 +444,7 @@ test('step developer: the playbook\'s step, the decisions of the work and its ow
   assert.ok(!prompt.includes(DEFAULT_PLAYBOOK.step))
   assert.ok(prompt.includes('## Decisions\n- all PRs are draft\n## login.1\n- touch only core'))
   assert.ok(!prompt.includes('keep the old API'), 'another step\'s decisions stay out')
-  for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push * dev)', 'Bash(git push *:dev)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
+  for (const rule of ['Bash(gh pr merge:*)', 'Bash(git push * main)', 'Bash(git push *:main)']) assert.ok(spec.disallowedTools?.includes(rule), rule)
 })
 
 test('project chat: the playbook\'s plan (it owns the works it creates) and tracker sections, the notes block; no merge or push to base (T-55.2, T-55.5)', async () => {
@@ -1843,8 +1843,7 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
   }
   try {
     // The project's format preselects it: v1 here, from Home: a new topic, a topic like any other.
-    store.updateProject(project.id, { reviewFormat: 'v1' })
-    const first = await orch.reviewPr(project.id, url)
+    const first = await orch.reviewPr(project.id, url, undefined, 'v1')
     const work = store.task(first.taskId)
     const t1 = store.session(first.sessionId)
     lives.set(t1.id, opened.at(-1)!)

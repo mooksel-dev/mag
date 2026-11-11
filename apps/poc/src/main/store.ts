@@ -132,9 +132,6 @@ export class Store {
     // Defaults for data written by older PoC versions.
     for (const p of this.data.projects) {
       delete (p as { devPoolSize?: number }).devPoolSize
-      p.templates ??= {}
-      delete (p.templates as Record<string, string>).story
-      p.baseBranch ??= 'main'
       p.enforceArchitecture ??= false
       p.architecture = migrateArch(p.architecture)
       p.archRun ??= null
@@ -607,7 +604,7 @@ export class Store {
   }
 
   createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', templates: {}, baseBranch: 'main', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: Date.now() }
+    const p: Project = { id: id(), name, repos: [], notes: '', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p

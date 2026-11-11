@@ -53,7 +53,8 @@ export const REVIEW_FORMATS: ReviewFormat[] = ['v1', 'v2']
 export const REVIEW_FORMAT_LABELS: Record<ReviewFormat, string> = { v1: 'v1 · findings and a verdict', v2: 'v2 · questions and the direction' }
 
 /** A project's format for new reviews: its setting, v2 without one. */
-export const projectReviewFormat = (project: Pick<Project, 'reviewFormat'>): ReviewFormat => (project.reviewFormat === 'v1' ? 'v1' : 'v2')
+/** The format a new review of a PR starts with; each run can pick the other. */
+export const DEFAULT_REVIEW_FORMAT: ReviewFormat = 'v2'
 
 /** One format's review of the PR: what the agent understood, whether the change solves it, and its findings. */
 export interface ReviewResult {
