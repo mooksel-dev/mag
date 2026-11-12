@@ -94,3 +94,8 @@ test('plainMarkdown: a line break is a newline and plain-text escapes go; code k
   assert.equal(plainMarkdown('\\`\\`\\` так і не працює, a\\_b, 1\\. item, \\*bold\\*'), '``` так і не працює, a_b, 1. item, *bold*')
   assert.equal(plainMarkdown('run `a\\_b` then\n```ts\nconst re = /\\./\n```'), 'run `a\\_b` then\n```ts\nconst re = /\\./\n```')
 })
+
+test('plainMarkdown: paragraphs (⇧↵) are lines; an empty line typed stays one; lists and code keep their lines', () => {
+  assert.equal(plainMarkdown('one\n\ntwo\n\n\n\nafter a blank'), 'one\ntwo\n\nafter a blank')
+  assert.equal(plainMarkdown('list:\n\n- a\n- b\n\n```\nx\n\ny\n```'), 'list:\n- a\n- b\n```\nx\n\ny\n```')
+})
