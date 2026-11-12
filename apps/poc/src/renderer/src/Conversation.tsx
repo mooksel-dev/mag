@@ -154,7 +154,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
                   </p>
                   {cards}
                 </div>
-                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
+                <Composer busy={false} placeholder="Reply…" draftKey={topic.id} commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
               </div>
             ) : (
               <div className="chatbox">

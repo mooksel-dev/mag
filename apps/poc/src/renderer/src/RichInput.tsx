@@ -28,11 +28,13 @@ const markdownOf = (editor: Editor) => plainMarkdown((editor.storage as unknown 
 export const RichInput = forwardRef<RichInputHandle, {
   placeholder: string
   autoFocus?: boolean
+  /** Markdown the field starts with (a saved draft). */
+  initial?: string
   onChange: (markdown: string, text: string) => void
   onKey: KeyHandler
   onFiles: (files: File[]) => void
   onAt?: () => void
-}>(function RichInput({ placeholder, autoFocus, onChange, onKey, onFiles, onAt }, ref) {
+}>(function RichInput({ placeholder, autoFocus, initial, onChange, onKey, onFiles, onAt }, ref) {
   // Handlers change every render; the editor is made once.
   const live = useRef({ onChange, onKey, onFiles, onAt })
   live.current = { onChange, onKey, onFiles, onAt }
@@ -46,6 +48,7 @@ export const RichInput = forwardRef<RichInputHandle, {
       FenceOnEnter,
     ],
     autofocus: autoFocus ? 'end' : false,
+    content: initial ?? '',
     editorProps: {
       attributes: { class: 'richinput md', 'aria-label': 'Message', role: 'textbox', 'aria-multiline': 'true' },
       handleKeyDown: (view, e) => {
@@ -68,6 +71,8 @@ export const RichInput = forwardRef<RichInputHandle, {
       },
     },
     onUpdate: ({ editor }) => live.current.onChange(markdownOf(editor).trim(), editor.getText()),
+    // A draft it starts with is the composer's text too.
+    onCreate: ({ editor }) => { if (!editor.isEmpty) live.current.onChange(markdownOf(editor).trim(), editor.getText()) },
   })
   // A new placeholder shows at once.
   useEffect(() => { editor?.view.dispatch(editor.state.tr) }, [placeholder, editor])
