@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -1915,6 +1915,8 @@ export class Orchestrator {
     const tasks = this.store.data.tasks.filter((t) => t.projectId === session.projectId)
     const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId)
     refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
+    // What the user wrote in a turn stopped before any reply: the CLI dropped it, so it goes first now.
+    const unheard = job ? [] : unheardBeforeStop(session.items)
     session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() })
     // A topic the user renamed keeps its title.
     if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
@@ -1924,6 +1926,7 @@ export class Orchestrator {
     let prompt = attachments.length && !command
       ? `${text}\n\nAttached files (open them with Read):\n${attachments.map((a) => `- ${a.path}`).join('\n')}`
       : text
+    if (!command) prompt = withUnheard(prompt, unheard)
     if (refs.length && !command) {
       this.store.changed()
       this.preparing.add(sessionId)

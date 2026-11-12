@@ -1540,3 +1540,34 @@ export interface Canvas {
   version: number
   updatedAt: number
 }
+
+/**
+ * The user's messages of a turn stopped before the agent did anything (the "Stopped" notice, no reply or tool call
+ * after them): Claude Code drops a prompt it was interrupted on, so the next message carries them. Empty when the last stop came after a
+ * reply, or a message was sent since.
+ */
+export function unheardBeforeStop(items: ChatItem[]): string[] {
+  let stop = -1
+  for (let n = items.length - 1; n >= 0; n--) {
+    const i = items[n]
+    if (i.kind === 'user' || i.kind === 'job') return []
+    if (i.kind === 'notice' && i.text === 'Stopped') { stop = n; break }
+  }
+  if (stop < 0) return []
+  const texts: string[] = []
+  for (let n = stop - 1; n >= 0; n--) {
+    const i = items[n]
+    // A tool call or a reply after them: the agent had them.
+    if (i.kind === 'assistant' || i.kind === 'tool') return []
+    if (i.kind === 'result' || (i.kind === 'notice' && i.text === 'Stopped')) break
+    if (i.kind === 'user' && i.text.trim()) texts.unshift(i.text)
+  }
+  return texts
+}
+
+/** The next prompt with what the agent missed when it was stopped (see unheardBeforeStop) before it. */
+export function withUnheard(prompt: string, unheard: string[]): string {
+  if (!unheard.length) return prompt
+  const quoted = unheard.map((t) => t.split('\n').map((l) => `> ${l}`).join('\n')).join('\n>\n')
+  return `Before you were stopped I wrote this, and it may not have reached you:\n${quoted}\n\n${prompt}`
+}
