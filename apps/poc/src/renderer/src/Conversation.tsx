@@ -184,7 +184,7 @@ function AgentCounts({ agents, total }: { agents: ReturnType<typeof topicAgents>
   return (
     <>
       Agents {total}
-      {agents.working > 0 && <span className="agentcount" title={`${agents.working} working`}><span className="sessdot green" aria-hidden />{agents.working}</span>}
+      {agents.working > 0 && <span className="agentcount" title={`${agents.working} working`}><span className="sessdot blue" aria-hidden />{agents.working}</span>}
       {agents.waiting > 0 && <span className="agentcount" title={`${agents.waiting} wait on you`}><span className="sessdot amber" aria-hidden />{agents.waiting}</span>}
       {failed > 0 && <span className="agentcount" title={`${failed} failed`}><span className="sessdot red" aria-hidden />{failed}</span>}
     </>
