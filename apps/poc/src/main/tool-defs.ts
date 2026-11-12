@@ -294,9 +294,10 @@ const DIAGRAM = {
 
 const FINDING = {
   type: 'object',
-  required: ['text'],
+  required: ['text', 'summary'],
   properties: {
-    text: { type: 'string' },
+    text: { type: 'string', description: 'The comment on the PR: short, to the author, what to change and why.' },
+    summary: { type: 'string', description: 'The essence for the user, one short line (≤ 15 words) that alone says what is wrong; text is the comment for the PR.' },
     where: { type: 'string', description: 'file:line, a module or a PR, when it applies.' },
     level: {
       type: 'string',
@@ -313,6 +314,7 @@ const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => 
   required: ['text', 'cites', ...required],
   properties: {
     text: { type: 'string' },
+    summary: { type: 'string', description: 'For a risk, a failed rule or criterion, a question: The essence for the user, one short line (≤ 15 words) that alone says what is wrong; text is the comment for the PR.' },
     source: { type: 'string', enum: ['agent', 'user', 'question', 'rule'], description: "agent: your reading, with code refs; user: the user's own words (PR comments, notes, decisions); question; rule: a project rule fails. mag itself gives checked to a mechanical fact of the direction whose cites are all units it verified; never give it." },
     cites: { type: 'array', items: { type: 'string' }, description: 'Inventory unit ids or file:line; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
     view: { type: 'string', description: 'The diagram of the review\'s set that shows it: canvas:<id>#<node>.' },

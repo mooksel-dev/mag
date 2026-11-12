@@ -1005,3 +1005,27 @@ details.inline { display: inline-block; margin-left: 6px; }
 .wlsub.on, .wlsub.on .wlsess { background: var(--soft); }
 .page details.advanced { margin-top: var(--sp-4); }
 .page details.advanced > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+
+/* The reviews of a topic as one table (ReviewTable). */
+.reviewtable { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.rthead { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); }
+.rtrow { position: relative; border-bottom: 1px solid var(--line); }
+.rtrow:last-child { border-bottom: none; }
+.rtline { display: grid; grid-template-columns: 12px max-content minmax(0, 1fr) max-content max-content max-content; align-items: center; gap: var(--sp-2); width: 100%; padding: 7px 72px 7px var(--sp-3); border: none; background: none; text-align: left; font-weight: 400; }
+.rtline:hover { background: var(--hover); }
+.rtcaret { color: var(--faint); font-size: 10px; }
+.rttitle { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rtopen { position: absolute; right: var(--sp-3); top: 5px; }
+.rtfindings { padding: 2px var(--sp-3) var(--sp-3) 32px; display: flex; flex-direction: column; gap: 6px; }
+.rtall { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+/* One column for the level, as wide as the widest label: every finding's text starts at the same place. */
+.rtfinding { display: grid; grid-template-columns: max-content 76px minmax(0, 1fr); gap: var(--sp-2); align-items: start; cursor: pointer; }
+.rtfinding .pill { margin-top: 2px; justify-self: start; }
+.rtmore { align-self: flex-start; margin-left: 24px; }
+.rtbody { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rtsum { font-weight: 500; }
+.rtcomment { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rtsaid { color: var(--faint); }
+.rtwhere { font-family: ui-monospace, Menlo, monospace; font-weight: 400; overflow-wrap: anywhere; }
+.rtpublish { display: flex; align-items: center; gap: var(--sp-2); margin-top: 4px; }
+.rtempty { padding: 0 var(--sp-3) var(--sp-3) 32px; margin: 0; }

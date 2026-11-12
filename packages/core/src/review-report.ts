@@ -30,6 +30,8 @@ const storedSource = (given: string): ClaimSource => (given === 'user' ? 'yours'
 
 export interface Claim {
   text: string
+  /** Its essence for the user, one short line, when it becomes a finding; the text is its comment on the PR. */
+  summary?: string
   source: ClaimSource
   /** Inventory unit ids, file:line, a PR comment, decision:<id>, a note: at least one. */
   cites: string[]
@@ -248,6 +250,7 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
     if (!out.text) errors.push(`${what}: text is required`)
     if (!source && !(CLAIM_SOURCES as string[]).includes(given)) errors.push(`${what}: source must be one of ${AGENT_SOURCES.join(', ')} (checked is mag's)`)
     if (text(c?.view)) out.view = text(c.view)
+    if (text(c?.summary)) out.summary = text(c.summary)
     return out
   }
   const d = (r.direction && typeof r.direction === 'object' ? r.direction : {}) as Raw
@@ -396,7 +399,7 @@ const RISK_FINDING: Record<RiskLevel, FindingLevel> = { high: 'blocker', medium:
 export function reportFindings(report: ReviewReport): ReviewFinding[] {
   const finding = (c: Claim, level: FindingLevel, label: string): ReviewFinding => {
     const where = c.cites.find((x) => LINE.test(x)) ?? c.cites[0]
-    return { text: `${label}${c.text}`, level, ...(where ? { where } : {}), ...(c.view ? { node: c.view } : {}) }
+    return { text: `${label}${c.text}`, level, ...(c.summary ? { summary: c.summary } : {}), ...(where ? { where } : {}), ...(c.view ? { node: c.view } : {}) }
   }
   const out: ReviewFinding[] = [
     ...(report.floor?.blockers ?? []).map((b): ReviewFinding => ({ text: `mag: ${b}`, level: 'blocker' })),
