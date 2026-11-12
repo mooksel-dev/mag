@@ -118,6 +118,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
         <h2 className="hello">What are we doing in {project.name}?</h2>
         <div>
           <Composer
+            draftKey={`home:${project.id}`}
             busy={busy}
             placeholder="Ask anything, describe a task, or paste a PR / ticket link…"
             commands={chatCommands({ projectId: project.id, agent: resolveChoice(project, 'chat').agent }, state.sessions)}

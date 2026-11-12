@@ -375,6 +375,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
         queue={liveSession(session)}
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
         commands={chatCommands(session, sessions)}
+        draftKey={session.id}
         onSend={(text, att, refs) => mag.send(session.id, text, att, refs)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
@@ -572,7 +573,10 @@ export function Composer({
   onFiles,
   autoFocus,
   refsFrom,
+  draftKey,
 }: {
+  /** Where its unsent text is kept (a chat's id): it is there again when the user comes back, until it is sent. */
+  draftKey?: string
   busy: boolean
   /** Messages may be sent while busy: the agent gets them in its current turn (live sessions). */
   queue?: boolean
@@ -595,6 +599,18 @@ export function Composer({
   /** The message as markdown, what is sent; `plain` its text, what a /command is read from. */
   const [text, setText] = useState('')
   const [plain, setPlain] = useState('')
+  const draft = draftKey && `mag.draft.${draftKey}`
+  // Another chat: its own draft (the field is made anew for it, see the key below, and reports that draft).
+  const shownDraft = useRef(draft)
+  if (shownDraft.current !== draft) {
+    shownDraft.current = draft
+    setText('')
+    setPlain('')
+  }
+  const keep = (md: string) => {
+    if (!draft) return
+    try { if (md) localStorage.setItem(draft, md); else localStorage.removeItem(draft) } catch { /* full: the draft is not kept */ }
+  }
   const [files, setFiles] = useState<Attachment[]>([])
   const [refs, setRefs] = useState<ChatRef[]>([])
   /** The palette is open; `at`: where the "@" that opened it is in the text (null: the button). */
@@ -658,6 +674,7 @@ export function Composer({
     ta.current?.clear()
     setText('')
     setPlain('')
+    keep('')
     if (!isCommand) {
       setFiles([])
       setRefs([])
@@ -719,10 +736,12 @@ export function Composer({
         {refsFrom && refs.length > 0 && <RefChips refs={refs} tasks={refsFrom.tasks} sessions={refsFrom.sessions} onRemove={(r) => setRefs((x) => x.filter((y) => y !== r))} />}
         {files.length > 0 && <Attachments items={files} onRemove={(a) => setFiles((x) => x.filter((f) => f !== a))} />}
         <RichInput
+          key={draft || undefined}
           ref={ta}
+          initial={draft ? (localStorage.getItem(draft) ?? '') : ''}
           placeholder={busy && !queue ? 'Wait for the agent to finish…' : placeholder}
           autoFocus={autoFocus}
-          onChange={(md, txt) => { setText(md); setPlain(txt) }}
+          onChange={(md, txt) => { setText(md); setPlain(txt); keep(md) }}
           onKey={onKey}
           onFiles={(imgs) => void add(imgs)}
           onAt={canRef ? () => setPicking({ at: 0 }) : undefined}

@@ -33,7 +33,8 @@ export type WorkGroup = 'waiting' | 'working' | 'topics' | 'done'
 
 export type CardKind = 'work' | 'review' | 'topic'
 /** amber = waiting on you, green = an agent working, grey = idle or someone else's move. */
-export type CardDot = 'amber' | 'green' | 'grey'
+/** blue = an agent works, amber = waits on you, green = done, ready for you, grey = closed or finished, red = failed. */
+export type CardDot = 'blue' | 'amber' | 'green' | 'grey' | 'red'
 
 export type WorkStage = 'Plan' | 'Approve' | 'Build' | 'Merge' | 'Done'
 export type ReviewStage = 'Running' | 'Report ready' | 'Waiting for author' | 'Done'
@@ -98,6 +99,9 @@ export interface SessionNode {
   children: SessionNode[]
 }
 
+/** A session's dot by its state: running blue, waiting on you amber, idle green, failed red, closed grey. */
+const SESSION_DOTS: Record<SessionState, CardDot> = { running: 'blue', waiting: 'amber', idle: 'green', error: 'red', closed: 'grey' }
+
 /** The label of a child session's role: subagent for one read from its parent's stream. */
 export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin' | 'agentJob'>): string =>
   s.origin === 'subagent' ? 'subagent' : s.role === null ? (s.agentJob ? 'agent' : 'general') : s.role === 'chat' ? 'topic' : s.role
@@ -118,7 +122,7 @@ export function sessionNodes(parentId: string, sessions: AgentSession[], seen = 
     .filter((s) => !seen.has(s.id) && !!seen.add(s.id))
     .map((s) => {
       const state = sessionState(s)
-      return { session: s, role: sessionRole(s), state, dot: state === 'waiting' ? 'amber' : state === 'running' ? 'green' : 'grey', children: sessionNodes(s.id, sessions, seen) }
+      return { session: s, role: sessionRole(s), state, dot: SESSION_DOTS[state], children: sessionNodes(s.id, sessions, seen) }
     })
 }
 
@@ -340,7 +344,7 @@ function progressOf(task: Task, tasks: Task[]): string | null {
 }
 
 const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
-  group === 'waiting' ? 'amber' : group !== 'done' && move.who === 'agent' ? 'green' : 'grey'
+  group === 'waiting' ? 'amber' : group === 'done' ? 'grey' : move.who === 'agent' ? 'blue' : 'green'
 
 /**
  * The project chat topics of `mine`, mag's topics of reviews included: not an agent's session. Each has a row; the works
@@ -425,7 +429,7 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     : works.length ? { who: 'other', text: 'Done' }
     : ownMove
   // Green while the chat or any open child has an agent running.
-  const dot: CardDot = group === 'waiting' ? 'amber' : group !== 'done' && (running || open.some((c) => c.dot === 'green')) ? 'green' : 'grey'
+  const dot: CardDot = group === 'waiting' ? 'amber' : group === 'done' ? 'grey' : running || open.some((c) => c.dot === 'blue') ? 'blue' : 'green'
   const last = [lastEvent(s, mine), ...children.map((c) => c.last)].filter((l) => !!l).sort((a, b) => b.at - a.at)[0] ?? null
   const under = flatNodes(tree).map((n) => n.session)
   return {
@@ -444,7 +448,7 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     session: s,
     // mag's topic of a review closes and deletes as that review.
     ...(s.reviewOf && { task: children.find((c) => c.id === s.reviewOf)?.task }),
-    own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'green' : 'grey' },
+    own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'blue' : closed ? 'grey' : 'green' },
     ...(children.length ? { children } : {}),
     ...(tree.length ? { sessions: tree } : {}),
   }
@@ -525,7 +529,7 @@ export function headerWork(sessionId: string, tasks: Task[], sessions: AgentSess
 
 /** Home's order of a group's cards: the agent working before someone else's move, then the latest activity first. */
 export function byActivity(cards: WorkCard[]): WorkCard[] {
-  const grey = (c: WorkCard) => (c.group === 'working' && c.dot === 'grey' ? 1 : 0)
+  const grey = (c: WorkCard) => (c.group === 'working' && c.dot !== 'blue' ? 1 : 0)
   return [...cards].sort((a, b) => grey(a) - grey(b) || b.at - a.at)
 }
 
@@ -676,7 +680,7 @@ export function cardMatches(c: WorkCard, filter: CardFilter): boolean {
     case 'waiting':
       return own.group === 'waiting'
     case 'working':
-      return own.dot === 'green'
+      return own.dot === 'blue'
     case 'reviews':
       return c.kind === 'review'
   }

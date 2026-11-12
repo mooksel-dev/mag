@@ -763,6 +763,7 @@ body.resizing iframe { pointer-events: none; }
 .sessdot.green { background: var(--green-fg); }
 .sessdot.amber { background: var(--amber-fg); }
 .sessdot.grey { background: var(--faint); opacity: .55; }
+.sessdot.blue { background: var(--info-fg); }
 .sessdot.red { background: var(--danger-fg); }
 .agentsbtn { display: inline-flex; align-items: center; gap: 8px; }
 .agentcount { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }

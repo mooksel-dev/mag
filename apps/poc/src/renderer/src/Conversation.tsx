@@ -154,7 +154,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
                   </p>
                   {cards}
                 </div>
-                <Composer busy={false} placeholder="Reply…" commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
+                <Composer busy={false} placeholder="Reply…" draftKey={topic.id} commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
               </div>
             ) : (
               <div className="chatbox">
@@ -184,7 +184,7 @@ function AgentCounts({ agents, total }: { agents: ReturnType<typeof topicAgents>
   return (
     <>
       Agents {total}
-      {agents.working > 0 && <span className="agentcount" title={`${agents.working} working`}><span className="sessdot green" aria-hidden />{agents.working}</span>}
+      {agents.working > 0 && <span className="agentcount" title={`${agents.working} working`}><span className="sessdot blue" aria-hidden />{agents.working}</span>}
       {agents.waiting > 0 && <span className="agentcount" title={`${agents.waiting} wait on you`}><span className="sessdot amber" aria-hidden />{agents.waiting}</span>}
       {failed > 0 && <span className="agentcount" title={`${failed} failed`}><span className="sessdot red" aria-hidden />{failed}</span>}
     </>

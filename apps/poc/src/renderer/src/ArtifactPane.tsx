@@ -127,7 +127,7 @@ function AgentRow({ agent: a, onOpen }: { agent: AgentLine; onOpen: () => void }
   return (
     <div className="agentrow">
       <button className="agentline" title={`${a.role} · ${a.on} · ${AGENT_STATE_LABELS[a.state]}`} onClick={onOpen}>
-        <span className={`sessdot ${a.state === 'working' ? 'green' : a.state === 'waiting' ? 'amber' : 'grey'}`} aria-hidden />
+        <span className={`sessdot ${a.state === 'working' ? 'blue' : a.state === 'waiting' ? 'amber' : a.state === 'failed' ? 'red' : 'grey'}`} aria-hidden />
         <span className="sessrole">{a.role}</span>
         <span className="agenton">{a.on}</span>
         <span className={`agentstate ${a.state}`}>{AGENT_STATE_LABELS[a.state]}</span>

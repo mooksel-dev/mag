@@ -474,7 +474,7 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
 }
 
 /** What a row's dot means, in its tooltip. */
-const DOT_LABELS: Record<WorkCard['dot'], string> = { green: 'an agent is working', amber: 'waits on you', grey: 'idle' }
+const DOT_LABELS: Record<WorkCard['dot'], string> = { blue: 'an agent is working', amber: 'waits on you', green: 'done, ready for you', grey: 'finished', red: 'failed' }
 
 /** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
 export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed' | 'sessions'>

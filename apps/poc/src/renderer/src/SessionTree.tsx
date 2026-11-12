@@ -112,7 +112,7 @@ export function DraftSubtopic({ parent, onSelect }: { parent: AgentSession; onSe
             <div className="items">
               <p className="muted small">A subtopic of {shortTitle(parent)}: a conversation of its own with the agent, in the same project. Your first message starts it; left empty, it is not kept.</p>
             </div>
-            <Composer busy={busy} autoFocus placeholder="What is this subtopic about?" onSend={send} />
+            <Composer busy={busy} autoFocus draftKey={`subtopic:${parent.id}`} placeholder="What is this subtopic about?" onSend={send} />
           </div>
         </div>
       </div>
