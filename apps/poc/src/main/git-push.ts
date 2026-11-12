@@ -1,11 +1,12 @@
+import { FALLBACK_BASE } from '@mag/core'
 import type { Project, RepoWork, Task } from '@mag/core'
 
 /** A repository's base branch: its own (RepoWork.base), else the project's, for works from before it was recorded. */
-export const baseOf = (project: Project, r: RepoWork) => r.base ?? project.baseBranch
+export const baseOf = (project: Project, r: RepoWork) => r.base ?? FALLBACK_BASE
 
 /** Every base branch of the project and of its works' repositories, once each: what no agent pushes to. */
 export const projectBases = (project: Project, tasks: Task[]) => [
-  ...new Set([project.baseBranch, ...tasks.filter((t) => t.projectId === project.id).flatMap((t) => (t.work?.repos ?? []).map((r) => baseOf(project, r)))]),
+  ...new Set([FALLBACK_BASE, ...tasks.filter((t) => t.projectId === project.id).flatMap((t) => (t.work?.repos ?? []).map((r) => baseOf(project, r)))]),
 ]
 
 /** Shell words of a command, split into its simple commands (`&&`, `||`, `;`, `|`, `&`, newline); quotes kept together. */

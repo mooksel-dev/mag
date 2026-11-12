@@ -1,3 +1,4 @@
+import { FALLBACK_BASE } from '@mag/core'
 import { MAG_MCP_ID, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -296,13 +297,13 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
               prs: t.work?.repos.flatMap((r) => (r.prUrl ? [`${r.prUrl} (${r.prState ?? 'unknown'})`] : [])),
               current: t.id === step?.id || undefined,
             })),
-            project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
+            project: { name: project.name, repos: project.repos, notes: project.notes },
             work: work && {
               dir: work.dir,
-              repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, base: r.base ?? project.baseBranch, prUrl: r.prUrl, prState: r.prState })),
+              repos: work.repos.map((r) => ({ name: repoWorkName(work, r), repo: r.repo, worktree: r.worktree, branch: r.branch, base: r.base ?? FALLBACK_BASE, prUrl: r.prUrl, prState: r.prState })),
             },
             diagrams: taskDiagrams(store, task.id).map((c) => ({ id: c.id, type: c.diagram!.type, title: c.title, changes: changes(c), ...placementOut(store, project, task.id, c) })),
-            docTemplate: project.templates[task.type] ?? DEFAULT_TEMPLATES[task.type],
+            docTemplate: DEFAULT_TEMPLATES[task.type],
             tickets: task.tickets?.length ? task.tickets : undefined,
           },
           null,
@@ -422,7 +423,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         const step = runStep(store, ctx)
         if (step?.status !== 'in_progress') throw new Error('No step is in progress')
         const work = step.work
-        const changed = work ? await changedRepos(work, project.baseBranch) : []
+        const changed = work ? await changedRepos(work, FALLBACK_BASE) : []
         if (work && changed.length) {
           const names = work.repos.filter((r) => changed.includes(r.repo)).map((r) => repoWorkName(work, r))
           throw new Error(`${step.key} has commits in ${names.join(', ')}: open a PR per changed repo and record it with set_pr`)
@@ -467,7 +468,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           // Comments made before the first PR are not feedback; later ones on any PR are.
           feedbackSeenAt: first ? Date.now() : work.feedbackSeenAt,
         }
-        const changed = await changedRepos(next, project.baseBranch)
+        const changed = await changedRepos(next, FALLBACK_BASE)
         const review = prRollup(next, changed) === 'review'
         store.updateTask(step?.id ?? task.id, { work: next })
         const missing = next.repos.filter((r) => changed.includes(r.repo) && (!r.prUrl || r.prState === 'closed')).map((r) => repoWorkName(next, r))
@@ -896,7 +897,7 @@ function sharedTool(
       const works = workSections(tasks)
       return JSON.stringify(
         {
-          project: { name: project.name, repos: project.repos, notes: project.notes, baseBranch: project.baseBranch },
+          project: { name: project.name, repos: project.repos, notes: project.notes },
           tasks: [...works.inProgress, ...works.ready, ...works.planning, ...works.finished].flatMap(withSubtasks).map((t) => ({
             key: t.key,
             title: t.title,

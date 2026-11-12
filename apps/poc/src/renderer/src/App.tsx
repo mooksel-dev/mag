@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import {
-  DEFAULT_TEMPLATES,
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
@@ -20,11 +19,6 @@ import {
   type IntegrationMode,
   type PlaybookSection,
   type Project,
-  type ReviewFormat,
-  type TaskType,
-  REVIEW_FORMATS,
-  REVIEW_FORMAT_LABELS,
-  projectReviewFormat,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { ModelPicker, useAgents } from './Agents'
@@ -41,7 +35,6 @@ import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 
 const mag = window.mag
-const TYPES: TaskType[] = ['dev', 'design', 'spike', 'research']
 /** Pages the list's footer opens; they take the place of the conversation. */
 type Page = ListPage
 const PAGE_NAMES: Record<Page, string> = { architecture: 'Architecture', settings: 'Settings' }
@@ -368,30 +361,17 @@ function Settings({ project, integrations }: { project: Project; integrations: I
         </form>
         <span className="muted small">The first repository is the agent's working directory; the rest are added with --add-dir.</span>
       </div>
-      <div className="row2">
-        <label className="field" title="Used for a repository without origin/HEAD; others use their own default branch">Default base branch<input defaultValue={project.baseBranch} onChange={(e) => update({ baseBranch: e.target.value.trim() || 'main' })} /></label>
-      </div>
       <label className="check">
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />
         Enforce core architecture (lib / clients / services) for agents
       </label>
-      <label className="field">
-        PR review format
-        <select value={projectReviewFormat(project)} style={{ width: 'max-content' }} onChange={(e) => update({ reviewFormat: e.target.value as ReviewFormat })}>
-          {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{REVIEW_FORMAT_LABELS[f]}</option>)}
-        </select>
-        <span className="muted small">The format a new review of a PR starts with; the work list asks each time with this one picked, and a review can run the other format too.</span>
-      </label>
       <AgentSettings project={project} />
       <IntegrationSettings project={project} integrations={integrations} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
-      <h2>Doc templates</h2>
-      {TYPES.map((t) => (
-        <label key={t} className="field">{t}
-          <textarea rows={6} defaultValue={project.templates[t] ?? DEFAULT_TEMPLATES[t]} onChange={(e) => update({ templates: { ...project.templates, [t]: e.target.value } })} />
-        </label>
-      ))}
-      <PlaybookSettings project={project} update={update} />
+      <details className="advanced">
+        <summary>Advanced: the playbook agents follow</summary>
+        <PlaybookSettings project={project} update={update} />
+      </details>
       <h2>Diagnostics</h2>
       <div className="field">
         <div><button onClick={() => mag.openLogs()}>Open logs folder</button></div>

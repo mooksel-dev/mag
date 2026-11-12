@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, projectReviewFormat, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -63,7 +63,7 @@ Bash is for reading. ${GITHUB_WRITES_LINE}
 Keep chat replies short, with your position in them; the doc carries the detail.`
 
 /** Every base branch of a work's repositories and the project's, once each: what developers never push to. */
-const basesOf = (project: Project, work: TaskWork | null) => [...new Set([project.baseBranch, ...(work?.repos ?? []).map((r) => baseOf(project, r))])]
+const basesOf = (project: Project, work: TaskWork | null) => [...new Set([FALLBACK_BASE, ...(work?.repos ?? []).map((r) => baseOf(project, r))])]
 
 const workLines = (project: Project, work: TaskWork) =>
   work.repos.map(
@@ -1048,7 +1048,7 @@ export class Orchestrator {
     const intro = `Implement step ${step.key} of ${task.key}. Start with get_task and get_doc.`
     const repoBase = (repo: string) => {
       const r = this.store.task(step.id).work?.repos.find((w) => w.repo === repo)
-      return r ? baseOf(project, r) : project.baseBranch
+      return r ? baseOf(project, r) : FALLBACK_BASE
     }
     const talk = ready.discuss.length ? [intro, discussText(ready.discuss, repoBase)].join('\n\n') : undefined
     // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
@@ -1145,7 +1145,7 @@ export class Orchestrator {
       this.store.updateTask(task.id, { localRepos: local })
       const work = this.store.task(stepId).work!
       const rest = { ...work, repos: work.repos.filter((w) => w.repo !== repo) }
-      const bases = r.base ? { [repo]: r.base } : r.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
+      const bases = r.base ? { [repo]: r.base } : r.prUrl ? {} : { [repo]: await defaultBranch(repo, FALLBACK_BASE) }
       patch = { work: this.workFor(rest, project, work.dir, r.branch, [repo], local, bases), ...(waiting && { waitingFor: null }) }
     } else if (choice === 'wait') patch = { waitingFor: { key: check!.busyBy!, repo } }
     else if (choice !== 'discuss') {
@@ -1292,7 +1292,7 @@ export class Orchestrator {
       return !w || (!w.base && !w.prUrl)
     }
     const todo = [...new Set([...repos, ...(prev?.repos ?? []).map((w) => w.repo)])].filter((r) => project.repos.includes(r) && unknown(r))
-    return Object.fromEntries(await Promise.all(todo.map(async (r) => [r, await defaultBranch(r, project.baseBranch)] as const)))
+    return Object.fromEntries(await Promise.all(todo.map(async (r) => [r, await defaultBranch(r, FALLBACK_BASE)] as const)))
   }
 
   /**
@@ -1313,7 +1313,7 @@ export class Orchestrator {
     const kept = (work: TaskWork) => (worktree ? { ...work, repos: work.repos.filter((w) => !(w.repo === repo && w.local)) } : work)
     // A repository leaving its main checkout for a worktree keeps the base it had.
     const had = step.work.repos.find((w) => w.repo === repo)
-    const bases = had?.base ? { [repo]: had.base } : had?.prUrl ? {} : { [repo]: await defaultBranch(repo, project.baseBranch) }
+    const bases = had?.base ? { [repo]: had.base } : had?.prUrl ? {} : { [repo]: await defaultBranch(repo, FALLBACK_BASE) }
     const planned = (work: TaskWork) => this.workFor(kept(work), project, work.dir, stepBranch(step.key), [repo], local, bases)
     const r = planned(step.work).repos.find((w) => w.repo === repo)
     if (!r) throw new Error(`${step.key} has no room for another worktree`)
@@ -1413,11 +1413,11 @@ export class Orchestrator {
     const policy =
       bases.length > 1
         ? `rebased on the fresh base of its repo (${conflicting.map((r) => `in ${repoWorkName(work!, r)}: ${rebase(baseOf(project, r))}`).join('; ')})`
-        : `rebased on fresh origin/${bases[0] ?? project.baseBranch} (${rebase(bases[0] ?? project.baseBranch)})`
+        : `rebased on fresh origin/${bases[0] ?? FALLBACK_BASE} (${rebase(bases[0] ?? FALLBACK_BASE)})`
     const text =
       problem === 'ci'
         ? `CI fails on your PR:\n${detail}\nRead the failing logs (gh pr checks, gh run view --log-failed), fix the cause, run the tests, push. If it is not caused by your change, say why here and call set_needs_input.`
-        : `Your PR has conflicts with ${bases.length > 1 ? `their bases (${bases.join(', ')})` : (bases[0] ?? project.baseBranch)}:\n${detail}\nThe branch policy: the step's branch is ${policy} rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
+        : `Your PR has conflicts with ${bases.length > 1 ? `their bases (${bases.join(', ')})` : (bases[0] ?? FALLBACK_BASE)}:\n${detail}\nThe branch policy: the step's branch is ${policy} rather than merged with it, so its PR stays one line of commits on top of the base that the reviewer reads; it is pushed with --force-with-lease, so nobody else's commits are lost. Resolve the conflicts keeping both sides' intent, run the tests and push. If a conflict needs a decision, call set_needs_input.`
     if (!this.resumeDeveloper(step, text, problem === 'ci' ? `CI failed · try ${n + 1}/${AUTO_FIX_TRIES}` : `Conflict · try ${n + 1}/${AUTO_FIX_TRIES}`)) return false
     this.store.updateTask(stepId, { autoFix: { ...tries, [problem]: n + 1 } })
     this.ownerEvent(stepId, `${step.key}: ${what}, the developer fixes it (try ${n + 1}/${AUTO_FIX_TRIES})`)
@@ -1621,7 +1621,7 @@ export class Orchestrator {
     const name = prRepoName(project, pr)
     // An imported review is read only: a review of its PR here is a new one.
     const prev = reviewOf(tasks.filter((t) => !t.imported), info.url)
-    const f = format ?? projectReviewFormat(project)
+    const f = format ?? DEFAULT_REVIEW_FORMAT
     const before = prev?.prReview?.results[f]
     // The topic that ran this format before, while it is there; never the other format's.
     const topicOf = (id: string | null | undefined) => (id ? this.store.data.sessions.find((s) => s.id === id && s.role === 'chat' && !s.taskId) : undefined)
@@ -2701,7 +2701,7 @@ export class Orchestrator {
     if (session.role === 'groomer' && task.status === 'planning' && !failed) this.store.updateTask(task.id, { needsInput: 'Groomer stopped without finishing; check the chat' })
     if (session.role === 'developer' && task.status === 'in_progress') {
       const work = this.ownerOf(session).work
-      const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, this.store.project(task.projectId).baseBranch) : []
+      const changed = work?.repos.some((r) => r.prUrl) ? await changedRepos(work, FALLBACK_BASE) : []
       const now = this.store.task(task.id)
       // A step whose developer asked its owner waits for the answer.
       if (now.status !== 'in_progress' || now.needsInput || this.isRunning(session.id) || session.background?.length || this.ownerOf(session).status === 'done' || this.ownerOf(session).ownerQuestion) return

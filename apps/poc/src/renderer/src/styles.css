@@ -998,3 +998,5 @@ details.inline { display: inline-block; margin-left: 6px; }
 .wlsub .wlsess { padding-right: 30px; }
 .wlsub .wlmore { top: 1px; }
 .wlsub.on, .wlsub.on .wlsess { background: var(--soft); }
+.page details.advanced { margin-top: var(--sp-4); }
+.page details.advanced > summary { cursor: pointer; font-weight: 600; color: var(--muted); }

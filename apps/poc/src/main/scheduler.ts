@@ -1,3 +1,4 @@
+import { FALLBACK_BASE } from '@mag/core'
 import { rmdir } from 'node:fs'
 import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
@@ -25,7 +26,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
    */
   const finished = async (owner: Task, work: TaskWork) => {
     if (anyRunning((s) => (owner.parentId ? s.stepId === owner.id : s.taskId === owner.id))) return false
-    return prsMerged(work, await changedRepos(work, store.project(owner.projectId).baseBranch))
+    return prsMerged(work, await changedRepos(work, FALLBACK_BASE))
   }
 
   // A PR closed without merge is not polled again; the developer opens a new one (set_pr) if needed.
@@ -127,7 +128,7 @@ export function startScheduler(store: Store, orch: Orchestrator) {
     // New commits on a step's PRs (pushed after the user's comments, or by hand) get the agent review again (T-55.1).
     const heads = prHeads(next)
     if (!reviewDue(owner, heads) || anyRunning((s) => s.stepId === owner.id)) return
-    if (prRollup(next, await changedRepos(next, store.project(owner.projectId).baseBranch)) === 'review') await orch.review(owner.id, heads)
+    if (prRollup(next, await changedRepos(next, FALLBACK_BASE)) === 'review') await orch.review(owner.id, heads)
   }
 
   /**

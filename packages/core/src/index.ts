@@ -51,6 +51,9 @@ export type SubtaskStatus = 'todo' | 'in_progress' | 'done'
 
 export const SUBTASK_STATUSES: SubtaskStatus[] = ['todo', 'in_progress', 'done']
 
+/** The base branch of a repository without origin/HEAD; every other one uses its own default branch. */
+export const FALLBACK_BASE = 'main'
+
 export interface Project {
   id: string
   name: string
@@ -58,12 +61,8 @@ export interface Project {
   repos: string[]
   /** Free-form notes / links the agents should know about. */
   notes: string
-  /** Markdown template per task type that agents follow when writing the task doc. */
-  templates: Partial<Record<TaskType, string>>
   /** The project's own playbook sections (T-55.2); missing or null = mag's default (see playbookOf). */
   playbook?: Partial<Playbook> | null
-  /** Branch that worktrees start from and PRs target. */
-  baseBranch: string
   /** Enforce the core/{lib,clients,services} layering in grooming, development and checks. */
   enforceArchitecture: boolean
   /** Architecture as an agent described it; rendered in the Architecture tab. */
@@ -83,8 +82,6 @@ export interface Project {
    * appends one line to notes. Missing = none.
    */
   directionDecisions?: DirectionDecision[]
-  /** The format a new review of a PR starts with (review-v2-part-2-v1-2.1); missing = v2. */
-  reviewFormat?: ReviewFormat
   /** The sidebar in the user's order, with the user's groups (see sidebarRows); missing or empty = one flat list. */
   sidebar?: SidebarNode[]
   createdAt: number

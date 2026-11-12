@@ -1,3 +1,4 @@
+import { FALLBACK_BASE } from '@mag/core'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { localCheckText, localOptions, openLocalChecks, repoNames, taskRepos, type LocalCheck, type LocalChoice, type Project, type Task } from '@mag/core'
 import { popupPlace } from './popupPlace'
@@ -114,7 +115,7 @@ export function LocalChecks({ step, project, compact }: { step: Task; project?: 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Each repository's own base (RepoWork.base), else the project's.
-  const baseOf = (repo: string) => step.work?.repos.find((r) => r.repo === repo)?.base ?? project?.baseBranch ?? 'main'
+  const baseOf = (repo: string) => step.work?.repos.find((r) => r.repo === repo)?.base ?? FALLBACK_BASE
   const checks = openLocalChecks(step)
   if (!checks.length && !step.waitingFor) return null
   const choose = (repo: string, choice: LocalChoice) => (e: React.MouseEvent) => {
