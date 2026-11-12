@@ -1,6 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import { Extension } from '@tiptap/core'
+import { Plugin } from '@tiptap/pm/state'
+import { plainMarkdown } from './markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import { Markdown } from 'tiptap-markdown'
@@ -17,7 +19,9 @@ export interface RichInputHandle {
 /** What the composer decides on a key: true = handled (the editor does nothing more). */
 export type KeyHandler = (e: KeyboardEvent, state: { inCode: boolean; inList: boolean; emptyItem: boolean }) => boolean
 
-const markdownOf = (editor: Editor) => (editor.storage as unknown as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown()
+const markdownOf = (editor: Editor) => plainMarkdown((editor.storage as unknown as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown())
+
+const FENCE_LINE = /^```([\w+#-]*)[ \u00a0]$/
 
 /** ```lang + Enter on a line of its own: a code block, as in Slack and the Claude app. */
 const FenceOnEnter = Extension.create({
@@ -33,6 +37,20 @@ const FenceOnEnter = Extension.create({
         return editor.chain().deleteRange({ from: $from.start(), to: $from.end() }).setCodeBlock(m[1] ? { language: m[1] } : undefined).run()
       },
     }
+  },
+  /** ```lang + space, however the text came in (a typed key, an IME, the DOM read back): the same code block. */
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction: (trs, _old, state) => {
+        if (!trs.some((t) => t.docChanged)) return null
+        const { $from, empty } = state.selection
+        if (!empty || $from.parent.type.name !== 'paragraph') return null
+        const m = FENCE_LINE.exec($from.parent.textContent)
+        const code = state.schema.nodes.codeBlock
+        if (!m || !code) return null
+        return state.tr.delete($from.start(), $from.end()).setBlockType($from.start(), $from.start(), code, m[1] ? { language: m[1] } : {})
+      },
+    })]
   },
 })
 

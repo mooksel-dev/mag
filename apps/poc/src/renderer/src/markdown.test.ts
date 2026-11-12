@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { canvasHref, mdSegments, parseCanvasHref } from './markdown.ts'
+import { plainMarkdown } from './markdown.ts'
 
 test('mdSegments: no canvas links is one markdown segment', () => {
   assert.deepEqual(mdSegments('# Hi\n\ntext'), [{ kind: 'md', text: '# Hi\n\ntext' }])
@@ -86,4 +87,10 @@ test('mdSegments: canvas:<id>#<node> links a node of a diagram', () => {
     { kind: 'canvas', id: 'c1', title: 'Store', node: 'task-store' },
     { kind: 'canvas', id: 'c1', title: 'All' },
   ])
+})
+
+test('plainMarkdown: a line break is a newline and plain-text escapes go; code keeps its backslashes', () => {
+  assert.equal(plainMarkdown('Давай приберемо\\\n\\\nДоречі'), 'Давай приберемо\n\nДоречі')
+  assert.equal(plainMarkdown('\\`\\`\\` так і не працює, a\\_b, 1\\. item, \\*bold\\*'), '``` так і не працює, a_b, 1. item, *bold*')
+  assert.equal(plainMarkdown('run `a\\_b` then\n```ts\nconst re = /\\./\n```'), 'run `a\\_b` then\n```ts\nconst re = /\\./\n```')
 })
