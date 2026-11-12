@@ -665,16 +665,20 @@ export function Composer({
   const submit = async () => {
     if ((busy && !queue) || (!text.trim() && !files.length && !refs.length)) return
     // Files and refs never go with a command; they stay for the next message. A failed send keeps all; the caller shows why.
+    // The draft goes first: the send can replace this field with the chat's own (a topic's first message), which would
+    // read the draft back before the send returns.
+    const sent = text
+    keep('')
     try {
-      await onSend(text.trim(), isCommand ? [] : files, isCommand ? [] : refs)
+      await onSend(sent.trim(), isCommand ? [] : files, isCommand ? [] : refs)
     } catch (err) {
       console.error(err)
+      keep(sent)
       return
     }
     ta.current?.clear()
     setText('')
     setPlain('')
-    keep('')
     if (!isCommand) {
       setFiles([])
       setRefs([])
