@@ -359,3 +359,29 @@ export function reviewPollOutcome(review: PrReview, live: { state: 'OPEN' | 'MER
   if (live.state !== 'OPEN') return 'done'
   return live.head && shownResult(review)?.head && live.head !== review.pr.head ? 'rereview' : null
 }
+
+/** The label a finding drawn from a report starts with ("Risk (bug): "), which its level already says. */
+const FINDING_LABEL = /^(?:mag|Convention: [^:]+|Problem: [^:]+: (?:not|partly) solved\.|Risk \(\w+\)):\s*|^(?:Problem: [^:]+: (?:not|partly) solved\.)\s*/
+
+/**
+ * A finding as the user reads it: its essence (its summary, else the first sentence of its text without the report's
+ * label) and the comment it makes on the PR, null when that only repeats the essence.
+ */
+export function findingLines(f: Pick<ReviewFinding, 'summary' | 'text'>): { summary: string; comment: string | null } {
+  const text = f.text.trim()
+  if (f.summary?.trim()) return { summary: f.summary.trim(), comment: text }
+  const bare = text.replace(FINDING_LABEL, '')
+  const m = /^(.{12,}?[.!?])(\s|$)/s.exec(bare)
+  const summary = (m ? m[1] : bare).trim()
+  const rest = bare.slice(summary.length).trim()
+  return { summary, comment: rest ? text : null }
+}
+
+/** A finding's essence for the user (see findingLines). */
+export const findingSummary = (f: Pick<ReviewFinding, 'summary' | 'text'>): string => findingLines(f).summary
+
+/** Where a finding is, as the user reads it: a file and line, a module or a PR; an inventory unit id is mag's own. */
+export const findingWhere = (f: Pick<ReviewFinding, 'where'>): string | null => (f.where && !/^u\d+$/.test(f.where) ? f.where : null)
+
+/** What a user publishes without picking: the blockers. */
+export const pickedByDefault = (f: Pick<ReviewFinding, 'post' | 'level'>): boolean => f.post ?? f.level === 'blocker'

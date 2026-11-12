@@ -140,6 +140,7 @@ function findingsArg(v: unknown): ReviewFinding[] {
     const level = opt(x.level)
     if (level && !(FINDING_LEVELS as string[]).includes(level)) throw new Error(`level must be one of ${FINDING_LEVELS.join(', ')}`)
     const f: ReviewFinding = { text }
+    if (opt(x.summary)) f.summary = opt(x.summary)
     if (opt(x.where)) f.where = opt(x.where)
     if (level) f.level = level as ReviewFinding['level']
     if (opt(x.node)) f.node = opt(x.node)

@@ -487,7 +487,10 @@ export const REVIEW_VERDICTS: ReviewVerdict[] = ['changes', 'merge', 'look']
 
 /** A finding of an agent review: of a step's PRs (AgentReview) or of a teammate's PR (PrReview). */
 export interface ReviewFinding {
+  /** The comment it makes on the PR. */
   text: string
+  /** Its essence for the user, one short line; missing on older reviews (findingSummary falls back to the text). */
+  summary?: string
   /** file:line, a module or a PR, when it applies. */
   where?: string
   /** How much it matters; missing on findings recorded before levels. */

@@ -6,6 +6,7 @@ import {
   findingCounts,
   findingsFolded,
   findingsByLevel,
+  pickedByDefault,
   isImported,
   prRepoName,
   reviewRunning,
@@ -42,7 +43,6 @@ const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { block
 const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending: '…', skipping: '–', cancel: '–' }
 
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
-const pickedByDefault = (f: ReviewFinding) => f.post ?? ['blocker', 'should_fix'].includes(f.level ?? 'should_fix')
 
 /** The CI checks of the PR, from GitHub when the page opens. */
 function Checks({ work }: { work: Task }) {

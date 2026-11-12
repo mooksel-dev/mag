@@ -22,6 +22,7 @@ import type { AppState } from '../../preload/api'
 import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
 import { topicAgents, topicArtifacts, type ArtifactTarget } from './artifacts'
 import { WorkCards } from './Cards'
+import { ReviewTable } from './ReviewTable'
 import { CanvasOpener, Chat, Composer, ModelChip } from './Chat'
 import { ArtifactDrawer } from './Drawer'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
@@ -96,10 +97,23 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const reviews = topic ? tasks.filter((t) => isReview(t) && t !== review && t.ownerSessionId === topic.id && t.status === 'in_progress') : []
   const owned = topic ? [...(review ? [review] : []), ...reviews, ...ownedWorks(topic.id, tasks)] : work ? [work] : []
   const cardsOf = work && owned.some((t) => t.id === work.id) ? [work, ...owned.filter((t) => t.id !== work.id)] : owned
-  const waiting = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).find((c) => c.card?.move.who === 'you')
+  const yours = cardsOf.map((t) => ({ t, card: workCard(t, tasks, state.sessions, now) })).filter((c) => c.card?.move.who === 'you')
+  // Several reviews waiting: the bar counts them, the table below lists them.
+  const waitingReviews = yours.filter((c) => isReview(c.t)).length
+  const waiting = waitingReviews > 1
+    ? { t: yours.find((c) => isReview(c.t))!.t, card: { move: { who: 'you' as const, text: `${waitingReviews} reviews wait on you: pick what to publish in the table below` } } }
+    : yours[0]
   // An answer goes into the composer.
   const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLElement>('.screenmain .richinput')?.focus())
-  const cards = cardsOf.length ? <>{cardsOf.map((t) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={cardsOf.length > 1} />)}</> : undefined
+  // A topic's reviews are one table; its works keep their cards.
+  const reviewsHere = topic ? cardsOf.filter(isReview) : []
+  const worksHere = cardsOf.filter((t) => !reviewsHere.includes(t))
+  const cards = cardsOf.length ? (
+    <>
+      {reviewsHere.length > 0 && <ReviewTable reviews={reviewsHere} project={project} state={state} onOpen={(taskId) => drawer.setOpen({ kind: 'review', taskId })} />}
+      {worksHere.map((t) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={worksHere.length > 1 || reviewsHere.length > 0} />)}
+    </>
+  ) : undefined
   const canGroom = !topic && !!work && !isReview(work) && !workSessions(work, state).some((s) => s.status === 'running') && !work.work && (work.status === 'planning' || work.status === 'ready')
   const pr = review?.prReview?.pr
   // A work or review closed or deleted from its card: back to the topic without it (gone with it too: Home).
@@ -137,7 +151,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
               Under {parent ? <button type="button" className="link" onClick={() => onSelect({ kind: 'topic', id: parent.id })}>{shortTitle(parent)}</button> : 'a deleted topic'}
             </div>
           )}
-          {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1} />}
+          {waiting?.card && <WaitingBar move={waiting.card.move} work={waiting.t} state={state} onAnswer={focus} keyed={cardsOf.length > 1 && waitingReviews < 2} />}
         </header>
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
