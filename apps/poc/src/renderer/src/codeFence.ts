@@ -31,11 +31,24 @@ const fenceKey = ({ editor }: { editor: Editor }) => {
   return true
 }
 
+/**
+ * ⇧↵ is the editor's ↵ here, since ↵ sends: a new list item (out of the list on an empty one), a new line in code, a new
+ * paragraph, so the markdown shortcuts work on the next line as they do after ↵ in any editor.
+ */
+const enterLike = ({ editor }: { editor: Editor }) =>
+  editor.commands.first(({ commands }) => [
+    () => commands.splitListItem('listItem'),
+    () => commands.newlineInCode(),
+    () => commands.createParagraphNear(),
+    () => commands.liftEmptyBlock(),
+    () => commands.splitBlock(),
+  ])
+
 export const FenceOnEnter = Extension.create({
   name: 'fenceOnEnter',
   priority: 1000,
   addKeyboardShortcuts() {
-    return { Enter: fenceKey, 'Shift-Enter': fenceKey }
+    return { Enter: fenceKey, 'Shift-Enter': (props) => fenceKey(props) || enterLike(props) }
   },
   /** ```lang + space, however the text came in (a typed key, an IME, the DOM read back): the same code block. */
   addProseMirrorPlugins() {
