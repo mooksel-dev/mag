@@ -1897,6 +1897,32 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
   }
 })
 
+test('Review again of a review a subtopic runs goes to that subtopic: no topic is made', async () => {
+  const s = setup()
+  const { dir, store, orch, project } = s
+  const remote = gitRepo(join(dir, 'remote'))
+  git(remote, 'checkout', '-q', '-b', 'feature')
+  writeFileSync(join(remote, 'charge.ts'), 'export const charge = 1\n')
+  git(remote, 'add', '.')
+  git(remote, 'commit', '-q', '-m', 'charge')
+  const head = git(remote, 'rev-parse', 'HEAD')
+  const url = 'https://github.com/acme/remote/pull/9'
+  const gh = fakeGh(dir)
+  gh.set({ repo: remote, posts: gh.postsFile, pr: { url, number: 9, title: 'Charge', author: { login: 'olena' }, state: 'OPEN', isDraft: false, baseRefName: 'main', headRefOid: head } })
+  try {
+    const { topic } = await liveTopic(s)
+    const sub = orch.startChild(topic.id, '', null, false, 'user')
+    const first = await orch.reviewPr(project.id, url, sub.id)
+    assert.equal(store.task(first.taskId).ownerSessionId, sub.id)
+    const sessions = store.data.sessions.length
+    const again = await orch.rereview(first.taskId)
+    assert.equal(again.sessionId, sub.id, 'the subtopic that runs it')
+    assert.equal(store.data.sessions.length, sessions, 'no topic is made')
+  } finally {
+    gh.restore()
+  }
+})
+
 /** The tools of a project topic that does what the buttons do, wired to the orchestrator as index.ts wires them. */
 function chatControls(s: ReturnType<typeof setup>) {
   const actions = {

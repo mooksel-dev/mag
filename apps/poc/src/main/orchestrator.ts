@@ -1623,8 +1623,15 @@ export class Orchestrator {
     const prev = reviewOf(tasks.filter((t) => !t.imported), info.url)
     const f = format ?? DEFAULT_REVIEW_FORMAT
     const before = prev?.prReview?.results[f]
-    // The topic that ran this format before, while it is there; never the other format's.
-    const topicOf = (id: string | null | undefined) => (id ? this.store.data.sessions.find((s) => s.id === id && s.role === 'chat' && !s.taskId) : undefined)
+    // The conversation that ran this format before, while it is there; never the other format's: a topic or a subtopic,
+    // or for an agent under one, its topic. Never a new topic for a review that has one.
+    const topicOf = (id: string | null | undefined) => {
+      const s = id ? this.store.data.sessions.find((x) => x.id === id) : undefined
+      if (!s || s.taskId) return undefined
+      if ((s.role === 'chat' && !s.parentId) || isSubtopic(s)) return s
+      const top = rootSession(s.id, this.store.data.sessions)
+      return top && top.role === 'chat' && !top.taskId ? top : undefined
+    }
     const owner = by ?? topicOf(before?.sessionId)?.id ?? topicOf(prev?.ownerSessionId)?.id
     if (owner && !by && this.isRunning(owner)) throw new Error(`The topic of ${prev!.key} is working; ask it there`)
     const sessionId = owner ?? this.newChat(projectId)
