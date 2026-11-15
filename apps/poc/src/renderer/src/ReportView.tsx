@@ -62,6 +62,9 @@ function useCode(target: HunkTarget, expand: Expand | undefined): { button: Reac
   }
 }
 
+/** An inventory unit's id (u12): mag's own, shown as its code, never as text. */
+const UNIT_ID = /^u\d+$/
+
 /** A row of the changes table (the routine one folds: `title` is its toggle); in the window, its units' code expands under it. */
 function ChangeRow({ change, expand, title, open = true }: { change: ReportChange; expand?: Expand; title?: ReactNode; open?: boolean }) {
   const { button, code } = useCode({ kind: 'change', units: change.units }, expand)
@@ -77,7 +80,8 @@ function ChangeRow({ change, expand, title, open = true }: { change: ReportChang
           </>
         )}
       </td>
-      <td className="small">{open ? change.units.map((u) => <code key={u}>{u}</code>) : `${change.units.length} units`}</td>
+      {/* Inventory unit ids are mag's own: a count here, the code behind them under "code". */}
+      <td className="small muted nowrap">{change.units.length} unit{change.units.length === 1 ? '' : 's'}</td>
     </tr>
   )
 }
@@ -95,7 +99,7 @@ function ClaimLine({ claim, onView, expand, children }: { claim: Claim; onView: 
         {children}
         <div>{claim.text}</div>
         <div className="small muted">
-          {claim.cites.map((c) => <code key={c}>{c}</code>)}
+          {claim.cites.filter((c) => !UNIT_ID.test(c)).map((c) => <code key={c}>{c}</code>)}
           {canvas && (still
             ? <a className="link small" href={`#${diagramAnchor(canvas)}`}>{label}</a>
             : <button className="link small" title="Show the diagram it cites" onClick={() => onView(canvas)}>{label}</button>)}
