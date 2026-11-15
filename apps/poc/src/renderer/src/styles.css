@@ -1038,3 +1038,8 @@ details.inline { display: inline-block; margin-left: 6px; }
 .inlineset .setlevels > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .inlineset .setlevel { margin: 0 4px 0 0; }
 .inlineset .setitem { width: auto; flex-direction: row; align-items: center; gap: 6px; }
+
+.fulldiff > summary { cursor: pointer; list-style: none; }
+.fulldiff > summary::-webkit-details-marker { display: none; }
+.fulldiff > summary h2::before { content: '▸ '; color: var(--faint); }
+.fulldiff[open] > summary h2::before { content: '▾ '; }
