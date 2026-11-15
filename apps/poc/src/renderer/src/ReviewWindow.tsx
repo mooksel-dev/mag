@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   FINDING_LEVEL_LABELS,
   findingsByLevel,
@@ -133,6 +133,19 @@ function DiffFile({ file, hunks, src }: { file: FileChange; hunks: HunkPick<File
         <code>{file.path}</code> <span className="muted small">{hunks.length} hunk{hunks.length === 1 ? '' : 's'}</span>
       </summary>
       {shownHunks(hunks, open || still).map((p) => <HunkBlock key={hunkKey(p.file, p.hunk)} pick={p} src={src} />)}
+    </details>
+  )
+}
+
+/** The full diff's card, folded: the review reads above it; opened, the diff renders. */
+function FoldedDiff({ files, children }: { files: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  // An exported page has no state to open it with: its diff is in the page, folded.
+  const still = useContext(StaticDataContext)
+  return (
+    <details className="reportcard fulldiff" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="cardhead"><h2>Full diff</h2><span className="muted small">{files} file{files === 1 ? '' : 's'}, by change</span></summary>
+      {(open || still) && children}
     </details>
   )
 }
@@ -346,10 +359,9 @@ export function ReviewWindow({ state, taskId, still = null }: {
               ))}
             </section>
           )}
-          <section className="reportcard">
-            <div className="cardhead"><h2>Full diff</h2><span className="muted small">by change, files folded</span></div>
+          <FoldedDiff files={model.groups.reduce((n, g) => n + g.files.length, 0)}>
             {view === null ? <p className="muted small">No PR: no diff.</p> : <FullDiff groups={model.groups} />}
-          </section>
+          </FoldedDiff>
         </main>
         {drawer && !ro && <ChatDrawer sessionId={discussed ?? owner?.id ?? null} state={state} onClose={() => setDrawer(false)} />}
       </div>

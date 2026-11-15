@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type MouseEvent as ReactMouseEvent, type ReactNode, type SetStateAction } from 'react'
 import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DBoundary, type DFlow, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
 import { callGroups, edgePill, flowLines, flowOf, methodCallers, moveEdges, relatedFlows, unchangedAt, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
@@ -99,7 +99,8 @@ export function ComponentView({ modules: drawn, boundaries = NO_BOUNDARIES, flow
   // The tree may change under us (a new architect run): fall back to the top when the level is gone.
   const parentId = level && crumbs.length ? level : null
   const sel = selected ? findNode(modules, selected) : undefined
-  const shown = (diff && hover ? findNode(modules, hover) : undefined) ?? sel
+  // The panel shows what is clicked; hovering only lights the box's links, so nothing reflows under the pointer.
+  const shown = sel
   // The open flow of a method, in place of the modules; gone with its diagram or module.
   const [flowId, setFlowId] = useState<string | null>(null)
   const flow = diff ? flows.find((f) => f.id === flowId) : undefined
@@ -195,17 +196,12 @@ export function ComponentView({ modules: drawn, boundaries = NO_BOUNDARIES, flow
       <div className="archbody">
         <Level key={parentId ?? ''} all={modules} boundaries={boundaries} flowDefs={flowDefs} diff={diff} paint={paint} flows={flows} parentId={parentId} selected={selected} hover={hover} onHover={setHover} onSelect={setSelected} onOpen={go} onReveal={reveal} onFlow={openFlow} />
         {diff ? (
-          // A diff keeps the panel in place, so hovering a box does not reflow the diagram under the pointer.
-          <aside className="archside">
-            {shown ? (
-              <>
-                {shown === sel && <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>}
-                <DiffDetails all={modules} flows={flows} node={shown} onReveal={reveal} onOpen={go} onFlow={openFlow} />
-              </>
-            ) : (
-              <p className="muted small">Hover or click a module to see what it calls and who calls it.</p>
-            )}
-          </aside>
+          shown && (
+            <aside className="archside">
+              <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
+              <DiffDetails all={modules} flows={flows} node={shown} onReveal={reveal} onOpen={go} onFlow={openFlow} />
+            </aside>
+          )
         ) : (
           sel && (
             <aside className="archside">
@@ -363,7 +359,12 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
   }
   const hoverProps = (id: string) => ({
     onMouseEnter: () => setHover(id),
-    onMouseLeave: () => setHover((h) => (h === id ? null : h)),
+    // Onto a badge or a step number drawn over the diagram: still this box. Its links redraw the badges, which would
+    // take the pointer, end the hover and redraw them again, many times a second. The level's own leave clears it.
+    onMouseLeave: (e: ReactMouseEvent) => {
+      if ((e.relatedTarget as Element | null)?.closest?.('.archbadge, .archstep')) return
+      setHover((h) => (h === id ? null : h))
+    },
   })
 
   /** A module's box; a port is a module outside the level. `style` places it on a graph level. */
@@ -427,7 +428,7 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
   }
 
   return (
-    <div className={`archdiagram${framed ? ' framed' : ''}`} ref={wrap}>
+    <div className={`archdiagram${framed ? ' framed' : ''}`} ref={wrap} onMouseLeave={() => setHover(null)}>
       {framed ? (
         <div className="archgraph" style={{ width: layout?.w ?? 0, height: layout?.h ?? 0, visibility: layout ? 'visible' : 'hidden' }}>
           {layout?.frames.map((f) => {

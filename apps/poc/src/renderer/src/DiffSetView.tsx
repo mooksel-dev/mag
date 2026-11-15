@@ -213,10 +213,11 @@ function NodePanel({ set, open, node, view, hunks, findings, onFollow }: {
   const here = node
     ? findings.filter((f) => f.node === `canvas:${open.id}#${node}` || (f.where && paths.has(findingPlace(f.where)?.path ?? f.where.split(':')[0])))
     : findings.filter((f) => f.node?.startsWith(`canvas:${open.id}`))
+  // Nothing selected and nothing to say: no panel over the diagram.
+  if (!node && !links.length && !here.length) return null
   return (
     <aside className="setside">
       <div className="label">{node ? nodeLabel(d, node) : 'This diagram'}</div>
-      {!node && <p className="muted small">Click a node: what it links to, its files and findings.</p>}
       {links.length > 0 && (
         <>
           <div className="label">Links</div>
