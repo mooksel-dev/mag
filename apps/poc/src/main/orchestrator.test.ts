@@ -1923,6 +1923,20 @@ test('Review again of a review a subtopic runs goes to that subtopic: no topic i
   }
 })
 
+test("the user's message in a topic answers the Needs you of the works it owns", async () => {
+  const s = setup()
+  const { topic } = await liveTopic(s)
+  const owned = s.store.createTask({ projectId: s.project.id, title: 'Owned', type: 'dev', description: '', ownerSessionId: topic.id })
+  const other = s.store.createTask({ projectId: s.project.id, title: 'Other', type: 'dev', description: '' })
+  s.store.updateTask(owned.id, { needsInput: 'Review the changes, then say go' })
+  s.store.updateTask(other.id, { needsInput: 'Pick one' })
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await s.orch.send(topic.id, 'looks good, go')
+  assert.equal(s.store.task(owned.id).needsInput, null)
+  assert.equal(s.store.task(other.id).needsInput, 'Pick one', 'another topic\'s work keeps its ask')
+})
+
 /** The tools of a project topic that does what the buttons do, wired to the orchestrator as index.ts wires them. */
 function chatControls(s: ReturnType<typeof setup>) {
   const actions = {

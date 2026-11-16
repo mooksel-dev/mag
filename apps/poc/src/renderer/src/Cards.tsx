@@ -99,6 +99,7 @@ export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; own
         <div className="actions">
           {questions.length > 0 && <button className="primary" disabled={busy || sent} title={busy ? 'The owner is in a turn' : 'Send the owner: you accept its recommendations'} onClick={accept}>{sent ? 'Sent' : 'Accept recommendations'}</button>}
           <button onClick={onAnswer}>{questions.length ? 'Answer differently' : 'Answer'}</button>
+          <button className="link small" title="Nothing to answer: take it off; the agent asks again if it still needs you" onClick={() => void mag.updateTask(work.id, { needsInput: null, needsQuestions: null })}>Dismiss</button>
         </div>
       )}
     </div>
