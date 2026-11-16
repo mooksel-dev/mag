@@ -106,7 +106,8 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   // An answer goes into the composer.
   const focus = () => requestAnimationFrame(() => box.current?.querySelector<HTMLElement>('.screenmain .richinput')?.focus())
   // A topic's reviews are one table; its works keep their cards.
-  const reviewsHere = topic ? cardsOf.filter(isReview) : []
+  // A review made a moment ago has no PR recorded yet: it joins the table once it has.
+  const reviewsHere = topic ? cardsOf.filter((t) => isReview(t) && !!t.prReview) : []
   const worksHere = cardsOf.filter((t) => !reviewsHere.includes(t))
   const cards = cardsOf.length ? (
     <>

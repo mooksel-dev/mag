@@ -42,7 +42,7 @@ export function ReviewTable({ reviews, project, state, onOpen }: {
         <b>{reviews.length} review{reviews.length > 1 ? 's' : ''}</b>
         {waiting > 0 && <span className="pill amber">{waiting} wait on you</span>}
       </div>
-      {reviews.map((t) => (
+      {reviews.filter((t) => t.prReview).map((t) => (
         <ReviewRow key={t.id} work={t} project={project} running={reviewRunning(t, state.sessions)} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onOpen={() => onOpen(t.id)} />
       ))}
     </div>
