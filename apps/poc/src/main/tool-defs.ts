@@ -425,7 +425,7 @@ export const TOOL_DEFS = [
     name: 'set_needs_input',
     scope: 'task',
     description:
-      "Tell the user you need them. Pass a one-line reason, or null when nothing is pending anymore. Details belong in the doc. When the user has to decide something, pass each decision in questions with your recommendation: the user sees them on a card and can accept all recommendations with one click (your chat then gets them as the user's answer). A step's developer asks the work's owner first: it answers in the developer's chat or asks the user.",
+      "Tell the user you need them: a one-line ask that says what they must do or decide (\"Review the changes in ftm, then say go\"), never a status (\"Changes ready\"); null when nothing is pending anymore. The user's next message in your chat clears it. Details belong in the doc. When the user has to decide something, pass each decision in questions with your recommendation: the user sees them on a card and can accept all recommendations with one click (your chat then gets them as the user's answer). A step's developer asks the work's owner first: it answers in the developer's chat or asks the user.",
     inputSchema: {
       type: 'object',
       properties: {

@@ -1946,6 +1946,8 @@ export class Orchestrator {
       if (block) prompt = prompt ? `${block}\n\n${prompt}` : block
     }
     if (!session.taskId) {
+      // The user writing here answers what the works this topic owns asked them; one that still needs them asks again.
+      if (!job) for (const t of this.store.data.tasks) if (t.ownerSessionId === session.id && !t.parentId && t.needsInput) this.store.updateTask(t.id, { needsInput: null, needsQuestions: null })
       this.store.changed()
       return this.run(session, prompt)
     }
