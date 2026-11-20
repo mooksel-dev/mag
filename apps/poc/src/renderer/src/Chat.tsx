@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, approvalCommand, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
+import { TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ModelPicker, agentName, useAgents } from './Agents'
 import { inputPreview, jobPreview } from './format'
@@ -795,7 +795,10 @@ export function ModelChip({ project, activeModel }: { project: AppState['project
   const box = useRef<HTMLDivElement>(null)
   useDismiss(open, box, setOpen)
   const choice = resolveChoice(project, 'chat')
-  const model = choice.model ? (agents.find((a) => a.id === choice.agent)?.models.find((m) => m.id === choice.model)?.label ?? choice.model) : 'Default'
+  const models = agents.find((a) => a.id === choice.agent)?.models ?? []
+  // A stored alias (opus) shows its model's version; the default shows the model the last run reported.
+  const ran = findModel(models, activeModel)?.label
+  const model = (choice.model ? (findModel(models, choice.model)?.label ?? choice.model) : ran ? `Default (${ran})` : 'Default') + (choice.effort ? ` · ${choice.effort}` : '')
   return (
     <div ref={box} className="modelchip">
       <button type="button" className="chip" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={activeModel ? `Last run: ${activeModel}` : 'Agent and model for project chats'}>

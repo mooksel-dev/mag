@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, Attachment, Canvas, ChatRef, ChildRole, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -172,6 +172,8 @@ export interface MagApi {
   runArchitect(projectId: string): Promise<void>
   /** Agent providers with detection state and their models. */
   listAgents(): Promise<AgentInfo[]>
+  /** The session's own agent, model and effort; null = its role's default. Applies from its next turn. */
+  setSessionChoice(sessionId: string, choice: ModelChoice | null): Promise<void>
   repoInfo(path: string): Promise<{ git: boolean; origin: string | null }>
   /** refs: chats the message references ("@"); the agent gets their summaries with it. */
   send(sessionId: string, text: string, attachments?: Attachment[], refs?: ChatRef[]): Promise<void>

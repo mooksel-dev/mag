@@ -1297,13 +1297,13 @@ test('review: the reviewer runs in a scratch worktree at the PR head, with the w
 
 test('Codex never reviews: a Codex developer\'s PRs are reviewed on Claude Code, said in the review; a PR review on a Codex chat is refused (prompts-use-the-models-to.2)', async () => {
   const { store, orch, step, project, dir } = await inReview(false)
-  store.updateProject(project.id, { agents: { developer: { agent: 'codex', model: 'gpt-6-luna' } } })
+  store.updateProject(project.id, { agents: { developer: { agent: 'codex', model: 'gpt-6-luna', effort: null } } })
   await orch.review(step.id, { [dir]: 'a1' })
   const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
   assert.equal(reviewer.agent, 'claude-code')
   assert.equal(runs.at(-1)!.spec.model, undefined, 'Claude Code on its default model')
   assert.match(reviewer.items.find((i) => i.kind === 'notice')!.text, /Codex can't review[\s\S]*This review runs on Claude Code/)
-  store.updateProject(project.id, { agents: { chat: { agent: 'codex', model: null } } })
+  store.updateProject(project.id, { agents: { chat: { agent: 'codex', model: null, effort: null } } })
   await assert.rejects(orch.reviewPr(project.id, 'https://github.com/acme/api/pull/4'), /Codex can't review[\s\S]*Pick Claude Code for Project chat/)
 })
 
@@ -2778,4 +2778,79 @@ test("a work's session keeps its subagents' calls in its own transcript: it has 
   live.emit({ type: 'tool.call', id: 'r1', name: 'Read', input: { file_path: 'x.ts' }, parentToolUseId: 'a1' })
   assert.equal(subagents(store).length, 0)
   assert.deepEqual(session.items.flatMap((i) => (i.kind === 'tool' ? [i.name] : [])), ['Agent', 'Read'])
+})
+
+test("a session runs on its own choice over its role's default; a new model or effort replaces the live process between turns; null goes back (model-picker-full-model-list.1)", async () => {
+  const { store, orch, project } = setup()
+  store.updateProject(project.id, { agents: { chat: { agent: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' } } })
+  const id = orch.newChat(project.id)
+  const other = orch.newChat(project.id)
+  const turn = async (text: string) => {
+    const before = opened.at(-1)
+    await orch.send(id, text)
+    const live = opened.at(-1)!
+    live.emit({ type: 'turn.done', ok: true })
+    await tick()
+    return { live, reopened: live !== before, spec: specs.at(-1)! }
+  }
+  const first = await turn('hi')
+  assert.deepEqual([first.spec.model, first.spec.effort], ['claude-sonnet-5-5', 'high'])
+
+  orch.setSessionChoice(id, { agent: 'claude-code', model: 'claude-opus-5-5', effort: 'max' })
+  assert.equal(first.live.closed, false, 'applies from the next turn')
+  const own = await turn('think hard')
+  assert.ok(own.reopened && first.live.closed)
+  assert.deepEqual([own.spec.model, own.spec.effort], ['claude-opus-5-5', 'max'])
+
+  // The same model on another effort is a new process too; the same choice keeps the process.
+  orch.setSessionChoice(id, { agent: 'claude-code', model: 'claude-opus-5-5', effort: 'low' })
+  const low = await turn('quick one')
+  assert.ok(low.reopened)
+  assert.deepEqual([low.spec.model, low.spec.effort], ['claude-opus-5-5', 'low'])
+  assert.equal((await turn('again')).reopened, false)
+
+  orch.setSessionChoice(id, null)
+  const back = await turn('back')
+  assert.deepEqual([back.spec.model, back.spec.effort], ['claude-sonnet-5-5', 'high'])
+  assert.equal(store.session(id).choice, null)
+
+  await orch.send(other, 'hi')
+  assert.deepEqual([specs.at(-1)!.model, specs.at(-1)!.effort], ['claude-sonnet-5-5', 'high'], 'other topics keep the default')
+})
+
+test('setSessionChoice: Codex is refused on a reviewer; a subagent and an unknown session have no choice; an empty model is the default', () => {
+  const { store, orch, project, task } = setup()
+  const reviewer = store.createSession({ projectId: project.id, taskId: task.id, role: 'reviewer', agent: 'claude-code', status: 'idle' })
+  assert.throws(() => orch.setSessionChoice(reviewer.id, { agent: 'codex', model: null, effort: null }), /Codex can't review/)
+  assert.equal(reviewer.choice, undefined)
+  orch.setSessionChoice(reviewer.id, { agent: 'claude-code', model: '', effort: 'xhigh' })
+  assert.deepEqual(reviewer.choice, { agent: 'claude-code', model: null, effort: 'xhigh' })
+  assert.throws(() => orch.setSessionChoice(reviewer.id, { agent: 'claude-code', model: null, effort: 'turbo' as never }), /Unknown effort/)
+  const sub = store.createSession({ projectId: project.id, taskId: null, role: null, agent: 'claude-code', status: 'idle' })
+  sub.origin = 'subagent'
+  assert.throws(() => orch.setSessionChoice(sub.id, null), /subagent/)
+  assert.throws(() => orch.setSessionChoice('gone', null), /not found/)
+})
+
+test("usage: the session's context fill, its window from the catalogue until the run reports one for that model (model-picker-full-model-list.1)", async () => {
+  const { store, orch, project } = setup()
+  const id = orch.newChat(project.id)
+  await orch.send(id, 'hi')
+  const live = opened.at(-1)!
+  live.emit({ type: 'session.started', nativeSessionId: 'n1', model: 'claude-opus-5-5' })
+  live.emit({ type: 'usage', model: 'claude-opus-5-5', contextUsed: 62_000 })
+  const context = () => store.session(id).context
+  assert.deepEqual([context()?.used, context()?.window], [62_000, 1_000_000])
+  // Another model's window (a subagent's) is not this session's.
+  live.emit({ type: 'usage', model: 'claude-haiku-5-5', contextWindow: 200_000 })
+  assert.equal(context()?.window, 1_000_000)
+  live.emit({ type: 'usage', model: 'claude-opus-5-5', contextWindow: 400_000 })
+  assert.deepEqual([context()?.used, context()?.window], [62_000, 400_000])
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  // The next request keeps the reported window.
+  await orch.send(id, 'more')
+  live.emit({ type: 'usage', model: 'claude-opus-5-5', contextUsed: 70_000 })
+  assert.deepEqual([context()?.used, context()?.window], [70_000, 400_000])
+  assert.ok(context()!.at > 0)
 })

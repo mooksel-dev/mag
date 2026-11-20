@@ -406,7 +406,7 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
   assert.deepEqual(store.data.sessions.filter((s) => s.id !== 'empty' && s.id !== 'talked').map((s) => [s.role, s.taskId, s.agent, s.titleGenerated, s.items.length]), [['chat', null, 'codex', true, 0], ['chat', null, 'codex', true, 0]])
   assert.equal(store.session('talked').items.length, 2, 'its history stays')
   assert.equal('ideas' in store.data, false)
-  assert.equal(store.data.schemaVersion, 11)
+  assert.equal(store.data.schemaVersion, 12)
   store.flush()
   const again = new Store(file)
   assert.equal('ideas' in JSON.parse(readFileSync(file, 'utf8')), false)
@@ -432,7 +432,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 11, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 12, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -441,7 +441,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file)
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 11)
+      assert.equal(again.data.schemaVersion, 12)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -474,7 +474,7 @@ test('session-tree migration: branchOf becomes parentId; a branch of a deleted t
   const shape = () => store.data.sessions.map((x) => [x.id, x.parentId ?? null, 'branchOf' in x])
   assert.deepEqual(shape(), [['root', null, false], ['branch', 'root', false], ['orphan', null, false], ['plain', null, false]])
   assert.equal(store.session('branch').forkOf, 'root-native')
-  assert.equal(store.data.schemaVersion, 11)
+  assert.equal(store.data.schemaVersion, 12)
   store.flush()
   assert.deepEqual(new Store(file).data.sessions.map((x) => [x.id, x.parentId ?? null]), [['root', null], ['branch', 'root'], ['orphan', null], ['plain', null]])
 })
@@ -525,7 +525,7 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 11)
+  assert.equal(store.data.schemaVersion, 12)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })
@@ -558,7 +558,7 @@ test("topic-owners migration: a work without a chat topic is owned by its groome
   assert.deepEqual(topic('groomer'), ['chat', null, 'Groomed', null, 1, 'n'])
   assert.deepEqual(topic('done-g'), ['chat', null, 'Old', 6, 1, 'n'])
   assert.deepEqual([store.session('old-g').role, store.session('dev').role], ['groomer', 'developer'], 'an earlier groomer and the developers stay agents of the work')
-  assert.equal(store.data.schemaVersion, 11)
+  assert.equal(store.data.schemaVersion, 12)
   store.flush()
 })
 
@@ -570,6 +570,21 @@ test('reads-auto migration: an integration on auto goes to reads, the architect 
   }))
   const store = new Store(file)
   assert.deepEqual(store.data.projects[0].integrations, { chat: { slack: 'reads', web: 'off' }, developer: { slack: 'ask', db: 'reads' }, architect: { slack: 'auto' } })
-  assert.equal(store.data.schemaVersion, 11)
+  assert.equal(store.data.schemaVersion, 12)
   store.flush()
+})
+
+test('effort migration: stored choices of projects and sessions get effort null, once (model-picker-full-model-list.1)', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const base = { projectId: 'p', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [], createdAt: 1 }
+  writeFileSync(file, JSON.stringify({
+    projects: [{ id: 'p', name: 'p', repos: [], agents: { chat: { agent: 'claude-code', model: 'opus' }, developer: { agent: 'codex', model: null } } }],
+    tasks: [], docs: {}, canvases: {}, events: [], integrations: [], schemaVersion: 11,
+    sessions: [{ ...base, id: 'own', choice: { agent: 'claude-code', model: 'sonnet' } }, { ...base, id: 'none' }],
+  }))
+  const store = new Store(file)
+  assert.deepEqual(store.data.projects[0].agents, { chat: { agent: 'claude-code', model: 'opus', effort: null }, developer: { agent: 'codex', model: null, effort: null } })
+  assert.deepEqual(store.session('own').choice, { agent: 'claude-code', model: 'sonnet', effort: null })
+  assert.equal(store.session('none').choice, undefined, 'no choice of its own: still its role default')
+  assert.equal(store.data.schemaVersion, 12)
 })

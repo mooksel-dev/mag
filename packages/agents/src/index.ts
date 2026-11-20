@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentKind, AgentModel } from '@mag/core'
+import type { AgentEvent, AgentKind, AgentModel, Effort } from '@mag/core'
 import { claudeCode } from './claude-code.ts'
 import { codex } from './codex.ts'
 
@@ -11,6 +11,8 @@ export interface RunSpec {
   forkSession?: boolean
   /** Provider model id or alias; omitted = the provider's default. */
   model?: string
+  /** How hard the model thinks; omitted = the provider's default. Codex has no max: it runs at xhigh. */
+  effort?: Effort
   appendSystemPrompt?: string
   /** Path to an MCP config JSON file. */
   mcpConfigPath?: string

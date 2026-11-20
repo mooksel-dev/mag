@@ -700,16 +700,40 @@ export interface Task {
 export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
 export type AgentKind = 'claude-code' | 'codex'
 
-/** Which provider runs a role and on which model. */
+/** How hard the model thinks: Claude Code's `--effort`, Codex's `model_reasoning_effort` (which has no max). */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/** Which provider runs a role (or one session, see sessionChoice), on which model and effort. */
 export interface ModelChoice {
   agent: AgentKind
   /** null = the provider's default model (no flag passed). */
   model: string | null
+  /** null = the provider's default effort (no flag passed). */
+  effort: Effort | null
 }
 
 export interface AgentModel {
+  /** What goes to the CLI's --model: the full model id. */
   id: string
+  /** e.g. "Opus 5.5". */
   label: string
+  /** e.g. "5.5". */
+  version: string
+  /** Tokens; null = not known for this model (the run's own report still fills a session's context). */
+  contextWindow: number | null
+  /** The efforts the model takes; empty = none can be set. */
+  efforts: Effort[]
+  /** The tier alias that tracks this model (opus, sonnet…), as older settings stored it; Claude Code only. */
+  alias?: string
+}
+
+/** The catalogue entry a model id names: by id, by its alias, or by id without the `[1m]` suffix. */
+export function findModel(models: readonly AgentModel[], id: string | null | undefined): AgentModel | undefined {
+  if (!id) return undefined
+  const bare = id.replace(/\[1m\]$/i, '')
+  return models.find((m) => m.id === id) ?? models.find((m) => m.alias === id) ?? models.find((m) => m.id === bare)
 }
 
 /** Catalogue entry for one provider. */
@@ -724,7 +748,7 @@ export interface AgentInfo {
 /** Roles the user can configure; reviewer follows developer. */
 export const SETTABLE_ROLES: AgentRole[] = ['chat', 'groomer', 'developer', 'architect']
 
-export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null }
+export const DEFAULT_CHOICE: ModelChoice = { agent: 'claude-code', model: null, effort: null }
 
 /** A run that reviews: a step's reviewer, or a topic's review of a teammate's PR (it runs on the chat's choice). */
 export type AgentJob = AgentRole | 'pr-review'
@@ -743,7 +767,23 @@ export function agentAllowed(job: AgentJob, agent: AgentKind): { ok: boolean; wh
 export function resolveChoice(project: Pick<Project, 'agents'>, role: AgentRole): ModelChoice {
   const agents = project.agents ?? {}
   const choices = role === 'reviewer' ? [agents.reviewer, agents.developer] : [agents[role]]
-  return choices.find((c) => c && agentAllowed(role, c.agent).ok) ?? DEFAULT_CHOICE
+  const c = choices.find((c) => c && agentAllowed(role, c.agent).ok)
+  return c ? withEffort(c) : DEFAULT_CHOICE
+}
+
+/** A stored choice from before effort (model-picker-full-model-list.1) has none: the provider's default. */
+function withEffort(c: ModelChoice): ModelChoice {
+  return { agent: c.agent, model: c.model ?? null, effort: c.effort ?? null }
+}
+
+/**
+ * What a session runs on: its own choice (set in that session), else its role's default (resolveChoice, by runRole).
+ * The session's own is skipped when its agent may not run that role (agentAllowed), so Codex never reviews.
+ */
+export function sessionChoice(project: Pick<Project, 'agents'>, session: Pick<AgentSession, 'role' | 'choice'>): ModelChoice {
+  const role = runRole(session)
+  if (session.choice && agentAllowed(role, session.choice.agent).ok) return withEffort(session.choice)
+  return resolveChoice(project, role)
 }
 
 /**
@@ -926,6 +966,13 @@ export interface AgentSession {
   reviewFormat?: ReviewFormat
   /** Model the agent reported when its session started. */
   activeModel?: string
+  /**
+   * The session's own agent, model and effort (model-picker-full-model-list.1); missing or null = its role's default
+   * (see sessionChoice). Applies from the next turn.
+   */
+  choice?: ModelChoice | null
+  /** How full the agent's context was at its last report, in tokens; missing = not reported yet. */
+  context?: SessionContext | null
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
   commands?: string[]
   /** A project topic the user closed: its history stays, the list shows it under Done; writing to it reopens it. */
@@ -953,6 +1000,14 @@ export interface AgentSession {
   createdAt: number
   /** When the current (or last) run started. */
   runStartedAt?: number
+}
+
+/** A session's context fill: `used` of `window` tokens, reported at `at`. */
+export interface SessionContext {
+  used: number
+  /** null = the window is not known (a model outside the catalogue that never reported one). */
+  window: number | null
+  at: number
 }
 
 export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review' | 'chat'
@@ -1070,6 +1125,11 @@ export type AgentEvent =
   /** We stopped it (interrupt, close, kill): not an error. */
   | { type: 'stopped' }
   | { type: 'context.compacted'; preTokens?: number }
+  /**
+   * The session's own context (never a subagent's): `contextUsed` = tokens the model's last request held; or
+   * `contextWindow` = the size of `model`'s window as the run reported it.
+   */
+  | { type: 'usage'; model?: string; contextUsed?: number; contextWindow?: number }
   | { type: 'error'; message: string }
   | { type: 'raw'; payload: unknown }
 

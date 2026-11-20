@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import type { AgentEvent } from '@mag/core'
+import type { AgentEvent, AgentModel, Effort } from '@mag/core'
 import { findBin } from './bin.ts'
 import type { AgentAdapter, RunSpec } from './index'
 
@@ -70,7 +70,8 @@ export function parseCodexLine(line: string): AgentEvent[] {
       return item.type === 'file_change' ? [{ type: 'tool.call', id: item.id, ...call }, result] : [result]
     }
     case 'turn.completed':
-      // Codex reports tokens, not dollars.
+      // Codex reports tokens, not dollars. No context fill: its usage adds up the turn's requests (the rollouts show the
+      // total past the model's window), so it is not what one request held.
       return [{ type: 'turn.done', ok: true }]
     case 'turn.failed':
       return [
@@ -111,6 +112,13 @@ function mcpArgs(path: string): string[] {
   return args
 }
 
+/** Codex's reasoning efforts (it also has minimal, which mag does not offer); no max: that runs at xhigh. */
+const CODEX_EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh']
+
+function codexEffort(e: Effort): Effort {
+  return e === 'max' ? 'xhigh' : e
+}
+
 /**
  * Arguments for `codex exec`. `allowedTools`/`disallowedTools` have no Codex equivalent;
  * the sandbox is the only control: workspace-write when Edit or Bash is allowed, read-only otherwise and always for a
@@ -126,6 +134,7 @@ export function buildArgs(spec: RunSpec): string[] {
   const common = ['--json', '--skip-git-repo-check', '-c', 'approval_policy="never"']
   if (write) common.push('-c', 'sandbox_workspace_write.network_access=true')
   if (spec.model) common.push('--model', spec.model)
+  if (spec.effort) common.push('-c', `model_reasoning_effort=${toml(codexEffort(spec.effort))}`)
   if (spec.appendSystemPrompt) common.push('-c', `developer_instructions=${toml(spec.appendSystemPrompt)}`)
   if (spec.mcpConfigPath) common.push(...mcpArgs(spec.mcpConfigPath))
 
@@ -140,6 +149,18 @@ export function buildArgs(spec: RunSpec): string[] {
   return [...args, '--', spec.prompt]
 }
 
+/**
+ * From `codex debug models` (CLI 0.164); Codex has no tier aliases, so update when models change. Their context windows
+ * were not checked (that CLI is not on the machine this list was last updated on): null = not known.
+ */
+const CODEX_MODELS: AgentModel[] = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', version: '6.1' },
+  { id: 'gpt-6-astra', label: 'GPT-6-Astra', version: '6' },
+  { id: 'gpt-6-sol', label: 'GPT-6-Sol', version: '6' },
+  { id: 'gpt-6-luna', label: 'GPT-6-Luna', version: '6' },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', version: '5.6' },
+].map((m) => ({ ...m, contextWindow: null, efforts: [...CODEX_EFFORTS] }))
+
 export const codex: AgentAdapter = {
   id: 'codex',
   displayName: 'Codex',
@@ -149,14 +170,7 @@ export const codex: AgentAdapter = {
   },
 
   async listModels() {
-    // From `codex debug models` (CLI 0.164); Codex has no tier aliases, so update when models change.
-    return [
-      { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol' },
-      { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
-      { id: 'gpt-6-sol', label: 'GPT-6-Sol' },
-      { id: 'gpt-6-luna', label: 'GPT-6-Luna' },
-      { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
-    ]
+    return CODEX_MODELS
   },
 
   start(spec, onEvent) {

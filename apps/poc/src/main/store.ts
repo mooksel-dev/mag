@@ -174,6 +174,7 @@ export class Store {
     () => this.migrateToParkedTopics(),
     () => this.migrateToTopicOwners(),
     () => this.migrateToReadsAuto(),
+    () => this.migrateToEffort(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -223,6 +224,12 @@ export class Store {
       topic.closedAt = null
     }
     delete data.ideas
+  }
+
+  /** A choice gets an effort (model-picker-full-model-list.1): none stored = the provider's default. */
+  private migrateToEffort() {
+    for (const p of this.data.projects) for (const c of Object.values(p.agents ?? {})) if (c) c.effort ??= null
+    for (const s of this.data.sessions) if (s.choice) s.choice.effort ??= null
   }
 
   /**
