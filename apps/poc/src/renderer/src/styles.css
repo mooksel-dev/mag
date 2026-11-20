@@ -575,6 +575,10 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .canvascard { flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .canvashead { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .canvashead .title { font-weight: 600; }
+.canvascard.folded .canvashead { border-bottom: none; }
+.canvasfold { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; min-width: 0; }
+.canvasfold > span[aria-hidden] { color: var(--faint); }
+.canvasslot:has(> .canvascard.folded) { margin: 4px 0; }
 .canvasframe { display: block; width: 100%; border: 0; background: var(--surface); }
 .canvaspage { overflow: auto; background: var(--surface); }
 .canvasfit { display: block; width: 100%; border: 0; background: var(--surface); }
@@ -935,6 +939,13 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .questions, .plansteps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .questions .rec { color: var(--green-fg); }
+/* A plan step that has more in the doc: its ▸ unfolds the step's part of §Plan and its diagrams. */
+.stepdetails > summary { cursor: pointer; list-style: none; }
+.stepdetails > summary::-webkit-details-marker { display: none; }
+.stepdetails > summary::after { content: ' ▸'; color: var(--faint); }
+.stepdetails[open] > summary::after { content: ' ▾'; }
+.stepdetails[open] { display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; }
+.stepdetails .md { font-size: 0.95em; }
 .agentlog { display: flex; flex-direction: column; height: 70vh; min-height: 0; border: 1px solid var(--line); border-radius: var(--r); }
 .pagewrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pagewrap > .page { flex: 1; min-height: 0; }

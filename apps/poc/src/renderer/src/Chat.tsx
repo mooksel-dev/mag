@@ -291,21 +291,32 @@ function CanvasNote({ children }: { children: ReactNode }) {
  */
 export const CanvasOpener = createContext<((canvas: CanvasRef, focus?: string) => void) | null>(null)
 
-/** A canvas in a chat or a doc: its preview; Open shows it in the drawer (or the overlay), ⧉ in its own window. */
+/**
+ * A canvas in a chat or a doc: one line, folded, so a run of them takes little room; ▸ unfolds the preview in place,
+ * Sidebar shows it in the screen's drawer (Full screen without one), ⧉ in its own window.
+ */
 export function CanvasCard({ canvas, latest = true, focus, onOpen }: { canvas: CanvasRef; latest?: boolean; focus?: string; onOpen?: (canvas: CanvasRef, focus?: string) => void }) {
+  const [unfolded, setUnfolded] = useState(false)
   const [full, setFull] = useState(false)
   const opener = useContext(CanvasOpener)
   const open = onOpen ?? opener
   return (
-    <div className="canvascard">
+    <div className={`canvascard${unfolded && latest ? '' : ' folded'}`}>
       <div className="canvashead">
-        <span className="title">{canvas.title}</span>
+        {latest ? (
+          <button className="canvasfold" aria-expanded={unfolded} title={unfolded ? 'Fold' : 'Show here'} onClick={() => setUnfolded(!unfolded)}>
+            <span aria-hidden>{unfolded ? '▾' : '▸'}</span> <span className="title">{canvas.title}</span>
+          </button>
+        ) : (
+          <span className="title">{canvas.title}</span>
+        )}
         <span className="muted small">v{canvas.version}</span>
         <div className="grow" />
-        {latest && !open && <OpenCanvasWindow canvas={canvas} />}
-        {latest && <button className="link" onClick={() => (open ? open(canvas, focus) : setFull(true))}>{open ? 'Open' : 'Expand'}</button>}
+        {latest && <button className="link" onClick={() => (open ? open(canvas, focus) : setFull(true))}>{open ? 'Sidebar' : 'Full screen'}</button>}
+        {latest && <OpenCanvasWindow canvas={canvas} />}
+        {!latest && <span className="muted small">revised later, see below</span>}
       </div>
-      {latest ? <CanvasFrame canvas={canvas} focus={focus} /> : <div className="muted small pad">Revised later; see the newer version below.</div>}
+      {latest && unfolded && <CanvasFrame canvas={canvas} focus={focus} />}
       {full && <CanvasOverlay canvas={canvas} focus={focus} onClose={() => setFull(false)} />}
     </div>
   )
@@ -314,7 +325,7 @@ export function CanvasCard({ canvas, latest = true, focus, onOpen }: { canvas: C
 function OpenCanvasWindow({ canvas }: { canvas: CanvasRef }) {
   return (
     <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>
-      ⧉ Open in window
+      ⧉ Window
     </button>
   )
 }

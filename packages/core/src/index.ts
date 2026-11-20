@@ -1532,7 +1532,7 @@ Hooks, components, pages, handlers, workers that change.
 Diff diagrams are recorded with show_diagram; link them here: [title](canvas:<id>).
 
 # Plan
-Numbered steps. Each step that changes code says, per repository it changes: what changes there and the diagrams of that change, e.g. "1. <step title> — in <repo>: <what> ([title](canvas:<id>), …)". A step without structural changes in a repo says so in one line.
+Numbered steps. Each step that changes code says, per repository it changes: what changes there and the diagrams of that change, e.g. "1. <step title> — in <repo>: <what> ([title](canvas:<id>), …)". A step without structural changes in a repo says so in one line. A step with more to say gets sub-items under its line, or a "## <step key> <title>" subsection; the plan card unfolds them.
 
 # Assumptions
 `,

@@ -2,6 +2,7 @@ import { useContext, useState } from 'react'
 import {
   acceptRecommendations,
   currentStep,
+  docStepPlan,
   inbox,
   isLegacy,
   isReview,
@@ -18,7 +19,8 @@ import {
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ApprovalCard, CanvasOpener } from './Chat'
+import { ApprovalCard, CanvasOpener, Markdown } from './Chat'
+import { canvasHref } from './markdown'
 import { canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
 import { prName } from './format'
 import { LocalChecks, StartButton } from './LocalMode'
@@ -108,21 +110,41 @@ export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; own
 
 /** The plan of a work in planning (Approve & Start) or ready (Start): its steps, and what happens next on its own. */
 export function PlanCard({ work, tasks, project, state }: { work: Task; tasks: Task[]; project?: Project; state: AppState }) {
+  const opener = useContext(CanvasOpener)
+  const openCanvas = (c: CanvasRef) => (opener ? opener(c) : void mag.openWindow({ kind: 'canvas', canvasId: c.id }))
   if (isReview(work)) return null
   const steps = subtasksOf(work.id, tasks)
   if (!steps.length) return null
   const sessions = state.sessions.filter((s) => s.taskId === work.id)
+  const doc = state.docs[work.id] ?? ''
   return (
     <div className="workcard plan">
       <div className="cardtitle">Plan: {steps.length} {steps.length > 1 ? 'steps' : 'step'}</div>
       <ol className="plansteps">
-        {steps.map((s) => {
+        {steps.map((s, i) => {
           const repos = project ? stepRepoNames(s, project) : undefined
-          return (
-            <li key={s.id}>
+          const head = (
+            <>
               <span className="key">{s.key}</span> {s.title}
               {repos && <span className="muted small"> · {repos.length ? repos.join(', ') : 'no code'}</span>}
               {s.startManually && <span className="muted small"> · start manually</span>}
+            </>
+          )
+          const details = docStepPlan(doc, s, i + 1)
+          const diagrams = state.canvases.filter((c) => c.role === 'plan' && c.stepId === s.id && !details.includes(`canvas:${c.id}`))
+          if (!details && !s.description.trim() && !diagrams.length) return <li key={s.id}>{head}</li>
+          return (
+            <li key={s.id}>
+              <details className="stepdetails">
+                <summary>{head}</summary>
+                {s.description.trim() && <div className="muted small">{s.description}</div>}
+                {details && <Markdown text={details} canvases={state.canvases} />}
+                {diagrams.length > 0 && (
+                  <div className="small">
+                    Diagrams: {diagrams.map((c, j) => <span key={c.id}>{j > 0 && ', '}<a href={canvasHref(c.id)} onClick={(e) => { e.preventDefault(); openCanvas(c) }}>{c.title}</a></span>)}
+                  </div>
+                )}
+              </details>
             </li>
           )
         })}
