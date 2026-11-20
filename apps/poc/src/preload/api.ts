@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { Meeting, Recording } from '../main/core/services/meetings/types.ts'
+import type { Meeting, MeetingContent, MeetingLink, Recording } from '../main/core/services/meetings/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -133,6 +133,8 @@ export interface MeetingStatus {
   hotkey: string | null
   /** Why the last Record did not start. */
   error?: string
+  /** Ids of meetings being summarized. */
+  summarizing: string[]
 }
 
 export interface MagApi {
@@ -314,6 +316,22 @@ export interface MagApi {
   startRecording(title?: string): Promise<{ ok: true } | { error: string }>
   /** Stops and saves the transcript; resolves once the last chunk is transcribed. */
   stopRecording(): Promise<void>
+  /** Every meeting under the storage root, newest first. */
+  listMeetings(): Promise<Meeting[]>
+  readMeeting(id: string): Promise<MeetingContent>
+  /** Deletes the meeting's folder. */
+  removeMeeting(id: string): Promise<void>
+  renameMeeting(id: string, title: string): Promise<Meeting>
+  linkMeeting(id: string, ref: MeetingLink): Promise<Meeting>
+  unlinkMeeting(id: string, ref: MeetingLink): Promise<Meeting>
+  /** Writes summary.md again. */
+  summarizeMeeting(id: string): Promise<void>
+  /** The meeting's folder in Finder; without an id, the storage root. */
+  revealMeeting(id?: string): Promise<void>
+  /** A folder dialog; the new root, or null when canceled. */
+  chooseMeetingsRoot(): Promise<string | null>
+  /** Called when meetings were saved, summarized, renamed, linked or deleted. */
+  onMeetingsChanged(cb: () => void): () => void
   /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */
   runCommand(runId: string, sessionId: string, command: string, onOutput: (chunk: string) => void): Promise<{ code: number | null; cwd: string }>
   stopCommand(runId: string): Promise<void>

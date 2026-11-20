@@ -1,7 +1,9 @@
 // Meetings (meetings-local-recording-transcript-and): records a call on this Mac and transcribes it locally into its
-// folder. Audio lives in memory only, ~30 s per channel at a time, until whisper has turned it into text.
+// folder, then summarizes it with the Claude CLI. Audio lives in memory only, ~30 s per channel at a time, until whisper
+// has turned it into text. The folders are the record: list, read, rename, link and delete work on them.
 import type { Capture, Channel, OnChunk } from '../../clients/audio-capture/index.ts'
-import type { MeetingFiles, TranscriptLine } from '../../clients/meeting-files/index.ts'
+import type { ClaudeCli } from '../../clients/claude-cli/index.ts'
+import type { MeetingContent, MeetingFiles, MeetingLink, TranscriptLine } from '../../clients/meeting-files/index.ts'
 import type { Stt } from '../../clients/stt/index.ts'
 import type { Meeting, Recording } from './types.ts'
 
@@ -11,8 +13,11 @@ export interface MeetingsDeps {
   capture(onChunk: OnChunk): Promise<Capture>
   stt: Pick<Stt, 'ensureModel' | 'transcribe'>
   files: MeetingFiles
+  llm: ClaudeCli
   now?: () => Date
   onChange?: (status: Recording | null) => void
+  /** A meeting's files changed: saved, summarized, renamed, linked or deleted. */
+  onMeetingsChanged?: () => void
   /** A meeting's end: by stop() or on its own (the helper ended, transcription could not start). */
   onStopped?: (meeting: Meeting, dir: string) => void
   onError?: (message: string, e: unknown) => void
@@ -24,7 +29,48 @@ export interface Meetings {
   /** Stops capturing, transcribes what is left and finalizes meta.json. */
   stop(): Promise<Meeting>
   status(): Recording | null
+  /** Writes summary.md (decisions, action items, open questions, participants) and the participants into meta.json. */
+  summarize(id: string): Promise<void>
+  /** Meetings being summarized now. */
+  summarizing(): string[]
+  /** Newest first. */
+  list(): Meeting[]
+  read(id: string): MeetingContent
+  /** Deletes the meeting's folder; not the one being recorded. */
+  remove(id: string): void
+  rename(id: string, title: string): Meeting
+  /** Links the meeting to a topic or a work; a link it has already is kept once. */
+  link(id: string, ref: MeetingLink): Meeting
+  unlink(id: string, ref: MeetingLink): Meeting
 }
+
+/** The summary's headings: fixed, so mag can read the participants back; the text under them is in the call's language. */
+export const SUMMARY_PROMPT = `You summarize a call from its transcript. Lines are "[hh:mm:ss] me|others: text": "me" is the user of this app, "others" everyone else on the call (one channel; tell people apart by what they say). The transcript is machine-made: fix obvious mishearings silently, never invent.
+
+Answer with Markdown only, exactly these four sections, headings in English as written, everything under them in the call's main language (Ukrainian, English or Russian):
+
+## Decisions
+- one line per decision; "None." when there are none
+
+## Action items
+- **who**: what (by when, if said); "None." when there are none
+
+## Open questions
+- one line each; "None." when there are none
+
+## Participants
+- one name per line as people were called on the call ("me" for the user when no name is said); nothing else
+
+The transcript:`
+
+/** The names under "## Participants". */
+export function participantsOf(summary: string): string[] {
+  const section = /^## Participants\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(summary)?.[1] ?? ''
+  const names = section.split('\n').map((l) => /^\s*[-*]\s+(.+?)\s*$/.exec(l)?.[1]?.replace(/\*\*/g, '')).filter((n): n is string => !!n && n !== 'None.')
+  return [...new Set(names)]
+}
+
+const sameLink = (a: MeetingLink, b: MeetingLink) => a.projectId === b.projectId && a.topicId === b.topicId && a.workKey === b.workKey
 
 const RATE = 16_000
 export const CHUNK_SECONDS = 30
@@ -149,6 +195,8 @@ interface Session {
   setup: Promise<void>
   errors: string[]
   stopping: Promise<Meeting> | null
+  /** Transcript lines written. */
+  lines: number
 }
 
 export function createMeetings(deps: MeetingsDeps): Meetings {
@@ -167,6 +215,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     if (!rec?.meeting || !lines.length) return
     try {
       deps.files.appendTranscript(rec.meeting.id, lines)
+      if (session) session.lines += lines.length
     } catch (e) {
       fail(`Writing the transcript failed: ${(e as Error).message}`, e)
     }
@@ -195,7 +244,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
 
   const finish = async (): Promise<Meeting> => {
     const s = session!
-    const meeting: Meeting = { ...rec!.meeting! }
+    let meeting: Meeting = { ...rec!.meeting! }
     const dir = rec!.dir!
     rec!.phase = 'stopping'
     changed()
@@ -207,6 +256,8 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       }
       await s.queue
       write(s.merger.flush())
+      // Renamed or linked while recording: meta.json has it.
+      meeting = { ...current(meeting.id, meeting) }
       meeting.endedAt = now().toISOString()
       if (s.errors.length) meeting.error = [...new Set(s.errors)].slice(0, MAX_ERRORS).join('; ')
       deps.files.writeMeta(meeting.id, meeting)
@@ -216,7 +267,51 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       changed()
     }
     deps.onStopped?.(meeting, dir)
+    deps.onMeetingsChanged?.()
+    if (s.lines) void summarize(meeting.id).catch(() => {})
     return meeting
+  }
+
+  const current = (id: string, fallback: Meeting) => {
+    try {
+      return deps.files.read(id).meta
+    } catch {
+      return fallback
+    }
+  }
+
+  const summaries = new Map<string, Promise<void>>()
+  const summarize = (id: string): Promise<void> => {
+    const going = summaries.get(id)
+    if (going) return going
+    const run = (async () => {
+      if (rec?.meeting?.id === id) throw new Error('The meeting is still being recorded')
+      const { transcript } = deps.files.read(id)
+      const summary = await deps.llm.complete(SUMMARY_PROMPT, transcript)
+      deps.files.writeSummary(id, summary)
+      const participants = participantsOf(summary)
+      if (participants.length) deps.files.writeMeta(id, { ...deps.files.read(id).meta, participants })
+    })()
+      .catch((e) => {
+        deps.onError?.(`Summarizing ${id} failed: ${(e as Error).message}`, e)
+        throw e
+      })
+      .finally(() => {
+        summaries.delete(id)
+        deps.onMeetingsChanged?.()
+      })
+    summaries.set(id, run)
+    deps.onMeetingsChanged?.()
+    return run
+  }
+
+  /** Read, change and write meta.json, and the recording's copy when it is the meeting being recorded. */
+  const updateMeta = (id: string, change: (m: Meeting) => Meeting): Meeting => {
+    const meta = change(deps.files.read(id).meta)
+    deps.files.writeMeta(id, meta)
+    if (rec?.meeting?.id === id) (rec.meeting = { ...rec.meeting, title: meta.title }, changed())
+    deps.onMeetingsChanged?.()
+    return meta
   }
 
   const stopOnItsOwn = (s: Session) => {
@@ -237,6 +332,7 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
         setup: Promise.resolve(),
         errors: [],
         stopping: null,
+        lines: 0,
       })
       changed()
       try {
@@ -296,5 +392,21 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     },
 
     status: () => (rec ? { ...rec } : null),
+    summarize,
+    summarizing: () => [...summaries.keys()],
+    list: () => deps.files.list(),
+    read: (id) => deps.files.read(id),
+    remove(id) {
+      if (rec?.meeting?.id === id) throw new Error('Stop the recording before deleting it')
+      deps.files.remove(id)
+      deps.onMeetingsChanged?.()
+    },
+    rename(id, title) {
+      const t = title.trim()
+      if (!t) throw new Error('A meeting needs a title')
+      return updateMeta(id, (m) => ({ ...m, title: t }))
+    },
+    link: (id, ref) => updateMeta(id, (m) => ({ ...m, links: [...(m.links ?? []).filter((l) => !sameLink(l, ref)), ref] })),
+    unlink: (id, ref) => updateMeta(id, (m) => ({ ...m, links: (m.links ?? []).filter((l) => !sameLink(l, ref)) })),
   }
 }

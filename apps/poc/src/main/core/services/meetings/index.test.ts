@@ -2,12 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Capture, OnChunk } from '../../clients/audio-capture/index.ts'
 import type { MeetingFiles, MeetingMeta, TranscriptLine } from '../../clients/meeting-files/index.ts'
-import { Chunker, TranscriptMerger, createMeetings, quietestCut, type Recording } from './index.ts'
+import { Chunker, TranscriptMerger, createMeetings, participantsOf, quietestCut, type Recording } from './index.ts'
 
 const RATE = 16_000
 const tone = (seconds: number, level = 0.5) => new Float32Array(seconds * RATE).fill(level)
 
-function fakes(opts: { setupFails?: string; captureFails?: string } = {}) {
+function fakes(opts: { setupFails?: string; captureFails?: string; summary?: string } = {}) {
   let onChunk: OnChunk = () => {}
   let endHelper: (e: string | null) => void = () => {}
   const transcribed: number[] = []
@@ -17,11 +17,29 @@ function fakes(opts: { setupFails?: string; captureFails?: string } = {}) {
   const statuses: (Recording | null)[] = []
   const stopped: MeetingMeta[] = []
   let closed = 0
-  const files: MeetingFiles = {
-    create: (meta) => (created.push(meta), { id: '2026-11-20-1430-sync', dir: '/m' }),
-    appendTranscript: (_, l) => void lines.push(...l),
-    writeMeta: (_, m) => void metas.push(m),
+  const disk = new Map<string, { meta: MeetingMeta; summary: string }>()
+  const at = (id: string) => {
+    const m = disk.get(id)
+    if (!m) throw new Error(`No meeting ${id}`)
+    return m
   }
+  const files: MeetingFiles = {
+    create: (meta) => {
+      created.push(meta)
+      const id = created.length === 1 ? '2026-11-20-1430-sync' : `2026-11-20-1430-sync-${created.length}`
+      disk.set(id, { meta: { id, ...meta }, summary: '' })
+      return { id, dir: `/m/${id}` }
+    },
+    appendTranscript: (_, l) => void lines.push(...l),
+    writeMeta: (id, m) => void (metas.push(m), (at(id).meta = m)),
+    writeSummary: (id, md) => void (at(id).summary = md),
+    list: () => [...disk.values()].map((d) => d.meta).reverse(),
+    read: (id) => ({ meta: at(id).meta, summary: at(id).summary, transcript: lines.map((l) => `${l.speaker}: ${l.text}`).join('\n'), dir: `/m/${id}` }),
+    remove: (id) => void (at(id), disk.delete(id)),
+    dirOf: (id) => `/m/${id}`,
+  }
+  const prompts: string[] = []
+  let changes = 0
   const meetings = createMeetings({
     capture: async (cb) => {
       if (opts.captureFails) throw new Error(opts.captureFails)
@@ -37,11 +55,13 @@ function fakes(opts: { setupFails?: string; captureFails?: string } = {}) {
       transcribe: async (pcm) => (transcribed.push(pcm.length / RATE), [{ start: 1, end: 2, text: `${Math.round(pcm.length / RATE)}s` }]),
     },
     files,
+    llm: { complete: async (prompt, input) => (prompts.push(input), opts.summary ?? '## Decisions\n- ship it') },
     now: () => new Date('2026-11-20T14:30:00Z'),
+    onMeetingsChanged: () => void changes++,
     onChange: (s) => statuses.push(s),
     onStopped: (m) => stopped.push(m),
   })
-  return { meetings, push: (...a: Parameters<OnChunk>) => onChunk(...a), endHelper: (e: string | null) => endHelper(e), transcribed, lines, metas, created, statuses, stopped, closed: () => closed }
+  return { meetings, push: (...a: Parameters<OnChunk>) => onChunk(...a), endHelper: (e: string | null) => endHelper(e), transcribed, lines, metas, created, statuses, stopped, closed: () => closed, disk, prompts, changes: () => changes }
 }
 
 test('a recording: both channels chunked, transcribed, merged by time; stop flushes the tails and finalizes meta', async () => {
@@ -143,4 +163,65 @@ test('TranscriptMerger: holds lines until both channels passed them; a channel f
   assert.deepEqual(m.add('others', [line(3, 'others')], 20).map((l) => l.text), ['others3', 'me5'])
   assert.deepEqual(m.add('me', [], 120).map((l) => l.text), ['me25'])
   assert.deepEqual(m.flush(), [])
+})
+
+const tick = () => new Promise((r) => setTimeout(r, 10))
+
+test('stop summarizes a meeting that has lines; participants go to meta.json', async () => {
+  const f = fakes({ summary: '## Decisions\n- ship\n\n## Participants\n- **Olena**\n- me\n- Olena\n' })
+  await f.meetings.start()
+  f.push(tone(30), 'me', 0)
+  await f.meetings.stop()
+  assert.deepEqual(f.meetings.summarizing(), ['2026-11-20-1430-sync'])
+  await tick()
+  assert.deepEqual(f.meetings.summarizing(), [])
+  assert.deepEqual(f.prompts, ['me: 30s'])
+  const { meta, summary } = f.meetings.read('2026-11-20-1430-sync')
+  assert.match(summary, /## Decisions/)
+  assert.deepEqual(meta.participants, ['Olena', 'me'])
+  assert.equal(meta.endedAt, '2026-11-20T14:30:00.000Z')
+})
+
+test('a meeting with no speech is not summarized', async () => {
+  const f = fakes()
+  await f.meetings.start()
+  await f.meetings.stop()
+  await tick()
+  assert.deepEqual(f.prompts, [])
+})
+
+test('rename and link while recording reach the final meta.json; delete refuses the recording one', async () => {
+  const f = fakes()
+  const m = await f.meetings.start()
+  f.meetings.rename(m.id, ' Planning ')
+  assert.equal(f.meetings.status()?.meeting?.title, 'Planning')
+  const work = { projectId: 'p1', workKey: 'ABC-1' }
+  f.meetings.link(m.id, work)
+  f.meetings.link(m.id, work)
+  f.meetings.link(m.id, { projectId: 'p1', topicId: 's1' })
+  assert.throws(() => f.meetings.remove(m.id), /Stop the recording/)
+  const done = await f.meetings.stop()
+  assert.equal(done.title, 'Planning')
+  assert.deepEqual(done.links, [work, { projectId: 'p1', topicId: 's1' }])
+  assert.deepEqual(f.meetings.unlink(m.id, work).links, [{ projectId: 'p1', topicId: 's1' }])
+  assert.throws(() => f.meetings.rename(m.id, '  '), /needs a title/)
+  f.meetings.remove(m.id)
+  assert.deepEqual(f.meetings.list(), [])
+  assert.ok(f.changes() > 0)
+})
+
+test('summarize: one run per meeting at a time; a failure is reported and can be retried', async () => {
+  const f = fakes()
+  await f.meetings.start()
+  await f.meetings.stop()
+  const a = f.meetings.summarize('2026-11-20-1430-sync')
+  assert.equal(f.meetings.summarize('2026-11-20-1430-sync'), a)
+  await a
+  await assert.rejects(f.meetings.summarize('nope'), /No meeting nope/)
+})
+
+test('participantsOf: the Participants section only', () => {
+  assert.deepEqual(participantsOf('## Decisions\n- a\n## Participants\n- Ivan\n* Maria  \n## Notes\n- x'), ['Ivan', 'Maria'])
+  assert.deepEqual(participantsOf('## Participants\n- None.'), [])
+  assert.deepEqual(participantsOf('no sections'), [])
 })

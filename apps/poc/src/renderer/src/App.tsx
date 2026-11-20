@@ -34,6 +34,7 @@ import { useTheme, type ThemeMode } from './useTheme'
 import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkList'
 import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
+import { MeetingView, MeetingsRootSetting } from './Meetings'
 
 const mag = window.mag
 /** Pages the list's footer opens; they take the place of the conversation. */
@@ -48,6 +49,8 @@ const PAGE_NAMES: Record<Page, string> = { architecture: 'Architecture', setting
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
   const [page, setPage] = useState<Page | null>(null)
+  // A meeting is workspace-wide; it opens in this window in place of the conversation.
+  const [meetingId, setMeetingId] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerMode | null>(null)
   // The open work or topic, per project.
   const selKey = `mag.selected.${projectId}`
@@ -64,6 +67,7 @@ export function App({ projectId }: { projectId: string }) {
     setSelected(s)
     setHomeGroup(null)
     setPage(null)
+    setMeetingId(null)
     // A New subtopic draft is this window's state only: reopened, its topic shows.
     const kept = s?.kind === 'draft' ? { kind: 'topic', id: s.id } : s
     try { localStorage.setItem(selKey, JSON.stringify(kept)) } catch { /* ignore */ }
@@ -126,7 +130,15 @@ export function App({ projectId }: { projectId: string }) {
   // A New subtopic draft under a topic or subtopic that still exists (topic-screen-one-new-compact.2).
   const draftParent = selected?.kind === 'draft' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const current: Selection | null = draftParent ? { kind: 'draft', id: draftParent.id } : work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
-  const screen = page ? PAGE_NAMES[page] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
+  const openPage = (p: Page | null) => {
+    setMeetingId(null)
+    setPage(p)
+  }
+  const openMeeting = (id: string) => {
+    setPage(null)
+    setMeetingId(id)
+  }
+  const screen = meetingId ? 'Meeting' : page ? PAGE_NAMES[page] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
 
   return (
     <div className="app">
@@ -139,16 +151,18 @@ export function App({ projectId }: { projectId: string }) {
       </div>
       <div className="layout" style={leftPane.style}>
         <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page ? null : current} home={!page && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onNewIn={(g) => { select(null); setHomeGroup(g) }} onOpenPage={setPage} />
+          <WorkList project={project} state={state} selected={page || meetingId ? null : current} home={!page && !meetingId && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onNewIn={(g) => { select(null); setHomeGroup(g) }} onOpenPage={openPage} meetingId={meetingId} onOpenMeeting={openMeeting} />
         </ErrorBoundary>
         <PaneHandle side="left" onResize={leftPane.set} />
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
-          {page ? (
+          {meetingId ? (
+            <MeetingView key={meetingId} id={meetingId} state={state} project={project} onClose={() => setMeetingId(null)} onSelect={select} />
+          ) : page ? (
             <main className="pagewrap">
               <div className="pagehead">
                 <span>{PAGE_NAMES[page]}</span>
                 <div className="grow" />
-                <button className="small" onClick={() => setPage(null)}>✕ Close</button>
+                <button className="small" onClick={() => openPage(null)}>✕ Close</button>
               </div>
               {page === 'architecture' ? (
                 <Architecture key={project.id} project={project} />
@@ -364,6 +378,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
         Enforce core architecture (lib / clients / services) for agents
       </label>
       <AgentSettings project={project} />
+      <MeetingsRootSetting />
       <IntegrationSettings project={project} integrations={integrations} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <details className="advanced">
