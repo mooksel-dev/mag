@@ -54,9 +54,20 @@ const recordRun: AgentAdapter['start'] = (spec, onEvent) => {
   runs.push({ spec, emit: onEvent, end })
   return { kill: end, done }
 }
+/** File rewinds (chat-message-actions-rewind-edit.2): each call; `rewindFails` makes the next one fail with it. */
+const rewinds: { cwd: string; id: string; at: string }[] = []
+let rewindFails: string | null = null
+let rewindHold: Promise<void> | null = null
 const fake: AgentAdapter = {
   ...real,
   start: recordRun,
+  rewindFiles: async (cwd, id, at) => {
+    rewinds.push({ cwd, id, at })
+    await rewindHold
+    const why = rewindFails
+    rewindFails = null
+    if (why) throw new Error(why)
+  },
   open: (spec, onEvent) => {
     specs.push(spec)
     const live = new FakeLive()
@@ -2995,4 +3006,79 @@ test('branchFrom: a subtopic forks the parent at the end of the reply’s turn, 
 
   // The topic's Branch (all of it) starts after the parent's last reply.
   assert.deepEqual(s.orch.startChild(topic.id, '', null, true).base, { at: 'r3' })
+})
+
+test('chat runs keep file checkpoints; a work’s runs do not (chat-message-actions-rewind-edit.2)', async () => {
+  const s = setup()
+  const id = s.orch.newChat(s.project.id)
+  await s.orch.send(id, 'Hi')
+  assert.equal(specs.at(-1)!.fileCheckpoints, true)
+  await developing()
+  assert.ok(!specs.at(-1)!.fileCheckpoints)
+})
+
+test('rewindSession code: the files go back to the first message the cut drops, the chat stays, a notice says so with git diff --stat (chat-message-actions-rewind-edit.2)', async () => {
+  const s = setup()
+  execFileSync('git', ['init', '-q'], { cwd: s.dir })
+  writeFileSync(join(s.dir, 'a.txt'), 'one\n')
+  execFileSync('git', ['add', 'a.txt'], { cwd: s.dir })
+  execFileSync('git', ['-c', 'user.email=x@x', '-c', 'user.name=x', 'commit', '-qm', 'init'], { cwd: s.dir })
+  writeFileSync(join(s.dir, 'a.txt'), 'two\n')
+  const { topic, live } = await rewindable(s)
+  const n = rewinds.length
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 1, 'rewind', 'code'), {})
+  assert.deepEqual(rewinds.slice(n), [{ cwd: s.dir, id: 'n1', at: 'u2' }])
+  assert.ok(live.closed, 'the CLI rewinds the transcript with no live process on it')
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one', 'result', 'Second', 'Done two', 'result', 'notice'])
+  const notice = topic.items.at(-1)!
+  assert.equal(notice.kind === 'notice' && notice.text, 'Code restored to before “Second” · git diff --stat: 1 file changed, 1 insertion(+), 1 deletion(-): a.txt')
+  assert.deepEqual([topic.nativeSessionId, topic.rewound ?? null], ['n1', null], 'the conversation is as it was')
+})
+
+test('rewindSession both: the files go back first, then the chat is cut, the notice after it; edit returns its text (chat-message-actions-rewind-edit.2)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  const n = rewinds.length
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 5, 'edit', 'both'), { text: 'Second' })
+  assert.deepEqual(rewinds.slice(n).map((r) => [r.id, r.at]), [['n1', 'u2']])
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one', 'notice'])
+  assert.match((topic.items.at(-1) as { text: string }).text, /^Code restored to before “Second”$/, 'no git checkout: no stat')
+  assert.deepEqual([topic.forkOf, topic.forkAt], ['n1', 'r2'])
+  // Not sent yet: the next restore reads the old transcript, which the pending fork copies.
+  await s.orch.rewindSession(topic.id, 0, 'edit', 'code')
+  assert.deepEqual(rewinds.at(-1), { cwd: s.dir, id: 'n1', at: 'u1' })
+  // The conversation-only default never touches the files.
+  const k = rewinds.length
+  await s.orch.rewindSession(topic.id, 1, 'rewind')
+  assert.equal(rewinds.length, k)
+})
+
+test('rewindSession code is refused without a message to restore to or its id; a failed restore cuts nothing; no send while it runs (chat-message-actions-rewind-edit.2)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  const before = topic.items
+  const n = rewinds.length
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'rewind', 'code'), /no message comes after this reply/)
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'retry', 'both'), /conversation only/)
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'rewind', 'all' as never), /scope must be/)
+  delete (topic.items[5] as { nativeId?: string }).nativeId
+  await assert.rejects(s.orch.rewindSession(topic.id, 5, 'edit', 'both'), /no id in the agent’s conversation/)
+  topic.items[5] = { ...topic.items[5], nativeId: 'u2' } as typeof topic.items[5]
+  assert.equal(rewinds.length, n)
+
+  rewindFails = 'No file checkpoint found for this message.'
+  await assert.rejects(s.orch.rewindSession(topic.id, 5, 'edit', 'both'), /no file checkpoint \(it ran before mag kept them\)/)
+  rewindFails = 'boom'
+  await assert.rejects(s.orch.rewindSession(topic.id, 1, 'rewind', 'both'), /The code could not be restored: boom/)
+  assert.equal(topic.items, before, 'nothing cut')
+  assert.equal(topic.rewound ?? null, null)
+
+  let release!: () => void
+  rewindHold = new Promise((r) => (release = r))
+  const pending = s.orch.rewindSession(topic.id, 5, 'edit', 'both')
+  await until(() => rewinds.length === n + 3)
+  await assert.rejects(s.orch.send(topic.id, 'Now'), /still working/)
+  rewindHold = null
+  release()
+  assert.deepEqual(await pending, { text: 'Second' })
 })

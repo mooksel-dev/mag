@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canRewindSession, lastReplyId, rewindBase, rewindCut, rewindPoint, type AgentSession, type ChatItem } from './index.ts'
+import { canRewindSession, filesRestorePoint, lastReplyId, rewindBase, rewindCut, rewindPoint, type AgentSession, type ChatItem } from './index.ts'
 
 const at = 0
 /** Two turns: 0 user, 1 reply r1, 2 tool, 3 reply r2, 4 result | 5 user, 6 reply r3, 7 result. */
@@ -75,4 +75,18 @@ test('lastReplyId: the last reply’s uuid, none when it has none', () => {
   assert.equal(lastReplyId(items), 'r3')
   assert.equal(lastReplyId([...items, { kind: 'assistant', text: 'old', at }]), undefined)
   assert.equal(lastReplyId([]), undefined)
+})
+
+test('filesRestorePoint: the first message the cut drops, with its uuid; none after the last turn or for retry (chat-message-actions-rewind-edit.2)', () => {
+  const ids = items.map((i) => (i.kind === 'user' ? { ...i, nativeId: i.text === 'First' ? 'u1' : 'u2' } : i))
+  assert.deepEqual(filesRestorePoint(ids, 1, 'rewind'), { n: 5, nativeId: 'u2' })
+  assert.deepEqual(filesRestorePoint(ids, 5, 'edit'), { n: 5, nativeId: 'u2' })
+  assert.deepEqual(filesRestorePoint(ids, 0, 'edit'), { n: 0, nativeId: 'u1' })
+  assert.equal(filesRestorePoint(ids, 6, 'rewind'), null, 'nothing after the last turn')
+  assert.equal(filesRestorePoint(ids, 6, 'retry'), null)
+  assert.equal(filesRestorePoint(ids, 2, 'rewind'), null, 'not on a tool')
+  assert.deepEqual(filesRestorePoint(items, 1, 'rewind'), { n: 5 }, 'a message without a uuid has no checkpoint id')
+  // A turn stopped before any reply goes with the edited message after it: the files go back to before it.
+  const stopped: ChatItem[] = [...ids.slice(0, 5), { kind: 'user', text: 'Oops', nativeId: 'u9', at }, { kind: 'notice', text: 'Stopped', at }, ...ids.slice(5)]
+  assert.deepEqual(filesRestorePoint(stopped, 7, 'edit'), { n: 5, nativeId: 'u9' })
 })

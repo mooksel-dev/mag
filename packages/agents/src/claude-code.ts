@@ -228,6 +228,22 @@ export function buildLiveArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages', ...specArgs(spec)]
 }
 
+/** The CLI keeps file checkpoints, and rewinds to them, only with this set (CLI 2.1.319). */
+const FILE_CHECKPOINTS_ENV = { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' }
+
+/** How long a file rewind may take before it is killed. */
+const REWIND_FILES_MS = 60_000
+
+/** What a run adds to mag's environment. */
+export function buildEnv(spec: Pick<RunSpec, 'env' | 'fileCheckpoints'>): Record<string, string> {
+  return { ...spec.env, ...(spec.fileCheckpoints && FILE_CHECKPOINTS_ENV) }
+}
+
+/** Restores the session's checkpointed files to a user message and exits. */
+export function buildRewindFilesArgs(nativeSessionId: string, userMessageId: string): string[] {
+  return ['--resume', nativeSessionId, '--rewind-files', userMessageId]
+}
+
 export const claudeCode: AgentAdapter = {
   id: 'claude-code',
   displayName: 'Claude Code',
@@ -250,7 +266,7 @@ export const claudeCode: AgentAdapter = {
     }
     const child = spawn(bin, buildArgs(spec), {
       cwd: spec.cwd,
-      env: { ...process.env, ...spec.env },
+      env: { ...process.env, ...buildEnv(spec) },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -290,7 +306,7 @@ export const claudeCode: AgentAdapter = {
     }
     const child = spawn(bin, buildLiveArgs(spec), {
       cwd: spec.cwd,
-      env: { ...process.env, ...spec.env },
+      env: { ...process.env, ...buildEnv(spec) },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
@@ -358,5 +374,30 @@ export const claudeCode: AgentAdapter = {
       },
       done,
     }
+  },
+
+  rewindFiles(cwd, nativeSessionId, userMessageId) {
+    const bin = findBin('claude', 'MAG_CLAUDE_BIN') ?? 'claude'
+    if (!existsSync(cwd)) return Promise.reject(new Error(`Working directory does not exist: ${cwd}`))
+    return new Promise((resolve, reject) => {
+      const child = spawn(bin, buildRewindFilesArgs(nativeSessionId, userMessageId), {
+        cwd,
+        env: { ...process.env, ...FILE_CHECKPOINTS_ENV },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stderr = ''
+      child.stdout.resume()
+      child.stderr.on('data', (d) => (stderr += d.toString()))
+      const timer = setTimeout(() => child.kill('SIGTERM'), REWIND_FILES_MS)
+      child.on('error', (err) => {
+        clearTimeout(timer)
+        reject(new Error(`Could not start ${bin}: ${err.message}`))
+      })
+      child.on('close', (code, signal) => {
+        clearTimeout(timer)
+        if (code === 0) resolve()
+        else reject(new Error(stderr.trim().replace(/^Error:\s*/, '') || (signal ? `claude --rewind-files was stopped (${signal})` : `claude exited with ${code}`)))
+      })
+    })
   },
 }

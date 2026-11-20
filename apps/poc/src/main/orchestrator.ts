@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, lastReplyId, rewindBase, rewindPoint, type RewindMode, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
 import type { LocalApi } from './api'
 import { formatFiles } from '@mag/diff'
-import { AGENT_MARK, magDir, changedRepos, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
+import { AGENT_MARK, magDir, changedRepos, diffStat, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
@@ -2070,17 +2070,41 @@ export class Orchestrator {
    * A message action (chat-message-actions-rewind-edit.1; see RewindMode, rewindPoint) on item `n`: the live process
    * closes, the chat keeps its items up to the cut and the next run forks the agent's conversation there (the old one
    * stays on disk; undoRewind restores it until the next send). Refused while a turn or a background task runs. edit:
-   * returns the message's text for the composer; retry: sends that message again at once.
+   * returns the message's text for the composer; retry: sends that message again at once. `scope`
+   * (chat-message-actions-rewind-edit.2; rewind and edit only): `code` restores the files Claude edited to the first message
+   * the cut drops (see filesRestorePoint) and leaves the conversation; `both` restores them first, then cuts. A failed
+   * restore cuts nothing. Either adds a notice with the checkout's `git diff --stat`; an undo does not bring the files back.
    */
-  async rewindSession(sessionId: string, n: number, mode: RewindMode): Promise<{ text?: string }> {
+  async rewindSession(sessionId: string, n: number, mode: RewindMode, scope: RewindScope = 'conversation'): Promise<{ text?: string }> {
     if (mode !== 'rewind' && mode !== 'edit' && mode !== 'retry') throw new Error('mode must be rewind, edit or retry')
+    if (!REWIND_SCOPES.includes(scope)) throw new Error(`scope must be one of ${REWIND_SCOPES.join(', ')}`)
+    if (mode === 'retry' && scope !== 'conversation') throw new Error('Retry rewinds the conversation only')
     const session = this.store.session(sessionId)
     const point = rewindPoint(session, n, mode)
     if (!point) throw new Error(canRewindSession(session) ? 'This message cannot be rewound to: it has no id in the agent’s conversation (an older message)' : 'Rewind works on Claude Code topics only')
+    const restore = scope === 'conversation' ? null : filesRestorePoint(session.items, n, mode)
+    if (scope !== 'conversation') {
+      if (!restore) throw new Error('No code to restore: no message comes after this reply')
+      if (!restore.nativeId) throw new Error('The code cannot be restored to this message: it has no id in the agent’s conversation (an older message, a one-off run or mag’s job)')
+    }
     this.assertIdle(session)
     await this.closeLive(sessionId)
     // A background task may have woken the agent while its process closed.
     this.assertIdle(session)
+    let notice: ChatItem | null = null
+    if (restore?.nativeId) {
+      // No message goes to the agent while its files change.
+      this.preparing.add(sessionId)
+      try {
+        notice = await this.restoreFiles(session, restore.n, restore.nativeId)
+      } finally {
+        this.preparing.delete(sessionId)
+      }
+    }
+    if (scope === 'code') {
+      this.store.pushItem(sessionId, notice!)
+      return {}
+    }
     const from = point.from === undefined ? undefined : session.items[point.from]
     const undo: RewindUndo = { items: session.items, nativeSessionId: session.nativeSessionId, forkOf: session.forkOf ?? null, forkAt: session.forkAt ?? null }
     session.base = rewindBase(session)
@@ -2090,8 +2114,9 @@ export class Orchestrator {
     session.forkAt = point.forkAt
     session.context = null
     session.rewound = undo
+    if (notice) session.items.push(notice)
     this.store.changed()
-    log.info('agent', `rewound (${mode})`, { session: sessionId, keep: point.keep, fork: !!point.forkOf })
+    log.info('agent', `rewound (${mode}, ${scope})`, { session: sessionId, keep: point.keep, fork: !!point.forkOf })
     if (mode === 'retry' && (from?.kind === 'user' || from?.kind === 'job')) {
       try {
         if (from.kind === 'user') await this.send(sessionId, from.text, from.attachments, undefined, from.refs)
@@ -2129,6 +2154,31 @@ export class Orchestrator {
     const point = rewindPoint(this.store.session(sessionId), n, 'rewind')
     if (!point?.forkOf || !point.forkAt) throw new Error('This reply cannot be branched from: it has no id in the agent’s conversation (an older message), or this is not a Claude Code topic')
     return this.startChild(sessionId, '', null, true, 'user', true, { of: point.forkOf, at: point.forkAt })
+  }
+
+  /**
+   * Restores the files Claude edited in the session's transcript to their state at item `n`, the user message `nativeId`
+   * (chat-message-actions-rewind-edit.2). Returns the notice that says so, with the checkout's `git diff --stat`.
+   */
+  private async restoreFiles(session: AgentSession, n: number, nativeId: string): Promise<ChatItem> {
+    const adapter = adapters[session.agent]
+    // The transcript the items are in: its own, or the one a pending fork copies (a fork keeps its checkpoints).
+    const transcript = session.nativeSessionId ?? session.forkOf
+    if (!adapter.rewindFiles || !transcript) throw new Error('The code cannot be restored: this topic has no Claude Code session yet')
+    // Where its runs ran: the CLI finds the session by it.
+    const { cwd } = this.spec(session)
+    try {
+      await adapter.rewindFiles(cwd, transcript, nativeId)
+    } catch (e) {
+      const why = (e as Error).message
+      throw new Error(/no file checkpoint/i.test(why) ? 'The code cannot be restored to this message: it has no file checkpoint (it ran before mag kept them)' : `The code could not be restored: ${why}`)
+    }
+    log.info('agent', 'files rewound', { session: session.id, at: nativeId })
+    const item = session.items[n]
+    const text = item?.kind === 'user' ? item.text.replace(/\s+/g, ' ') : ''
+    const what = `Code restored to before “${text.length > 40 ? `${text.slice(0, 40)}…` : text}”`
+    const stat = await diffStat(cwd).catch(() => null)
+    return { kind: 'notice', text: stat === null ? what : `${what} · git diff --stat: ${stat}`, at: Date.now() }
   }
 
   private assertIdle(session: AgentSession) {
@@ -2204,6 +2254,8 @@ export class Orchestrator {
         // A topic may own a review of a teammate's PR: what it writes to GitHub (a push too) waits for the user's Approve.
         ...(preset ? {} : this.askingGithubWrites()),
         readOnly: reads,
+        // For a rewind's code restore (rewindSession).
+        fileCheckpoints: true,
       }
     }
     const task = this.store.task(session.taskId)

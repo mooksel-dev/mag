@@ -1300,6 +1300,26 @@ export function rewindPoint(
   return { keep: cut.keep, forkOf: at ? current : null, forkAt: at, ...(cut.from !== undefined && { from: cut.from }) }
 }
 
+/** What a rewind or edit restores (chat-message-actions-rewind-edit.2): the conversation, Claude's file edits, or both. */
+export type RewindScope = 'conversation' | 'code' | 'both'
+
+export const REWIND_SCOPES: readonly RewindScope[] = ['conversation', 'code', 'both']
+
+/**
+ * The message whose file checkpoint a code restore of `mode` on item `n` goes back to: the first one the conversation's
+ * cut drops, so the files match what the agent keeps. `nativeId`: its uuid, missing on a job, a one-off run's message or
+ * an older one. null: the action does not apply (see rewindCut), it drops no message, or it is a retry.
+ */
+export function filesRestorePoint(items: ChatItem[], n: number, mode: RewindMode): { n: number; nativeId?: string } | null {
+  if (mode === 'retry') return null
+  const cut = rewindCut(items, n, mode)
+  if (!cut) return null
+  const at = items.findIndex((i, k) => k >= cut.keep && startsTurn(i))
+  if (at < 0) return null
+  const item = items[at]
+  return { n: at, ...(item.kind === 'user' && item.nativeId && { nativeId: item.nativeId }) }
+}
+
 /** States of a work that is over. */
 export const FINISHED_STATES: WorkState[] = ['done', 'canceled']
 

@@ -1,5 +1,5 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -187,9 +187,10 @@ export interface MagApi {
   startChild(parentId: string, brief: string, role: ChildRole | null, fork?: boolean): Promise<AgentSession>
   /**
    * A message action on item `n` (chat-message-actions-rewind-edit.1): rewind to a reply, edit a message (its text comes
-   * back for the composer) or retry a reply. Refused while the agent works.
+   * back for the composer) or retry a reply. Refused while the agent works. `scope` (rewind and edit): the conversation
+   * (default), Claude's file edits, or both (chat-message-actions-rewind-edit.2).
    */
-  rewind(sessionId: string, n: number, mode: RewindMode): Promise<{ text?: string }>
+  rewind(sessionId: string, n: number, mode: RewindMode, scope?: RewindScope): Promise<{ text?: string }>
   /** Undoes the last rewind, until the next send. */
   undoRewind(sessionId: string): Promise<void>
   /** A subtopic with the conversation up to the end of reply `n`'s turn; returns it. */

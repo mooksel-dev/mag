@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -300,7 +300,7 @@ app.whenReady().then(async () => {
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[], refs?: ChatRef[]) => orch.send(sid, text, attachments, undefined, refs))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
   handle('session:start-child', (_, parentId: string, brief: string, role: ChildRole | null, fork?: boolean) => orch.startChild(parentId, brief, role, !!fork, 'user'))
-  handle('session:rewind', (_, sessionId: string, n: number, mode: RewindMode) => orch.rewindSession(sessionId, n, mode))
+  handle('session:rewind', (_, sessionId: string, n: number, mode: RewindMode, scope?: RewindScope) => orch.rewindSession(sessionId, n, mode, scope))
   handle('session:undo-rewind', (_, sessionId: string) => orch.undoRewind(sessionId))
   handle('session:branch-from', (_, sessionId: string, n: number) => orch.branchFrom(sessionId, n))
   handle('chat:rename', (_, sessionId: string, title: string) => orch.renameChat(sessionId, title))
