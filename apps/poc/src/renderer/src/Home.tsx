@@ -16,7 +16,7 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { MoveButton } from './Cards'
-import { Composer, ModelChip } from './Chat'
+import { Composer, SessionModelChip } from './Chat'
 import { useNow } from './Tasks'
 import { cardSelection, type HomeGroup, type Selection } from './WorkList'
 
@@ -123,7 +123,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
             placeholder="Ask anything, describe a task, or paste a PR / ticket link…"
             commands={chatCommands({ projectId: project.id, agent: resolveChoice(project, 'chat').agent }, state.sessions)}
             onSend={send}
-            chip={<ModelChip project={project} />}
+            chip={<SessionModelChip project={project} up />}
             intent={intent}
             onFiles={onFiles}
             autoFocus

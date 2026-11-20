@@ -3,7 +3,7 @@ import { setOf, type AgentSession } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { TaskArtifact, taskArtifactHead } from './ArtifactPane'
 import type { ArtifactTarget } from './artifacts'
-import { CanvasFrame, Chat } from './Chat'
+import { CanvasFrame, Chat, SessionModelChip } from './Chat'
 import { DiffSetView, setContext } from './DiffSetView'
 import { diagramsOf } from './DiffTab'
 import type { Selection } from './WorkList'
@@ -63,11 +63,13 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
 function AgentDrawer({ session, state, onClose, onOpenKey }: { session: AgentSession; state: AppState; onClose: () => void; onOpenKey: (key: string) => void }) {
   const on = state.tasks.find((t) => t.id === (session.stepId ?? session.taskId))
   const title = [session.role ?? 'agent', on?.title].filter(Boolean).join(' · ')
+  const project = state.projects.find((p) => p.id === session.projectId)
   return (
     <aside className="drawer" aria-label={`Agent: ${title}`}>
       <div className="drawerhead">
         <span className="title" title={on ? `${title} · ${on.key}` : title}>{title}</span>
-        <span className="muted small">{session.activeModel ?? 'default'} · {session.status}</span>
+        {project && <SessionModelChip project={project} session={session} tasks={state.tasks.filter((t) => t.projectId === session.projectId)} />}
+        <span className="muted small">{session.status}</span>
         {session.status === 'running' && <button className="small" onClick={() => void mag.stop(session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
         <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
       </div>

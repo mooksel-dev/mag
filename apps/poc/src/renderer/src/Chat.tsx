@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type Task } from '@mag/core'
+import { TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { ModelPicker, agentName, useAgents } from './Agents'
+import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
+import { choiceLabel } from './modelChoice'
 import { inputPreview, jobPreview } from './format'
 import { useAppliedTheme } from './useTheme'
 import { canvasHref, mdSegments, parseCanvasHref } from './markdown'
@@ -773,42 +774,48 @@ export function Composer({
   )
 }
 
-/** Closes a popover on Escape or a mousedown outside `ref`. */
-function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, setOpen: (open: boolean) => void) {
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open, ref, setOpen])
-}
-
-/** "Claude Code · Opus ▾": the project chat's agent and model, picked in a popover. */
-export function ModelChip({ project, activeModel }: { project: AppState['projects'][number]; activeModel?: string }) {
+/**
+ * "Opus 5.5 · high · ▮▮▯ 62%" (model-picker-full-model-list.2): the model and effort a session runs on (its own choice,
+ * else its role's project default; see sessionChoice) and how full its context is; the popover sets the session's own
+ * choice, from its next turn. A subagent's is a plain label: it runs on its parent's process. Without `session` (a
+ * new chat, Home) it shows and sets the project's default for chats. `up`: the popover opens above (in a composer).
+ */
+export function SessionModelChip(props: { project: Project; up?: boolean } & ({ session: AgentSession; tasks: Task[] } | { session?: undefined })) {
+  const { project, up } = props
   const agents = useAgents()
-  const [open, setOpen] = useState(false)
-  const box = useRef<HTMLDivElement>(null)
-  useDismiss(open, box, setOpen)
-  const choice = resolveChoice(project, 'chat')
+  if (!props.session) {
+    const choice = resolveChoice(project, 'chat')
+    return (
+      <ChoiceChip label={choiceLabel(agents, choice)} title="Agent, model and effort of new chats in this project" up={up}>
+        <ModelPopover agents={agents} choice={choice} job="chat" onChange={(c) => c && void mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })} />
+      </ChoiceChip>
+    )
+  }
+  const { session, tasks } = props
+  const job = sessionJob(session, tasks)
+  const choice = sessionChoice(project, session, job)
+  const fallback = sessionChoice(project, { role: session.role, choice: null }, job)
+  // A stored choice the job refuses (Codex on a review) is not what runs: the default is.
+  const own = session.choice && agentAllowed(job, session.choice.agent).ok ? session.choice : null
   const models = agents.find((a) => a.id === choice.agent)?.models ?? []
-  // A stored alias (opus) shows its model's version; the default shows the model the last run reported.
-  const ran = findModel(models, activeModel)?.label
-  const model = (choice.model ? (findModel(models, choice.model)?.label ?? choice.model) : ran ? `Default (${ran})` : 'Default') + (choice.effort ? ` · ${choice.effort}` : '')
+  const ran = findModel(models, session.activeModel) ?? findModel(models, choice.model)
+  const window = session.context ? (session.context.window ?? ran?.contextWindow ?? null) : null
+  const title = [
+    `${agentName(agents, choice.agent)} · ${choice.model ? (findModel(models, choice.model)?.id ?? choice.model) : 'default model'} · effort ${choice.effort ?? 'default'}`,
+    own ? 'This session\'s own choice; applies from its next turn' : 'The project default for this role',
+    session.activeModel && `Last run: ${session.activeModel}`,
+    session.context && `Context: ${session.context.used.toLocaleString()} / ${window ? window.toLocaleString() : '?'} tokens`,
+  ].filter(Boolean).join('\n')
+  const label = (
+    <>
+      {choiceLabel(agents, choice, session.activeModel)}
+      {session.context && <> · <ContextGauge used={session.context.used} window={window} /></>}
+    </>
+  )
+  const set = (c: ModelChoice | null) => void mag.setSessionChoice(session.id, c).catch((e: Error) => alert(e.message))
   return (
-    <div ref={box} className="modelchip">
-      <button type="button" className="chip" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={activeModel ? `Last run: ${activeModel}` : 'Agent and model for project chats'}>
-        {agentName(agents, choice.agent)} · {model} ▾
-      </button>
-      {open && (
-        <div className="chippop">
-          <ModelPicker agents={agents} label="Chat" choice={choice} onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })} />
-        </div>
-      )}
-    </div>
+    <ChoiceChip label={label} title={title} up={up}>
+      {!isSubagent(session) && <ModelPopover agents={agents} choice={own} fallback={fallback} job={job} onChange={set} />}
+    </ChoiceChip>
   )
 }

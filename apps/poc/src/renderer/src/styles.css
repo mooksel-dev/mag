@@ -105,7 +105,6 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .chatpanel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
 .chathead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .chathead select { min-width: 0; flex: 0 1 auto; }
-.chatmodel { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .banner { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg); padding: 8px 12px; border-radius: 8px; }
 .banner button { margin-left: 10px; }
 .banner.info { background: var(--green-bg); border-color: transparent; color: var(--green-fg); }
@@ -473,7 +472,8 @@ button.flowlink { flex: none; padding: 0; font-size: 11px; font-family: inherit;
 .factcoverage { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 button.iconbtn { flex: none; position: relative; width: 28px; height: 28px; padding: 0; border: none; border-radius: 7px; background: none; color: var(--muted); font-size: 14px; line-height: 1; display: grid; place-items: center; }
 button.iconbtn:not(:disabled):hover { background: var(--hover); color: var(--text); }
-.agentroles { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 6px 8px; align-items: center; }
+.agentroles { display: grid; grid-template-columns: max-content 1fr; gap: 6px 8px; align-items: center; }
+.agentrole .modelchip { justify-self: start; }
 .agentrole { display: contents; }
 .agentnote { grid-column: 1 / -1; margin: -2px 0 4px; }
 
@@ -519,7 +519,36 @@ button.iconbtn:not(:disabled):hover { background: var(--hover); color: var(--tex
 .modelchip { position: relative; min-width: 0; }
 .modelchip .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; border-radius: 7px; background: none; padding: 4px 8px; font-size: 12px; color: var(--muted); }
 .modelchip .chip:hover, .modelchip .chip[aria-expanded='true'] { background: var(--hover); color: var(--text); }
-.chippop { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 5; display: flex; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.modelchip .chip.static { display: inline-block; cursor: default; }
+.modelchip .chip.static:hover { background: none; color: var(--muted); }
+.modelchip .caret { font-size: 10px; }
+.chippop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .12); }
+.chippop.up { left: 0; right: auto; top: auto; bottom: calc(100% + 6px); }
+.agentrole .chippop { left: 0; right: auto; }
+.modelpop { display: flex; flex-direction: column; gap: 8px; width: 340px; max-width: 80vw; }
+.mptabs { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--status); }
+.mptabs button { flex: 1; border: none; border-radius: 5px; background: none; padding: 4px 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.mptabs button.on { background: var(--surface); color: var(--text); }
+.mpwhy { margin: 0; }
+.mprows { display: flex; flex-direction: column; gap: 1px; max-height: 280px; overflow-y: auto; }
+.mprow { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; align-items: baseline; width: 100%; border: none; border-radius: 6px; background: none; padding: 6px 8px; text-align: left; font-size: 13px; color: var(--text); }
+.mprow:not(:disabled):hover { background: var(--hover); }
+.mprow.on { background: var(--soft); color: var(--accent); }
+.mprow:disabled { opacity: .45; cursor: not-allowed; }
+.mprow .mpname { font-weight: 500; }
+.mprow .mpwin { font-size: 12px; color: var(--muted); }
+.mprow .mpid { grid-column: 1 / -1; font-size: 11px; color: var(--faint); background: none; padding: 0; }
+.mpeffort { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.mpeffort .seg { display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--status); }
+.mpeffort .seg button { flex: 1; border: none; border-radius: 5px; background: none; padding: 4px 6px; font-size: 12px; color: var(--muted); }
+.mpeffort .seg button.on { background: var(--surface); color: var(--text); }
+.gauge { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.gaugebar { display: inline-block; width: 28px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.gaugebar > span { display: block; height: 100%; background: var(--muted); }
+.gauge.warn { color: var(--amber-fg); }
+.gauge.warn .gaugebar > span { background: var(--amber-fg); }
+.gauge.full { color: var(--danger-fg); }
+.gauge.full .gaugebar > span { background: var(--danger-fg); }
 button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-height: 1; }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .attachment { position: relative; display: inline-flex; align-items: center; }

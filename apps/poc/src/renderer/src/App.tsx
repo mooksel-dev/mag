@@ -21,7 +21,8 @@ import {
   type Project,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
-import { ModelPicker, useAgents } from './Agents'
+import { ChoiceChip, ModelPopover, useAgents } from './Agents'
+import { choiceLabel } from './modelChoice'
 import { Architecture } from './Architecture'
 import { workTarget } from './artifacts'
 import { ownerSession, TopicConversation } from './Conversation'
@@ -233,12 +234,9 @@ function AgentSettings({ project }: { project: Project }) {
         {SETTABLE_ROLES.map((role) => (
           <div key={role} className="agentrole">
             <span>{ROLE_LABELS[role] ?? role}</span>
-            <ModelPicker
-              agents={agents}
-              label={ROLE_LABELS[role] ?? role}
-              choice={resolveChoice(project, role)}
-              onChange={(c) => mag.updateProject(project.id, { agents: { ...project.agents, [role]: c } })}
-            />
+            <ChoiceChip label={choiceLabel(agents, resolveChoice(project, role))} title={`Agent, model and effort of the ${ROLE_LABELS[role] ?? role}`}>
+              <ModelPopover agents={agents} choice={resolveChoice(project, role)} job={role} onChange={(c) => c && void mag.updateProject(project.id, { agents: { ...project.agents, [role]: c } })} />
+            </ChoiceChip>
             {resolveChoice(project, role).agent === 'codex' && CODEX_NOTES[role] && <span className="muted small agentnote">{CODEX_NOTES[role]}</span>}
           </div>
         ))}
