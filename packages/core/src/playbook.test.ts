@@ -72,7 +72,7 @@ test('DEFAULT_PLAYBOOK keeps process and intent; the contracts are the tools\' (
     assert.match(s, /the checks\s+of the code your\s+job lists/)
   }
   for (const s of [DEFAULT_PLAYBOOK.review, DEFAULT_PLAYBOOK.prReview]) {
-    assert.match(s, /follow each claim to\s+the code/)
+    assert.match(s, /one judgment by a good human reviewer, not a checklist/)
     assert.match(s, /in the report schema of\s+the tool you record it with/)
     assert.match(s, /opens with its intent[\s\S]*ends with your conclusion and\s+advice:\s+one paragraph each/)
     // No forced counts and no label-to-verdict mapping.
@@ -91,11 +91,26 @@ test('DEFAULT_PLAYBOOK keeps process and intent; the contracts are the tools\' (
 test('DEFAULT_PLAYBOOK: the verdict is the reviewer\'s, its leaning on direction has its own field (prompts-use-the-models-to.1)', () => {
   const p = DEFAULT_PLAYBOOK.prReview
   assert.match(p, /user's call: prepare it, never decide it/)
-  assert.match(p, /your own leaning, if you have one, goes in direction.view/)
-  // Options from the inventory first, the author's description only after.
-  assert.ok(p.indexOf('set_inventory') < p.indexOf('Direction, before you read'))
-  assert.ok(p.indexOf('Direction, before you read') < p.indexOf('gh pr view <url>'))
-  assert.match(DEFAULT_PLAYBOOK.review, /Direction is the approved plan/)
+  assert.match(p, /Your own leaning, if you have one, goes in direction.view/)
+  // The first pass on scope and design from the code alone, the author's description only after.
+  assert.ok(p.indexOf('set_inventory') < p.indexOf('First pass, scope and design'))
+  assert.ok(p.indexOf('First pass, scope and design') < p.indexOf('gh pr view <url>'))
+  assert.match(DEFAULT_PLAYBOOK.review, /The direction is the approved plan: follows/)
+})
+
+test('DEFAULT_PLAYBOOK: design first, threads before own issues, criteria PR → ticket → design, only violations (review-v3-concise-design-first.1)', () => {
+  const p = DEFAULT_PLAYBOOK.prReview
+  assert.match(p, /what of the diff does the problem need, is there a simpler design, is it needed at all/)
+  // Existing threads are read before the reviewer settles its own issues; what a teammate raised is not new.
+  assert.ok(p.indexOf('every thread on it') < p.indexOf('6. Issues'))
+  assert.match(p, /before you settle your own issues[\s\S]*raisedBy, not new/)
+  assert.match(p, /criteria from the PR, else its ticket, else the design/)
+  assert.match(p, /Found nowhere\s+on a change of behaviour: a blocker/)
+  assert.match(p, /never\s+a list of rules that pass/)
+  for (const s of [p, DEFAULT_PLAYBOOK.review]) assert.doesNotMatch(s, /pass \/\s+fail|solved \/\s+partly/)
+  assert.match(DEFAULT_PLAYBOOK.review, /First pass, scope and design/)
+  assert.match(DEFAULT_PLAYBOOK.review, /Lay out a direction only when/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /names one diagram that shows the essence of the change/)
 })
 
 test('PRINCIPLES: the audit\'s nine, said once in the code (prompts-use-the-models-to.4)', () => {

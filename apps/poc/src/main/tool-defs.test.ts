@@ -34,11 +34,17 @@ test('each contract is said once: no sentence of the playbook or mag\'s bar repe
 test('the contracts the playbook used to state live in the tool schemas (prompts-use-the-models-to.4)', () => {
   const all = (name: string) => descriptions(TOOL_DEFS.find((t) => t.name === name)).join('\n') + TOOL_DEFS.find((t) => t.name === name)!.description
   const review = all('set_review')
-  assert.match(review, /approve: you would merge it yourself; look: the user should decide/)
+  assert.match(review, /approve: you would merge it yourself, no issues of your own; approve_with_comments: mergeable/)
+  assert.match(review, /Never approve with a blocker/)
   assert.match(review, /mag keeps its own floor[\s\S]*attaches those blockers itself/)
   assert.match(review, /never give it/)
-  assert.match(review, /routine: true, last/)
-  assert.match(review, /request_changes → changes, look → look, approve → merge/)
+  assert.match(review, /request_changes → changes, look → look, approve and approve_with_comments → merge/)
+  // The issues report (review-v3-concise-design-first.1): severity by impact, a place a human reads, raised ones not new.
+  assert.match(review, /blocker: must not merge; only a bug, data, security or production-ops problem, or acceptance[\s\S]*never conventions, naming, docs or ticket wording/)
+  assert.match(review, /never an inventory unit id/)
+  assert.match(review, /not counted as new and not published by default/)
+  assert.match(review, /Criteria from the PR first, then its ticket, then the design/)
+  assert.match(review, /Only when no design or decision settles the direction/)
   const inventory = all('set_inventory')
   assert.match(inventory, /change rename with from, never a del and an add/)
   assert.match(inventory, /also when only its body changes/)

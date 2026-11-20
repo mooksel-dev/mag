@@ -103,7 +103,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
       <span className="intent">
         → {route.label}
         {route.kind === 'review' && (
-          <select value={format} aria-label="Review format" title="v1: findings by level and a verdict; v2: the questions and the direction for you to decide. The default is the project's setting." onChange={(e) => setFormat(e.target.value as ReviewFormat)}>
+          <select value={format} aria-label="Review format" title="v1: findings by level and a verdict; v2: issues with evidence, the direction only when unsettled. The default is the project's setting." onChange={(e) => setFormat(e.target.value as ReviewFormat)}>
             {REVIEW_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         )}

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -295,9 +295,9 @@ ${playbookOf(project).review}
 ${CODE_CHECKS}
 You write the fact, from the draft units and the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
 ${playbookOf(project).fact}
-Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, write a claim that says why it is right or what is wrong (a fact of the direction, a failed convention or a risk), or ask for changes; the others as you judge.
+Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, say whether the code or the plan is right: an issue when the code is wrong, a line in verified when it is right; the others as you judge.
 ${fact}
-Call set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds. If you would lean another way than the plan on direction, say so in direction.view: it never counts toward the verdict, and the user reads it after the options.
+Call set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds. If you think the plan's direction is wrong, say so as an issue the user owns.
 ${scratch.length ? scratchLine('your scratch worktree') : 'Run no tests: CI runs them, and you have no scratch worktree this time.'}
 Change no files of the PRs and don't push, comment on GitHub or merge; leave the doc and the plan as they are: the developer fixes what you find in their branch, and the user changes the plan. Then reply in one line.
 
@@ -320,7 +320,7 @@ const roundLine = (round: number, rounds: number) =>
     round <= rounds
       ? `If you ask for changes, they go back to the developer: this is round ${round} of the ${rounds} that may.`
       : `This is past the ${rounds} round${rounds === 1 ? '' : 's'} that go back to the developer: if you ask for changes, the user decides.`
-  } Ask for changes for what must be fixed before merge, since each round costs a cycle of the developer; the rest are risks or ideas.`
+  } Ask for changes for what must be fixed before merge, since each round costs a cycle of the developer; the rest are should, nit or note issues, or ideas.`
 
 /** What a review run may do in its scratch worktree, and why there only. */
 const scratchLine = (where: string) =>
@@ -360,10 +360,10 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     : "The fact, by the project's playbook:"
   const order = v1
     ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
-    : "Review it following the project's playbook, in its order: the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments (gh pr view): options you work out after reading the author lean to the author's."
+    : "Review it following the project's playbook, in its order: the inventory first, then the first pass on scope and design from the code alone, and only then the PR's description and its threads (gh pr view): options you work out after reading the author lean to the author's, and what a teammate already raised is not new."
   const close = v1
     ? 'Call set_pr_review with the verdict and the findings once you have them (again whenever the user asks for more and they change), then reply in a few lines: the verdict and the blockers.'
-    : `Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the checks verdict, its blockers, and the direction's decision with its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
+    : `Call set_pr_review with the report once you have it (again whenever the user asks for more and it changes), then reply in a few lines: the verdict, its blockers, and, when the report lays out a direction, its options for the user to decide. When the user decides it, record it with decide_direction.${blocks(decisionsBlock(project.directionDecisions))}`
   return `Review the PR ${pr.url} (${name}#${pr.number} by @${pr.author}, into ${pr.base}, head ${pr.head.slice(0, 12)}): you own the ${format} review of ${work.key}. ${where}${before}
 Pass work: "${work.key}" to show_diagram, place_diagram, get_diagrams, get_pr_changes and set_pr_review.
 ${order}
@@ -379,7 +379,7 @@ ${close}`
 
 /** The review topic's job when the user wants to discuss the direction (review-v2-questions-first-direction.2). */
 const discussPrompt = (work: Task, report: ReviewReport, decisions: DirectionDecision[] | undefined) => {
-  const others = report.direction.options.filter((o) => !o.pr).map((o) => o.name)
+  const others = (report.direction?.options ?? []).filter((o) => !o.pr).map((o) => o.name)
   return `The user wants to discuss the direction of ${work.prReview!.pr.url} (review ${work.key}, its v2 result) before deciding it. The direction card:
 
 ${directionCardText(report, decisions)}
@@ -1865,6 +1865,7 @@ export class Orchestrator {
     const r = review.results.v2
     const report = r?.report
     if (!r || !report) throw new Error(`${work.key} has no v2 report to decide on: run its v2 review`)
+    if (!report.direction) throw new Error(`${work.key}: its report lays out no direction to decide${isIssuesReport(report) && report.follows ? `: it follows ${report.follows}` : ''}`)
     if (!DIRECTION_CHOICES.includes(input.choice)) throw new Error(`choice must be one of ${DIRECTION_CHOICES.join(', ')}`)
     const option = input.option?.trim()
     if (input.choice === 'prefer') {
@@ -1906,6 +1907,7 @@ export class Orchestrator {
     const result = work.prReview?.results.v2
     const report = result?.report
     if (!isReview(work) || !report) throw new Error(`${work.key} has no v2 report to discuss`)
+    if (!report.direction) throw new Error(`${work.key}: its report lays out no direction to discuss`)
     assertNotImported(work, 'discuss its direction')
     // The topic that ran the v2 review: decide_direction is its.
     const topic = this.store.data.sessions.find((s) => s.id === result.sessionId) ?? this.ownerSession(work)

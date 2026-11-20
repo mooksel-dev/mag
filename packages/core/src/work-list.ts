@@ -194,6 +194,17 @@ export function reviewStage(task: Task, sessions: AgentSession[]): ReviewStage |
   return task.prReview!.posted ? 'Waiting for author' : 'Report ready'
 }
 
+/** A review's stage as plain words for the header of its panel (review-v3-concise-design-first.1): a status, not steps. */
+export const REVIEW_STAGE_TEXT: Record<ReviewStage, string> = {
+  Running: 'The agent is reviewing',
+  'Report ready': 'Report ready · yours to publish',
+  'Waiting for author': 'Report ready · waiting for the author',
+  Done: 'Closed',
+}
+
+/** A review's status line: its stage in words; null without a stage (the move line says what to do). */
+export const reviewStageText = (stage: ReviewStage | null | undefined): string | null => (stage ? REVIEW_STAGE_TEXT[stage] : null)
+
 /** A work's sessions: its own (groomer, developer, reviewer), its owner topic and, a review, the topic of each result. */
 function sessionsOf(task: Task, sessions: AgentSession[]): AgentSession[] {
   const topics = reviewTopicIds(task)
@@ -244,7 +255,7 @@ function reviewMove(task: Task, sessions: AgentSession[], now: number): CardMove
       return { who: 'other', text: 'Waits for the agent' }
     case 'ready':
       if (posted) return { who: 'other', text: `PR author · ${span(now - posted.at)}`, action: { kind: 'open_pr', url: task.prReview!.pr.url } }
-      if (r?.report && !r.report.decided) return { who: 'you', text: `Your call on direction (${r.report.direction.options.length} options)`, action: { kind: 'open' } }
+      if (r?.report?.direction && !r.report.decided) return { who: 'you', text: `Your call on direction (${r.report.direction.options.length} options)`, action: { kind: 'open' } }
       return { who: 'you', text: 'Publish the review', action: { kind: 'publish' } }
   }
 }

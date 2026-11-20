@@ -93,12 +93,15 @@ ${CODE_CHECKS}
   that changes what was decided is a question before it is code.`
 
 /**
- * How the reviews use their report (review-v2-questions-first-direction.1; prompts-use-the-models-to.4): intent only.
- * Its shape, the meaning of each verdict and mag's floor are the report schema of set_review / set_pr_review.
+ * How the reviews use their report (review-v3-concise-design-first.1; prompts-use-the-models-to.4): intent only. Its
+ * shape, the meaning of each verdict and severity and mag's floor are the report schema of set_review / set_pr_review.
  */
-const REPORT = `The report answers fixed questions, so the user reads every review the same way and can follow each claim to
-the code: cite what shows it. Its shape, what each verdict means and mag's floor under it are in the report schema of
-the tool you record it with; mag checks the report before it stores it and answers what to fix.`
+const REPORT = `The report reads as one judgment by a good human reviewer, not a checklist: what the change does, each problem
+once with its impact and a comment ready to post, the evidence behind its acceptance, what you checked and what you did
+not, and your conclusion, so the user can act on it between other things. Severity follows impact: what breaks for
+users, data, security or production blocks; a convention, a name or the ticket's wording never does. Its shape, what each
+verdict means and mag's floor under it are in the report schema of the tool you record it with; mag checks the report
+before it stores it and answers what to fix.`
 
 export const DEFAULT_PLAYBOOK: Playbook = {
   stance: `- Lead the work. You hold the problem, the options and the plan; the user reviews, helps decide and approves. End
@@ -162,47 +165,47 @@ what and where.`,
   review: `1. Read the PRs with gh pr view and gh pr diff, and the code in your scratch worktrees; run a focused test there
    when reading leaves a doubt.
 2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
-3. Answer the review's questions in a report (set_review), as the report below says. Direction is the approved plan:
-   its decision and the chosen option (pr: true; the rejected ones from §Options), cited with source user from §Decisions;
-   facts say where the PRs leave the plan. Problem: each item of the step's plan and the doc's acceptance → solved /
-   partly / not. Conventions: the decisions, the project's rules, modules, layers and interfaces as in the diagrams.
-   Risks: bugs, missing tests, risky changes, and the checks of the code your job lists.
-4. Something worth doing that is outside the step and need not block it: add_idea, not a claim.
+3. First pass, scope and design: does every part of the diff serve the step, is there a simpler design, is any of it
+   not needed at all? What you find is an issue of kind scope or design.
+4. Acceptance: each item of the step's plan and the doc's acceptance (source design) → its evidence: a test by name,
+   CI, a check you ran.
+5. Issues: only what is wrong, each once, with the checks of the code your job lists. Where the PRs leave the plan,
+   say whether the code or the plan is right. Nothing that passes goes in the report.
+6. The direction is the approved plan: follows. Lay out a direction only when the PRs make a design decision the plan
+   and §Decisions leave open.
+7. Something worth doing that is outside the step and need not block it: add_idea, not an issue.
 The report opens with its intent, what the step changes and why for a human, and ends with your conclusion and
 advice: one paragraph each.
 ${REPORT}`,
   prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
-have done it. Whether its direction is right is the user's call: prepare it, never decide it.
+have done it. Where its direction is still open, it is the user's call: prepare it, never decide it.
 1. Fact first: get_pr_changes lists the PR's hunks with their ids; read its diff (gh pr diff, or git in the
    repository) and write its change inventory (set_inventory), as the fact section says.
-2. Direction, before you read the author's description or the PR's comments: from the inventory and the code alone,
-   name each design decision the change takes, one sentence each, and work out the sensible options for it on your
-   own, the PR's design one of them (pr: true), each with one line of trade-offs. Then the mechanical facts of the PR's
-   option: how many modules learn the new concept, how many changes hit existing flows, new rule violations, each
-   citing units. The user decides the direction; your own leaning, if you have one, goes in direction.view.
-3. Only now read the PR: gh pr view <url> (description, author, base, files) with its comments (gh pr view
-   --comments; review comments with gh api, reading only). Add the references that bear on the direction; the
-   user's own words have source user.
+2. First pass, scope and design, from the code alone, before you read the author's description or the PR's comments:
+   what of the diff does the problem need, is there a simpler design, is it needed at all. When nothing settles the
+   design (the ticket's design, a decision of the user, an ADR), work out the design decision it makes and the sensible
+   options for it on your own, the PR's one of them; options you work out after reading the author lean to the
+   author's. Your own leaning, if you have one, goes in direction.view.
+3. Only now read the PR: gh pr view <url> (description, author, base, files) and every thread on it (gh pr view
+   --comments; review comments and reviews with gh api, reading only), before you settle your own issues. What a
+   teammate already raised is raisedBy, not new; an earlier thread goes in verified as fixed or still open.
 4. Find its ticket (in the description, the branch or the title) and read it as the tracker section says; record it
    with add_ticket. Without access to the tracker, say what is missing and work from the description.
-5. Problem: show that the PR's problem is real (the problem argument). In the report, each acceptance
-   criterion of the ticket → solved / partly / not, with evidence. Call out a wrong framing or a problem that is not
-   real.
-6. Conventions: each relevant rule of the project (decisions and notes, the playbook, the repository's conventions in
-   CLAUDE.md, AGENTS.md, README and the code around it, the architecture's layers, modules and interfaces) → pass /
-   fail, a failed one citing the offending edges or lines.
-7. Risks: bugs, data and migrations, operations, security, privacy, missing tests and the checks of the code your
-   job lists; each with level, kind, mechanism and where.
-8. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
-   says. mag reads the checks too and holds a failing one as its floor under your verdict; say what a failure means
-   for the change, and the pending ones.
-9. Record it with set_pr_review: problem, approach and the report, as the report below says.
-10. The direction is the user's call: argue its options with them when they ask, and once they decide, record it with
-   decide_direction (ok, prefer an option, or discuss with the author; the principle in their words; the comment to
-   the author you worded together). An earlier decision of the user that bears on it is a reference with source
-   user citing decision:<id>.
+5. Acceptance: criteria from the PR, else its ticket, else the design. Each → its evidence (a test by name, CI, a
+   check you ran), not a retelling of the code. Found outside the PR: a note asking to copy them into it. Found nowhere
+   on a change of behaviour: a blocker asking for them; a config, version or typo change needs none (trivial).
+6. Issues: only what is wrong, each problem once, ranked by impact, with the checks of the code your job lists; never
+   a list of rules that pass. Who decides each: the author, the PO (scope, the ticket) or the user.
+7. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
+   says. mag reads the checks too and holds a failing one as its floor under your verdict; what you checked goes in
+   verified, what you did not in notChecked.
+8. Record it with set_pr_review: problem, approach and the report, as the report below says.
+9. When the report lays out a direction, the call is the user's: argue its options with them when they ask, and once
+   they decide, record it with decide_direction (ok, prefer an option, or discuss with the author; the principle in
+   their words; the comment to the author you worded together). An earlier decision of the user that bears on it is a
+   reference with source user citing decision:<id>, or what the direction follows.
 Read only: nothing goes to the PR or the tracker, because the PR is a teammate's and what reaches them is the user's
-call. The user publishes the findings they pick.
+call. The user publishes the issues they pick.
 The report opens with its intent, what the PR changes and why for a human, and ends with your conclusion and advice:
 one paragraph each.
 ${REPORT}`,
@@ -236,9 +239,10 @@ It covers every change at the level the code is designed at, named as the code n
 has already parsed the bookkeeping into draft units (signatures, blocks): spend your effort on meaning, what each change
 does, how much logic it changes, and on the units no parser sees, and fix a draft unit that is wrong. set_inventory's
 schema says what a unit is and how mag checks it; you never draw the component and data diagrams.
-Then draw with show_diagram (no role, so it joins the fact set) only what the inventory cannot give and the review
-needs: a scenario, or the logic of a method whose logic is nontrivial. mag answers each save with its check: fix the
-blockers, and answer each warning with a fix or a reason.`,
+The report names one diagram that shows the essence of the change, if any: the system view mag draws from the
+inventory, or a scenario you draw with show_diagram (no role, so it joins the fact set) when that view does not show
+it; the page shows only that one. mag answers each save with its check: fix the blockers, and answer each warning
+with a fix or a reason.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Through Bash you only read the tracker. Change nothing in the tracker (no
 comments, transitions, edits) unless the user explicitly asks: the tracker is the team's, and what lands there speaks

@@ -7,12 +7,12 @@
 import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
 import { reportLine, type ChecksVerdict, type ReviewReport } from './review-report.ts'
 
-/** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit. */
-export type FindingLevel = 'blocker' | 'should_fix' | 'question' | 'nit'
+/** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit; note = no action. */
+export type FindingLevel = 'blocker' | 'should_fix' | 'question' | 'nit' | 'note'
 
-export const FINDING_LEVELS: FindingLevel[] = ['blocker', 'should_fix', 'question', 'nit']
+export const FINDING_LEVELS: FindingLevel[] = ['blocker', 'should_fix', 'question', 'nit', 'note']
 
-export const FINDING_LEVEL_LABELS: Record<FindingLevel, string> = { blocker: 'blocker', should_fix: 'should fix', question: 'question', nit: 'nit' }
+export const FINDING_LEVEL_LABELS: Record<FindingLevel, string> = { blocker: 'blocker', should_fix: 'should fix', question: 'question', nit: 'nit', note: 'note' }
 
 /** The verdict on a teammate's PR, as GitHub's review events have it. */
 export type PrVerdict = 'approve' | 'request_changes' | 'comment'
@@ -50,7 +50,7 @@ export type ReviewFormat = 'v1' | 'v2'
 
 export const REVIEW_FORMATS: ReviewFormat[] = ['v1', 'v2']
 
-export const REVIEW_FORMAT_LABELS: Record<ReviewFormat, string> = { v1: 'v1 · findings and a verdict', v2: 'v2 · questions and the direction' }
+export const REVIEW_FORMAT_LABELS: Record<ReviewFormat, string> = { v1: 'v1 · findings and a verdict', v2: 'v2 · issues and evidence' }
 
 /** A project's format for new reviews: its setting, v2 without one. */
 /** The format a new review of a PR starts with; each run can pick the other. */
@@ -225,9 +225,9 @@ export function resultLine(r: ReviewResult | null): string {
   return r?.verdict ? `${PR_VERDICT_LABELS[r.verdict]} · ${findingCounts(r.findings)}` : ''
 }
 
-/** The verdict a PR review keeps for GitHub from a report's checks verdict: look is a comment. */
+/** The verdict a PR review keeps for GitHub from a report's checks verdict: look is a comment, approve with comments an approve. */
 export function prVerdictOf(checks: ChecksVerdict): PrVerdict {
-  return checks === 'look' ? 'comment' : checks
+  return checks === 'look' ? 'comment' : checks === 'approve_with_comments' ? 'approve' : checks
 }
 
 /** A topic of a review (its owner, or the run of either format) is in a turn. */

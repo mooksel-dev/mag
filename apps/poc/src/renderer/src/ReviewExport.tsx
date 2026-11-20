@@ -122,28 +122,6 @@ export function useRenderReviewExport(state: AppState | null) {
   )
 }
 
-/** Export review: a save dialog, then the review as one .zip. */
-export function ExportReviewButton({ work, onError }: { work: Task; onError: (e: string | null) => void }) {
-  const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState<string | null>(null)
-  const run = () => {
-    onError(null)
-    setBusy(true)
-    mag.exportReview(work.id).then(
-      (path) => setSaved(path),
-      (e) => onError(String((e as Error).message ?? e)),
-    ).finally(() => setBusy(false))
-  }
-  return (
-    <>
-      {saved && <span className="muted small" title={saved}>saved to {saved.split('/').pop()}</span>}
-      <button className="small" disabled={busy} title="One .zip: the review page (opens offline), review.json, the PR's diff and details, the diagrams as SVG" onClick={run}>
-        {busy ? 'Exporting…' : 'Export review'}
-      </button>
-    </>
-  )
-}
-
 /** A review imported from an archive: where from and when; it is read only. */
 export function ImportedBanner({ work }: { work: Task }) {
   const i = work.imported

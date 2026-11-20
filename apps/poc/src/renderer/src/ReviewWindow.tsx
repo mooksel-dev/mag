@@ -23,8 +23,8 @@ import { ownerSession } from './Conversation'
 import { DiffSetView, type DiagramCanvas } from './DiffSetView'
 import { Comparison, useHunks } from './FactPanel'
 import { ReportConclusion, ReportView, diagramAnchor } from './ReportView'
-import { ExportReviewButton, ImportedBanner } from './ReviewExport'
-import { FormatSwitch } from './Reviews'
+import { ImportedBanner } from './ReviewExport'
+import { ReviewMenu } from './Reviews'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
 
 const mag = window.mag
@@ -231,9 +231,10 @@ function StaticDiagrams({ entry, svgs }: { entry: InlineSet; svgs: Record<string
 
 /**
  * The review window (review-v2-part-2-v1-2.2): one full-window page in a pop-out. A PR's review shows the shown result
- * (v1 | v2): verdict strip → direction card with its buttons → the four question cards → the changes table → the
- * diagrams inline → the full diff by change; a step shows its agent review, plan ↔ fact and its plan and fact diagrams
- * the same way. Every claim, diagram node and change row expands its hunks in place; no diagram opens a window. The
+ * (v1 | v2): an issues report as intent with the verdict → issues → acceptance → verified → direction → its one diagram
+ * (a legacy one as verdict strip → direction card → the four question cards → the changes table → the fact diagrams) →
+ * the conclusion → the full diff, folded, as reference; a step shows its agent review, plan ↔ fact and its plan
+ * diagrams the same way. Every claim, diagram node and change row expands its hunks in place; no diagram opens a window. The
  * conversation is a drawer at the side; Discuss with agent opens it with the direction card.
  */
 export function ReviewWindow({ state, taskId, still = null }: {
@@ -289,21 +290,23 @@ export function ReviewWindow({ state, taskId, still = null }: {
           <div className="taskrow">
             <span className="key">{task.key}</span>
             {pr && review && project ? (
-              still ? <span title={review.pr.url}><b>{prRepoName(project, review.pr)}#{review.pr.number}</b> <span className="muted small">{review.pr.url}</span></span>
-              : <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} ↗</button>
+              <>
+                {still ? <span title={review.pr.url}><b>{prRepoName(project, review.pr)}#{review.pr.number}</b></span>
+                  : <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} ↗</button>}
+                <span className="muted small">· @{review.pr.author} → {review.pr.base}</span>
+              </>
             ) : (
               parent && <span className="muted small">step of {parent.key} {parent.title}</span>
             )}
             <div className="grow" />
             {model.report && <span className="muted small">{reportLine(model.report, model.kind)}</span>}
-            {!still && pr && <ExportReviewButton work={task} onError={setError} />}
             {!ro && <button className="small" title="The conversation with the agent, at the side" onClick={() => setDrawer(!drawer)}>{drawer ? 'Hide agent' : 'Agent'}</button>}
+            {!still && pr && review && <ReviewMenu work={task} review={review} running={running} onError={setError} />}
           </div>
           <h1>{pr ? task.title.replace(/^[^:]*#\d+: /, '') : task.title}</h1>
           {error && <div className="banner">{error}</div>}
           {!still && <ImportedBanner work={task} />}
           {still && pr && review && <p className="muted small">The {review.shown} result{review.results[review.shown === 'v1' ? 'v2' : 'v1'] ? `; the ${review.shown === 'v1' ? 'v2' : 'v1'} result is in review.json` : ''}. Exported from mag{task.imported ? ` (imported from ${task.imported.from})` : ''}.</p>}
-          {!still && pr && review && <FormatSwitch work={task} review={review} running={running} onError={setError} />}
           {model.report && (
             <ReportView
               report={model.report}
@@ -356,14 +359,14 @@ export function ReviewWindow({ state, taskId, still = null }: {
             <section ref={diagramsAt} className="reportcard">
               <div className="cardhead"><h2>Diagrams</h2><span className="muted small">click a node: its code here</span></div>
               {model.sets.map((s) => (
-                <InlineDiagrams key={s.set[0].id} entry={s} step={task} current={s.set.some((c) => c.id === shown) ? shown : undefined} />
+                <InlineDiagrams key={s.set[0].id} entry={s} step={task} current={s.set.some((c) => c.id === shown) ? shown : s.current} />
               ))}
             </section>
           )}
+          {model.report && <ReportConclusion report={model.report} />}
           <FoldedDiff files={model.groups.reduce((n, g) => n + g.files.length, 0)}>
             {view === null ? <p className="muted small">No PR: no diff.</p> : <FullDiff groups={model.groups} />}
           </FoldedDiff>
-          {model.report && <ReportConclusion report={model.report} />}
         </main>
         {drawer && !ro && <ChatDrawer sessionId={discussed ?? owner?.id ?? null} state={state} onClose={() => setDrawer(false)} />}
       </div>
