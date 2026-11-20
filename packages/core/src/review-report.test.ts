@@ -35,6 +35,7 @@ const inventory: ChangeInventory = {
 
 /** A synthetic review with every block of the report. */
 const raw = {
+  intent: 'Routes each request to its tenant by the host name, so tenants no longer need a header.',
   direction: {
     decisions: [{ text: 'A tenant is identified by the suffix of its host name', source: 'agent', cites: ['u1'], view: 'canvas:fact1#api' }],
     options: [
@@ -61,6 +62,7 @@ const raw = {
     { title: 'Wiring', why: 'imports and names', units: ['u4'], routine: true },
   ],
   checks: { verdict: 'request_changes', why: 'custom domains break and a crafted host reaches another tenant' },
+  conclusion: 'Not mergeable yet: decide on custom domains with the author and close the crafted-host hole first.',
 }
 
 const synthetic = (): ReviewReport => {
@@ -80,6 +82,21 @@ test('normalizeReport reads every block; checked from the agent is read as agent
   assert.equal(r.checks, 'request_changes')
   assert.equal(r.why, 'custom domains break and a crafted host reaches another tenant')
   assert.deepEqual(normalizeReport(JSON.stringify(raw)).errors, [])
+})
+
+test('normalizeReport: intent and conclusion are each one short paragraph, required', () => {
+  const r = synthetic()
+  assert.equal(r.intent, raw.intent)
+  assert.equal(r.conclusion, raw.conclusion)
+  const { intent: _, conclusion: __, ...without } = raw
+  const missing = normalizeReport(without).errors
+  assert.ok(missing.some((e) => /^intent is required: one paragraph/.test(e)))
+  assert.ok(missing.some((e) => /^conclusion is required: one paragraph/.test(e)))
+  const bad = normalizeReport({ ...raw, intent: 'One.\n\nTwo.', conclusion: 'x'.repeat(601) }).errors
+  assert.ok(bad.some((e) => /^intent: one paragraph, no blank lines or lists/.test(e)))
+  assert.ok(bad.some((e) => /^conclusion: 601 characters; one concise paragraph, up to 600/.test(e)))
+  assert.ok(normalizeReport({ ...raw, conclusion: 'Advice:\n- fix it\n- test it' }).errors.some((e) => /^conclusion: one paragraph, no blank lines or lists/.test(e)))
+  assert.deepEqual(normalizeReport({ ...raw, intent: 'A line\nwrapped once.' }).errors, [])
 })
 
 test('normalizeReport accepts the reviewer\'s view on the direction; it must lean to an option', () => {

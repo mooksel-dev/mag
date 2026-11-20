@@ -60,6 +60,7 @@ test('DEFAULT_PLAYBOOK keeps process and intent; the contracts are the tools\' (
   for (const s of [DEFAULT_PLAYBOOK.review, DEFAULT_PLAYBOOK.prReview]) {
     assert.match(s, /follow each claim to\s+the code/)
     assert.match(s, /in the report schema of\s+the tool you record it with/)
+    assert.match(s, /opens with its intent[\s\S]*ends with your conclusion and\s+advice:\s+one paragraph each/)
     // No forced counts and no label-to-verdict mapping.
     assert.doesNotMatch(s, /2–4|2–6|request_changes with a failed rule/)
   }

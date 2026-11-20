@@ -196,12 +196,22 @@ function Decided({ decided, draft }: { decided: DirectionDecision; draft?: strin
   )
 }
 
+/** The report's intent, read first: what the change does and why; nothing on a report from before it was asked. */
+export function ReportIntent({ report }: { report: ReviewReport }) {
+  return report.intent ? <section className="reportcard"><h2>Intent</h2><p>{report.intent}</p></section> : null
+}
+
+/** The reviewer's conclusion and advice, read last; nothing on a report from before it was asked. */
+export function ReportConclusion({ report }: { report: ReviewReport }) {
+  return report.conclusion ? <section className="reportcard"><h2>Conclusion</h2><p>{report.conclusion}</p></section> : null
+}
+
 /**
  * The review report (review-v2-questions-first-direction.1), as the mockup: verdict strip → direction card → question
  * cards → changes table. The evidence views, the inventory and the rest go below it (`children`); a claim's view opens
  * its diagram there (`onView`).
  */
-export function ReportView({ report, fact, kind, onView, decisions, direction, expand, staticPage = false, children }: {
+export function ReportView({ report, fact, kind, onView, decisions, direction, expand, staticPage = false, conclusion = true, children }: {
   report: ReviewReport
   fact: Pick<StepFact, 'counts'> | null | undefined
   kind: ReportKind
@@ -214,6 +224,8 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
   expand?: Expand
   /** Rendered for a static page: no buttons, folds and anchors instead (the direction buttons are not passed then). */
   staticPage?: boolean
+  /** The conclusion after `children`; false when the page puts it last itself. */
+  conclusion?: boolean
   children?: ReactNode
 }) {
   const [routineOpen, setRoutineOpen] = useState(false)
@@ -226,6 +238,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
   return (
     <StaticContext.Provider value={staticPage}>
     <div className="report">
+      <ReportIntent report={report} />
       <div className="reportstrip">
         <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="The reviewer's verdict on problem, conventions and risks, never below mag's floor">Checks: {CHECKS_LABELS[report.checks]}</span>
         {reportStrip(report, fact, kind).map((c) => {
@@ -310,6 +323,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
         </table>
       </section>
       {children}
+      {conclusion && <ReportConclusion report={report} />}
     </div>
     </StaticContext.Provider>
   )

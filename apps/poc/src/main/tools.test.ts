@@ -475,7 +475,8 @@ test('set_review is the reviewer\'s alone and records the verdict of its step', 
   await call('set_review', { verdict: 'changes', findings: JSON.stringify([{ text: ' no test ', where: 'a.ts:3' }, { text: 'scope' }]) }, reviewer.id)
   await call('set_review', { verdict: 'merge', findings: [] }, reviewer.id)
   // A report needs the inventory of the review's fact; its checks give the verdict (review-v2-questions-first-direction.1).
-  const report = { direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve', why: 'w' } }
+  const report = { intent: 'i', direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve', why: 'w' }, conclusion: 'c' }
+  await assert.rejects(call('set_review', { report: { ...report, intent: '', conclusion: 'a\n\nb' } }, reviewer.id), /intent is required: one paragraph[\s\S]*conclusion: one paragraph, no blank lines or lists/)
   await assert.rejects(call('set_review', { report }, reviewer.id), /Not recorded\. Fix the report[\s\S]*direction\.decisions: name the design decision[\s\S]*no inventory yet/)
   await assert.rejects(call('set_review', { report: { ...report, checks: { verdict: 'merge' } } }, reviewer.id), /checks\.verdict must be one of[\s\S]*checks\.why is required/)
   assert.deepEqual(calls, ['review big.1: changes a.ts:3|no test;|scope', 'review big.1: merge '])

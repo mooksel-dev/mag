@@ -22,7 +22,7 @@ import { Chat, Markdown } from './Chat'
 import { ownerSession } from './Conversation'
 import { DiffSetView, type DiagramCanvas } from './DiffSetView'
 import { Comparison, useHunks } from './FactPanel'
-import { ReportView, diagramAnchor } from './ReportView'
+import { ReportConclusion, ReportView, diagramAnchor } from './ReportView'
 import { ExportReviewButton, ImportedBanner } from './ReviewExport'
 import { FormatSwitch } from './Reviews'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
@@ -311,6 +311,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
               kind={model.kind}
               decisions={project?.directionDecisions}
               staticPage={!!still}
+              conclusion={false}
               direction={pr && !ro ? {
                 busy: running || deciding,
                 discuss: () => act(async () => {
@@ -362,6 +363,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
           <FoldedDiff files={model.groups.reduce((n, g) => n + g.files.length, 0)}>
             {view === null ? <p className="muted small">No PR: no diff.</p> : <FullDiff groups={model.groups} />}
           </FoldedDiff>
+          {model.report && <ReportConclusion report={model.report} />}
         </main>
         {drawer && !ro && <ChatDrawer sessionId={discussed ?? owner?.id ?? null} state={state} onClose={() => setDrawer(false)} />}
       </div>

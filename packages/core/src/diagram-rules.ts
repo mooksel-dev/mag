@@ -128,7 +128,7 @@ function levels(d: ComponentDiagram): string[] {
     )
   if (d.modules.length >= FRAME_AT && !layered.length && !d.modules.some((n) => n.boundary))
     out.push(
-      `The top level has ${d.modules.length} systems and no boundary: give boundaries (cloud accounts, VPCs, runtimes, the device, outside) and each module its boundary, so the user sees where each one runs; number the main scenarios with flows.`,
+      `The top level has ${d.modules.length} systems and no boundary: give boundaries as the project's architecture has them (cloud accounts, VPCs, runtimes, a SaaS, the device) and each module its boundary, so the user sees where each one runs (none when it has no architecture); number the main scenarios with flows.`,
     )
   const used = new Set<string>()
   walkArch(d.modules, (n: DNode) => n.uses.forEach((u) => u.flow && used.add(u.flow)))

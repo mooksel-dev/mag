@@ -61,3 +61,22 @@ test('show_canvas tells agents to embed a diagram or another canvas by id at the
   assert.match(d, /Never redraw a diagram in the page \(no Mermaid/)
   assert.match(d, /split into separate documents at them: its top-level styles go with every piece, its scripts do not/)
 })
+
+test('the review report requires intent first and conclusion last, each one paragraph', () => {
+  for (const name of ['set_review', 'set_pr_review']) {
+    const report = (TOOL_DEFS.find((t) => t.name === name)!.inputSchema as unknown as { properties: { report: { required: string[]; properties: Record<string, { description: string }> } } }).properties.report
+    assert.equal(report.required[0], 'intent')
+    assert.equal(report.required.at(-1), 'conclusion')
+    assert.match(report.properties.intent.description, /^Shown first: one concise paragraph[\s\S]*what the change does and why, not how/)
+    assert.match(report.properties.conclusion.description, /^Shown last: one concise paragraph with your conclusion and advice/)
+  }
+})
+
+test('diagram frames come from the project\'s architecture, named neutrally; none without one; ask where it is silent', () => {
+  const d = TOOL_DEFS.find((t) => t.name === 'show_diagram')!
+  assert.match(d.description, /Boundaries are where the code runs, as the project's architecture records it \(get_architecture\)/)
+  assert.match(d.description, /never ours or theirs, never by team; a project without an architecture has no outer frames, only its apps/)
+  assert.match(d.description, /ask the user, never guess/)
+  assert.match(descriptions(d.inputSchema).join('\n'), /app: a deployable app drawn expanded on the system level, its changed modules inside it with layers/)
+  assert.match(descriptions(d.inputSchema).join('\n'), /from the project's architecture with its names, never ours \/ not ours or a team; none without an architecture/)
+})

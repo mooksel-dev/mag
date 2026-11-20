@@ -124,6 +124,8 @@ export const CHECKS_VERDICTS: ChecksVerdict[] = ['request_changes', 'look', 'app
 export const CHECKS_LABELS: Record<ChecksVerdict, string> = { request_changes: 'Request changes', look: 'Look', approve: 'Approve' }
 
 export interface ReviewReport {
+  /** What the change does and why, one paragraph, shown first; missing on a report from before it was asked. */
+  intent?: string
   direction: Direction
   problem: CriterionClaim[]
   conventions: RuleClaim[]
@@ -144,6 +146,8 @@ export interface ReviewReport {
   decided?: DirectionDecision
   /** The comment to the author drafted with the call: the preferred option (prefer) or questions (discuss). */
   draft?: string
+  /** The reviewer's conclusion and advice, one paragraph, shown last; missing on a report from before it was asked. */
+  conclusion?: string
 }
 
 /** The user's call on a direction: it is fine, another option is better, or the author is asked first. */
@@ -224,6 +228,18 @@ export type ReportKind = 'step' | 'pr'
 type Raw = Record<string, unknown>
 const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 const list = (v: unknown): Raw[] => (Array.isArray(v) ? (v as Raw[]) : [])
+/** The longest intent or conclusion a reader takes in at a glance. */
+const PARAGRAPH_MAX = 600
+
+/** What is wrong with a one-paragraph field: empty, too long, or more than a paragraph (blank lines, a list). */
+function paragraphErrors(value: string, what: string, about: string): string[] {
+  if (!value) return [`${what} is required: one paragraph, ${about}`]
+  const errors: string[] = []
+  if (value.length > PARAGRAPH_MAX) errors.push(`${what}: ${value.length} characters; one concise paragraph, up to ${PARAGRAPH_MAX}`)
+  if (/\n\s*\n|^\s*([-*+•]|\d+[.)])\s/m.test(value)) errors.push(`${what}: one paragraph, no blank lines or lists`)
+  return errors
+}
+
 const strings = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) : typeof v === 'string' && v.trim() ? [v.trim()] : [])
 
 /**
@@ -316,7 +332,11 @@ export function normalizeReport(raw: unknown): { report: ReviewReport; errors: s
   const why = text(c.why)
   if (!CHECKS_VERDICTS.includes(checks)) errors.push(`checks.verdict must be one of ${CHECKS_VERDICTS.join(', ')}`)
   if (!why) errors.push('checks.why is required: one line on why this verdict')
-  return { report: { direction, problem, conventions, risks, questions, changes, checks, why }, errors }
+  const intent = text(r.intent)
+  const conclusion = text(r.conclusion)
+  errors.push(...paragraphErrors(intent, 'intent', 'what the change does and why, for a human (not how)'))
+  errors.push(...paragraphErrors(conclusion, 'conclusion', 'your conclusion and advice'))
+  return { report: { intent, direction, problem, conventions, risks, questions, changes, checks, why, conclusion }, errors }
 }
 
 /** Every claim of a report with where it is, in page order. */

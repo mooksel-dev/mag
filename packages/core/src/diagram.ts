@@ -43,7 +43,7 @@ export interface DNode extends Omit<ArchNode, 'interface' | 'uses' | 'children'>
   uses: DUse[]
   children?: DNode[]
   links?: DiagramLink[]
-  /** The id of the boundary it runs in (a cloud account, a VPC, a runtime, the device, outside); see ComponentDiagram.boundaries. */
+  /** The id of the boundary it runs in (a cloud account, a VPC, a runtime, a SaaS, the device); see ComponentDiagram.boundaries. */
   boundary?: string
 }
 
@@ -68,7 +68,7 @@ export interface DUse extends Omit<ArchUse, 'calls'> {
 export interface DBoundary {
   id: string
   name: string
-  /** "AWS account", "VPC", "device", "3rd party"… */
+  /** "AWS account", "VPC", "runner", "SaaS", "device"… */
   kind?: string
   /** One line: owner, environments, where it is defined. */
   note?: string
