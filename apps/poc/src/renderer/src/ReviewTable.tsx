@@ -34,7 +34,8 @@ export function ReviewTable({ reviews, project, state, onOpen }: {
   state: AppState
   onOpen: (taskId: string) => void
 }) {
-  const [open, setOpen] = useState<string | null>(reviews.length === 1 ? reviews[0].id : null)
+  // Folded: the agent's reply and the drawer already tell the review; a row unfolds to pick findings to publish.
+  const [open, setOpen] = useState<string | null>(null)
   const waiting = reviews.filter((t) => shownResult(t.prReview)?.verdict && !t.prReview?.posted).length
   return (
     <div className="reviewtable" aria-label="Reviews">
@@ -129,7 +130,7 @@ function Findings({ work, findings, verdict, at, running, name }: {
             <span className={`pill ${LEVEL_TAGS[f.level ?? 'should_fix']}`}>{FINDING_LEVEL_LABELS[f.level ?? 'should_fix']}</span>
             <span className="rtbody">
               <span className="rtsum">{summary}{where && <span className="rtwhere small muted"> · {where}</span>}</span>
-              {comment && <span className="rtcomment small muted"><span className="rtsaid">Comment:</span> {comment}</span>}
+              {comment && <span className="rtcomment small muted" title={comment}><span className="rtsaid">Comment:</span> {comment}</span>}
             </span>
           </label>
         )
