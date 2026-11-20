@@ -20,7 +20,7 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ApprovalCard, CanvasOpener, Markdown } from './Chat'
-import { canvasHref } from './markdown'
+import { canvasHref, mdOutline, type OutlinePoint } from './markdown'
 import { canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
 import { prName } from './format'
 import { LocalChecks, StartButton } from './LocalMode'
@@ -131,7 +131,7 @@ export function PlanCard({ work, tasks, project, state }: { work: Task; tasks: T
           const repos = project ? stepRepoNames(s, project) : undefined
           const head = (
             <>
-              <span className="key">{s.key}</span> {s.title}
+              <span title={s.key}>{s.title}</span>
               {repos && <span className="muted small"> · {repos.length ? repos.join(', ') : 'no code'}</span>}
               {s.startManually && <span className="muted small"> · start manually</span>}
             </>
@@ -144,7 +144,7 @@ export function PlanCard({ work, tasks, project, state }: { work: Task; tasks: T
               <details className="stepdetails">
                 <summary>{head}</summary>
                 {s.description.trim() && <div className="muted small">{s.description}</div>}
-                {details && <Markdown text={details} canvases={state.canvases} />}
+                {details && <Outline points={mdOutline(details)} canvases={state.canvases} />}
                 {diagrams.length > 0 && (
                   <div className="small">
                     Diagrams: {diagrams.map((c, j) => <span key={c.id}>{j > 0 && ', '}<a href={canvasHref(c.id)} onClick={(e) => { e.preventDefault(); openCanvas(c) }}>{c.title}</a></span>)}
@@ -162,6 +162,29 @@ export function PlanCard({ work, tasks, project, state }: { work: Task; tasks: T
         <span className="muted small">Then on its own: developer → PR → the owner's review → a Merge card here. To change the plan, tell the owner.</span>
       </div>
     </div>
+  )
+}
+
+/** Points longer than this, or with sub-points, fold to two lines behind their own ▸. */
+const POINT_FOLD = 140
+
+/** A step's part of the plan a level at a time: each point in two lines at most; its ▸ shows all of it and its sub-points. */
+function Outline({ points, canvases }: { points: OutlinePoint[]; canvases: CanvasRef[] }) {
+  return (
+    <ul className="outline">
+      {points.map((p, i) => {
+        const text = <Markdown className="md point" text={p.text} canvases={canvases} />
+        if (!p.points.length && p.text.length <= POINT_FOLD && !p.text.includes('\n')) return <li key={i}>{text}</li>
+        return (
+          <li key={i}>
+            <details>
+              <summary>{text}</summary>
+              {p.points.length > 0 && <Outline points={p.points} canvases={canvases} />}
+            </details>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

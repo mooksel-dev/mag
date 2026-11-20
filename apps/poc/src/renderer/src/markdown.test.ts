@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { canvasHref, mdSegments, parseCanvasHref } from './markdown.ts'
-import { plainMarkdown } from './markdown.ts'
+import { mdOutline, plainMarkdown } from './markdown.ts'
 
 test('mdSegments: no canvas links is one markdown segment', () => {
   assert.deepEqual(mdSegments('# Hi\n\ntext'), [{ kind: 'md', text: '# Hi\n\ntext' }])
@@ -98,4 +98,16 @@ test('plainMarkdown: a line break is a newline and plain-text escapes go; code k
 test('plainMarkdown: paragraphs (⇧↵) are lines; an empty line typed stays one; lists and code keep their lines', () => {
   assert.equal(plainMarkdown('one\n\ntwo\n\n\n\nafter a blank'), 'one\ntwo\n\nafter a blank')
   assert.equal(plainMarkdown('list:\n\n- a\n- b\n\n```\nx\n\ny\n```'), 'list:\n- a\n- b\n```\nx\n\ny\n```')
+})
+
+test('mdOutline: list items with their sub-items; paragraphs and code stay whole', () => {
+  const md = 'No new modules.\n\n- `a.ts`. The report:\n  more of it\n  - check one\n  - check two\n- `b.ts`\n    ```\n    x\n    ```\n\nAfter.\n1. one'
+  assert.deepEqual(mdOutline(md), [
+    { text: 'No new modules.', points: [] },
+    { text: '`a.ts`. The report:\nmore of it', points: [{ text: 'check one', points: [] }, { text: 'check two', points: [] }] },
+    { text: '`b.ts`\n```\nx\n```', points: [] },
+    { text: 'After.', points: [] },
+    { text: 'one', points: [] },
+  ])
+  assert.deepEqual(mdOutline('mag: [D](canvas:a1)\n- x'), [{ text: 'mag: [D](canvas:a1)', points: [] }, { text: 'x', points: [] }])
 })
