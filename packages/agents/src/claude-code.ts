@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { MAG_MCP_ID, type AgentEvent, type BackgroundTask, type Integration } from '@mag/core'
+import { EFFORTS, MAG_MCP_ID, type AgentEvent, type AgentModel, type BackgroundTask, type Integration } from '@mag/core'
 import { findBin } from './bin.ts'
 import type { AgentAdapter, LiveHandle, RunSpec } from './index'
 
@@ -71,6 +71,14 @@ function fromClaude(j: any): AgentEvent[] {
       return [{ type: 'raw', payload: j }]
     case 'assistant': {
       const out: AgentEvent[] = []
+      // Context fill: what this request held. A subagent has a context of its own, not the session's.
+      const u = j.message?.usage
+      if (!parent.parentToolUseId && u && typeof u.input_tokens === 'number')
+        out.push({
+          type: 'usage',
+          ...(typeof j.message.model === 'string' && { model: j.message.model }),
+          contextUsed: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+        })
       for (const b of j.message?.content ?? []) {
         if (b.type === 'text' && b.text?.trim()) out.push({ type: 'message', text: b.text, ...parent })
         else if (b.type === 'tool_use') out.push({ type: 'tool.call', id: b.id, name: b.name, input: b.input, ...parent })
@@ -87,6 +95,7 @@ function fromClaude(j: any): AgentEvent[] {
     }
     case 'result':
       return [
+        ...windows(j),
         {
           type: 'turn.done',
           ok: j.subtype === 'success' && !j.is_error,
@@ -97,6 +106,13 @@ function fromClaude(j: any): AgentEvent[] {
     default:
       return [{ type: 'raw', payload: j }]
   }
+}
+
+/** The context window of each model the run used (`result.modelUsage`), subagents' models included. */
+function windows(j: any): AgentEvent[] {
+  return Object.entries(j.modelUsage ?? {})
+    .filter(([, u]: [string, any]) => typeof u?.contextWindow === 'number' && u.contextWindow > 0)
+    .map(([model, u]: [string, any]) => ({ type: 'usage', model, contextWindow: u.contextWindow }))
 }
 
 /**
@@ -160,7 +176,7 @@ export function liveParser(onControl: (requestId: string, ok: boolean, error?: s
       if (j.type === 'result') {
         const stopped = stopping && j.is_error
         inTurn = stopping = false
-        if (stopped) return [{ type: 'stopped' }, { type: 'turn.done', ok: true, costUsd: j.total_cost_usd, nativeSessionId: j.session_id }]
+        if (stopped) return [{ type: 'stopped' }, ...windows(j), { type: 'turn.done', ok: true, costUsd: j.total_cost_usd, nativeSessionId: j.session_id }]
       }
       return fromClaude(j)
     },
@@ -172,6 +188,7 @@ function specArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   const args: string[] = []
   if (spec.resumeId) args.push('--resume', spec.resumeId, ...(spec.forkSession ? ['--fork-session'] : []))
   if (spec.model) args.push('--model', spec.model)
+  if (spec.effort) args.push('--effort', spec.effort)
   if (spec.appendSystemPrompt) args.push('--append-system-prompt', spec.appendSystemPrompt)
   if (spec.mcpConfigPath) args.push('--mcp-config', spec.mcpConfigPath)
   if (spec.allowedTools?.length) args.push('--allowedTools', spec.allowedTools.join(','))
@@ -183,6 +200,19 @@ function specArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   if (spec.noTools) args.push('--tools', '', '--strict-mcp-config')
   return args
 }
+
+/**
+ * Full model ids, checked with `claude --model <id> -p` on CLI 2.1.329, which takes every effort on each and reports a
+ * 1M context window for each (`result.modelUsage`), so the `[1m]` variants would be the same models twice and are not
+ * listed. Update when models change. The tier aliases older settings stored (opus, sonnet, haiku) still go to --model as
+ * they are; `alias` maps them here.
+ */
+const CLAUDE_MODELS: AgentModel[] = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', version: '5.5', alias: 'opus' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', version: '5.5', alias: 'sonnet' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', version: '5.5', alias: 'haiku' },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2', version: '5.2', alias: 'fable' },
+].map((m) => ({ ...m, contextWindow: 1_000_000, efforts: [...EFFORTS] }))
 
 export function buildArgs(spec: RunSpec): string[] {
   return ['-p', spec.prompt, '--output-format', 'stream-json', '--verbose', ...specArgs(spec)]
@@ -203,12 +233,7 @@ export const claudeCode: AgentAdapter = {
   },
 
   async listModels() {
-    // Aliases track the latest model of each tier, so the list needs no updates.
-    return [
-      { id: 'opus', label: 'Opus' },
-      { id: 'sonnet', label: 'Sonnet' },
-      { id: 'haiku', label: 'Haiku' },
-    ]
+    return CLAUDE_MODELS
   },
 
   start(spec, onEvent) {

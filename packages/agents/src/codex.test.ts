@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEvent } from '@mag/core'
-import { buildArgs, parseCodexLine } from './codex.ts'
+import { buildArgs, codex, parseCodexLine } from './codex.ts'
 
 const fixture = (name: string) =>
   readFileSync(new URL(`./__fixtures__/${name}`, import.meta.url), 'utf8')
@@ -113,4 +113,24 @@ test('buildArgs ignores permissionMode, which is Claude Code only', () => {
 test('buildArgs ignores askTools, which is Claude Code only', () => {
   const spec = { cwd: '/wt', prompt: 'go', allowedTools: ['Bash'] }
   assert.deepEqual(buildArgs({ ...spec, askTools: ['Bash(git push:*)'] }), buildArgs(spec))
+})
+
+test('buildArgs passes effort as model_reasoning_effort, max as xhigh, to fresh and resumed runs; none by default', () => {
+  for (const resumeId of [undefined, 'thread-1']) {
+    assert.ok(values(buildArgs({ cwd: '/r', prompt: 'hi', effort: 'low', resumeId }), '-c').includes('model_reasoning_effort="low"'))
+    assert.ok(values(buildArgs({ cwd: '/r', prompt: 'hi', effort: 'max', resumeId }), '-c').includes('model_reasoning_effort="xhigh"'))
+    assert.ok(!values(buildArgs({ cwd: '/r', prompt: 'hi', resumeId }), '-c').some((v) => v.startsWith('model_reasoning_effort')))
+  }
+})
+
+test('codex lists its models with a version and the efforts it takes, no max; context windows unknown', async () => {
+  for (const m of await codex.listModels()) {
+    assert.ok(m.version, m.id)
+    assert.equal(m.contextWindow, null)
+    assert.deepEqual(m.efforts, ['low', 'medium', 'high', 'xhigh'])
+  }
+})
+
+test('parseCodexLine reports no context fill: turn usage adds up its requests', () => {
+  assert.ok(!fixture('codex.jsonl').some((e) => e.type === 'usage'))
 })

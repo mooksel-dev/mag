@@ -56,6 +56,7 @@ const api: MagApi = {
   stopCommand: (runId) => ipcRenderer.invoke('command:stop', runId),
   runArchitect: (projectId) => ipcRenderer.invoke('arch:run', projectId),
   listAgents: () => ipcRenderer.invoke('agents:list'),
+  setSessionChoice: (sessionId, choice) => ipcRenderer.invoke('session:setChoice', sessionId, choice),
   repoInfo: (path) => ipcRenderer.invoke('repo:info', path),
   send: (sessionId, text, attachments, refs) => ipcRenderer.invoke('session:send', sessionId, text, attachments, refs),
   newChat: (projectId) => ipcRenderer.invoke('chat:new', projectId),

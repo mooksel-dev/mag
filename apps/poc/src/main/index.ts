@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type LocalChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -295,6 +295,7 @@ app.whenReady().then(async () => {
   handle('command:stop', (_, runId: string) => commandRuns.get(runId)?.stop())
   handle('arch:run', (_, projectId: string) => orch.architect(projectId))
   handle('agents:list', () => orch.agents())
+  handle('session:setChoice', (_, sessionId: string, choice: ModelChoice | null) => orch.setSessionChoice(sessionId, choice))
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[], refs?: ChatRef[]) => orch.send(sid, text, attachments, undefined, refs))
   handle('chat:new', (_, projectId: string) => orch.newChat(projectId))

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -456,7 +456,11 @@ export class Orchestrator {
   /** One process per turn. */
   private runs = new Map<string, RunHandle>()
   /** Live processes (see liveSession), kept between turns. */
-  private lives = new Map<string, { handle: LiveHandle; agent: AgentKind; model: string | null; closing: boolean }>()
+  private lives = new Map<string, { handle: LiveHandle; choice: ModelChoice; closing: boolean }>()
+  /** Each provider's model catalogue (see agents), for a session's context window. */
+  private models = new Map<AgentKind, AgentModel[]>()
+  /** Context windows runs reported, by model id: they win over the catalogue's. */
+  private windows = new Map<string, number>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
   /** Agent reviews going on, by step: what set_review records (null while the PR heads are fetched). */
   private reviewing = new Map<string, { round: number; heads: Record<string, string>; withContext: boolean; startedAt: number } | null>()
@@ -479,7 +483,13 @@ export class Orchestrator {
     private store: Store,
     private api: LocalApi,
     private paths: Paths,
-  ) {}
+  ) {
+    for (const id of Object.keys(adapters) as AgentKind[])
+      adapters[id]
+        .listModels()
+        .then((m) => this.models.set(id, m))
+        .catch(() => {})
+  }
 
   /** A turn is going on. */
   isRunning(sessionId: string) {
@@ -492,14 +502,53 @@ export class Orchestrator {
       (Object.keys(adapters) as AgentKind[]).map(async (id) => {
         const a = adapters[id]
         const [bin, models] = await Promise.all([a.detect(), a.listModels()])
+        this.models.set(id, models)
         return { id, displayName: a.displayName, detected: bin !== null, models }
       }),
     )
   }
 
-  /** Read on every run, so a settings change applies to the next turn. */
-  private choice(projectId: string, role: AgentRole): ModelChoice {
+  /** A role's default, for a run or session that has no choice of its own yet. Read on every run, as choice. */
+  private roleChoice(projectId: string, role: AgentRole): ModelChoice {
     return resolveChoice(this.store.project(projectId), role)
+  }
+
+  /**
+   * What the session runs on: its own choice, else its role's default (sessionChoice), never Codex for a review
+   * (sessionJob). Read on every run, so a change applies to the next turn.
+   */
+  private choice(session: AgentSession): ModelChoice {
+    return sessionChoice(this.store.project(session.projectId), session, this.job(session))
+  }
+
+  private job(session: AgentSession) {
+    return sessionJob(session, this.store.data.tasks.filter((t) => t.projectId === session.projectId))
+  }
+
+  /**
+   * The session's own agent, model and effort (model-picker-full-model-list.1); null = its role's default again. Applies
+   * from the next turn: a live process between turns is replaced then (see runLive). An agent that may not do the
+   * session's job (Codex on a reviewer or a PR review's topic, see sessionJob) is refused.
+   */
+  setSessionChoice(sessionId: string, choice: ModelChoice | null) {
+    const session = this.store.data.sessions.find((s) => s.id === sessionId)
+    if (!session) throw new Error('Session not found')
+    if (isSubagent(session)) throw new Error("A subagent runs in its parent's process: it has no model of its own")
+    if (choice) {
+      if (!adapters[choice.agent]) throw new Error(`Unknown agent: ${choice.agent}`)
+      if (choice.effort != null && !EFFORTS.includes(choice.effort)) throw new Error(`Unknown effort: ${choice.effort}`)
+      const allowed = agentAllowed(this.job(session), choice.agent)
+      if (!allowed.ok) throw new Error(allowed.why)
+    }
+    session.choice = choice ? { agent: choice.agent, model: choice.model || null, effort: choice.effort ?? null } : null
+    log.info('agent', 'session choice set', { session: session.id, ...(session.choice ?? { default: true }) })
+    this.store.changed()
+  }
+
+  /** A model's context window: as a run reported it, else the catalogue's; null = not known. */
+  private contextWindow(agent: AgentKind, model: string | undefined): number | null {
+    if (!model) return null
+    return this.windows.get(model) ?? findModel(this.models.get(agent) ?? [], model)?.contextWindow ?? null
   }
 
   /** Background run that (re)describes the project's architecture. */
@@ -510,15 +559,16 @@ export class Orchestrator {
     const mcpConfigPath = this.mcpConfig(`arch-${projectId}`, { MAG_PROJECT_ID: projectId })
     const run = { status: 'running' as const, startedAt: Date.now(), note: 'Reading the code…' }
     this.store.updateProject(projectId, { archRun: run })
-    log.info('agent', 'architect run started', { project: project.name, agent: this.choice(projectId, 'architect').agent })
+    log.info('agent', 'architect run started', { project: project.name, agent: this.roleChoice(projectId, 'architect').agent })
     const set = (patch: Partial<NonNullable<Project['archRun']>>) =>
       this.store.updateProject(projectId, { archRun: { ...this.store.project(projectId).archRun!, ...patch } })
     let failed = false
-    const c = this.choice(projectId, 'architect')
+    const c = this.roleChoice(projectId, 'architect')
     const handle = adapters[c.agent].start(
       this.withIntegrations(projectId, 'architect', c.agent, false, {
         cwd: project.repos[0],
         model: c.model ?? undefined,
+        effort: c.effort ?? undefined,
         addDirs: project.repos.slice(1),
         prompt: 'Describe the architecture of this project. Start with get_architecture.',
         appendSystemPrompt: ARCHITECT_PROMPT + blocks(contextBlocks({ notes: project.notes })),
@@ -553,7 +603,7 @@ export class Orchestrator {
   /** Empty project chat; the first send starts the agent. */
   newChat(projectId: string) {
     this.store.project(projectId)
-    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.choice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
+    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.roleChoice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
   }
 
   /**
@@ -569,7 +619,7 @@ export class Orchestrator {
     if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
     if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
     const text = brief.trim()
-    const agent = this.choice(parent.projectId, runRole({ role })).agent
+    const agent = this.roleChoice(parent.projectId, runRole({ role })).agent
     if (fork) {
       // Only Claude Code forks a session; Codex's resume would write into the parent's own.
       if (parent.agent !== 'claude-code' || !parent.nativeSessionId) throw new Error('This session has no agent session to fork yet: send it a message first (Claude Code only)')
@@ -1506,7 +1556,7 @@ export class Orchestrator {
     const scratch = await this.ensureScratch(session)
     const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
     // A Codex developer's PRs are reviewed on Claude Code (resolveChoice): say so where the review runs.
-    const refused = agentAllowed('reviewer', this.choice(task.projectId, 'developer').agent)
+    const refused = agentAllowed('reviewer', this.roleChoice(task.projectId, 'developer').agent)
     if (!refused.ok) session.items.push({ kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
     session.items.push({ kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
     return this.run(session, text)
@@ -1609,9 +1659,10 @@ export class Orchestrator {
    */
   async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
-    // The review runs on the chat's agent; Codex can't be held to "nothing goes to the PR".
-    const allowed = agentAllowed('pr-review', this.choice(projectId, 'chat').agent)
-    if (!allowed.ok) throw new Error(`${allowed.why} Pick Claude Code for Project chat in the project's settings to review PRs.`)
+    // The review runs on the asking topic's agent, else the chat's; Codex can't be held to "nothing goes to the PR".
+    const asker = by ? this.store.data.sessions.find((s) => s.id === by) : undefined
+    const allowed = agentAllowed('pr-review', (asker ? this.choice(asker) : this.roleChoice(projectId, 'chat')).agent)
+    if (!allowed.ok) throw new Error(`${allowed.why} Pick Claude Code ${asker?.choice ? "for this topic" : "for Project chat in the project's settings"} to review PRs.`)
     const info = await prInfo(parsePrUrl(url).url)
     if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
     // A repository the project has no checkout of is read from GitHub (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10).
@@ -2029,7 +2080,7 @@ export class Orchestrator {
 
   private newSession(taskId: string, role: AgentRole, stepId: string | null = null) {
     const projectId = this.store.task(taskId).projectId
-    return this.store.createSession({ projectId, taskId, stepId, role, agent: this.choice(projectId, role).agent, status: 'running' })
+    return this.store.createSession({ projectId, taskId, stepId, role, agent: this.roleChoice(projectId, role).agent, status: 'running' })
   }
 
   private mcpConfig(name: string, env: Record<string, string>) {
@@ -2245,7 +2296,7 @@ export class Orchestrator {
   /** A turn of the session: on its live process (see liveSession), or on a process of its own. */
   private async run(session: AgentSession, prompt: string) {
     // The agent the session runs on next decides; a live process of an agent without them goes first.
-    if (liveSession({ role: session.role, agent: this.choice(session.projectId, runRole(session)).agent })) return this.runLive(session, prompt)
+    if (liveSession({ role: session.role, agent: this.choice(session).agent })) return this.runLive(session, prompt)
     if (this.lives.has(session.id)) await this.closeLive(session.id)
     if (this.hasScratch(session)) await this.ensureScratch(session)
     this.runOnce(session, prompt)
@@ -2257,7 +2308,7 @@ export class Orchestrator {
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
 
-    const c = this.choice(session.projectId, runRole(session))
+    const c = this.choice(session)
     if (c.agent !== session.agent) {
       // Native sessions can't move between providers; the next run starts fresh.
       session.agent = c.agent
@@ -2269,7 +2320,7 @@ export class Orchestrator {
     session.runStartedAt = startedAt
     this.store.changed()
     this.logSessionEvent(session, 'agent_started', `${session.role} started`)
-    const who = { session: session.id, role: session.role, task: session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId)?.key : undefined, agent: session.agent, model: c.model }
+    const who = { session: session.id, role: session.role, task: session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId)?.key : undefined, agent: session.agent, model: c.model, effort: c.effort }
     log.info('agent', `${session.role} run started`, who)
 
     const onEvent = this.onEvent(session)
@@ -2279,7 +2330,7 @@ export class Orchestrator {
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
     const handle = adapters[session.agent].start(
-      { ...spec, prompt, model: c.model ?? undefined, resumeId, forkSession: fork, mcpConfigPath },
+      { ...spec, prompt, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)
@@ -2303,6 +2354,8 @@ export class Orchestrator {
       this.store.changed()
     }
     const tree = this.hasSubagents(session)
+    /** The model of this process's last request: the one whose context the session holds. */
+    let model: string | undefined
     return (e: AgentEvent) => {
       const at = Date.now()
       // A subagent's events go to its own child, not into this transcript (topics-a-tree-of-agent.4).
@@ -2331,6 +2384,17 @@ export class Orchestrator {
         case 'subagent.done':
           if (tree) this.endSubagent(session, e.toolUseId, e.ok, e.summary)
           return
+        case 'usage': {
+          if (e.contextWindow && e.model) this.windows.set(e.model, e.contextWindow)
+          const was = session.context
+          if (e.contextUsed !== undefined) {
+            model = e.model ?? model ?? session.activeModel
+            session.context = { used: e.contextUsed, window: this.contextWindow(session.agent, model) ?? was?.window ?? null, at }
+          } else if (e.contextWindow && was && e.model === (model ?? session.activeModel)) session.context = { ...was, window: e.contextWindow }
+          // The CLI repeats a request's usage on each of its content blocks: an unchanged fill is no store change.
+          if (session.context !== was && (session.context?.used !== was?.used || session.context?.window !== was?.window)) this.store.changed()
+          return
+        }
         case 'context.compacted':
           return push({ kind: 'notice', text: `Context compacted${e.preTokens ? ` (was ≈${Math.round(e.preTokens / 1000)}k tokens)` : ''}`, at })
         case 'turn.done':
@@ -2456,12 +2520,12 @@ export class Orchestrator {
    */
   private async runLive(session: AgentSession, prompt: string) {
     this.clearIdle(session.id)
-    const c = this.choice(session.projectId, runRole(session))
+    const c = this.choice(session)
     let live = this.lives.get(session.id)
     // A new session is created running before its first turn: only a live process can be in a turn.
     const inTurn = !!live && !live.closing && session.status === 'running'
-    // A new model or agent applies between turns. One process at a time per native session: a closing one goes first.
-    if (live && !inTurn && (live.agent !== c.agent || live.model !== c.model)) void this.closeLive(session.id)
+    // A new agent, model or effort applies between turns. One process at a time per native session: a closing one goes first.
+    if (live && !inTurn && (live.choice.agent !== c.agent || live.choice.model !== c.model || live.choice.effort !== c.effort)) void this.closeLive(session.id)
     if (live?.closing) {
       await live.handle.done
       live = this.lives.get(session.id)
@@ -2487,7 +2551,7 @@ export class Orchestrator {
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
     const spec = this.withIntegrations(session.projectId, runRole(session), session.agent, true, this.spec(session))
-    const who = { session: session.id, role: session.role, agent: session.agent, model: c.model }
+    const who = { session: session.id, role: session.role, agent: session.agent, model: c.model, effort: c.effort }
     const openedAt = Date.now()
     // A branched topic's first process forks its parent's session; later ones resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
@@ -2495,7 +2559,7 @@ export class Orchestrator {
     log.info('agent', `${session.role} live process opened`, { ...who, resume: !!session.nativeSessionId, fork })
 
     const onEvent = this.onEvent(session)
-    const handle = adapter.open({ ...spec, model: c.model ?? undefined, resumeId, forkSession: fork, mcpConfigPath }, (e) => {
+    const handle = adapter.open({ ...spec, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, mcpConfigPath }, (e) => {
       if (e.type === 'stopped' && session.status !== 'running') return // an idle close says nothing in the chat
       onEvent(e)
       if (e.type === 'turn.started') this.turnStarted(session)
@@ -2506,7 +2570,7 @@ export class Orchestrator {
         this.store.changed()
       } else if (e.type === 'turn.done') this.turnEnded(session)
     })
-    const live = { handle, agent: c.agent, model: c.model, closing: false }
+    const live = { handle, choice: c, closing: false }
     this.lives.set(session.id, live)
     session.live = true
     this.store.changed()
@@ -2647,7 +2711,7 @@ export class Orchestrator {
     const { sessions } = this.store.data
     const at = summaryCovers(item, sessions)
     const prompt = summaryPrompt(summarySource(item, sessions, kind === 'task' ? this.store.data.docs[id] : ''))
-    const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.choice(item.projectId, 'chat').agent)
+    const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.roleChoice(item.projectId, 'chat').agent)
     const adapter = adapters[agent]
     let text = ''
     let failed = false
