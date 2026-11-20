@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CANVAS_CLASSES, CANVAS_CSS, TOKENS_CSS, canvasDocument, canvasTheme } from './index.ts'
+import { CANVAS_CLASSES, CANVAS_CSS, TOKENS_CSS, HEIGHT_MESSAGE, canvasDocument, canvasEmbedWarnings, canvasPieces, canvasTheme } from './index.ts'
 
 const block = (selector: string) => {
   const at = TOKENS_CSS.indexOf(`${selector} {`)
@@ -49,4 +49,72 @@ test('the classes told to agents are the ones canvas.css styles', () => {
     assert.ok(CANVAS_CLASSES.includes(c), c)
     assert.ok(CANVAS_CSS.includes(`.${c}`), c)
   }
+})
+
+test('canvasPieces: a page without embeds is one piece, as it is', () => {
+  const html = '<h1>t</h1><div><mag-canvas id="x"></mag-canvas></div>'
+  assert.deepEqual(canvasPieces(html), [{ kind: 'html', html }])
+  assert.deepEqual(canvasPieces(''), [{ kind: 'html', html: '' }])
+})
+
+test('canvasPieces: top-level <mag-canvas id> tags split the page; empty pieces go', () => {
+  assert.deepEqual(canvasPieces('<h1>Review</h1>\n<mag-canvas id="d1"></mag-canvas>\n<p>after</p><mag-canvas id=\'d2\'/>  <mag-canvas id=d3>ignored</mag-canvas>'), [
+    { kind: 'html', html: '<h1>Review</h1>\n' },
+    { kind: 'embed', id: 'd1' },
+    { kind: 'html', html: '\n<p>after</p>' },
+    { kind: 'embed', id: 'd2' },
+    { kind: 'embed', id: 'd3' },
+  ])
+  assert.deepEqual(canvasPieces('<MAG-CANVAS data-id="no" ID="a"></MAG-CANVAS>'), [{ kind: 'embed', id: 'a' }])
+  assert.deepEqual(canvasPieces('<mag-canvas></mag-canvas>'), [{ kind: 'embed', id: '' }])
+})
+
+test('canvasPieces: a tag inside an element, a comment or a script stays HTML; unclosed <p> and <li> do not nest', () => {
+  const nested = '<div class="card"><mag-canvas id="in"></mag-canvas></div>'
+  assert.deepEqual(canvasPieces(`${nested}<mag-canvas id="out"></mag-canvas>`), [{ kind: 'html', html: nested }, { kind: 'embed', id: 'out' }])
+  const hidden = '<!-- <mag-canvas id="c"></mag-canvas> --><script>const s = "<mag-canvas id=\'s\'>"</script><img src="a.png"><br/>'
+  assert.deepEqual(canvasPieces(`${hidden}<mag-canvas id="out"></mag-canvas>`), [{ kind: 'html', html: hidden }, { kind: 'embed', id: 'out' }])
+  assert.deepEqual(canvasPieces('<p>one<p>two<ul><li>a<li>b</ul><mag-canvas id="x"></mag-canvas>').map((p) => p.kind), ['html', 'embed'])
+  assert.deepEqual(canvasPieces('<p>text<mag-canvas id="x"></mag-canvas>').map((p) => p.kind), ['html', 'embed'])
+})
+
+test('canvasPieces: every piece keeps the page\'s styles and a full document\'s head', () => {
+  const style = '<style>.x { gap: var(--sp-2) }</style>'
+  const link = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/x.css">'
+  assert.deepEqual(canvasPieces(`<h1>a</h1>${style}<mag-canvas id="d"></mag-canvas><p>b</p>${link}`), [
+    { kind: 'html', html: `${style}${link}<h1>a</h1>` },
+    { kind: 'embed', id: 'd' },
+    { kind: 'html', html: `${style}${link}<p>b</p>` },
+  ])
+  const doc = '<!doctype html><html><head><title>t</title></head><body class="b"><h1>a</h1><mag-canvas id="d"></mag-canvas><p>b</p></body></html>'
+  assert.deepEqual(canvasPieces(doc), [
+    { kind: 'html', html: '<!doctype html><html><head><title>t</title></head><body class="b"><h1>a</h1></body></html>' },
+    { kind: 'embed', id: 'd' },
+    { kind: 'html', html: '<!doctype html><html><head><title>t</title></head><body class="b"><p>b</p></body></html>' },
+  ])
+})
+
+test('canvasDocument with reportHeight posts the page\'s height to its parent', () => {
+  assert.ok(!canvasDocument('<p>x</p>', 'light').includes(HEIGHT_MESSAGE))
+  const doc = canvasDocument('<p>x</p>', 'light', { reportHeight: true })
+  assert.match(doc, new RegExp(`<script data-mag-canvas>[^<]*parent\\.postMessage\\(\\{ ${HEIGHT_MESSAGE}:`))
+  assert.ok(doc.indexOf(HEIGHT_MESSAGE) < doc.indexOf('<body>'))
+})
+
+test('canvasEmbedWarnings: a tag inside an element, without id, of a missing canvas or of the page itself', () => {
+  const known = new Set(['d1', 'd2'])
+  const exists = (id: string) => known.has(id)
+  assert.deepEqual(canvasEmbedWarnings('<h1>t</h1><mag-canvas id="d1"></mag-canvas><p>no embeds</p>', exists), [])
+  assert.deepEqual(canvasEmbedWarnings('<p>plain page</p>', exists), [])
+  const w = canvasEmbedWarnings('<main><section><mag-canvas id="d2"></mag-canvas></section></main><div><mag-canvas id="x">', exists)
+  assert.equal(w.length, 2)
+  assert.match(w[0], /^<mag-canvas id="d2"> is inside <section>, so it is not drawn: put it at the top level/)
+  assert.match(w[1], /^<mag-canvas id="x"> is inside <div>/)
+  assert.match(canvasEmbedWarnings('<html><head></head><mag-canvas id="d1"></mag-canvas></html>', exists)[0], /is inside <html>.*in <body> for a full document/)
+  assert.deepEqual(canvasEmbedWarnings('<html><body><mag-canvas id="d1"></mag-canvas></body></html>', exists), [])
+  const top = canvasEmbedWarnings('<mag-canvas></mag-canvas><mag-canvas id="gone"></mag-canvas><mag-canvas id="me"></mag-canvas>', exists, 'me')
+  assert.equal(top.length, 3)
+  assert.match(top[0], /^<mag-canvas> has no id/)
+  assert.match(top[1], /^<mag-canvas id="gone">: no canvas with this id/)
+  assert.match(top[2], /^<mag-canvas id="me"> is this canvas itself/)
 })

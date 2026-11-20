@@ -168,6 +168,8 @@ what and where.`,
    partly / not. Conventions: the decisions, the project's rules, modules, layers and interfaces as in the diagrams.
    Risks: bugs, missing tests, risky changes, and the checks of the code your job lists.
 4. Something worth doing that is outside the step and need not block it: add_idea, not a claim.
+The report opens with its intent, what the step changes and why for a human, and ends with your conclusion and
+advice: one paragraph each.
 ${REPORT}`,
   prReview: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
 have done it. Whether its direction is right is the user's call: prepare it, never decide it.
@@ -201,6 +203,8 @@ have done it. Whether its direction is right is the user's call: prepare it, nev
    user citing decision:<id>.
 Read only: nothing goes to the PR or the tracker, because the PR is a teammate's and what reaches them is the user's
 call. The user publishes the findings they pick.
+The report opens with its intent, what the PR changes and why for a human, and ends with your conclusion and advice:
+one paragraph each.
 ${REPORT}`,
   prReviewV1: `Review what the PR did against the problem it solves and the project's agreements, never against how you would
 have done it: no diagram of your own design and no list of differences from it.

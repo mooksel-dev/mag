@@ -326,6 +326,22 @@ test('show_diagram validates, saves a diagram canvas and lists it in get_task an
   assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
 })
 
+test('show_canvas warns on save where an embed would not show: nested, no id, missing, itself (one-canvas-with-real-diagrams.1)', async () => {
+  const { call, store } = setup()
+  const plain = await call('show_canvas', { title: 'Page', html: '<p>hi</p>' })
+  const page = Object.values(store.data.canvases).find((x) => x.kind === 'html')!
+  assert.equal(plain, `Shown to the user as canvas ${page.id} (v1).`)
+  const ok = await call('show_canvas', { title: 'Review', html: `<h1>R</h1><mag-canvas id="${page.id}"></mag-canvas>` })
+  assert.match(ok, /^Shown to the user as canvas \S+ \(v1\)\.$/)
+  const bad = await call('show_canvas', { id: page.id, title: 'Page', html: `<main><mag-canvas id="${page.id}"></mag-canvas></main><mag-canvas id="gone"></mag-canvas><mag-canvas></mag-canvas><mag-canvas id="${page.id}"></mag-canvas>` })
+  assert.equal(store.data.canvases[page.id].version, 2)
+  assert.match(bad, new RegExp(`^Shown to the user as canvas ${page.id} \\(v2\\)\\. Saved, but its embeds would not show as meant; fix them now and call again with id ${page.id}:\n- `))
+  assert.match(bad, /is inside <main>, so it is not drawn/)
+  assert.match(bad, /<mag-canvas id="gone">: no canvas with this id/)
+  assert.match(bad, /<mag-canvas> has no id/)
+  assert.match(bad, /is this canvas itself/)
+})
+
 test('show_diagram warns where a data diagram breaks the rules of the diff: owner, stored data, relations (povnyi-diff-nabir-pov-iazanykh.3)', async () => {
   const { call } = setup()
   const out = await call('show_diagram', {
@@ -459,7 +475,8 @@ test('set_review is the reviewer\'s alone and records the verdict of its step', 
   await call('set_review', { verdict: 'changes', findings: JSON.stringify([{ text: ' no test ', where: 'a.ts:3' }, { text: 'scope' }]) }, reviewer.id)
   await call('set_review', { verdict: 'merge', findings: [] }, reviewer.id)
   // A report needs the inventory of the review's fact; its checks give the verdict (review-v2-questions-first-direction.1).
-  const report = { direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve', why: 'w' } }
+  const report = { intent: 'i', direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve', why: 'w' }, conclusion: 'c' }
+  await assert.rejects(call('set_review', { report: { ...report, intent: '', conclusion: 'a\n\nb' } }, reviewer.id), /intent is required: one paragraph[\s\S]*conclusion: one paragraph, no blank lines or lists/)
   await assert.rejects(call('set_review', { report }, reviewer.id), /Not recorded\. Fix the report[\s\S]*direction\.decisions: name the design decision[\s\S]*no inventory yet/)
   await assert.rejects(call('set_review', { report: { ...report, checks: { verdict: 'merge' } } }, reviewer.id), /checks\.verdict must be one of[\s\S]*checks\.why is required/)
   assert.deepEqual(calls, ['review big.1: changes a.ts:3|no test;|scope', 'review big.1: merge '])

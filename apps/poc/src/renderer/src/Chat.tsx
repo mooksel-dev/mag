@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasRef, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
+import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
@@ -190,25 +190,99 @@ const fileUrl = (a: Attachment) => `mag-file://att/${encodeURIComponent(a.path.s
 /**
  * A canvas's content: an HTML page in a sandboxed frame, or a diagram drawn by mag. `height`: of the frame; a diagram
  * takes the height it needs (scrolling past a cap), or fills its box at '100%'. `focus`: a node of a diagram to show.
- * `siblings`: the task's diagrams, for the flows of methods (see DiagramView).
+ * `siblings`: the task's diagrams, for the flows of methods (see DiagramView). A page with `<mag-canvas id>` tags shows
+ * the canvases they name in their place, drawn the same way (one-canvas-with-real-diagrams.1); `within`: the ids of the
+ * canvases this one is embedded in, outermost first, so it is as tall as its content and a cycle is drawn as a note.
  */
-export function CanvasFrame({ canvas, height = 340, focus, siblings }: { canvas: CanvasRef; height?: number | string; focus?: string; siblings?: DiagramItem[] }) {
+export function CanvasFrame({ canvas, height = 340, focus, siblings, within }: { canvas: CanvasRef; height?: number | string; focus?: string; siblings?: DiagramItem[]; within?: string[] }) {
   const [content, setContent] = useState<Pick<Canvas, 'kind' | 'html' | 'diagram'> | null | undefined>(undefined)
   const theme = useAppliedTheme()
   useEffect(() => {
     mag.getCanvas(canvas.id).then(setContent)
   }, [canvas.id, canvas.version])
+  const pieces = useMemo(() => (content?.kind !== 'diagram' && content?.html ? canvasPieces(content.html) : []), [content])
   if (content === undefined) return <div className="muted small">Loading…</div>
+  if (content === null && within) return <CanvasNote>Canvas {canvas.id} not found.</CanvasNote>
   if (content?.kind === 'diagram' && content.diagram)
     return (
-      <div className={`canvasdiagram${height === '100%' ? ' fill' : ''}`}>
+      <div className={`canvasdiagram${height === '100%' && !within ? ' fill' : ''}`}>
         <DiagramView diagram={content.diagram} focus={focus} siblings={siblings} />
       </div>
     )
+  const html = content?.html ?? ''
+  const shown = canvasTheme(html, theme)
+  const chain = [...(within ?? []), canvas.id]
+  if (pieces.some((p) => p.kind === 'embed')) {
+    const page = <CanvasPieces pieces={pieces} theme={shown} title={canvas.title} within={chain} />
+    return within ? <div className="canvaspage">{page}</div> : <div className="canvasframe canvaspage" style={{ height }}>{page}</div>
+  }
+  if (within) return <FitFrame html={html} theme={shown} title={canvas.title} />
   // No allow-same-origin: the page can run scripts but cannot reach window.mag. mag's tokens and canvas.css, in the
   // app's theme, so the page looks like the app (prompts-use-the-models-to.7).
-  const doc = content?.html ? canvasDocument(content.html, theme) : ''
+  const doc = html ? canvasDocument(html, theme) : ''
   return <iframe className="canvasframe" title={canvas.title} sandbox="allow-scripts allow-popups" srcDoc={doc} style={{ height }} />
+}
+
+/** The pieces of a page with embeds: its HTML in frames as tall as their content, each embedded canvas in its place. */
+function CanvasPieces({ pieces, theme, title, within }: { pieces: CanvasPiece[]; theme: CanvasTheme; title: string; within: string[] }) {
+  return (
+    <>
+      {pieces.map((p, i) => (p.kind === 'html' ? <FitFrame key={i} html={p.html} theme={theme} title={title} /> : <EmbeddedCanvas key={i} id={p.id} within={within} />))}
+    </>
+  )
+}
+
+/** HTML in a sandboxed frame that grows to its content: the page posts its height (canvasDocument's reportHeight). */
+function FitFrame({ html, theme, title }: { html: string; theme: CanvasTheme; title: string }) {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(0)
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const h = (e.data as Record<string, unknown> | null)?.[HEIGHT_MESSAGE]
+      if (e.source === ref.current?.contentWindow && typeof h === 'number' && h >= 0) setHeight(h)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+  const doc = useMemo(() => canvasDocument(html, theme, { reportHeight: true }), [html, theme])
+  return <iframe ref={ref} className="canvasfit" title={title} sandbox="allow-scripts allow-popups" srcDoc={doc} style={{ height }} />
+}
+
+/** The title and version of a canvas, from the app's state; null when there is no such canvas. */
+function useCanvasMeta(id: string): CanvasRef | null | undefined {
+  const [meta, setMeta] = useState<{ title: string; version: number } | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    const pick = (s: AppState) => {
+      const c = s.canvases.find((x) => x.id === id)
+      if (live) setMeta((was) => (!c ? null : was && was.title === c.title && was.version === c.version ? was : { title: c.title, version: c.version }))
+    }
+    void mag.getState().then(pick)
+    const off = mag.onState(pick)
+    return () => {
+      live = false
+      off()
+    }
+  }, [id])
+  return meta && { id, ...meta }
+}
+
+/** A canvas a page embeds by `<mag-canvas id>`; one that embeds itself (a cycle) or is missing is a note. */
+function EmbeddedCanvas({ id, within }: { id: string; within: string[] }) {
+  const meta = useCanvasMeta(id)
+  if (!id) return <CanvasNote>A &lt;mag-canvas&gt; without id.</CanvasNote>
+  if (within.includes(id)) return <CanvasNote>Canvas {id} embeds itself here; not drawn again.</CanvasNote>
+  if (meta === undefined) return <div className="muted small">Loading…</div>
+  if (meta === null) return <CanvasNote>Canvas {id} not found.</CanvasNote>
+  return (
+    <div className="canvasembed" data-canvas={id}>
+      <CanvasFrame key={meta.version} canvas={meta} within={within} />
+    </div>
+  )
+}
+
+function CanvasNote({ children }: { children: ReactNode }) {
+  return <div className="callout canvasnote small">{children}</div>
 }
 
 /**

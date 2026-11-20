@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt, normalizeDiagram, type ComponentDiagram, type DNode } from '@mag/core'
-import { callGroups, changedModule, edgePill, flowItems, flowLines, flowOf, methodCallers, moveEdges, movedOut, relatedFlows, unchangedAt } from './componentDiff.ts'
+import { appLanes, callGroups, changedModule, edgeLabel, edgePill, foldEdges, laneFrameId, quietZones, zoneId, zoneOf, zoneOwners, flowItems, flowLines, flowOf, methodCallers, moveEdges, movedOut, relatedFlows, unchangedAt } from './componentDiff.ts'
 
 const diagram = normalizeDiagram({
   type: 'component',
@@ -131,4 +131,86 @@ test('a module with a flow of a method keeps its box, and so does its parent', (
   const app: DNode = { id: 'app', name: 'App', description: '', uses: [], children: [{ id: 'inner', name: 'Inner', description: '', uses: [] }] }
   assert.equal(changedModule(app, new Set()), false)
   assert.equal(changedModule(app, new Set(), new Set(['inner'])), true)
+})
+
+test('edgeLabel: the first call, a changed one first on a diff, "+n" for the rest; counts and calls in the tooltip', () => {
+  const e = edgesAt(diagram.modules, null).find((x) => x.from === 'ui')!
+  assert.deepEqual(edgeLabel(e, true), { text: 'get(id)', more: 3, mark: 'mod', title: '+1 ~1 −0\n− get(id)\n+ get(id, opts)\n+ drop(id)\n  list()' })
+  assert.deepEqual(edgeLabel(e, false), { text: 'list()', more: 3, title: 'list()\nget(id)\nget(id, opts)\ndrop(id)' })
+  const plain = edgesAt(diagram.modules, null).find((x) => x.from === 'svc' && x.to === 'db')!
+  assert.deepEqual(edgeLabel(plain, true), { text: 'find()', more: 0, title: '  find()' })
+  assert.deepEqual(edgeLabel({ from: 'a', to: 'b', calls: ['run(job) - starts it'] }, false)?.text, 'run(job)')
+  assert.equal(edgeLabel({ from: 'a', to: 'b', calls: [] }, true), null)
+})
+
+const system = (): ComponentDiagram => ({
+  type: 'component',
+  summary: 's',
+  boundaries: [
+    { id: 'aws', name: 'AWS' },
+    { id: 'hub', name: 'hub', kind: 'app', parent: 'aws' },
+    { id: 'other', name: 'other team', parent: 'aws' },
+    { id: 'billing', name: 'billing', parent: 'other' },
+    { id: 'saas', name: 'SaaS', diff: 'add' },
+    { id: 'empty', name: 'empty' },
+  ],
+  modules: [
+    { id: 'h', name: 'handler', description: '', layer: 'app', boundary: 'hub', uses: [{ to: 's', calls: [{ text: 'pay(id)', diff: 'add' }] }, { to: 'b1', calls: [{ text: 'GET /a' }], flow: 'f', step: '1' }] },
+    { id: 's', name: 'svc', description: '', layer: 'service', boundary: 'hub', diff: 'add', uses: [{ to: 'b2', calls: [{ text: 'POST /b' }], diff: 'add', flow: 'f', step: '2' }, { to: 'ext', calls: [] }] },
+    { id: 'b1', name: 'b1', description: '', boundary: 'other', uses: [{ to: 'b2', calls: [{ text: 'x()' }] }] },
+    { id: 'b2', name: 'b2', description: '', boundary: 'billing', uses: [] },
+    { id: 'ext', name: 'ext', description: '', boundary: 'saas', uses: [] },
+  ],
+})
+
+test('quietZones: the outermost boundaries with no change in them or on them; zoneOwners maps their modules to the block', () => {
+  const d = system()
+  const zones = quietZones(d, d.modules, d.boundaries!)
+  assert.deepEqual([...zones], ['other'])
+  assert.deepEqual([...zoneOwners(d.modules, d.boundaries!, zones)], [['b1', zoneId('other')], ['b2', zoneId('other')]])
+  d.modules[3].interface = [{ text: 'get()', diff: 'mod' }]
+  assert.deepEqual([...quietZones(d, d.modules, d.boundaries!)], [])
+  const marked = system()
+  marked.boundaries![3].diff = 'mod'
+  assert.deepEqual([...quietZones(marked, marked.modules, marked.boundaries!)], [])
+})
+
+test('foldEdges: ends in a zone move to its block, arrows merge with their calls and steps, one inside the block goes', () => {
+  const d = system()
+  const owners = zoneOwners(d.modules, d.boundaries!, quietZones(d, d.modules, d.boundaries!))
+  const edges = foldEdges(edgesAt(d.modules, null), owners)
+  const z = zoneId('other')
+  assert.deepEqual(edges.map((e) => `${e.from}>${e.to}`), ['h>s', `h>${z}`, `s>${z}`, 's>ext'])
+  assert.deepEqual(edges.find((e) => e.from === 'h' && e.to === z)?.calls, ['GET /a'])
+  assert.deepEqual(edges.find((e) => e.from === 's' && e.to === z)?.steps, [{ flow: 'f', step: '2', calls: ['POST /b'] }])
+  const merged = foldEdges(
+    [
+      { from: 'a', to: 'x', calls: ['one()'], steps: [{ flow: 'f', step: '1', calls: ['one()'] }], async: true },
+      { from: 'a', to: 'y', calls: ['one()', 'two()'], diff: 'add', callDiff: { 'two()': 'add' }, steps: [{ flow: 'f', step: '2', calls: ['two()'] }], async: true },
+      { from: 'x', to: 'y', calls: ['in()'] },
+    ],
+    new Map([['x', 'Z'], ['y', 'Z']]),
+  )
+  assert.deepEqual(merged, [{ from: 'a', to: 'Z', calls: ['one()', 'two()'], callDiff: { 'two()': 'add' }, diff: 'mod', async: true, steps: [{ flow: 'f', step: '1', calls: ['one()'] }, { flow: 'f', step: '2', calls: ['two()'] }] }])
+  assert.equal(foldEdges(edges, new Map()), edges)
+})
+
+test('appLanes: layered modules in an app boundary go in the frame of their layer inside it', () => {
+  const d = system()
+  assert.deepEqual([...appLanes(d, d.modules)], [
+    ['h', { frame: laneFrameId('hub', 'app'), boundary: 'hub', layer: 'app' }],
+    ['s', { frame: laneFrameId('hub', 'service'), boundary: 'hub', layer: 'service' }],
+  ])
+  d.boundaries![1].kind = 'runtime'
+  assert.equal(appLanes(d, d.modules).size, 0)
+})
+
+test('zoneOf: the folded zone a module sits in, so a #node link to it opens the zone', () => {
+  const d = system()
+  const zones = quietZones(d, d.modules, d.boundaries!)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'b2'), 'other')
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'b1'), 'other')
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'h'), undefined)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'nope'), undefined)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, null), undefined)
 })

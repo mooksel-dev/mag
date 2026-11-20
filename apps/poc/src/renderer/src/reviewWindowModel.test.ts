@@ -121,3 +121,15 @@ test('the static page and an imported review have no run, direction buttons, dra
   assert.match(reviews, /direction=\{ro \? undefined/, 'the right pane: no direction buttons on an imported review')
   assert.match(reviews, /r\.verdict && !ro && <Publish/, 'nor Publish')
 })
+
+test('the report reads intent first and conclusion last; a report without them shows neither', () => {
+  const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8')
+  const view = read('./ReportView.tsx')
+  assert.match(view, /<div className="report">\s*<ReportIntent report=\{report\} \/>\s*<div className="reportstrip">/)
+  assert.match(view, /\{children\}\s*\{conclusion && <ReportConclusion report=\{report\} \/>\}\s*<\/div>/)
+  assert.match(view, /return report\.intent \?[^\n]*: null/)
+  assert.match(view, /return report\.conclusion \?[^\n]*: null/)
+  const win = read('./ReviewWindow.tsx')
+  assert.match(win, /conclusion=\{false\}/)
+  assert.match(win, /<\/FoldedDiff>\s*\{model\.report && <ReportConclusion report=\{model\.report\} \/>\}\s*<\/main>/, 'the window: the conclusion after everything')
+})

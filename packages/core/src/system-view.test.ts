@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { diagramWarnings, edgesAt, normalizeDiagram, validateDiagram, type ComponentDiagram } from './index.ts'
+import { diagramWarnings, edgesAt, inApp, normalizeDiagram, validateDiagram, type ComponentDiagram } from './index.ts'
 
 // docs/examples/money-hub-architecture.json: the system view of a change drawn well, with boundaries, numbered flows
 // and the inside of the new app one click down.
@@ -77,4 +77,28 @@ test('diagramWarnings: layered modules beside systems on the top level, many sys
   const w = diagramWarnings(flat).join('\n')
   assert.match(w, /The top level has 5 systems and no boundary/)
   assert.match(w, /Flow f has no step/)
+})
+
+test('diagramWarnings: layered modules in a boundary of kind app are an expanded app on the system level; outside one they are still flagged', () => {
+  const expanded = (): ComponentDiagram => ({
+    type: 'component',
+    summary: 's',
+    boundaries: [{ id: 'aws', name: 'AWS' }, { id: 'hub', name: 'money-hub', kind: 'App', parent: 'aws' }, { id: 'jobs', name: 'jobs', parent: 'hub' }],
+    modules: [
+      { id: 'web', name: 'web', description: '', uses: [{ to: 'handler', calls: [{ text: 'GET /x' }] }] },
+      { id: 'handler', name: 'handler', description: '', layer: 'app', boundary: 'hub', uses: [{ to: 'svc', calls: [{ text: 'list()' }] }] },
+      { id: 'worker', name: 'worker', description: '', layer: 'app', boundary: 'jobs', uses: [{ to: 'svc', calls: [] }] },
+      { id: 'svc', name: 'svc', description: '', layer: 'service', boundary: 'hub', uses: [{ to: 'db', calls: [] }] },
+      { id: 'db', name: 'db', description: '', boundary: 'aws', uses: [] },
+    ],
+  })
+  assert.deepEqual(validateDiagram(expanded()), [])
+  assert.deepEqual(diagramWarnings(expanded()), [])
+  const d = expanded()
+  d.modules.push({ id: 'loose', name: 'loose', description: '', layer: 'client', boundary: 'aws', uses: [] })
+  assert.match(diagramWarnings(d).join('\n'), /Top-level modules loose have a layer/)
+  assert.doesNotMatch(diagramWarnings(d).join('\n'), /handler|svc/)
+  assert.equal(inApp(d, 'jobs'), true)
+  assert.equal(inApp(d, 'aws'), false)
+  assert.equal(inApp(d, undefined), false)
 })

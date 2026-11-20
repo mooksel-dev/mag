@@ -308,6 +308,15 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .archbadge.d-move { border-color: var(--diff-move); }
 /* a diff arrow carries only the count of its changed calls: "+2 ~1 −1" */
 .archbadge.pill { white-space: nowrap; padding: 0 7px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-weight: 500; }
+.archbadge.label { display: inline-flex; gap: 5px; align-items: center; max-width: 150px; padding: 0 7px; white-space: nowrap; font-weight: 500; }
+.archbadge.label .call { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; background: none; padding: 0; }
+.archbadge.label .more { color: var(--muted); font-size: 10px; }
+.archbadge.label .archstep.static { height: 16px; min-width: 16px; padding: 0 4px; font-size: 10px; }
+.archbadge.label.d-none { color: var(--muted); }
+.archbox.quiet { width: auto; min-width: 110px; max-width: 190px; padding: 6px 10px; }
+.archbox.zone { border-style: dashed; }
+.archframe.lane { background: none; border-style: dotted; }
+.archframehead .link { padding: 0; font-size: 11px; pointer-events: auto; }
 /* the side panel of a diff: full call lists, one per line */
 .archside .bline { display: flex; gap: 4px; align-items: baseline; font-size: 12px; overflow-wrap: anywhere; }
 .archside .bline b { flex: none; width: 1em; }
@@ -567,6 +576,12 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .canvashead { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .canvashead .title { font-weight: 600; }
 .canvasframe { display: block; width: 100%; border: 0; background: var(--surface); }
+.canvaspage { overflow: auto; background: var(--surface); }
+.canvasfit { display: block; width: 100%; border: 0; background: var(--surface); }
+.canvasembed { margin: 0 20px 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.canvasembed .canvasembed { margin: 8px; }
+.canvasembed .canvasdiagram { max-height: none; overflow: visible; }
+.canvasnote { margin: 0 20px 12px; padding: 8px 12px; border-left: 3px solid var(--amber-line); border-radius: 6px; background: var(--amber-bg); color: var(--text); }
 .pad { padding: 8px 10px; }
 .overlay { position: fixed; inset: 0; background: var(--scrim); display: flex; padding: 32px; z-index: 10; }
 .overlaybox { flex: 1; background: var(--surface); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }

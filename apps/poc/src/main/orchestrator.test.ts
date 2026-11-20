@@ -1564,6 +1564,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const ctx = { projectId: project.id, sessionId: topic.id }
   const claim = (text: string, cites: string[]) => ({ text, source: 'agent', cites })
   const reportArg = {
+    intent: 'Charges a fixed fee per order, so billing no longer depends on the cart.',
     direction: {
       decisions: [claim('The charge is a constant', ['u1'])],
       options: [{ name: 'constant', tradeoffs: 'simple', pr: true }, { name: 'config', tradeoffs: 'per tenant' }],
@@ -1576,6 +1577,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
     questions: [{ text: 'why 1?', cites: ['src/charge.ts:1'] }],
     changes: [{ title: 'charge', why: 'the whole PR', units: ['u1'] }],
     checks: { verdict: 'request_changes', why: 'a magic number' },
+    conclusion: 'Ask the author to move the fee to config; otherwise it is ready.',
   }
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'approve' } }), /Not recorded\. Fix the report[\s\S]*checks\.verdict must be one of[\s\S]*checks\.why is required/)
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [] } }), /units in no change: u1/)
@@ -1590,6 +1592,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const v2 = store.task(work.id).prReview!.results.v2!
   assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
+  assert.deepEqual([v2.report?.intent, v2.report?.conclusion], [reportArg.intent, reportArg.conclusion])
   assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
 
   // The user's call on the direction (review-v2-questions-first-direction.2): the topic records it once they decide.
