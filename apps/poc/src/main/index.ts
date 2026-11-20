@@ -432,7 +432,7 @@ app.whenReady().then(async () => {
   handle('logs:open', () => openLogs())
   startAppMenu(store, windows, openLogs)
   startAttention(store, windows)
-  startMeetings()
+  actions.meetings = startMeetings()
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

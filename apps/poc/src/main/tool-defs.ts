@@ -760,6 +760,39 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'search_meetings',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "Search the user's recorded calls (workspace-wide, not only this project): their transcripts and summaries, when the user asks about a meeting or what was said or decided on a call. All words must match, as prefixes, any case. Ranked lines with the meeting id, title, start, part and [hh:mm:ss] of a transcript line.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to find, e.g. "release date".' },
+        from: { type: 'string', description: 'Meetings started on or after: ISO date (YYYY-MM-DD, the local day) or time.' },
+        to: { type: 'string', description: 'Meetings started on or before: ISO date (the whole local day) or time.' },
+        people: { type: 'array', items: { type: 'string' }, description: 'Only meetings with any of them among the participants (a part of a name).' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'read_meeting',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "One of the user's meetings by id (from search_meetings): title, times, participants, then its summary and transcript (lines \"[hh:mm:ss] me|others: text\"; me is the user). Pages of ~40k characters: pass the answer's next as offset.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Meeting id, e.g. 2026-11-20-1430-dbo-sync.' },
+        part: { type: 'string', enum: ['summary', 'transcript'], description: 'Only this part; both by default.' },
+        offset: { type: 'number', description: 'Where the page starts, in characters; 0 by default.' },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'read_chat',
     scope: 'any',
     reviewer: 'also',

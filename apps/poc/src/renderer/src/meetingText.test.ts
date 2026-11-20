@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { linkKey, meetingWhen, transcriptLines } from './meetingText.ts'
+import { linkKey, meetingWhen, snippetParts, transcriptLines } from './meetingText.ts'
 
 test('transcriptLines: the [hh:mm:ss] speaker: text lines only', () => {
   const md = '# Sync\n\n> Recorded locally…\n\n[00:00:05] me: Привіт: як справи?\n[00:01:00] others: ok\nnot a line\n'
@@ -16,4 +16,9 @@ test('meetingWhen: date, time and length', () => {
 
 test('linkKey: a topic and a work of one project differ', () => {
   assert.notEqual(linkKey({ projectId: 'p', topicId: 'x' }), linkKey({ projectId: 'p', workKey: 'x' }))
+})
+
+test('snippetParts: matched words apart', () => {
+  assert.deepEqual(snippetParts('…move the \u0002release\u0003 to \u0002Dec\u0003'), [{ text: '…move the ', hit: false }, { text: 'release', hit: true }, { text: ' to ', hit: false }, { text: 'Dec', hit: true }])
+  assert.deepEqual(snippetParts('plain'), [{ text: 'plain', hit: false }])
 })

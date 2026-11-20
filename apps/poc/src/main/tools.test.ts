@@ -79,7 +79,7 @@ const setup = () => {
   // The user has answered the groomer's checkpoint: it may plan steps.
   groomer.items.push({ kind: 'user', text: 'Option A', at: 1 })
   const call = (name: string, args: Record<string, unknown> = {}, sessionId = groomer.id) => tools({ taskId: task.id, sessionId }, name, args)
-  return { store, project, task, tools, call, calls, groomer, ownerTakes: (v: boolean) => (owner = v) }
+  return { store, project, task, tools, call, calls, groomer, actions, ownerTakes: (v: boolean) => (owner = v) }
 }
 
 /** A step's work in a dir that does not exist: no commits of its own. */
@@ -711,4 +711,26 @@ test('read_chat: a topic by id, a work by key with its doc and owner topic, page
   assert.match(work, /^Work .*: Big \(planning\)\n\nDocument:\n# Plan\nRotate tokens\n\nConversation:\n\[.*\] User: Why does login fail\?/)
   await assert.rejects(call('read_chat', { id: 'nope' }), /No chat nope/)
   for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) assert.ok(toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).some((t) => t.name === 'read_chat'), role)
+})
+
+test('search_meetings and read_meeting: every role, any project; hits with id and time, the meeting paged', async () => {
+  const { actions, call } = setup()
+  await assert.rejects(call('search_meetings', { query: 'x' }), /not ready/)
+  const asked: unknown[] = []
+  const meta = { id: '2026-11-20-1430-sync', title: 'Sync', startedAt: '2026-11-20T14:30:00.000Z', participants: ['Olena'] }
+  actions.meetings = {
+    search: (q, f) => (asked.push([q, f]), [{ meetingId: meta.id, part: 'transcript', at: '00:00:09', snippet: 'move the \u0002release\u0003', title: 'Sync', startedAt: meta.startedAt }]),
+    read: () => ({ meta, summary: '## Decisions\n- ship', transcript: `# Sync\n\n${'[00:00:01] me: hi\n'.repeat(4000)}`, dir: '/m' }),
+  }
+  assert.match(await call('search_meetings', { query: 'release', from: '2026-11-01', people: 'Olena' }), /^- 2026-11-20-1430-sync · Sync · 2026-11-20 14:30 UTC · transcript \[00:00:09\]: move the \*\*release\*\*\n\nRead one with read_meeting\(id\)\.$/)
+  assert.deepEqual(asked, [['release', { from: '2026-11-01', to: undefined, people: ['Olena'], limit: 30 }]])
+  await assert.rejects(call('search_meetings', {}), /Pass query/)
+  assert.match(await call('read_meeting', { id: meta.id, part: 'summary' }), /^Meeting 2026-11-20-1430-sync: Sync\nStarted .*\nParticipants: Olena\n\n## Summary\n## Decisions\n- ship\n\n\(end of the meeting\)$/)
+  const first = await call('read_meeting', { id: meta.id })
+  assert.match(first, /## Transcript\n# Sync[\s\S]*\(more: call read_meeting with offset 40000\)$/)
+  assert.match(await call('read_meeting', { id: meta.id, offset: 40000 }), /\(end of the meeting\)$/)
+  for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) {
+    const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
+    assert.ok(names.includes('search_meetings') && names.includes('read_meeting'), role)
+  }
 })

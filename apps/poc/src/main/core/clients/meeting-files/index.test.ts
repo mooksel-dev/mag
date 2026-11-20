@@ -48,8 +48,10 @@ test('list, read, writeSummary, remove; ids that are paths are refused', () => {
   assert.equal(r.dir, newer.dir)
   assert.equal(r.meta.title, 'New')
 
+  assert.ok(files.changedAt(newer.id) > 0)
   files.remove(older.id)
   assert.equal(existsSync(older.dir), false)
+  assert.equal(files.changedAt(older.id), 0)
   assert.throws(() => files.read(older.id), /No meeting/)
   for (const bad of ['../x', '2026-11-02-0900-new/../../etc', '/etc/passwd']) assert.throws(() => files.read(bad), /Not a meeting id/)
 })
