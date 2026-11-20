@@ -328,6 +328,76 @@ export function docDecisions(doc: string, stepKey?: string): string {
   return out.join('\n').trim()
 }
 
+/** Headings of the plan section of a task doc, at any level. */
+const PLAN_HEADING = /^(#{1,6})\s+(plan|план)\s*$/i
+
+/**
+ * The part of a doc's §Plan about one step, for the plan card's details: a subheading naming the step (its key, ".<n>",
+ * "<n>.", "Step <n>" or its title) with its body, else the top-level list item <position> (or naming the key) with its
+ * sub-items. `position`: the step's 1-based place in its work. Empty when the doc says nothing of it.
+ */
+export function docStepPlan(doc: string, step: { key: string; title: string }, position: number): string {
+  const lines = doc.split('\n')
+  const start = lines.findIndex((l) => PLAN_HEADING.test(l.trim()))
+  if (start < 0) return ''
+  const level = PLAN_HEADING.exec(lines[start].trim())![1].length
+  const body: string[] = []
+  let fence = false
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*```/.test(line)) fence = !fence
+    const h = !fence && /^(#{1,6})\s/.exec(line)
+    if (h && h[1].length <= level) break
+    body.push(line)
+  }
+  const key = step.key.toLowerCase()
+  const n = step.key.match(/\.(\d+)$/)?.[1] ?? String(position)
+  const title = step.title.trim().toLowerCase()
+  const names = (text: string) => {
+    const t = text.trim().toLowerCase()
+    return t.includes(key) || new RegExp(`^(?:step\\s+|крок\\s+)?\\.?${n}(?:[.):\\s—–-]|$)`).test(t) || (!!title && t.includes(title))
+  }
+  const section = sliceBy(body, (line) => /^(#{1,6})\s+(.*)$/.exec(line), (m) => m[1].length, (m) => names(m[2]))
+  if (section !== null) return section
+  const item = sliceBy(
+    body,
+    (line) => /^(\d+)[.)]\s+(.*)$/.exec(line),
+    () => 0,
+    (m) => m[1] === String(position) || m[2].toLowerCase().includes(key),
+    true,
+  )
+  return item ?? ''
+}
+
+/**
+ * The lines from the first one `open` matches and `pick` accepts to the next match of the same or an outer `depth`
+ * (code fences skipped), without that first line; `keepHead` keeps the rest of the first line (a list item's text) and
+ * dedents the item's sub-lines. Null when nothing is picked.
+ */
+function sliceBy(lines: string[], open: (line: string) => RegExpExecArray | null, depth: (m: RegExpExecArray) => number, pick: (m: RegExpExecArray) => boolean, keepHead = false): string | null {
+  let fence = false
+  let from = -1
+  let at = 0
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^\s*```/.test(line)) fence = !fence
+    const m = fence ? null : open(line)
+    if (from < 0) {
+      if (m && pick(m)) {
+        from = i
+        at = depth(m)
+        if (keepHead) out.push(m[2])
+      }
+      continue
+    }
+    if (m && depth(m) <= at) break
+    // A list item ends at the first line back at the margin that is not its own.
+    if (keepHead && line.trim() && !/^\s/.test(line)) break
+    out.push(keepHead ? line.replace(/^ {1,4}|^\t/, '') : line)
+  }
+  return from < 0 ? null : out.join('\n').trim()
+}
+
 /** Which agreements win when they disagree. */
 export const PRECEDENCE = 'When they disagree: decisions of the step override decisions of the work, which override the playbook. What mag enforces (no merge, no push to base, steps only after the checkpoint) holds whatever they say.'
 

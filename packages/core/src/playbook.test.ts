@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, DEVELOPER_BAR, PRECEDENCE, PRINCIPLES, contextBlocks, docDecisions, playbookOf, storedPlaybook } from './index.ts'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, DEVELOPER_BAR, PRECEDENCE, PRINCIPLES, contextBlocks, docDecisions, docStepPlan, playbookOf, storedPlaybook } from './index.ts'
 
 test('playbookOf: own sections win, empty or missing ones and bad rounds fall back to the default', () => {
   assert.deepEqual(playbookOf({}), DEFAULT_PLAYBOOK)
@@ -39,6 +39,20 @@ test('docDecisions: the Decisions section, with the given step\'s subsection onl
   assert.equal(docDecisions('# Problem\np'), '')
   assert.equal(docDecisions('# Рішення\n1. Опція A\n\n# Plan'), '1. Опція A')
   assert.equal(docDecisions('# Decisions\n```\n# not a heading\n```\n- a\n# Plan'), '```\n# not a heading\n```\n- a')
+})
+
+test('docStepPlan: the step\'s subsection of §Plan, else its numbered item with sub-items', () => {
+  const headed = '# W\n## Plan\nRules apply.\n\n### .1 Record\nmag: [D1](canvas:a1)\n- spike\n  - nested\n### .2 Summary\n- two\n## Open questions\nNone.'
+  assert.equal(docStepPlan(headed, { key: 'w.1', title: 'Record' }, 1), 'mag: [D1](canvas:a1)\n- spike\n  - nested')
+  assert.equal(docStepPlan(headed, { key: 'w.2', title: 'Summary' }, 2), '- two')
+  assert.equal(docStepPlan(headed, { key: 'w.3', title: 'Search' }, 3), '')
+  assert.equal(docStepPlan('# Plan\n## ABC-1.2 API\n- a\n## Step 3\n- b', { key: 'ABC-1.2', title: 'x' }, 1), '- a')
+  assert.equal(docStepPlan('# Plan\n## 3. Later\n- b', { key: 'ABC-1.3', title: 'x' }, 2), '- b')
+  assert.equal(docStepPlan('# Plan\n## Make the UI\n```\n## not\n```\n# Next', { key: 'k.4', title: 'Make the UI' }, 1), '```\n## not\n```')
+  const listed = '# Plan\n1. Core — in api: x ([d](canvas:c1))\n   - sub\n2. UI\n\nAfter.\n# Assumptions'
+  assert.equal(docStepPlan(listed, { key: 'k.1', title: 'Core' }, 1), 'Core — in api: x ([d](canvas:c1))\n- sub')
+  assert.equal(docStepPlan(listed, { key: 'k.5', title: 'UI' }, 2), 'UI')
+  assert.equal(docStepPlan('# Problem\np', { key: 'k.1', title: 'x' }, 1), '')
 })
 
 test('contextBlocks: decisions with the precedence, then the notes; empty parts left out', () => {
