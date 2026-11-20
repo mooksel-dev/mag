@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { emptyResult, type Diagram, type TaskWork } from '@mag/core'
+import { emptyResult, normalizeReport, type Diagram, type IssuesReport, type TaskWork } from '@mag/core'
 import { Store } from './store.ts'
 import { createTools, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
@@ -63,8 +63,8 @@ const setup = () => {
     answerDeveloper: async (id, text) => {
       calls.push(`answer ${store.task(id).key}: ${text}`)
     },
-    reviewPr: async (projectId, url, by, format) => {
-      calls.push(`review_pr ${url} by ${by}${format ? ` ${format}` : ""}`)
+    reviewPr: async (projectId, url, by, format, again) => {
+      calls.push(`review_pr ${url} by ${by}${format ? ` ${format}` : ""}${again ? ' again' : ''}`)
       return { taskId: 'r', job: 'Review it.' }
     },
     exportReview: async (id, path) => (calls.push(`export ${store.task(id).key}${path ? ` to ${path}` : ''}`), `${path ?? '/Downloads'}/api-418-review.zip`),
@@ -232,6 +232,26 @@ test('set_needs_input keeps the questions with their recommendations for the car
   await call('set_needs_input', { reason: 'Again', questions })
   assert.equal(await call('set_needs_input', { reason: null, questions }), 'Cleared.')
   assert.equal(store.task(task.id).needsQuestions, null)
+})
+
+test('set_needs_input on a planned work warns of every step without criteria in §Acceptance (review-v3-concise-design-first.2)', async () => {
+  const { store, task, call } = setup()
+  assert.equal(await call('set_needs_input', { reason: 'Pick an option' }), 'The user will be notified.', 'no steps yet: nothing to warn of')
+  await call('create_subtask', { title: 'Core' })
+  await call('create_subtask', { title: 'UI' })
+  store.data.docs[task.id] = '# Plan\n1. Core\n2. UI'
+  const warned = await call('set_needs_input', { reason: 'Plan ready for review' })
+  assert.match(warned, /^The user will be notified\. Warning: §Acceptance of the doc gives no criteria for big\.1, big\.2\. Write them \(update_doc\)/)
+  assert.equal(store.task(task.id).needsInput, 'Plan ready for review', 'a warning, not a refusal')
+  store.data.docs[task.id] = '# Plan\n1. Core\n2. UI\n\n# Acceptance\n## big.1 Core\n- lists work\n\n# Assumptions'
+  assert.match(await call('set_needs_input', { reason: 'Plan ready for review' }), /no criteria for big\.2\. Write/)
+  store.data.docs[task.id] = '# Acceptance\n1. Core\n   - lists work\n2. UI\n   - shows the list'
+  assert.equal(await call('set_needs_input', { reason: 'Plan ready for review' }), 'The user will be notified.')
+  assert.equal(await call('set_needs_input', { reason: null }), 'Cleared.')
+  // Past planning the plan is approved: no warning.
+  store.data.docs[task.id] = ''
+  store.updateTask(task.id, { status: 'in_progress' })
+  assert.equal(await call('set_needs_input', { reason: 'Drop the cache?' }), 'The user will be notified.')
 })
 
 test('get_task shows the work\'s tickets', async () => {
@@ -741,4 +761,36 @@ test('search_meetings and read_meeting: every role, any project; hits with id an
     const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
     assert.ok(names.includes('search_meetings') && names.includes('read_meeting'), role)
   }
+})
+
+test("set_pr_review: a look at new commits is a delta against the result at the older head; at the same head it keeps it (review-v3-concise-design-first.3)", async () => {
+  const { store, project, actions } = setup()
+  const recorded: IssuesReport[] = []
+  const tools = createTools(store, { ...actions, setPrReview: (_id, _s, r) => (recorded.push(r.report as IssuesReport), 'Recorded.') })
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  const review = store.createTask({ projectId: project.id, title: 'api#418: Retry', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
+  const issue = { title: 'Key from the body', impact: 'a retry double-charges', kind: 'bug', severity: 'blocker', owner: 'author', comment: 'Take the key from the header.', where: 'api/charge.go:88' }
+  const raw = { intent: 'Makes retries idempotent.', verdict: 'request_changes', why: 'double charge', issues: [issue], acceptance: [{ criterion: 'no double charge', source: 'ticket', evidence: 'charge_test.go', status: 'not' }], verified: [], notChecked: [], follows: 'the ticket', conclusion: 'Ask for the header key.' }
+  const before = normalizeReport(raw).report
+  const pr = { url: 'https://github.com/acme/api/pull/418', repo: '/r/api', number: 418, author: 'olena', base: 'main', head: 'new' }
+  store.updateTask(review.id, { prReview: { pr, results: { v2: { ...emptyResult('v2', topic.id), verdict: 'request_changes', head: 'old', at: 1, report: before } }, shown: 'v2', posted: null } })
+  const own = (args: Record<string, unknown>) => tools({ projectId: project.id, sessionId: topic.id }, 'set_pr_review', { work: review.key, problem: 'p', approach: 'a', ...args })
+  await assert.rejects(own({ report: { ...raw, issues: [] , verdict: 'approve', why: 'fixed' } }), /delta is required on a re-review: each issue of the previous round fixed or open \(Key from the body\)/)
+  await own({ report: { ...raw, issues: [], verdict: 'approve', why: 'fixed', delta: [{ title: 'Key from the body', status: 'fixed' }] } })
+  assert.deepEqual(recorded.at(-1)!.delta, [{ title: 'Key from the body', status: 'fixed' }])
+  // Recorded at the new head, the same head again keeps the delta without restating it.
+  store.updateTask(review.id, { prReview: { ...store.task(review.id).prReview!, results: { v2: { ...emptyResult('v2', topic.id), verdict: 'approve', head: 'new', at: 2, report: recorded.at(-1)! } } } })
+  await own({ report: { ...raw, issues: [], verdict: 'approve', why: 'still fine' } })
+  assert.deepEqual(recorded.at(-1)!.delta, [{ title: 'Key from the body', status: 'fixed' }])
+  // A first review has no delta.
+  store.updateTask(review.id, { prReview: { pr, results: { v2: emptyResult('v2', topic.id) }, shown: 'v2', posted: null } })
+  await assert.rejects(own({ report: { ...raw, delta: [{ title: 'x', status: 'new' }] } }), /delta: only a re-review has one/)
+})
+
+test('review_pr passes again only when asked (review-v3-concise-design-first.3)', async () => {
+  const { project, tools, calls, store } = setup()
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  await tools({ projectId: project.id, sessionId: topic.id }, 'review_pr', { url: 'https://github.com/acme/api/pull/1' })
+  await tools({ projectId: project.id, sessionId: topic.id }, 'review_pr', { url: 'https://github.com/acme/api/pull/1', again: true })
+  assert.deepEqual(calls, [`review_pr https://github.com/acme/api/pull/1 by ${topic.id}`, `review_pr https://github.com/acme/api/pull/1 by ${topic.id} again`])
 })

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -11,7 +11,7 @@ import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, magDir, changedRepos, diffStat, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
-import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepSet, stepTargets } from './fact.ts'
+import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepBacking, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 import { baseOf, projectBases } from './git-push.ts'
 
@@ -273,7 +273,8 @@ ${playbook.tracker}`
  * The reviewer's message for one round (T-55.1). A fork keeps the system prompt of the session it forks (the owner's),
  * so the whole job is said here, every round.
  */
-const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string, fact: string, scratch: Scratch[]) => {
+const reviewPrompt = (project: Project, task: Task, step: Task, position: number, work: TaskWork, heads: Record<string, string>, round: number, withContext: boolean, doc: string, fact: string, scratch: Scratch[]) => {
+  const criteria = docStepAcceptance(doc, step, position)
   const prs = work.repos.filter((r) => heads[r.repo]).map((r) => {
     const own = scratch.find((s) => s.repo === r.repo)
     return `- ${repoWorkName(work, r)}: ${r.prUrl} at ${heads[r.repo].slice(0, 12)}, the developer's worktree ${r.worktree}${own ? `, your scratch worktree ${own.dir}` : ''}`
@@ -284,18 +285,23 @@ const reviewPrompt = (project: Project, task: Task, step: Task, work: TaskWork, 
     prev?.verdict === 'changes'
       ? `\nYour last review asked for changes and the developer has pushed since. Check that these were addressed:\n${findingLines(prev.findings)}`
       : ''
+  const before = isIssuesReport(prev?.report) ? prev.report.issues.map((i) => i.title) : null
+  const delta = before
+    ? `\nThis is a re-review: record delta against your last review (round ${prev!.round}), the table the user reads first: each of its issues fixed or open (${before.length ? before.join('; ') : 'it had none'}), and each issue of this round open or new. Look at what changed since; an issue still open is said once.`
+    : ''
   return `Review step ${step.key} of ${task.key}: "${step.title}" (agent review, round ${round}). You are the first reviewer of its PR${prs.length > 1 ? 's' : ''}, before the user:
 ${prs.join('\n')}
-${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc. Look hardest where your own plan may be wrong: whoever wrote a plan tends to see what they expected, and a PR that leaves the plan may be the one that is right. Say so when it is.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}
+${withContext ? 'You discussed and planned this work with the user earlier in this conversation: check the PRs against what you agreed there and against the doc. Look hardest where your own plan may be wrong: whoever wrote a plan tends to see what they expected, and a PR that leaves the plan may be the one that is right. Say so when it is.' : 'You did not take part in planning: the task doc is the agreed plan.'}${again}${delta}
 ${roundLine(round, rounds)}
 First read get_task, get_doc and get_diagrams(step: "${step.key}") (this step's planned change; the rest of the task's with get_diagrams()) and what the doc links for it. get_pr_changes lists the files the PRs change, each with the module that owns it and its hunks; read the diff itself with gh pr diff or git diff in the worktrees.
 ${stanceLine(playbookOf(project))}
 Then review following the project's playbook:
 ${playbookOf(project).review}
+${criteria ? `The step's criteria in the doc's §Acceptance, each to its evidence:\n${criteria}` : `The doc's §Acceptance gives ${step.key} no criteria.`}
 ${CODE_CHECKS}
 You write the fact, from the draft units and the hunks below (at most about 40k characters of them: get_pr_changes lists them all, the ones cut here among them), following the project's playbook:
 ${playbookOf(project).fact}
-Each save answers with plan ↔ fact (levels by the playbook). For every critical or high difference, say whether the code or the plan is right: an issue when the code is wrong, a line in verified when it is right; the others as you judge.
+Each save answers with plan ↔ fact (levels by the playbook). It never blocks and the user reads it as one line, so keep it out of your issues unless the code is wrong: for a critical or high deviation the doc does not back, say whether the code or the plan is right, an issue when the code is wrong; the rest need nothing.
 ${fact}
 Call set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds. If you think the plan's direction is wrong, say so as an issue the user owns.
 ${scratch.length ? scratchLine('your scratch worktree') : 'Run no tests: CI runs them, and you have no scratch worktree this time.'}
@@ -348,7 +354,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
   const before = r.verdict
     ? `\nYou reviewed it before, at ${r.head?.slice(0, 12)}: ${r.report ? reportLine(r.report) : PR_VERDICT_LABELS[r.verdict]}.${r.findings.length ? ` Your findings then:\n${findingLines(r.findings)}` : ''}\n${
         newer
-          ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact set and revise it where the new commits change it.${since ? `\nChanged since your review (mag):\n${since}` : ''}`
+          ? `New commits since: review only what changed after ${r.head?.slice(0, 12)} (${sinceDiff}) and whether each finding still holds; keep the fact set and revise it where the new commits change it.${isIssuesReport(r.report) ? ` Record delta, the table the user reads first: each issue of your last review fixed or open (${r.report.issues.map((i) => i.title).join('; ') || 'it had none'}), and each issue now open or new.` : ''}${since ? `\nChanged since your review (mag):\n${since}` : ''}`
           : `Look again: whether each finding still holds${shared ? '' : '; keep the fact set and revise it'}.`
       }`
     : ''
@@ -464,7 +470,8 @@ export class Orchestrator {
   private windows = new Map<string, number>()
   private idleTimers = new Map<string, NodeJS.Timeout>()
   /** Agent reviews going on, by step: what set_review records (null while the PR heads are fetched). */
-  private reviewing = new Map<string, { round: number; heads: Record<string, string>; withContext: boolean; startedAt: number } | null>()
+  /** Agent reviews going on; `previous`: the step's review when the round started, what a delta is checked against. */
+  private reviewing = new Map<string, { round: number; heads: Record<string, string>; withContext: boolean; startedAt: number; previous?: ReviewReport } | null>()
   /** The PR heads each step's review last started on: a failed review is not retried on its own (see review). */
   private reviewTried = new Map<string, string>()
   /** Topics whose title is being generated. */
@@ -1542,7 +1549,7 @@ export class Orchestrator {
     }
     const withContext = !!session.forkOf
     const round = nextReviewRound(fresh.review)
-    this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now() })
+    this.reviewing.set(stepId, { round, heads: now, withContext, startedAt: Date.now(), previous: fresh.review?.report })
     this.reviewTried.set(stepId, key)
     log.info('agent', `${step.key}: agent review round ${round}`, { withContext })
     this.ownerEvent(stepId, `${step.key}: PR ready, agent review round ${round}`)
@@ -1561,7 +1568,8 @@ export class Orchestrator {
       return
     }
     const scratch = await this.ensureScratch(session)
-    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
+    const position = subtasksOf(task.id, this.store.data.tasks).findIndex((t) => t.id === stepId) + 1
+    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), position, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
     // A Codex developer's PRs are reviewed on Claude Code (resolveChoice): say so where the review runs.
     const refused = agentAllowed('reviewer', this.roleChoice(task.projectId, 'developer').agent)
     if (!refused.ok) session.items.push({ kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
@@ -1580,7 +1588,7 @@ export class Orchestrator {
     const canvases = Object.values(this.store.data.canvases)
     const plans = stepSet(canvases, stepId, 'plan')
     const changed = await changes(project, await stepTargets(project, step, heads), localGit, plans, { draft: true })
-    const fact = check(project, changed, stepSet(canvases, stepId, 'fact'), plans)
+    const fact = check(project, changed, stepSet(canvases, stepId, 'fact'), plans, stepBacking(step, this.store.data.tasks, this.store.data.docs))
     this.store.updateTask(stepId, { fact: factRecord(fact, heads) })
     // A large PR's hunks go through get_pr_changes: the message carries the first ones, and the whole draft.
     return [factReport(fact), draftListing(changed), hunkListing(changed, ROUND_HUNKS_CHARS)].filter(Boolean).join('\n\n')
@@ -1615,8 +1623,12 @@ export class Orchestrator {
     // The threshold for "no need to look at the code" (T-58 Decision 5) is mag's, not the reviewer's; each revision of the fact set records it anew.
     // A report has it applied already (its floor, with mag's blockers attached); the older form without one is refused.
     const fact = step.fact
+    // Only an incomplete fact holds merge; plan ↔ fact never does (review-v3-concise-design-first.3).
     if (verdict === 'merge' && fact?.blockers.length && JSON.stringify(fact.heads) === JSON.stringify(pending.heads))
-      throw new Error(`Not recorded: merge is over the threshold, the user has to look at:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nGive look (with these as findings) or changes.`)
+      throw new Error(`Not recorded: the fact is not complete, so merge is not allowed yet:\n${fact.blockers.map((b) => `- ${b}`).join('\n')}\nComplete it with set_inventory, or give look or changes.`)
+    // A re-review is a delta against the round before (review-v3-concise-design-first.3).
+    const delta = isIssuesReport(report) ? deltaErrors(report, pending.previous) : []
+    if (delta.length) throw new Error(`Not recorded. Fix the report and call again:\n- ${delta.join('\n- ')}`)
     const review: AgentReview = { verdict, findings, ...(report ? { report } : {}), round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })
@@ -1662,9 +1674,11 @@ export class Orchestrator {
    * (review-v2-part-2-v1-2.1): the result this run records, the project's default without one; the review keeps one
    * result per format and shows this one. `by`: the project topic that asks (review_pr); it runs the review and gets
    * the job back to do in its turn. Without it (Run v1 / Run v2) the review's topic does it, the one that ran this format
-   * before first; only a review from Home, the user's New topic, gets a new topic, a topic like any other.
+   * before first; only a review from Home, the user's New topic, gets a new topic, a topic like any other. A format
+   * already reviewed at the PR's head runs again only with `again` (the user asked: Review again, Run v1 / v2, or said
+   * so to the topic); else it answers with what is recorded (review-v3-concise-design-first.3).
    */
-  async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat): Promise<{ taskId: string; sessionId: string; job: string }> {
+  async reviewPr(projectId: string, url: string, by?: string, format?: ReviewFormat, again = false): Promise<{ taskId: string; sessionId: string; job: string }> {
     const project = this.store.project(projectId)
     // The review runs on the asking topic's agent, else the chat's; Codex can't be held to "nothing goes to the PR".
     const asker = by ? this.store.data.sessions.find((s) => s.id === by) : undefined
@@ -1675,12 +1689,18 @@ export class Orchestrator {
     // A repository the project has no checkout of is read from GitHub (reviews-ahent-reviuit-pr-timeitiv.3, Decision 10).
     const repo = await this.repoOfSlug(project, info.repo)
     const tasks = this.store.data.tasks.filter((t) => t.projectId === projectId)
-    const pr: PrRef = { url: info.url, repo: repo ?? info.repo, ...(repo ? {} : { outside: true }), number: info.number, author: info.author, base: info.base, head: info.head }
+    const pr: PrRef = { url: info.url, repo: repo ?? info.repo, ...(repo ? {} : { outside: true }), number: info.number, author: info.author, base: info.base, head: info.head, ...(info.draft ? { draft: true } : {}) }
     const name = prRepoName(project, pr)
     // An imported review is read only: a review of its PR here is a new one.
     const prev = reviewOf(tasks.filter((t) => !t.imported), info.url)
     const f = format ?? DEFAULT_REVIEW_FORMAT
     const before = prev?.prReview?.results[f]
+    if (!again && prev && before?.verdict && before.head === info.head)
+      return {
+        taskId: prev.id,
+        sessionId: prev.ownerSessionId ?? before.sessionId,
+        job: `${prev.key} has its ${f} review at this head (${info.head.slice(0, 12)}) already: ${before.report ? reportLine(before.report) : PR_VERDICT_LABELS[before.verdict]}. Nothing new to review: point the user to it. Call review_pr with again: true only when the user asks for another look at the same commits.`,
+      }
     // The conversation that ran this format before, while it is there; never the other format's: a topic or a subtopic,
     // or for an agent under one, its topic. Never a new topic for a review that has one.
     const topicOf = (id: string | null | undefined) => {
@@ -1727,7 +1747,7 @@ export class Orchestrator {
     const work = this.store.task(workId)
     if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
     assertNotImported(work, 'be reviewed again')
-    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, work.prReview.shown)
+    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, work.prReview.shown, true)
   }
 
   /**
@@ -1739,7 +1759,7 @@ export class Orchestrator {
     if (!isReview(work) || !work.prReview) throw new Error(`${work.key} is not a review of a PR`)
     assertNotImported(work, 'run a review')
     if (!REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
-    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, format)
+    return this.reviewPr(work.projectId, work.prReview.pr.url, undefined, format, true)
   }
 
   /** The user's v1 | v2 switch: the page and the lists show that result, and the conversation beside it is its topic. */

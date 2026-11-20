@@ -111,8 +111,10 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
     { text: 'save(id: string)', diff: 'add', files: ['src/store.ts'] },
   ])
   assert.deepEqual(fact.counts, { match: 1, differs: 0, missing: 1, unplanned: 0, additions: 1, outside: 1, unaccounted: 0, ungrounded: 0 }, 'load(id, fresh?) planned, load(id: string, fresh = false) done: as planned; save inside store, extra in app outside the plan')
-  assert.equal(fact.compareVersion, 2)
-  assert.deepEqual(fact.blockers, ['store: remove is planned, not done'])
+  assert.equal(fact.compareVersion, 3)
+  // A deviation is no blocker (review-v3-concise-design-first.3): it is recorded apart, backed by the doc or not.
+  assert.deepEqual(fact.blockers, [])
+  assert.deepEqual(fact.deviations, [{ text: 'store: remove is planned, not done', backed: false }])
 
   // A unit left out is a draft unit still without its meaning: mag parsed extra() (prompts-use-the-models-to.6).
   await assert.rejects(inventory({ ...INVENTORY, units: INVENTORY.units.slice(0, 2) }), /Unit d1 \(extra\): a method needs logic/)
@@ -139,7 +141,7 @@ test('factOf and set_inventory: the reviewer gets the hunks, writes the inventor
   // A plan the fact agrees with: merge is allowed.
   const agreed = store.data.canvases[root.id].diagram as ComponentDiagram
   store.saveCanvas({ id: plan.id, projectId: plan.projectId, taskId: plan.taskId, sessionId: null, title: 'Plan', kind: 'diagram', diagram: agreed })
-  assert.match(await show({ type: 'flowchart', of: 'store#load', summary: 'fresh', nodes: [{ id: 'a', label: 'fresh?', shape: 'decision' }], edges: [] }, flow.match(/^Diagram (\w+)/)![1]), /merge is allowed\.$/)
+  assert.match(await show({ type: 'flowchart', of: 'store#load', summary: 'fresh', nodes: [{ id: 'a', label: 'fresh?', shape: 'decision' }], edges: [] }, flow.match(/^Diagram (\w+)/)![1]), /merge is allowed\. Plan ↔ fact: as planned, never a blocker\.$/)
   assert.deepEqual(store.task(step.id).fact!.blockers, [])
 })
 
@@ -215,7 +217,7 @@ test('factView: files without lines, plan ↔ fact, the threshold and the invent
   store.updateTask(step.id, { fact: old })
   await factView(store.project(s.projectId), store.task(step.id), Object.values(store.data.canvases), (f) => recorded.push(f))
   assert.equal(recorded.length, 1)
-  assert.equal((recorded[0] as { compareVersion: number }).compareVersion, 2)
+  assert.equal((recorded[0] as { compareVersion: number }).compareVersion, 3)
   assert.ok(!(recorded[0] as { blockers: string[] }).blockers.some((b) => b.startsWith('high:')))
   store.updateTask(step.id, { fact: recorded[0] as typeof old })
   await factView(store.project(s.projectId), store.task(step.id), Object.values(store.data.canvases), (f) => recorded.push(f))

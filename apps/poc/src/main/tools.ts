@@ -1,5 +1,5 @@
-import { FALLBACK_BASE } from '@mag/core'
-import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { FALLBACK_BASE, deviationsLine } from '@mag/core'
+import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -9,7 +9,7 @@ import { changedRepos, revParse, treeAt } from './git.ts'
 import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
 import { changes as factChanges, draftListing, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
-import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepFact, stepSet } from './fact.ts'
+import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepBacking, stepFact, stepSet } from './fact.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
 import { meetingTool } from './meeting-tools.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
@@ -48,7 +48,7 @@ export interface ToolActions {
   /** stop_session: stops the session's turn, as the user's Stop. */
   stop(sessionId: string): Promise<void>
   /** A topic's review_pr: the review of a teammate's PR in `format` (the project's without one), run by `by`; returns the job for its turn. */
-  reviewPr(projectId: string, url: string, by: string, format?: ReviewFormat): Promise<{ taskId: string; job: string }>
+  reviewPr(projectId: string, url: string, by: string, format?: ReviewFormat, again?: boolean): Promise<{ taskId: string; job: string }>
   /** The user's export_review: the review's .zip at `path` (default: Downloads); returns the file's path. */
   exportReview(workId: string, path?: string): Promise<string>
   /** The fact of a review's PR (its get_pr_changes), without a plan; starts the fact diagram on the first call. */
@@ -177,9 +177,9 @@ async function failedChecks(actions: ToolActions, url: string): Promise<string[]
 }
 
 /**
- * What mag owns about a step's PRs under review (prompts-use-the-models-to.1): plan ↔ fact's blockers (deviations, an
- * incomplete fact), their failed CI checks and, in a project that enforces its architecture, the rules the step's
- * worktrees break at the heads under review (a worktree elsewhere is not what is reviewed).
+ * What mag owns about a step's PRs under review (prompts-use-the-models-to.1): their failed CI checks and, in a project
+ * that enforces its architecture, the rules the step's worktrees break at the heads under review (a worktree elsewhere
+ * is not what is reviewed). Plan ↔ fact is none (review-v3-concise-design-first.3).
  */
 async function stepFloors(actions: ToolActions, project: Project, step: Task): Promise<MagFloors> {
   const repos = step.work?.repos.filter((r) => r.prUrl && r.prState === 'open') ?? []
@@ -191,7 +191,7 @@ async function stepFloors(actions: ToolActions, project: Project, step: Task): P
       if (!head || !existsSync(r.worktree) || (await revParse(r.worktree, 'HEAD').catch(() => null)) !== head) continue
       for (const v of analyze(r.worktree).violations.filter((x) => x.severity === 'error')) rules.push(`${v.rule}: ${v.from} -> ${v.to} (${v.file}:${v.line})`)
     }
-  return { deviations: step.fact?.blockers ?? [], ci, rules }
+  return { ci, rules }
 }
 
 /** Tickets from a tool argument: [{ url, key? }] (a plain string is a URL); some agent CLIs pass the array as a JSON string. */
@@ -365,7 +365,13 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           return "The work's owner, who planned it, gets your question first: it answers here or asks the user. Stop here until the answer comes."
         const questions = reason ? needsQuestions(args.questions) : null
         store.updateTask(task.id, { needsInput: reason, needsQuestions: questions })
-        return reason ? `The user will be notified${questions ? `, with ${questions.length} question${questions.length > 1 ? 's' : ''} and your recommendations on a card` : ''}.` : 'Cleared.'
+        if (!reason) return 'Cleared.'
+        const notified = `The user will be notified${questions ? `, with ${questions.length} question${questions.length > 1 ? 's' : ''} and your recommendations on a card` : ''}.`
+        // A planned work asks for approval: each step needs its criteria (review-v3-concise-design-first.2).
+        const missing = !task.parentId && task.status === 'planning' ? stepsWithoutAcceptance(store.data.docs[task.id] ?? '', steps()) : []
+        return missing.length
+          ? `${notified} Warning: §Acceptance of the doc gives no criteria for ${missing.join(', ')}. Write them (update_doc) before the user approves the plan: without them the step has no agreed "done" for its developer and reviewer.`
+          : notified
       }
 
       case 'answer_developer': {
@@ -511,7 +517,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
         if (args.report != null) {
           const step = store.task(stepId)
-          const agent = reportArg(args.report, step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null, (id) => store.data.canvases[id]?.projectId === project.id)
+          const agent = reportArg(args.report, step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases), undefined, stepBacking(step, store.data.tasks, store.data.docs)) : null, (id) => store.data.canvases[id]?.projectId === project.id)
           if (args.verdict != null && args.verdict !== stepVerdict(agent.checks)) throw new Error(`Not recorded: verdict ${String(args.verdict)} and the report's verdict ${agent.checks} disagree; ${agent.checks} is ${stepVerdict(agent.checks)}. Leave the top-level verdict out.`)
           const report = withFloor(agent, verdictFloor(await stepFloors(actions, project, step)))
           return actions.setReview(stepId, stepVerdict(report.checks), reportFindings(report), report)
@@ -535,10 +541,18 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           const pr = review.pr
           const head = task.fact?.heads[pr.repo]
           const agent = reportArg(args.report, head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null, (id) => store.data.canvases[id]?.projectId === project.id)
+          // A look at new commits is a delta against the result at the older head; at the same head it keeps its delta.
+          const prev = review.results[format]
+          const reviewed = prev?.verdict ? prev : null
+          if (reviewed && reviewed.head !== pr.head) {
+            const delta = deltaErrors(agent, reviewed.report)
+            if (delta.length) throw new Error(`Not recorded. Fix the report and call again:\n- ${delta.join('\n- ')}`)
+          } else if (!reviewed && agent.delta) throw new Error('Not recorded. Fix the report and call again:\n- delta: only a re-review has one; this is the first review, leave it out')
+          else if (reviewed && !agent.delta && isIssuesReport(reviewed.report) && reviewed.report.delta) agent.delta = reviewed.report.delta
           const unknown = unknownDecisions(agent, project.directionDecisions)
           if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
           // A teammate's PR has no plan of ours and no rules mag enforces: CI is the floor mag owns there.
-          const report = withFloor(agent, verdictFloor({ deviations: [], ci: await failedChecks(actions, pr.url), rules: [] }))
+          const report = withFloor(agent, verdictFloor({ ci: await failedChecks(actions, pr.url), rules: [] }))
           return actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
         }
         if (args.report != null) throw new Error('Not recorded: this is the v1 review of the PR: record verdict and findings (problem and approach beside them), no report')
@@ -727,7 +741,7 @@ async function setInventory(store: Store, project: Project, ctx: ToolContext, ta
   for (const c of set) if (generated(c) && c.id !== rootCanvas.id && c.id !== dataCanvas?.id) store.placeCanvas(c.id, none)
   showInChat(store, ctx, rootCanvas)
   const fact = place.step
-    ? await stepFact(project, place.step, place.heads, Object.values(store.data.canvases), changed)
+    ? await stepFact(project, place.step, place.heads, Object.values(store.data.canvases), changed, stepBacking(place.step, store.data.tasks, store.data.docs))
     : await reviewFact(project, place.work, Object.values(store.data.canvases), undefined, changed)
   store.updateTask((place.step ?? place.work).id, { fact: factRecord(fact, place.heads) })
   const saved = `Inventory saved: ${inventory.units.length} units; mag generated [${rootCanvas.title}](canvas:${rootCanvas.id}) (v${rootCanvas.version}, the root)${dataCanvas ? ` and [${dataCanvas.title}](canvas:${dataCanvas.id}) (v${dataCanvas.version})` : ''}. Draw scenarios and method logic with show_diagram, without role.`
@@ -745,10 +759,10 @@ async function factCheck(store: Store, project: Project, canvas: Canvas): Promis
   const step = canvas.stepId ? store.data.tasks.find((t) => t.id === canvas.stepId) : undefined
   if (!step?.fact) return ''
   try {
-    const fact = await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases))
+    const fact = await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases), undefined, stepBacking(step, store.data.tasks, store.data.docs))
     store.updateTask(step.id, { fact: factRecord(fact, step.fact.heads) })
     if (!fact.blockers.length && !fact.warnings.length && !fact.inventoryCheck?.undeclared.length && !fact.inventoryCheck?.noiseClaims.length)
-      return ' The inventory accounts for every block of changed code and rests on its hunks, the set hangs together and the fact agrees with the plan: merge is allowed.'
+      return ` The inventory accounts for every block of changed code and rests on its hunks and the set hangs together: merge is allowed. Plan ↔ fact: ${deviationsLine(fact.deviations)}, never a blocker.`
     return `\n${factReport(fact)}`
   } catch (e) {
     log.warn('tools', `fact check of ${canvas.id} failed: ${(e as Error).message}`)
@@ -997,7 +1011,7 @@ function sharedTool(
       if (!session || runRole(session) !== 'chat') throw new Error('review_pr is for a project topic')
       const format = args.format == null || args.format === '' ? undefined : (args.format as ReviewFormat)
       if (format && !REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
-      return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format).then((r) => r.job)
+      return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format, args.again === true).then((r) => r.job)
     }
 
     case 'export_review': {

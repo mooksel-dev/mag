@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkReport,
+  deltaErrors,
+  deltaView,
   criteriaSources,
   isIssuesReport,
   issueFinding,
@@ -218,7 +220,7 @@ test('checkReport: the direction either follows what settles it or is laid out, 
 })
 
 test('reportFindings of an issues report: mag\'s blockers first, then each issue as it is, its comment to post, its title the summary; a raised one not picked', () => {
-  const r = withFloor(issuesReport(), verdictFloor({ deviations: [], ci: ['build'], rules: [] }))
+  const r = withFloor(issuesReport(), verdictFloor({ ci: ['build'], rules: [] }))
   const f = reportFindings(r)
   assert.deepEqual(f.map((x) => [x.level, x.summary ?? '-', x.where ?? '-', x.post ?? '-']), [
     ['blocker', '-', '-', '-'],
@@ -246,34 +248,30 @@ test('issuesView: the first five shown, the rest folded, raised ones not new; th
 
 test('the verdict is the agent\'s unless mag\'s floor is stricter; then mag attaches its blockers', () => {
   const r = issuesReport({ verdict: 'approve', issues: [], acceptance: raw.acceptance })
-  const none = verdictFloor({ deviations: [], ci: [], rules: [] })
+  const none = verdictFloor({ ci: [], rules: [] })
   assert.deepEqual(none, { verdict: 'approve', blockers: [] })
   for (const verdict of ['approve', 'approve_with_comments', 'look', 'request_changes'] as const) assert.equal(finalVerdict({ verdict }, none), verdict)
   const kept = withFloor(r, none)
   assert.equal(kept.checks, 'approve')
   assert.equal(kept.floor, undefined)
   assert.equal(kept.raisedFrom, undefined)
-  // A plan deviation is look: it raises approve and approve_with_comments, never lowers request_changes.
-  const deviation = verdictFloor({ deviations: ['orchestrator setReview is off the plan'], ci: [], rules: [] })
-  assert.equal(deviation.verdict, 'look')
-  assert.equal(finalVerdict({ verdict: 'approve' }, deviation), 'look')
-  assert.equal(finalVerdict({ verdict: 'approve_with_comments' }, deviation), 'look')
-  assert.equal(finalVerdict({ verdict: 'request_changes' }, deviation), 'request_changes')
-  const ci = verdictFloor({ deviations: ['x is off the plan'], ci: ['typecheck'], rules: [] })
+  // Plan ↔ fact is no floor (review-v3-concise-design-first.3): only CI and the architecture rules are, and they never lower request_changes.
+  const ci = verdictFloor({ ci: ['typecheck'], rules: [] })
   assert.equal(ci.verdict, 'request_changes')
-  assert.deepEqual(ci.blockers, ['CI failed: typecheck', 'x is off the plan'])
-  assert.equal(verdictFloor({ deviations: [], ci: [], rules: ['services never use services: a -> b (a.ts:3)'] }).verdict, 'request_changes')
+  assert.deepEqual(ci.blockers, ['CI failed: typecheck'])
+  assert.equal(finalVerdict({ verdict: 'look' }, ci), 'request_changes')
+  assert.equal(verdictFloor({ ci: [], rules: ['services never use services: a -> b (a.ts:3)'] }).verdict, 'request_changes')
   const raised = withFloor(r, ci)
   assert.equal(raised.checks, 'request_changes')
   assert.equal(raised.raisedFrom, 'approve')
   assert.deepEqual(raised.floor, ci)
   assert.ok(isIssuesReport(raised))
-  const same = withFloor({ ...r, checks: 'request_changes' }, deviation)
+  const same = withFloor({ ...r, checks: 'request_changes' }, ci)
   assert.equal(same.checks, 'request_changes')
   assert.equal(same.raisedFrom, undefined)
-  assert.deepEqual(same.floor, deviation)
+  assert.deepEqual(same.floor, ci)
   // Applied again, the reviewer's own verdict is the start, not mag's earlier raise.
-  const again = withFloor(withFloor(r, deviation), none)
+  const again = withFloor(withFloor(r, ci), none)
   assert.equal(again.checks, 'approve')
   assert.equal(again.raisedFrom, undefined)
   assert.equal(again.floor, undefined)
@@ -395,4 +393,29 @@ test('directionDraft: prefer names the option against the PR\'s, discuss asks wh
   assert.equal(directionDraft(r, decision()), "I'd rather go with Tenant id in the token than Suffix of the host: one source of truth; touches auth.\n\nidentity comes from auth")
   assert.equal(directionDraft(r, { choice: 'discuss' }), '- Why Suffix of the host over Tenant id in the token or Lookup table host → tenant?\n- Are custom domains in scope?')
   assert.equal(directionDraft(r, { choice: 'ok' }), '')
+})
+
+test('a re-review is a delta against the round before: each previous issue fixed or open, each issue now open or new (review-v3-concise-design-first.3)', () => {
+  const previous = issuesReport({ issues: raw.issues.slice(0, 2) })
+  const [host, domains] = previous.issues.map((i) => i.title)
+  const first = issuesReport()
+  assert.deepEqual(deltaErrors(first, null), [], 'a first review has none')
+  assert.match(deltaErrors(issuesReport({ delta: [{ title: host, status: 'new' }] }), null)[0], /^delta: only a re-review has one/)
+  assert.match(deltaErrors(first, previous)[0], /^delta is required on a re-review: .*A crafted host reaches another tenant; Custom domains are not covered/)
+  const issues = [raw.issues[1], { ...raw.issues[0], title: 'Logs leak the token', where: 'src/log.ts:3' }]
+  const delta = [{ title: host, status: 'fixed' }, { title: domains, status: 'open' }, { title: 'Logs leak the token', status: 'new' }]
+  assert.deepEqual(deltaErrors(issuesReport({ issues, delta }), previous), [])
+  const short = issuesReport({ issues, delta: delta.slice(1) })
+  assert.match(deltaErrors(short, previous)[0], /^delta: 1 fixed or open, but the previous round had 2 issues/)
+  const unlisted = issuesReport({ issues, delta: delta.slice(0, 2) })
+  assert.match(deltaErrors(unlisted, previous)[0], /^delta: 1 open or new, but this report has 2 issues/)
+  // After a legacy report any delta goes.
+  assert.deepEqual(deltaErrors(first, { checks: 'look' } as never), [])
+  assert.deepEqual(deltaView({ delta: delta as never }), [
+    { status: 'fixed', titles: [host] },
+    { status: 'open', titles: [domains] },
+    { status: 'new', titles: ['Logs leak the token'] },
+  ])
+  assert.deepEqual(normalizeReport({ ...raw, delta: [{ title: '', status: 'gone' }] }).errors, ['delta[0]: title is required, the issue\'s title', 'delta[0] (): status must be one of fixed, open, new'])
+  assert.deepEqual(normalizeReport({ ...raw, delta: 'x' }).errors, ['delta must be a list of { title, status }'])
 })

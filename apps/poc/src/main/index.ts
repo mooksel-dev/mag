@@ -15,7 +15,7 @@ import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startScheduler } from './scheduler'
 import { prChecks, prDetails, repoInfo } from './git'
-import { factView, reviewDiff, reviewFactView, reviewHunk, stepHunk } from './fact'
+import { factView, reviewDiff, stepBacking, reviewFactView, reviewHunk, stepHunk } from './fact'
 import { exportReview, importReview } from './core/services/review-export/index.ts'
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
@@ -139,7 +139,7 @@ app.whenReady().then(async () => {
   actions.startChild = (parentId, brief, role, fork, subtopic) => orch.startChild(parentId, brief, role, fork, 'agent', subtopic)
   actions.sessionInTree = (callerId, targetId) => orch.sessionInTree(callerId, targetId)
   actions.stop = (id) => orch.stop(id)
-  actions.reviewPr = (projectId, url, by, format) => orch.reviewPr(projectId, url, by, format)
+  actions.reviewPr = (projectId, url, by, format, again) => orch.reviewPr(projectId, url, by, format, again)
   actions.reviewFact = (id) => orch.reviewFactOf(id)
   actions.setPrReview = (id, sessionId, review) => orch.setPrReview(id, sessionId, review)
   actions.decideDirection = (id, decision) => orch.decideDirection(id, decision)
@@ -322,7 +322,7 @@ app.whenReady().then(async () => {
     // A step's fact recorded by an older compare (a merged one's too) is recorded again as it is read.
     return isReview(step)
       ? reviewFactView(store.project(step.projectId), step, canvases)
-      : factView(store.project(step.projectId), step, canvases, (fact) => store.updateTask(step.id, { fact }))
+      : factView(store.project(step.projectId), step, canvases, (fact) => store.updateTask(step.id, { fact }), stepBacking(step, store.data.tasks, store.data.docs))
   })
   handle('step:hunk', (_, stepId: string, repo: string, base: string, head: string, hunk: HunkRef) => {
     const step = store.task(stepId)

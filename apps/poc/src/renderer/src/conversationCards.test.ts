@@ -63,7 +63,8 @@ test('factCard: deviations tagged, what the inventory leaves out to check by han
   } as never
   const card = factCard({ key: 'w.1', title: 'v1/v2' }, view)
   assert.equal(card.title, 'Step 1 · Plan ↔ fact')
-  assert.deepEqual(card.verdict, { label: '3 deviations: look', tone: 'warn' })
+  // Never blocking (review-v3-concise-design-first.3).
+  assert.deepEqual(card.verdict, { label: '3 deviations, not blocking', tone: 'neutral' })
   assert.deepEqual(card.rows.map((r) => [r.tag, r.text]), [
     ['otherwise', 'orchestrator: setPrReview has another signature than planned'],
     ['not done', 'store: sessions.reviewFormat is planned, not done'],
@@ -118,4 +119,10 @@ test('foldEvents: a run of tools, notices and jobs is one line; messages, replie
     '7: result',
     '8: a · b · c · +2 more (5)',
   ])
+})
+
+test('factCard: a dependency between modules is no deviation (review-v3-concise-design-first.3)', () => {
+  const edge = { status: 'unplanned', phrase: 'new dependency tools → git, not on the plan', fact: { kind: 'edge' } } as never
+  const card = factCard({ key: 'w.1', title: 'x' }, { items: [edge], additions: [], outsidePlan: { modules: [], line: '' }, check: null, inventory: { units: 1, summary: [] } } as never)
+  assert.deepEqual(card.verdict, { label: 'as planned', tone: 'good' })
 })

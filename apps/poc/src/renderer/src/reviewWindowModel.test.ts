@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { hunksOf, type ChangeInventory, type IssuesReport, type LegacyReport, type ReviewResult, type Task } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
-import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
+import { askHunk, hunkCacheFor, paneShowsFact, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
 
 // A synthetic review of a PR: a legacy v2 report over a two-unit inventory, its fact set of a Component and a Data diagram.
 const inventory: ChangeInventory = {
@@ -196,4 +196,10 @@ test('a review panel\'s header: one line (PR · author → base · tickets · CI
   // The verdict big, the intent right below it; the direction only when the report lays one out.
   const view = read('./ReportView.tsx')
   assert.match(view, /<section className="reportcard verdictcard">\s*<div className="cardhead">\s*<span className=\{`verdict [^\n]*\n\s*\{kind === 'pr' && report\.direction && [^\n]*Direction: your call[^\n]*\n\s*<\/div>\s*<p className="intent">\{report\.intent\}<\/p>/)
+})
+
+test("a PR review's pane shows the inventory and fact diagrams only for a legacy report (review-v3-concise-design-first.3)", () => {
+  assert.equal(paneShowsFact(issues), false, 'an issues report: its one diagram, the inventory stays internal')
+  assert.equal(paneShowsFact({ checks: 'look', direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [] } as LegacyReport), true)
+  assert.equal(paneShowsFact(undefined), true, 'a v1 result without a report keeps its fact')
 })

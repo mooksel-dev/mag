@@ -145,7 +145,8 @@ export function factCard(
   view: Pick<FactView, 'items' | 'additions' | 'outsidePlan' | 'check' | 'inventory'>,
   merged = false,
 ): CardModel {
-  const deviations = view.items.filter((i) => i.status !== 'match')
+  // A dependency between modules is no deviation (review-v3-concise-design-first.3).
+  const deviations = view.items.filter((i) => i.status !== 'match' && (i.plan ?? i.fact)?.kind !== 'edge')
   const matches = view.items.filter((i) => i.status === 'match')
   const check = view.check
   const ungrounded = check ? check.ungrounded.length + check.unknown.length + check.otherModule.length : 0
@@ -171,7 +172,7 @@ export function factCard(
   const verdict = step.review
     ? ({ label: covered ? 'covers the PR' : 'does not cover the PR yet', tone: covered ? 'good' : 'warn' } as const)
     : deviations.length
-      ? ({ label: `${plural(deviations.length, 'deviation')}${merged ? '' : ': look'}`, tone: merged ? 'neutral' : 'warn' } as const)
+      ? ({ label: `${plural(deviations.length, 'deviation')}${merged ? '' : ', not blocking'}`, tone: 'neutral' } as const)
       : ({ label: matches.length ? `${matches.length} as planned` : 'as planned', tone: 'good' } as const)
   return {
     title: step.review ? 'Fact of the PR' : `${stepLabel(step)} · Plan ↔ fact`,

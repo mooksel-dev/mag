@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, DEVELOPER_BAR, PRECEDENCE, PRINCIPLES, contextBlocks, docDecisions, docStepPlan, playbookOf, storedPlaybook } from './index.ts'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEFAULT_TEMPLATES, DEVELOPER_BAR, PRECEDENCE, PRINCIPLES, contextBlocks, docDecisions, deviationBacking, deviationsLine, docStepAcceptance, docStepPlan, stepsWithoutAcceptance, playbookOf, storedPlaybook } from './index.ts'
 
 test('playbookOf: own sections win, empty or missing ones and bad rounds fall back to the default', () => {
   assert.deepEqual(playbookOf({}), DEFAULT_PLAYBOOK)
@@ -53,6 +53,23 @@ test('docStepPlan: the step\'s subsection of §Plan, else its numbered item with
   assert.equal(docStepPlan(listed, { key: 'k.1', title: 'Core' }, 1), 'Core — in api: x ([d](canvas:c1))\n- sub')
   assert.equal(docStepPlan(listed, { key: 'k.5', title: 'UI' }, 2), 'UI')
   assert.equal(docStepPlan('# Problem\np', { key: 'k.1', title: 'x' }, 1), '')
+})
+
+test('docStepAcceptance: the step\'s criteria in §Acceptance; stepsWithoutAcceptance lists the steps without (review-v3-concise-design-first.2)', () => {
+  const doc = '# Plan\n## w.1 Record\n- plan of one\n\n# Acceptance\n## w.1 Record\n- records a meeting\n## Step 3\n- searches\n\n# Assumptions\n- none'
+  const steps = [{ key: 'w.1', title: 'Record' }, { key: 'w.2', title: 'Summary' }, { key: 'w.3', title: 'Search' }]
+  assert.equal(docStepAcceptance(doc, steps[0], 1), '- records a meeting')
+  assert.equal(docStepAcceptance(doc, steps[1], 2), '')
+  assert.equal(docStepAcceptance(doc, steps[2], 3), '- searches')
+  assert.deepEqual(stepsWithoutAcceptance(doc, steps), ['w.2'])
+  assert.equal(docStepAcceptance('## Acceptance criteria\n1. Core\n   - a test sees x\n2. UI', { key: 'k.1', title: 'Core' }, 1), 'Core\n- a test sees x')
+  assert.deepEqual(stepsWithoutAcceptance('# Plan\n1. Core', steps), ['w.1', 'w.2', 'w.3'])
+})
+
+test('playbook: the owner writes criteria per step, the developer proves each in the PR body, the step review checks each (review-v3-concise-design-first.2)', () => {
+  assert.match(DEFAULT_PLAYBOOK.plan, /§Acceptance gives each step its criteria[\s\S]*checkable[\s\S]*set_needs_input warns/)
+  assert.match(DEFAULT_PLAYBOOK.step, /acceptance, each of the step's criteria in the doc's\s+§Acceptance → how it is verified \(a test by name, or a manual check/)
+  assert.match(DEFAULT_PLAYBOOK.review, /each criterion of the step in the doc's §Acceptance \(source design\) → its evidence[\s\S]*unverified, never met/)
 })
 
 test('contextBlocks: decisions with the precedence, then the notes; empty parts left out', () => {
@@ -133,4 +150,14 @@ test('developer bar: the reviewer\'s code checks from the same constant, the dev
   assert.match(DEVELOPER_BAR, /Never weaken, skip or delete a test/)
   assert.match(DEVELOPER_BAR, /Done means[\s\S]*acceptance/)
   assert.doesNotMatch(DEVELOPER_BAR, /\b[A-Z]{4,}\b/, 'no ALL-CAPS emphasis')
+})
+
+test('deviationBacking: the work\'s §Decisions and the step\'s plan; deviationsLine in one line (review-v3-concise-design-first.3)', () => {
+  const doc = '# Decisions\n- keep LegacyReport\n## w.2\n- w.2 only\n\n# Plan\n1. Core — `IssuesReport`\n2. UI\n\n# Progress\n- IgnoredHere'
+  assert.equal(deviationBacking(doc, { key: 'w.1', title: 'Core' }, 1), '- keep LegacyReport\nCore — `IssuesReport`')
+  assert.doesNotMatch(deviationBacking(doc, { key: 'w.1', title: 'Core' }, 1), /IgnoredHere|w\.2 only/)
+  assert.equal(deviationBacking('', { key: 'w.1', title: 'Core' }, 1), '')
+  assert.equal(deviationsLine([]), 'as planned')
+  assert.equal(deviationsLine([{ backed: true }]), '1 deviation (1 backed by the doc)')
+  assert.equal(deviationsLine([{ backed: false }, { backed: false }]), '2 deviations')
 })

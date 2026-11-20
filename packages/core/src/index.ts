@@ -533,17 +533,31 @@ export interface StepFact {
   counts: { match: number; differs: number; missing: number; unplanned: number; additions?: number; outside?: number; unaccounted: number; ungrounded: number }
   /** The compare it was recorded by (COMPARE_VERSION); none before plan-level compare. */
   compareVersion?: number
+  /** What keeps the review from merge: the inventory's gaps (an incomplete fact); deviations before compare version 3. */
   blockers: string[]
+  /**
+   * The deviations from the plan in words, each backed by the doc (§Decisions, the step's plan) or not; never blockers
+   * (review-v3-concise-design-first.3). Missing before compare version 3.
+   */
+  deviations?: { text: string; backed: boolean }[]
   /** The root of the fact set, the diagram with the inventory. */
   canvasId: string | null
   at: number
 }
 
 /**
- * The version of plan ↔ fact a StepFact is recorded by: 2 is plan level (plan-fact-porivniannia-na-rivni.1). A fact of
- * an older one is computed again when it is next read.
+ * The version of plan ↔ fact a StepFact is recorded by: 2 is plan level (plan-fact-porivniannia-na-rivni.1); 3 keeps
+ * deviations apart from blockers (review-v3-concise-design-first.3). A fact of an older one is computed again when it
+ * is next read.
  */
-export const COMPARE_VERSION = 2
+export const COMPARE_VERSION = 3
+
+/** Plan ↔ fact in one line: 'as planned', or 'N deviations (M backed by the doc)'; never a blocker. */
+export function deviationsLine(deviations: { backed: boolean }[]): string {
+  if (!deviations.length) return 'as planned'
+  const backed = deviations.filter((d) => d.backed).length
+  return `${deviations.length} deviation${deviations.length > 1 ? 's' : ''}${backed ? ` (${backed} backed by the doc)` : ''}`
+}
 
 /** A step's recorded fact was compared by an older version of plan ↔ fact. */
 export const staleFact = (fact: Pick<StepFact, 'compareVersion'> | null | undefined) => !!fact && (fact.compareVersion ?? 1) < COMPARE_VERSION
@@ -1655,6 +1669,9 @@ Diff diagrams are recorded with show_diagram; link them here: [title](canvas:<id
 
 # Plan
 Numbered steps. Each step that changes code says, per repository it changes: what changes there and the diagrams of that change, e.g. "1. <step title> — in <repo>: <what> ([title](canvas:<id>), …)". A step without structural changes in a repo says so in one line. A step with more to say gets sub-items under its line, or a "## <step key> <title>" subsection; the plan card unfolds them.
+
+# Acceptance
+The criteria of each step, by which its developer and reviewer tell it is done: a "## <step key> <title>" subsection (or a numbered item, as in Plan) per step, one criterion per line, each observable and checkable (what a user or a test sees, not how the code does it), e.g. "- a plan without criteria for a step gets a warning on set_needs_input".
 
 # Assumptions
 `,

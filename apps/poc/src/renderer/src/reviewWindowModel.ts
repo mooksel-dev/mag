@@ -81,6 +81,12 @@ export function reviewWindowModel(task: Task, canvases: AppState['canvases'], vi
   return { kind: pr ? 'pr' : 'step', result, report, blocks, sets, inventory, groups: view ? diffByChange(report, inventory, view.files) : [] }
 }
 
+/**
+ * Whether a PR review's pane shows its inventory and fact diagrams (review-v3-concise-design-first.3): only for a
+ * legacy report. An issues report shows its one diagram; the inventory stays the reviewer's, for mag's checks.
+ */
+export const paneShowsFact = (report: ReviewReport | null | undefined) => !isIssuesReport(report)
+
 /** A loaded hunk: its lines, null while loading, an error message. */
 export type HunkLines = string[] | string | null
 

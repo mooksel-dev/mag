@@ -8,6 +8,8 @@ import {
   issuesView,
   isIssuesReport,
   type AcceptanceItem,
+  type DeltaStatus,
+  deltaView,
   type EvidenceStatus,
   type Issue,
   type IssueOwner,
@@ -36,6 +38,8 @@ const CHECKS_TONES: Record<ChecksVerdict, Tone> = { request_changes: 'bad', look
 const SEVERITY_PILLS: Record<IssueSeverity, string> = { blocker: 'red', should: 'amber', nit: '', note: '' }
 const EVIDENCE_PILLS: Record<EvidenceStatus, string> = { met: 'green', partly: 'amber', not: 'red', unverified: '' }
 const OWNER_LABELS: Record<IssueOwner, string> = { author: 'the author', po: 'the PO', user: 'you' }
+const DELTA_LABELS: Record<DeltaStatus, string> = { fixed: 'fixed', open: 'still open', new: 'new' }
+const DELTA_PILLS: Record<DeltaStatus, string> = { fixed: 'green', open: 'amber', new: 'violet' }
 const SOURCE_LABELS: Record<AcceptanceItem['source'], string> = { pr: 'the PR', ticket: 'the ticket', design: 'the design', none: 'nowhere (inferred)' }
 const SOURCE_TITLES: Record<Claim['source'], string> = {
   checked: 'mag verified it against the inventory',
@@ -366,6 +370,19 @@ function IssuesReportView({ report, kind, onView, decisions, direction, expand, 
         <p className="intent">{report.intent}</p>
         <ChecksWhy report={report} />
       </section>
+
+      {report.delta && (
+        <section className="reportcard">
+          <div className="cardhead"><h2>Since the last review</h2></div>
+          {deltaView(report).map((g) => (
+            <div key={g.status} className="finding">
+              <span className={`pill ${DELTA_PILLS[g.status]}`}>{DELTA_LABELS[g.status]}</span>
+              <ul className="grow small">{g.titles.map((t, i) => <li key={i}>{t}</li>)}</ul>
+            </div>
+          ))}
+          {!report.delta.length && <p className="muted small">Nothing before, nothing new.</p>}
+        </section>
+      )}
 
       <section className="reportcard">
         <div className="cardhead">

@@ -22,6 +22,7 @@ import { Chat, Markdown } from './Chat'
 import { ownerSession } from './Conversation'
 import { DiffSetView, type DiagramCanvas } from './DiffSetView'
 import { Comparison, useHunks } from './FactPanel'
+import { planFactLine } from './factView'
 import { ReportConclusion, ReportView, diagramAnchor } from './ReportView'
 import { ImportedBanner } from './ReviewExport'
 import { ReviewMenu } from './Reviews'
@@ -329,8 +330,12 @@ export function ReviewWindow({ state, taskId, still = null }: {
           )}
           {model.blocks.includes('comparison') && (
             <section className="reportcard">
-              <div className="cardhead"><h2>Plan ↔ fact</h2></div>
-              {view ? <Comparison view={view} hunks={hunks} /> : <p className="muted small">{view === null ? 'No PR yet: nothing to compare.' : 'Comparing…'}</p>}
+              {view ? (
+                <details className="reportfold">
+                  <summary>{planFactLine(view, task.fact)}</summary>
+                  <Comparison view={view} hunks={hunks} />
+                </details>
+              ) : <p className="muted small">{view === null ? 'No PR yet: nothing to compare.' : 'Comparing…'}</p>}
             </section>
           )}
           {model.blocks.includes('legacy') && r && (
