@@ -168,3 +168,15 @@ test('layoutFramed: boxes sit in nested frames, callers above what they call, an
   assert.ok(inFrame(l.frames.find((f) => f.id === 'aws')!, vpc), 'the VPC is in its account')
   assert.ok(at('app').y < at('api').y && at('api').y < at('db').y, 'callers above what they call')
 })
+
+test('layoutFramed: the lanes of an expanded app stack top to bottom by their calls (app → services → clients)', async () => {
+  const box = (id: string, frame: string) => ({ id, w: 190, h: 64, frame })
+  const lane = (layer: string) => `hub\u0000lane:${layer}`
+  const frames = [{ id: 'hub' }, ...['app', 'service', 'client'].map((l) => ({ id: lane(l), parent: 'hub' })), { id: 'other' }]
+  const boxes = [box('h1', lane('app')), box('h2', lane('app')), box('s', lane('service')), box('c', lane('client')), box('ext', 'other')]
+  const l = await layoutFramed(boxes, frames, [{ from: 'h1', to: 's' }, { from: 'h2', to: 's' }, { from: 's', to: 'c' }, { from: 'c', to: 'ext' }])
+  const at = (id: string) => l.frames.find((f) => f.id === id)!
+  assert.ok(at(lane('app')).y + at(lane('app')).h <= at(lane('service')).y)
+  assert.ok(at(lane('service')).y + at(lane('service')).h <= at(lane('client')).y)
+  assert.equal(at(lane('app')).depth, 1)
+})

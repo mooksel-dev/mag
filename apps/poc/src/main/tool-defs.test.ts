@@ -54,3 +54,9 @@ test('show_canvas tells agents to build on mag\'s classes and bring no palette o
   assert.match(d, /Bring no palette, fonts or background of your own/)
   assert.doesNotMatch(d, /inline CSS/)
 })
+
+test('show_canvas tells agents to embed a diagram or another canvas by id at the top level, never redraw it (one-canvas-with-real-diagrams.1)', () => {
+  const d = TOOL_DEFS.find((t) => t.name === 'show_canvas')!.description
+  assert.ok(d.includes('<mag-canvas id="<its id>"></mag-canvas> at the top level of the page'))
+  assert.match(d, /Never redraw a diagram in the page \(no Mermaid/)
+})

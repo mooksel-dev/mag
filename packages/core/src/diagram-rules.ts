@@ -98,6 +98,19 @@ function renames(d: ComponentDiagram): string[] {
   return out
 }
 
+/** The kind of boundary that is one app drawn expanded on the system level: its modules keep their layers there. */
+export const APP_BOUNDARY = 'app'
+
+/** Whether a boundary is an app's (kind APP_BOUNDARY) or sits in one. */
+export function inApp(d: ComponentDiagram, boundary: string | undefined): boolean {
+  const seen = new Set<string>()
+  for (let b = d.boundaries?.find((x) => x.id === boundary); b && !seen.has(b.id); b = d.boundaries?.find((x) => x.id === b!.parent)) {
+    if (b.kind?.trim().toLowerCase() === APP_BOUNDARY) return true
+    seen.add(b.id)
+  }
+  return false
+}
+
 /** Top-level modules that read better framed: several outside runtimes or apps, none placed in a boundary. */
 const FRAME_AT = 5
 
@@ -108,9 +121,10 @@ const FRAME_AT = 5
 function levels(d: ComponentDiagram): string[] {
   const out: string[] = []
   const layered = d.modules.filter((n) => n.layer)
-  if (layered.length && layered.length < d.modules.length)
+  const loose = layered.filter((n) => !inApp(d, n.boundary))
+  if (loose.length && layered.length < d.modules.length)
     out.push(
-      `Top-level modules ${layered.map((n) => n.id).join(', ')} have a layer next to systems without one: the top level is the system view (apps and outside runtimes); put an app's modules in its children, so the user clicks into it.`,
+      `Top-level modules ${loose.map((n) => n.id).join(', ')} have a layer next to systems without one: the top level is the system view (apps and outside runtimes); put an app's modules in its children, so the user clicks into it, or, for the app that changes, in a boundary of kind "app", so it is drawn expanded on the system level.`,
     )
   if (d.modules.length >= FRAME_AT && !layered.length && !d.modules.some((n) => n.boundary))
     out.push(
