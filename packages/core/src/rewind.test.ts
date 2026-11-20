@@ -37,6 +37,11 @@ test('rewindCut: retry is an edit of the message that started the reply’s turn
   assert.equal(rewindCut([{ kind: 'assistant', text: 'hi', at }], 0, 'retry'), null, 'no message before it')
 })
 
+test('rewindCut: retry on a user message sends that message again', () => {
+  assert.deepEqual(rewindCut(items, 5, 'retry'), { keep: 4, at: 'r2', from: 5 })
+  assert.deepEqual(rewindCut(items, 0, 'retry'), { keep: 0, at: null, from: 0 })
+})
+
 test('rewindCut: a reply it needs without a uuid (an older item) makes it unavailable', () => {
   const old = items.map((i) => (i.kind === 'assistant' && i.nativeId === 'r2' ? { kind: 'assistant' as const, text: i.text, at } : i))
   assert.equal(rewindCut(old, 1, 'rewind'), null)

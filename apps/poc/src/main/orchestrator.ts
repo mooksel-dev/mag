@@ -2149,10 +2149,14 @@ export class Orchestrator {
     log.info('agent', 'rewind undone', { session: sessionId })
   }
 
-  /** Branch from here: a subtopic whose agent has the conversation up to the end of item `n`'s turn; the parent stays. */
+  /**
+   * Branch from here: a subtopic whose agent has the conversation up to the end of item `n`'s turn, or, on a user
+   * message, up to the reply before it; the parent stays.
+   */
   branchFrom(sessionId: string, n: number): AgentSession {
-    const point = rewindPoint(this.store.session(sessionId), n, 'rewind')
-    if (!point?.forkOf || !point.forkAt) throw new Error('This reply cannot be branched from: it has no id in the agent’s conversation (an older message), or this is not a Claude Code topic')
+    const session = this.store.session(sessionId)
+    const point = rewindPoint(session, n, session.items[n]?.kind === 'user' ? 'edit' : 'rewind')
+    if (!point?.forkOf || !point.forkAt) throw new Error('This message cannot be branched from: it has no id in the agent’s conversation (an older message), no reply comes before it, or this is not a Claude Code topic')
     return this.startChild(sessionId, '', null, true, 'user', true, { of: point.forkOf, at: point.forkAt })
   }
 

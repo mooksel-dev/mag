@@ -3008,6 +3008,14 @@ test('branchFrom: a subtopic forks the parent at the end of the reply’s turn, 
   assert.deepEqual(s.orch.startChild(topic.id, '', null, true).base, { at: 'r3' })
 })
 
+test('branchFrom on a user message forks at the reply before it; the first message has none', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  const child = s.orch.branchFrom(topic.id, 5)
+  assert.deepEqual([child.forkOf, child.forkAt, child.items.length], ['n1', 'r2', 0])
+  assert.throws(() => s.orch.branchFrom(topic.id, 0), /cannot be branched/)
+})
+
 test('chat runs keep file checkpoints; a work’s runs do not (chat-message-actions-rewind-edit.2)', async () => {
   const s = setup()
   const id = s.orch.newChat(s.project.id)
