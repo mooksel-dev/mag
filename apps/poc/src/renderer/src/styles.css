@@ -977,8 +977,20 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .workcard.good { border-left-color: var(--green-fg); }
 .workcard .cardtitle { font-weight: 600; }
 .workcard .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.questions, .plansteps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
-.questions .rec { color: var(--green-fg); }
+.plansteps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+/* Questions: a header with the buttons, then one line per question; its ▸ (or Show ★) shows all of it and the recommendation. */
+.qcard { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
+.qhead { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; }
+.qtitle { font-weight: 600; white-space: nowrap; }
+.qtitle::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--amber-fg); margin-right: 6px; vertical-align: 1px; }
+.qhead .qreason { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qlist { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 1px; font-size: var(--fs-sm); }
+.qlist li::marker { color: var(--faint); }
+.qlist summary { cursor: pointer; list-style: none; padding: 1px 0; }
+.qlist summary::-webkit-details-marker { display: none; }
+.qlist details:not([open]) > summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qlist summary:hover { color: var(--text); }
+.qrec { color: var(--muted); padding: 1px 0 4px 12px; border-left: 2px solid var(--line); margin: 2px 0 4px; }
 /* A plan step that has more in the doc: its ▸ unfolds the step's part of §Plan and its diagrams. */
 .stepdetails > summary { cursor: pointer; list-style: none; }
 .stepdetails > summary::-webkit-details-marker { display: none; }
