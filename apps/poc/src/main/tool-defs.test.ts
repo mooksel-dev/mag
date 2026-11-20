@@ -59,4 +59,5 @@ test('show_canvas tells agents to embed a diagram or another canvas by id at the
   const d = TOOL_DEFS.find((t) => t.name === 'show_canvas')!.description
   assert.ok(d.includes('<mag-canvas id="<its id>"></mag-canvas> at the top level of the page'))
   assert.match(d, /Never redraw a diagram in the page \(no Mermaid/)
+  assert.match(d, /split into separate documents at them: its top-level styles go with every piece, its scripts do not/)
 })

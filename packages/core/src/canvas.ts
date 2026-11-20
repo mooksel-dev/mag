@@ -106,7 +106,17 @@ const CLOSES: Record<string, string[]> = { p: ['p'], li: ['li'], dt: ['dt', 'dd'
 const CLOSES_P = new Set(['address', 'article', 'aside', 'blockquote', 'details', 'div', 'dl', 'fieldset', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'ul', EMBED_TAG])
 const TAG = /<(\/?)([a-zA-Z][\w:-]*)((?:"[^"]*"|'[^']*'|[^'">])*)>/y
 const ID_ATTR = /(?:^|\s)id\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))/i
+const idOf = (attrs: string) => {
+  const m = ID_ATTR.exec(attrs)
+  return (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim()
+}
 const STYLESHEET = /(?:^|\s)rel\s*=\s*["']?stylesheet/i
+
+/** A `<mag-canvas>` tag inside another element: it is not drawn. `parent`: the element it sits in. */
+interface NestedEmbed {
+  id: string
+  parent: string
+}
 
 /**
  * An HTML canvas split on its top-level `<mag-canvas id>` tags: the HTML between them and, in place of each, the canvas
@@ -115,6 +125,30 @@ const STYLESHEET = /(?:^|\s)rel\s*=\s*["']?stylesheet/i
  * whitespace is dropped. A canvas without such tags is one piece, as it is.
  */
 export function canvasPieces(html: string): CanvasPiece[] {
+  return scanCanvas(html).pieces
+}
+
+/**
+ * What would not show of the canvases a page embeds, for the agent to fix: a tag inside another element, a tag
+ * without id, an id `exists` does not know or the page's own (`self`); [] when there is nothing.
+ */
+export function canvasEmbedWarnings(html: string, exists: (id: string) => boolean, self?: string): string[] {
+  const { pieces, nested } = scanCanvas(html)
+  const tag = (id: string) => (id ? `<${EMBED_TAG} id="${id}">` : `<${EMBED_TAG}>`)
+  const out = nested.map(
+    (n) => `${tag(n.id)} is inside <${n.parent}>, so it is not drawn: put it at the top level of the page (in <body> for a full document), between the other elements.`,
+  )
+  for (const p of pieces) {
+    if (p.kind !== 'embed') continue
+    if (!p.id) out.push(`${tag('')} has no id: give the id of the canvas or diagram to show (show_canvas or show_diagram gave it to you).`)
+    else if (p.id === self) out.push(`${tag(p.id)} is this canvas itself: it is drawn as a note; embed another canvas.`)
+    else if (!exists(p.id)) out.push(`${tag(p.id)}: no canvas with this id; it is drawn as "not found". Use an id show_canvas or show_diagram gave you.`)
+  }
+  return out
+}
+
+function scanCanvas(html: string): { pieces: CanvasPiece[]; nested: NestedEmbed[] } {
+  const nested: NestedEmbed[] = []
   const body = /<body\b[^>]*>/i.exec(html)
   const from = body ? body.index + body[0].length : 0
   const close = body ? html.toLowerCase().lastIndexOf('</body') : -1
@@ -154,12 +188,14 @@ export function canvasPieces(html: string): CanvasPiece[] {
     if (stack.at(-1) === 'p' && CLOSES_P.has(name)) stack.pop()
     while (CLOSES[name]?.includes(stack.at(-1)!)) stack.pop()
     const selfClosed = /\/\s*$/.test(attrs)
+    if (name === EMBED_TAG && stack.length) {
+      nested.push({ id: idOf(attrs), parent: stack.at(-1)! })
+    }
     if (name === EMBED_TAG && !stack.length) {
       const end = selfClosed ? -1 : lower.indexOf(`</${EMBED_TAG}`, at)
       const after = end < 0 ? at : lower.indexOf('>', end) + 1 || region.length
-      const id = ID_ATTR.exec(attrs)
       text += region.slice(last, start)
-      parts.push({ kind: 'html', html: text }, { kind: 'embed', id: (id?.[1] ?? id?.[2] ?? id?.[3] ?? '').trim() })
+      parts.push({ kind: 'html', html: text }, { kind: 'embed', id: idOf(attrs) })
       text = ''
       last = at = after
       continue
@@ -183,7 +219,8 @@ export function canvasPieces(html: string): CanvasPiece[] {
     }
     if (!VOID.has(name) && !selfClosed) stack.push(name)
   }
-  if (!parts.length) return [{ kind: 'html', html }]
+  if (!parts.length) return { pieces: [{ kind: 'html', html }], nested }
   parts.push({ kind: 'html', html: text + region.slice(last) })
-  return parts.flatMap((p): CanvasPiece[] => (p.kind === 'embed' ? [p] : p.html.trim() ? [{ kind: 'html', html: prefix + shared.join('') + p.html + suffix }] : []))
+  const pieces = parts.flatMap((p): CanvasPiece[] => (p.kind === 'embed' ? [p] : p.html.trim() ? [{ kind: 'html', html: prefix + shared.join('') + p.html + suffix }] : []))
+  return { pieces, nested }
 }

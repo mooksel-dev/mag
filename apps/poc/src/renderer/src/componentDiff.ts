@@ -228,6 +228,12 @@ export function zoneOwners(nodes: DNode[], boundaries: DBoundary[], zones: Set<s
   return owners
 }
 
+/** The zone (a boundary of `zones`) a module of the level is folded into, if any: a #node link to it opens that zone. */
+export function zoneOf(nodes: DNode[], boundaries: DBoundary[], zones: Set<string>, module: string | null): string | undefined {
+  const block = module ? zoneOwners(nodes.filter((n) => n.id === module), boundaries, zones).get(module) : undefined
+  return block && boundaries.find((b) => zoneId(b.id) === block)?.id
+}
+
 /**
  * The arrows of a level with the modules of folded zones drawn as their block: an end in a zone moves to its block,
  * arrows between the same two ends merge (calls, steps and changes together), one inside a block goes away.

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type MouseEvent as ReactMouseEvent, type ReactNode, type SetStateAction } from 'react'
 import { BOX_LINES, boxLines, callersOf, componentSummary, edgesAt, findNode, flowDiff, flowsSummary, formatDiffCount, innerSummary, layerRule, methodName, moves, nodeDiff, parseFlowRef, pathTo, type ArchEdge, type ArchLayer, type BoxLine, type ComponentDiagram, type DBoundary, type DFlow, type DiffCount, type DNode, type DiffMark, type FlowView, type LineMark } from '@mag/core'
 import { routeEdges, type Box } from '../archEdges'
-import { appLanes, callGroups, edgeLabel, flowLines, flowOf, foldEdges, methodCallers, moveEdges, quietZones, relatedFlows, signature, unchangedAt, unchangedModules, zoneId, zoneOwners, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
+import { appLanes, callGroups, edgeLabel, flowLines, flowOf, foldEdges, methodCallers, moveEdges, quietZones, relatedFlows, signature, unchangedAt, unchangedModules, zoneId, zoneOf, zoneOwners, type CallGroup, type FlowItem, type FlowLink } from '../componentDiff'
 import type { PlanOverlay } from '@mag/diff/types'
 import { paintPlan, type Painted } from '../planOverlay'
 import { DiffLegend } from './DiffLegend'
@@ -282,6 +282,11 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
       if (!next.delete(id)) next.add(id)
       return next
     })
+  // A module shown by a #node link (or selected in the panel) inside a folded zone opens that zone, so its box is there.
+  const selectedZone = zoneOf(nodes, boundaries, zones, selected)
+  useEffect(() => {
+    if (selectedZone) setOpenZones((s) => (s.has(selectedZone) ? s : new Set(s).add(selectedZone)))
+  }, [selectedZone])
   const shutZones = useMemo(() => boundaries.filter((b) => zones.has(b.id) && !openZones.has(b.id)), [boundaries, zones, openZones])
   const owners = useMemo(() => zoneOwners(nodes, boundaries, new Set(shutZones.map((b) => b.id))), [nodes, boundaries, shutZones])
   const shown = useMemo(() => foldEdges(edges, owners), [edges, owners])

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { edgesAt, normalizeDiagram, type ComponentDiagram, type DNode } from '@mag/core'
-import { appLanes, callGroups, changedModule, edgeLabel, edgePill, foldEdges, laneFrameId, quietZones, zoneId, zoneOwners, flowItems, flowLines, flowOf, methodCallers, moveEdges, movedOut, relatedFlows, unchangedAt } from './componentDiff.ts'
+import { appLanes, callGroups, changedModule, edgeLabel, edgePill, foldEdges, laneFrameId, quietZones, zoneId, zoneOf, zoneOwners, flowItems, flowLines, flowOf, methodCallers, moveEdges, movedOut, relatedFlows, unchangedAt } from './componentDiff.ts'
 
 const diagram = normalizeDiagram({
   type: 'component',
@@ -203,4 +203,14 @@ test('appLanes: layered modules in an app boundary go in the frame of their laye
   ])
   d.boundaries![1].kind = 'runtime'
   assert.equal(appLanes(d, d.modules).size, 0)
+})
+
+test('zoneOf: the folded zone a module sits in, so a #node link to it opens the zone', () => {
+  const d = system()
+  const zones = quietZones(d, d.modules, d.boundaries!)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'b2'), 'other')
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'b1'), 'other')
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'h'), undefined)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, 'nope'), undefined)
+  assert.equal(zoneOf(d.modules, d.boundaries!, zones, null), undefined)
 })

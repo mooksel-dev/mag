@@ -326,6 +326,22 @@ test('show_diagram validates, saves a diagram canvas and lists it in get_task an
   assert.equal(JSON.parse(await call('get_task')).diagrams.length, 1)
 })
 
+test('show_canvas warns on save where an embed would not show: nested, no id, missing, itself (one-canvas-with-real-diagrams.1)', async () => {
+  const { call, store } = setup()
+  const plain = await call('show_canvas', { title: 'Page', html: '<p>hi</p>' })
+  const page = Object.values(store.data.canvases).find((x) => x.kind === 'html')!
+  assert.equal(plain, `Shown to the user as canvas ${page.id} (v1).`)
+  const ok = await call('show_canvas', { title: 'Review', html: `<h1>R</h1><mag-canvas id="${page.id}"></mag-canvas>` })
+  assert.match(ok, /^Shown to the user as canvas \S+ \(v1\)\.$/)
+  const bad = await call('show_canvas', { id: page.id, title: 'Page', html: `<main><mag-canvas id="${page.id}"></mag-canvas></main><mag-canvas id="gone"></mag-canvas><mag-canvas></mag-canvas><mag-canvas id="${page.id}"></mag-canvas>` })
+  assert.equal(store.data.canvases[page.id].version, 2)
+  assert.match(bad, new RegExp(`^Shown to the user as canvas ${page.id} \\(v2\\)\\. Saved, but its embeds would not show as meant; fix them now and call again with id ${page.id}:\n- `))
+  assert.match(bad, /is inside <main>, so it is not drawn/)
+  assert.match(bad, /<mag-canvas id="gone">: no canvas with this id/)
+  assert.match(bad, /<mag-canvas> has no id/)
+  assert.match(bad, /is this canvas itself/)
+})
+
 test('show_diagram warns where a data diagram breaks the rules of the diff: owner, stored data, relations (povnyi-diff-nabir-pov-iazanykh.3)', async () => {
   const { call } = setup()
   const out = await call('show_diagram', {

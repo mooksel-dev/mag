@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CANVAS_CLASSES, CANVAS_CSS, TOKENS_CSS, HEIGHT_MESSAGE, canvasDocument, canvasPieces, canvasTheme } from './index.ts'
+import { CANVAS_CLASSES, CANVAS_CSS, TOKENS_CSS, HEIGHT_MESSAGE, canvasDocument, canvasEmbedWarnings, canvasPieces, canvasTheme } from './index.ts'
 
 const block = (selector: string) => {
   const at = TOKENS_CSS.indexOf(`${selector} {`)
@@ -99,4 +99,22 @@ test('canvasDocument with reportHeight posts the page\'s height to its parent', 
   const doc = canvasDocument('<p>x</p>', 'light', { reportHeight: true })
   assert.match(doc, new RegExp(`<script data-mag-canvas>[^<]*parent\\.postMessage\\(\\{ ${HEIGHT_MESSAGE}:`))
   assert.ok(doc.indexOf(HEIGHT_MESSAGE) < doc.indexOf('<body>'))
+})
+
+test('canvasEmbedWarnings: a tag inside an element, without id, of a missing canvas or of the page itself', () => {
+  const known = new Set(['d1', 'd2'])
+  const exists = (id: string) => known.has(id)
+  assert.deepEqual(canvasEmbedWarnings('<h1>t</h1><mag-canvas id="d1"></mag-canvas><p>no embeds</p>', exists), [])
+  assert.deepEqual(canvasEmbedWarnings('<p>plain page</p>', exists), [])
+  const w = canvasEmbedWarnings('<main><section><mag-canvas id="d2"></mag-canvas></section></main><div><mag-canvas id="x">', exists)
+  assert.equal(w.length, 2)
+  assert.match(w[0], /^<mag-canvas id="d2"> is inside <section>, so it is not drawn: put it at the top level/)
+  assert.match(w[1], /^<mag-canvas id="x"> is inside <div>/)
+  assert.match(canvasEmbedWarnings('<html><head></head><mag-canvas id="d1"></mag-canvas></html>', exists)[0], /is inside <html>.*in <body> for a full document/)
+  assert.deepEqual(canvasEmbedWarnings('<html><body><mag-canvas id="d1"></mag-canvas></body></html>', exists), [])
+  const top = canvasEmbedWarnings('<mag-canvas></mag-canvas><mag-canvas id="gone"></mag-canvas><mag-canvas id="me"></mag-canvas>', exists, 'me')
+  assert.equal(top.length, 3)
+  assert.match(top[0], /^<mag-canvas> has no id/)
+  assert.match(top[1], /^<mag-canvas id="gone">: no canvas with this id/)
+  assert.match(top[2], /^<mag-canvas id="me"> is this canvas itself/)
 })
