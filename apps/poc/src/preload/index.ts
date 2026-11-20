@@ -135,6 +135,20 @@ const api: MagApi = {
   },
   startRecording: (title) => ipcRenderer.invoke('meetings:start', title),
   stopRecording: () => ipcRenderer.invoke('meetings:stop'),
+  listMeetings: () => ipcRenderer.invoke('meetings:list'),
+  readMeeting: (id) => ipcRenderer.invoke('meetings:read', id),
+  removeMeeting: (id) => ipcRenderer.invoke('meetings:remove', id),
+  renameMeeting: (id, title) => ipcRenderer.invoke('meetings:rename', id, title),
+  linkMeeting: (id, ref) => ipcRenderer.invoke('meetings:link', id, ref),
+  unlinkMeeting: (id, ref) => ipcRenderer.invoke('meetings:unlink', id, ref),
+  summarizeMeeting: (id) => ipcRenderer.invoke('meetings:summarize', id),
+  revealMeeting: (id) => ipcRenderer.invoke('meetings:reveal', id),
+  chooseMeetingsRoot: () => ipcRenderer.invoke('meetings:chooseRoot'),
+  onMeetingsChanged: (cb) => {
+    const fn = () => cb()
+    ipcRenderer.on('meetings:changed', fn)
+    return () => ipcRenderer.removeListener('meetings:changed', fn)
+  },
 }
 
 contextBridge.exposeInMainWorld('mag', api)

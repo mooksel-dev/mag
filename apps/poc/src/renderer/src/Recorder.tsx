@@ -5,7 +5,7 @@ import { useNow } from './Tasks'
 
 const mag = window.mag
 
-function useMeetingStatus(): MeetingStatus | null {
+export function useMeetingStatus(): MeetingStatus | null {
   const [status, setStatus] = useState<MeetingStatus | null>(null)
   useEffect(() => {
     void mag.meetingStatus().then(setStatus)

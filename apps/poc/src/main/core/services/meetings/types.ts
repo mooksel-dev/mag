@@ -1,5 +1,7 @@
 // Types of the meetings service, for callers that run without Node (the renderer).
 import type { MeetingMeta } from '../../clients/meeting-files/types.ts'
+
+export type { MeetingContent, MeetingLink } from '../../clients/meeting-files/types.ts'
 import type { SetupProgress } from '../../clients/stt/types.ts'
 
 export type Meeting = MeetingMeta

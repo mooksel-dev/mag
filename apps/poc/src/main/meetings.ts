@@ -1,8 +1,10 @@
-import { BrowserWindow, Notification, app, globalShortcut, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
+import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingStatus } from '../preload/api'
 import { openCapture } from './core/clients/audio-capture/index.ts'
-import { createMeetingFiles } from './core/clients/meeting-files/index.ts'
+import { createClaudeCli } from './core/clients/claude-cli/index.ts'
+import { createMeetingFiles, type MeetingLink } from './core/clients/meeting-files/index.ts'
 import { createStt } from './core/clients/stt/index.ts'
 import { createMeetings } from './core/services/meetings/index.ts'
 import { log } from './log'
@@ -37,15 +39,38 @@ function recordingIcon(): NativeImage {
   return nativeImage.createFromBitmap(px, { width, height })
 }
 
+/** Workspace settings of meetings, in userData/meetings.json: where they are kept. */
+function rootSetting(userData: string, fallback: string) {
+  const file = join(userData, 'meetings.json')
+  let root = fallback
+  try {
+    const saved = (JSON.parse(readFileSync(file, 'utf8')) as { root?: unknown }).root
+    if (typeof saved === 'string' && saved) root = saved
+  } catch {
+    // none saved yet
+  }
+  return {
+    get: () => root,
+    set(next: string) {
+      root = next
+      writeFileSync(file, `${JSON.stringify({ root }, null, 2)}\n`)
+    },
+  }
+}
+
 /**
- * Meetings, workspace-wide (meetings-local-recording-transcript-and.1): Record / Stop from any window or the global
- * hotkey, the recording shown in every window and on the dock, a notification when the transcript is saved.
+ * Meetings, workspace-wide (meetings-local-recording-transcript-and): Record / Stop from any window or the global
+ * hotkey, the recording shown in every window and on the dock, a notification when the transcript is saved; the
+ * Meetings section's list, meeting view, rename, delete, links, Show in Finder and the storage root.
  */
 export function startMeetings() {
-  const root = join(app.getPath('documents'), 'mag', 'meetings')
-  const stt = createStt({ modelsDir: join(app.getPath('userData'), 'whisper') })
+  const userData = app.getPath('userData')
+  const root = rootSetting(userData, join(app.getPath('documents'), 'mag', 'meetings'))
+  const stt = createStt({ modelsDir: join(userData, 'whisper') })
   const helper = join(app.getAppPath(), 'native', 'mag-audio', 'build', 'mag-audio')
-  let status: MeetingStatus = { recording: null, last: null, root, hotkey: RECORD_HOTKEY }
+  const llmDir = join(userData, 'runs', 'meetings')
+  mkdirSync(llmDir, { recursive: true })
+  let status: MeetingStatus = { recording: null, last: null, root: root.get(), hotkey: RECORD_HOTKEY, summarizing: [] }
   let dotted: NativeImage | null = null
   // Electron drops click handlers of notifications that are garbage-collected.
   const shown = new Set<Notification>()
@@ -60,8 +85,13 @@ export function startMeetings() {
   const meetings = createMeetings({
     capture: (onChunk) => openCapture(helper, onChunk),
     stt,
-    files: createMeetingFiles(root),
+    files: createMeetingFiles(root.get),
+    llm: createClaudeCli({ cwd: llmDir }),
     onChange: (recording) => send({ recording }),
+    onMeetingsChanged: () => {
+      send({ summarizing: meetings.summarizing() })
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send('meetings:changed')
+    },
     onError: (message, e) => log.warn('meetings', message, e),
     onStopped: (meeting, dir) => {
       send({ last: { meeting, dir } })
@@ -94,6 +124,37 @@ export function startMeetings() {
   ipcMain.handle('meetings:status', () => status)
   ipcMain.handle('meetings:start', (_, title?: string) => (send({ error: undefined }), start(title)))
   ipcMain.handle('meetings:stop', async () => void (await meetings.stop()))
+  ipcMain.handle('meetings:list', () => meetings.list())
+  ipcMain.handle('meetings:read', (_, id: string) => meetings.read(id))
+  ipcMain.handle('meetings:remove', (_, id: string) => {
+    meetings.remove(id)
+    if (status.last?.meeting.id === id) send({ last: null })
+  })
+  ipcMain.handle('meetings:rename', (_, id: string, title: string) => {
+    const meeting = meetings.rename(id, title)
+    if (status.last?.meeting.id === id) send({ last: { ...status.last, meeting } })
+    return meeting
+  })
+  ipcMain.handle('meetings:link', (_, id: string, ref: MeetingLink) => meetings.link(id, ref))
+  ipcMain.handle('meetings:unlink', (_, id: string, ref: MeetingLink) => meetings.unlink(id, ref))
+  ipcMain.handle('meetings:summarize', (_, id: string) => meetings.summarize(id))
+  ipcMain.handle('meetings:reveal', (_, id?: string) => {
+    if (!id) {
+      mkdirSync(root.get(), { recursive: true })
+      return void shell.openPath(root.get())
+    }
+    shell.showItemInFolder(join(meetings.read(id).dir, 'transcript.md'))
+  })
+  // Meetings already saved stay where they are; the list shows the new root's.
+  ipcMain.handle('meetings:chooseRoot', async () => {
+    if (meetings.status()) throw new Error('Stop the recording first')
+    const r = await dialog.showOpenDialog({ title: 'Where mag keeps meetings', defaultPath: root.get(), properties: ['openDirectory', 'createDirectory'] })
+    if (r.canceled || !r.filePaths[0]) return null
+    root.set(r.filePaths[0])
+    send({ root: root.get(), last: null })
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('meetings:changed')
+    return root.get()
+  })
   if (!globalShortcut.register(RECORD_HOTKEY, () => (send({ error: undefined }), toggle()))) {
     log.warn('meetings', `${RECORD_HOTKEY} is taken by another app`)
     status.hotkey = null

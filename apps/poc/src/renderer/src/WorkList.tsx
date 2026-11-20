@@ -35,7 +35,7 @@ import { SearchPalette } from './SearchPalette'
 import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
 import { DraftRow, SubtopicRows } from './SessionTree'
-import { Recorder } from './Recorder'
+import { MeetingsSection } from './Meetings'
 
 const mag = window.mag
 
@@ -96,7 +96,7 @@ type Drop = { groupId: string | null; before: string | null }
  * are under Archive at the bottom. Search (⌘K or its field) opens the SearchPalette over all chats, archive included. Groups are the user's (create, rename, collapse, delete, + starts something
  * in one). Each row has a ⋯ menu, also on right-click.
  */
-export function WorkList({ project, state, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage }: {
+export function WorkList({ project, state, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, meetingId, onOpenMeeting }: {
   project: Project
   state: AppState
   selected: Selection | null
@@ -110,6 +110,9 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   /** A group's +: Home, creating into that group. */
   onNewIn: (g: HomeGroup) => void
   onOpenPage: (p: ListPage) => void
+  /** The meeting open in place of the conversation. */
+  meetingId: string | null
+  onOpenMeeting: (id: string) => void
 }) {
   const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === project.id)
@@ -234,7 +237,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           </button>
           {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => onPicker(null)} />}
         </div>
-        <Recorder />
+        <MeetingsSection selectedId={meetingId} onOpen={onOpenMeeting} />
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
           ＋ New topic <kbd>⌘N</kbd>
         </button>

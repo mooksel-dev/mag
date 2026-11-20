@@ -767,6 +767,22 @@ body.resizing iframe { pointer-events: none; }
 .newbtn:hover { border-color: var(--faint); }
 .newbtn.on { border-color: var(--accent); }
 .newbtn kbd, .wlsearch kbd { margin-left: auto; font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); }
+.meetings { display: flex; flex-direction: column; gap: 4px; }
+.mtghead { display: flex; align-items: center; }
+.mtglist { display: flex; flex-direction: column; max-height: 30vh; overflow: auto; }
+.mtgrow { display: flex; align-items: baseline; gap: var(--sp-2); width: 100%; padding: 4px 10px; border: none; border-radius: var(--r); background: none; font-weight: 400; text-align: left; }
+.mtgrow:hover { background: var(--hover); }
+.mtgrow.on { background: var(--hover); font-weight: 600; }
+.mtgtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mtgrename input { font: inherit; }
+.mtglinks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0; }
+.mtglinks .pill { display: inline-flex; gap: 4px; }
+.transcript { display: flex; flex-direction: column; gap: 2px; }
+.tline { display: grid; grid-template-columns: 70px 52px 1fr; gap: var(--sp-2); margin: 0; padding: 2px 4px; border-radius: var(--r); }
+.tline.hit { background: var(--hover); outline: 1px solid var(--accent); }
+.tline .tat { font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); padding-top: 2px; }
+.tline .tspk { font-size: var(--fs-xs); color: var(--muted); padding-top: 2px; }
+.tline.me .tspk { color: var(--accent); }
 .recorder { display: flex; flex-direction: column; gap: 2px; }
 .recbtn { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); font-weight: 600; text-align: left; }
 .recbtn:hover:not(:disabled) { border-color: var(--faint); }
