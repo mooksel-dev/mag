@@ -74,9 +74,13 @@ export function WorkCards({ work, owner, state, onAnswer, label = false }: {
 /** The inbox items ItemCard draws a card for (a question has QuestionsCard). */
 const ITEM_CARDS: InboxItem['kind'][] = ['ready_to_merge', 'review_look', 'check_failed', 'agent_failed', 'ready_to_start', 'review_ready']
 
-/** The agent's questions with its recommendations: one click accepts them all; anything else is typed to the owner. */
+/**
+ * The agent's questions with its recommendations: one line each, its recommendation behind its ▸ (or all of them at
+ * once); one click accepts them all; anything else is typed to the owner.
+ */
 export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; owner: AgentSession | null; busy: boolean; onAnswer: () => void }) {
   const [sent, setSent] = useState(false)
+  const [all, setAll] = useState(false)
   const questions = work.needsQuestions ?? []
   const accept = () => {
     if (!owner) return
@@ -84,25 +88,27 @@ export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; own
     mag.send(owner.id, acceptRecommendations(questions)).catch(() => setSent(false))
   }
   return (
-    <div className="workcard ask">
-      <div className="cardtitle">{questions.length ? `${questions.length} ${questions.length > 1 ? 'decisions' : 'decision'} needed from you` : 'Needs you'}</div>
-      <div className="muted small">{work.needsInput}</div>
+    <div className="qcard">
+      <div className="qhead">
+        <span className="qtitle">{questions.length ? `${questions.length} ${questions.length > 1 ? 'decisions' : 'decision'}` : 'Needs you'}</span>
+        <span className="muted small qreason" title={work.needsInput ?? ''}>{work.needsInput}</span>
+        <div className="grow" />
+        {questions.some((q) => q.recommendation) && <button className="link small" onClick={() => setAll(!all)}>{all ? 'Hide ★' : 'Show ★'}</button>}
+        {owner && questions.length > 0 && <button className="primary small" disabled={busy || sent} title={busy ? 'The owner is in a turn' : 'Send the owner: you accept its recommendations (★)'} onClick={accept}>{sent ? 'Sent' : 'Accept ★'}</button>}
+        {owner && <button className="small" title="Type your answer to the owner" onClick={onAnswer}>Answer…</button>}
+        {owner && <button className="iconbtn" title="Nothing to answer: take it off; the agent asks again if it still needs you" aria-label="Dismiss" onClick={() => void mag.updateTask(work.id, { needsInput: null, needsQuestions: null })}>✕</button>}
+      </div>
       {questions.length > 0 && (
-        <ol className="questions">
+        <ol className="qlist">
           {questions.map((q, i) => (
-            <li key={i}>
-              <div>{q.text}</div>
-              {q.recommendation && <div className="rec">★ {q.recommendation}</div>}
+            <li key={`${i}-${all}`}>
+              <details open={all}>
+                <summary title={q.text}>{q.text}</summary>
+                {q.recommendation && <div className="qrec">★ {q.recommendation}</div>}
+              </details>
             </li>
           ))}
         </ol>
-      )}
-      {owner && (
-        <div className="actions">
-          {questions.length > 0 && <button className="primary" disabled={busy || sent} title={busy ? 'The owner is in a turn' : 'Send the owner: you accept its recommendations'} onClick={accept}>{sent ? 'Sent' : 'Accept recommendations'}</button>}
-          <button onClick={onAnswer}>{questions.length ? 'Answer differently' : 'Answer'}</button>
-          <button className="link small" title="Nothing to answer: take it off; the agent asks again if it still needs you" onClick={() => void mag.updateTask(work.id, { needsInput: null, needsQuestions: null })}>Dismiss</button>
-        </div>
       )}
     </div>
   )
