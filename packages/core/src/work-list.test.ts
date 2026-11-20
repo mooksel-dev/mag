@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  reviewStageText,
   acceptRecommendations,
   byActivity,
   cardFilter,
@@ -595,4 +596,14 @@ test('workCards: a subagent read from a session\'s stream is a child labelled su
   const got = cards([], sessions)
   assert.deepEqual(got[0].sessions!.map((n) => [n.session.id, n.role, n.state]), [['s1', 'subagent', 'running']])
   assert.equal(got[0].dot, 'blue')
+})
+
+test('a review\'s status in words for its panel, not steps (review-v3-concise-design-first.1)', () => {
+  assert.deepEqual((['Running', 'Report ready', 'Waiting for author', 'Done'] as const).map(reviewStageText), [
+    'The agent is reviewing',
+    'Report ready · yours to publish',
+    'Report ready · waiting for the author',
+    'Closed',
+  ])
+  assert.equal(reviewStageText(null), null)
 })

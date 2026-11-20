@@ -1,5 +1,5 @@
 import { FALLBACK_BASE } from '@mag/core'
-import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type ReportKind, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -153,13 +153,14 @@ function findingsArg(v: unknown): ReviewFinding[] {
 }
 
 /**
- * A review report from a tool argument (review-v2-questions-first-direction.1): its shape, then checkReport against the
- * inventory of the review's fact; mag's checked badge on the claims that cite only units the hunks bear out. Throws with
- * everything to fix; nothing is stored then.
+ * A review report from a tool argument (review-v3-concise-design-first.1): its shape, then checkReport; its diagram a
+ * canvas of the project; mag's checked badge on the direction's facts that cite only units the hunks of the review's
+ * fact bear out. Throws with everything to fix; nothing is stored then.
  */
-function reportArg(raw: unknown, kind: ReportKind, fact: Pick<Fact, 'inventory' | 'inventoryCheck'> | null): ReviewReport {
+function reportArg(raw: unknown, fact: Pick<Fact, 'inventory' | 'inventoryCheck'> | null, canvasOf: (id: string) => boolean): IssuesReport {
   const { report, errors } = normalizeReport(raw)
-  const all = [...errors, ...(errors.length ? [] : checkReport(report, fact?.inventory ?? null, kind))]
+  const all = [...errors, ...(errors.length ? [] : checkReport(report))]
+  if (report.diagram && !canvasOf(report.diagram)) all.push(`diagram: no canvas ${report.diagram} in this project; give the id show_diagram answered with`)
   if (all.length) throw new Error(`Not recorded. Fix the report and call again:\n- ${all.join('\n- ')}`)
   const bad = new Set([...(fact?.inventoryCheck?.ungrounded ?? []), ...(fact?.inventoryCheck?.otherModule ?? [])].map((u) => u.unit))
   return markChecked(report, (fact?.inventory?.units ?? []).map((u) => u.id).filter((id) => !bad.has(id)))
@@ -510,8 +511,8 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (role !== 'reviewer' || !stepId) throw new Error('set_review is for the reviewer of a step')
         if (args.report != null) {
           const step = store.task(stepId)
-          const agent = reportArg(args.report, 'step', step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null)
-          if (args.verdict != null && args.verdict !== stepVerdict(agent.checks)) throw new Error(`Not recorded: verdict ${String(args.verdict)} and checks ${agent.checks} disagree; checks ${agent.checks} is ${stepVerdict(agent.checks)}. Leave verdict out.`)
+          const agent = reportArg(args.report, step.fact ? await stepFact(project, step, step.fact.heads, Object.values(store.data.canvases)) : null, (id) => store.data.canvases[id]?.projectId === project.id)
+          if (args.verdict != null && args.verdict !== stepVerdict(agent.checks)) throw new Error(`Not recorded: verdict ${String(args.verdict)} and the report's verdict ${agent.checks} disagree; ${agent.checks} is ${stepVerdict(agent.checks)}. Leave the top-level verdict out.`)
           const report = withFloor(agent, verdictFloor(await stepFloors(actions, project, step)))
           return actions.setReview(stepId, stepVerdict(report.checks), reportFindings(report), report)
         }
@@ -533,7 +534,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           if (args.report == null) throw new Error('Not recorded: this is the v2 review of the PR: record it with report (problem and approach beside it), not verdict and findings')
           const pr = review.pr
           const head = task.fact?.heads[pr.repo]
-          const agent = reportArg(args.report, 'pr', head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null)
+          const agent = reportArg(args.report, head ? await reviewFact(project, task, Object.values(store.data.canvases), head) : null, (id) => store.data.canvases[id]?.projectId === project.id)
           const unknown = unknownDecisions(agent, project.directionDecisions)
           if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
           // A teammate's PR has no plan of ours and no rules mag enforces: CI is the floor mag owns there.

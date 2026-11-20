@@ -2,6 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkReport,
+  criteriaSources,
+  isIssuesReport,
+  issueFinding,
+  issuesView,
+  type IssuesReport,
+  type LegacyReport,
   finalVerdict,
   verdictFloor,
   withFloor,
@@ -33,8 +39,8 @@ const inventory: ChangeInventory = {
   noise: [],
 }
 
-/** A synthetic review with every block of the report. */
-const raw = {
+/** A stored report from before review-v3-concise-design-first.1, with every block it had. */
+const legacy: LegacyReport = {
   intent: 'Routes each request to its tenant by the host name, so tenants no longer need a header.',
   direction: {
     decisions: [{ text: 'A tenant is identified by the suffix of its host name', source: 'agent', cites: ['u1'], view: 'canvas:fact1#api' }],
@@ -43,7 +49,7 @@ const raw = {
       { name: 'Tenant id in the token', tradeoffs: 'one source of truth; touches auth' },
       { name: 'Lookup table host → tenant', tradeoffs: 'any domain; one more query per request' },
     ],
-    facts: [{ text: '3 modules learn the suffix', source: 'checked', cites: ['u1', 'u2'] }],
+    facts: [{ text: '3 modules learn the suffix', source: 'agent', cites: ['u1', 'u2'] }],
     references: [{ text: 'Project note: identity comes from auth', source: 'yours', cites: ['notes'] }],
   },
   problem: [
@@ -51,41 +57,76 @@ const raw = {
     { criterion: 'Custom domains work', status: 'not', text: 'A custom domain has no suffix', source: 'agent', cites: ['src/router.ts:40'] },
   ],
   conventions: [
-    { rule: 'app layer uses services, never clients', status: 'fail', text: 'handler calls the db client', source: 'agent', cites: ['src/handler.ts:12'], view: 'canvas:fact1#handler' },
+    { rule: 'app layer uses services, never clients', status: 'fail', text: 'handler calls the db client', source: 'rule', cites: ['src/handler.ts:12'], view: 'canvas:fact1#handler' },
     { rule: 'tests next to code', status: 'pass', text: 'router.test.ts', source: 'agent', cites: ['u3'] },
   ],
   risks: [{ level: 'high', kind: 'security', text: 'Another tenant\'s data', mechanism: 'a crafted host maps to another tenant', source: 'agent', cites: ['src/router.ts:41-44'] }],
-  questions: [{ text: 'Are custom domains in scope?', cites: ['ticket'] }],
+  questions: [{ text: 'Are custom domains in scope?', source: 'question', cites: ['ticket'] }],
   changes: [
     { title: 'Tenant from the host', why: 'the design decision', units: ['u1', 'u2'] },
     { title: 'Handler reads the tenant', why: 'breaks the layer rule', units: ['u3'] },
     { title: 'Wiring', why: 'imports and names', units: ['u4'], routine: true },
   ],
-  checks: { verdict: 'request_changes', why: 'custom domains break and a crafted host reaches another tenant' },
+  checks: 'request_changes',
+  why: 'custom domains break and a crafted host reaches another tenant',
   conclusion: 'Not mergeable yet: decide on custom domains with the author and close the crafted-host hole first.',
 }
 
-const synthetic = (): ReviewReport => {
-  const { report, errors } = normalizeReport(raw)
+const synthetic = (): LegacyReport => structuredClone(legacy)
+
+/** A review as an agent passes it today: issues and evidence, its direction unsettled. */
+const raw = {
+  intent: 'Routes each request to its tenant by the host name, so tenants no longer need a header.',
+  verdict: 'request_changes',
+  why: 'a crafted host reaches another tenant',
+  issues: [
+    { title: 'A crafted host reaches another tenant', impact: 'tenant A reads tenant B\'s invoices', kind: 'security', severity: 'blocker', owner: 'author', comment: 'Match the whole host, not its suffix: `evil-acme.com` maps to `acme`.', where: 'src/router.ts:41-44' },
+    { title: 'Custom domains are not covered', impact: 'a customer on its own domain gets a 404', kind: 'scope', severity: 'should', owner: 'po', comment: 'Are custom domains in scope of this ticket?' },
+    { title: 'Handler calls the db client', impact: 'the layer rule breaks', kind: 'convention', severity: 'nit', owner: 'author', comment: 'Go through the tenants service.', where: 'mag:src/handler.ts:12', raisedBy: '@ann' },
+  ],
+  acceptance: [
+    { criterion: 'Requests reach their tenant', source: 'ticket', evidence: 'router.test.ts "picks the tenant by host"', status: 'met' },
+    { criterion: 'No header needed', source: 'pr', evidence: 'no test sends the header', status: 'unverified' },
+  ],
+  verified: ['CI: build and test green', "@ann's thread on the handler: still open"],
+  notChecked: ['load under many tenants'],
+  direction: {
+    decisions: [{ text: 'A tenant is identified by the suffix of its host name', source: 'agent', cites: ['src/router.ts:40'] }],
+    options: [
+      { name: 'Suffix of the host', tradeoffs: 'no migration; breaks on custom domains', pr: true },
+      { name: 'Tenant id in the token', tradeoffs: 'one source of truth; touches auth' },
+    ],
+    facts: [{ text: '3 modules learn the suffix', source: 'checked', cites: ['u1', 'u2'] }],
+    references: [{ text: 'Project note: identity comes from auth', source: 'user', cites: ['notes'] }],
+  },
+  diagram: 'canvas:fact1#api',
+  conclusion: 'Not mergeable yet: close the crafted-host hole, and ask the PO about custom domains.',
+}
+
+const issuesReport = (over: Record<string, unknown> = {}): IssuesReport => {
+  const { report, errors } = normalizeReport({ ...raw, ...over })
   assert.deepEqual(errors, [])
   return report
 }
 
-test('normalizeReport reads every block; checked from the agent is read as agent, a failed rule is a rule claim, questions are questions', () => {
-  const r = synthetic()
-  assert.equal(r.direction.options.length, 3)
-  assert.equal(r.direction.facts[0].source, 'agent')
-  assert.equal(r.conventions[0].source, 'rule')
-  assert.equal(r.conventions[1].source, 'agent')
-  assert.equal(r.questions[0].source, 'question')
-  assert.equal(r.direction.decisions[0].view, 'canvas:fact1#api')
+test('normalizeReport reads an issues report; checked from the agent is read as agent, user as yours; the diagram is a canvas id', () => {
+  const r = issuesReport()
+  assert.ok(isIssuesReport(r))
+  assert.ok(!isIssuesReport(synthetic()))
   assert.equal(r.checks, 'request_changes')
-  assert.equal(r.why, 'custom domains break and a crafted host reaches another tenant')
+  assert.equal(r.why, raw.why)
+  assert.deepEqual(r.issues.map((i) => [i.severity, i.owner, i.where ?? '-', i.raisedBy ?? '-']), [['blocker', 'author', 'src/router.ts:41-44', '-'], ['should', 'po', '-', '-'], ['nit', 'author', 'mag:src/handler.ts:12', '@ann']])
+  assert.deepEqual(r.acceptance.map((a) => [a.source, a.status]), [['ticket', 'met'], ['pr', 'unverified']])
+  assert.deepEqual([r.verified.length, r.notChecked], [2, ['load under many tenants']])
+  assert.equal(r.direction?.facts[0].source, 'agent')
+  assert.equal(r.direction?.references[0].source, 'yours')
+  assert.equal(r.diagram, 'fact1')
+  assert.deepEqual(checkReport(r), [])
   assert.deepEqual(normalizeReport(JSON.stringify(raw)).errors, [])
 })
 
 test('normalizeReport: intent and conclusion are each one short paragraph, required', () => {
-  const r = synthetic()
+  const r = issuesReport()
   assert.equal(r.intent, raw.intent)
   assert.equal(r.conclusion, raw.conclusion)
   const { intent: _, conclusion: __, ...without } = raw
@@ -99,148 +140,177 @@ test('normalizeReport: intent and conclusion are each one short paragraph, requi
   assert.deepEqual(normalizeReport({ ...raw, intent: 'A line\nwrapped once.' }).errors, [])
 })
 
-test('normalizeReport accepts the reviewer\'s view on the direction; it must lean to an option', () => {
-  const view = { leaning: 'Tenant id in the token', why: 'auth already knows the tenant', confidence: 'medium' }
-  const { report, errors } = normalizeReport({ ...raw, direction: { ...raw.direction, view } })
-  assert.deepEqual(errors, [])
-  assert.deepEqual(report.direction.view, view)
-  assert.deepEqual(checkReport(report, inventory), [])
-  const bad = normalizeReport({ ...raw, direction: { ...raw.direction, view: { leaning: 'Something else', confidence: 'sure' } } }).errors
+test('normalizeReport: an issue has its kind, severity and owner, a ready comment, where a file:line and never a unit id; a blocker only of a kind that may block', () => {
+  const issue = raw.issues[0]
+  const errs = (over: Record<string, unknown>) => normalizeReport({ ...raw, issues: [{ ...issue, ...over }] }).errors
+  assert.ok(errs({ where: 'u23' }).some((e) => /issues\[0\] .*where "u23" is no file:line; give path:line \(an inventory unit id or a module is not one\)/.test(e)))
+  assert.ok(errs({ where: 'H3.1' }).some((e) => /where "H3.1" is no file:line/.test(e)))
+  assert.ok(errs({ where: 'router' }).some((e) => /where "router" is no file:line/.test(e)))
+  assert.deepEqual(errs({ where: 'src/router.ts:41' }), [])
+  for (const kind of ['convention', 'naming', 'docs', 'design', 'scope', 'tests', 'question'])
+    assert.ok(errs({ kind }).some((e) => new RegExp(`a ${kind} issue is never a blocker`).test(e)), kind)
+  for (const kind of ['bug', 'data', 'security', 'ops', 'acceptance']) assert.deepEqual(errs({ kind }), [], kind)
+  const missing = errs({ title: '', impact: '', comment: '', kind: 'style', severity: 'major', owner: 'team' })
+  for (const re of [/title is required/, /impact is required/, /comment is required/, /kind must be one of bug, data/, /severity must be one of blocker, should, nit, note/, /owner must be one of author, po, user/])
+    assert.ok(missing.some((e) => re.test(e)), String(re))
+  const accept = normalizeReport({ ...raw, acceptance: [{ criterion: '', source: 'slack', status: 'done' }] }).errors
+  for (const re of [/acceptance\[0\]: criterion is required/, /source must be one of pr, ticket, design, none/, /evidence is required/, /status must be one of met, partly, not, unverified/])
+    assert.ok(accept.some((e) => re.test(e)), String(re))
+})
+
+test('normalizeReport refuses the fields of the old report with what replaces them, a verdict on the direction and wrong shapes', () => {
+  const { errors } = normalizeReport({ ...raw, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve' }, verdict: 'merge', why: '' })
+  for (const re of [/^problem: the report has no problem; use acceptance/, /^conventions: .*use issues \(only what is wrong, no pass list\)/, /^risks: /, /^questions: .*issues of kind question/, /^changes: /, /^checks: .*use verdict and why/, /^verdict must be one of request_changes, look, approve_with_comments, approve/, /^why is required/])
+    assert.ok(errors.some((e) => re.test(e)), String(re))
+  assert.ok(normalizeReport({ ...raw, direction: { ...raw.direction, verdict: 'ok' } }).errors.some((e) => /direction has no verdict: the direction is the user's call/.test(e)))
+  assert.ok(normalizeReport({ ...raw, direction: 'fine' }).errors.some((e) => /direction must be an object/.test(e)))
+  assert.ok(normalizeReport('nope').errors.some((e) => /report must be an object/.test(e)))
+  const view = { leaning: 'Something else', confidence: 'sure' }
+  const bad = normalizeReport({ ...raw, direction: { ...raw.direction, view } }).errors
   assert.ok(bad.some((e) => /leaning "Something else" is no option's name/.test(e)))
   assert.ok(bad.some((e) => /direction.view: why is required/.test(e)))
   assert.ok(bad.some((e) => /direction.view: confidence must be one of high, medium, low/.test(e)))
+  const good = issuesReport({ direction: { ...raw.direction, view: { leaning: 'Tenant id in the token', why: 'auth knows it', confidence: 'medium' } } })
+  assert.equal(good.direction?.view?.leaning, 'Tenant id in the token')
 })
 
-test('normalizeReport refuses a verdict on the direction and wrong shapes', () => {
-  const { errors } = normalizeReport({ ...raw, direction: { ...raw.direction, verdict: 'ok' }, risks: [{ level: 'huge', kind: 'bug', text: 'x', source: 'agent', cites: ['u1'] }], checks: { verdict: 'merge' } })
-  assert.ok(errors.some((e) => /direction has no verdict: the direction is the user's call; give your leaning in direction.view/.test(e)))
-  assert.ok(errors.some((e) => /risks\[0\]: level must be one of/.test(e)))
-  assert.ok(errors.some((e) => /risks\[0\]: mechanism is required/.test(e)))
-  assert.ok(errors.some((e) => /checks.verdict must be one of/.test(e)))
-  assert.ok(errors.some((e) => /checks.why is required/.test(e)))
-  // The old form, a bare verdict, says what is missing.
-  assert.ok(normalizeReport({ ...raw, checks: 'approve' }).errors.some((e) => /checks.verdict must be one of/.test(e)))
-  assert.ok(normalizeReport('nope').errors.some((e) => /report must be an object/.test(e)))
-  assert.ok(normalizeReport({ ...raw, problem: [{ criterion: 'c', status: 'solved', text: 't', source: 'mine', cites: ['u1'] }] }).errors.some((e) => /source must be one of agent, user, question, rule/.test(e)))
+test('checkReport: never approve with a blocker; request_changes needs something to fix; approve with own issues is approve_with_comments', () => {
+  const r = issuesReport()
+  const [, should, raised] = r.issues
+  assert.ok(checkReport({ ...r, checks: 'approve' }).some((e) => /^verdict: approve with 1 blocker \(A crafted host reaches another tenant\)/.test(e)))
+  assert.ok(checkReport({ ...r, checks: 'approve_with_comments' }).some((e) => /^verdict: approve_with_comments with 1 blocker/.test(e)))
+  assert.deepEqual(checkReport({ ...r, checks: 'look' }), [])
+  assert.deepEqual(checkReport({ ...r, issues: [should], checks: 'request_changes' }), [])
+  assert.ok(checkReport({ ...r, issues: [raised], checks: 'request_changes' }).some((e) => /request_changes with nothing to fix/.test(e)))
+  assert.ok(checkReport({ ...r, issues: [should], checks: 'approve' }).some((e) => /that is approve_with_comments/.test(e)))
+  // A teammate's raised nit is not the reviewer's own: approve stands.
+  assert.deepEqual(checkReport({ ...r, issues: [raised], checks: 'approve' }), [])
+  assert.deepEqual(checkReport({ ...r, issues: [should, raised], checks: 'approve_with_comments' }), [])
+  assert.deepEqual(checkReport({ ...r, issues: [], checks: 'approve' }), [])
 })
 
-test('normalizeReport: user is the source a reviewer gives for the user\'s own words, stored as yours; yours itself still taken (prompts-use-the-models-to.5)', () => {
-  const ref = (source: string) => normalizeReport({ ...raw, direction: { ...raw.direction, references: [{ text: 'your note', source, cites: ['notes'] }] } })
-  for (const source of ['user', 'yours']) {
-    const { report, errors } = ref(source)
-    assert.deepEqual(errors, [], source)
-    assert.equal(report.direction.references[0].source, 'yours', source)
-  }
+test('checkReport: a non-trivial change without criteria anywhere needs its acceptance blocker; a trivial one needs none', () => {
+  const r = issuesReport({ verdict: 'approve_with_comments' })
+  const none = { ...r, issues: [r.issues[1]], acceptance: [{ criterion: 'routes by host', source: 'none' as const, evidence: 'inferred from the diff', status: 'met' as const }] }
+  assert.ok(checkReport(none).some((e) => /^acceptance: no criteria in the PR, its ticket or the design; .*blocker issue of kind acceptance.*trivial: true/.test(e)))
+  assert.ok(checkReport({ ...none, acceptance: [] }).some((e) => /^acceptance: no criteria/.test(e)))
+  assert.deepEqual(checkReport({ ...none, trivial: true }), [])
+  const ask = { title: 'No acceptance criteria', impact: 'nobody can tell when it is done', kind: 'acceptance' as const, severity: 'blocker' as const, owner: 'po' as const, comment: 'What are the acceptance criteria?' }
+  assert.deepEqual(checkReport({ ...none, issues: [ask], checks: 'request_changes' }), [])
+  // Criteria from the design count (a step's plan), and so do the ticket's.
+  assert.deepEqual(checkReport({ ...none, acceptance: [{ ...none.acceptance[0], source: 'design' }] }), [])
+  assert.deepEqual(criteriaSources(r), ['pr', 'ticket'])
+  assert.deepEqual(criteriaSources(none), ['none'])
 })
 
-test('checkReport: the synthetic review passes against its inventory', () => {
-  assert.deepEqual(checkReport(synthetic(), inventory), [])
-})
-
-test('checkReport: claims cited, options with one of the PR, every unit in exactly one change', () => {
-  const r = synthetic()
-  const bad: ReviewReport = {
-    ...r,
-    direction: { ...r.direction, options: [{ ...r.direction.options[1] }], decisions: [{ ...r.direction.decisions[0], cites: [] }] },
-    changes: [
-      { title: 'A', why: 'x', units: ['u1', 'u2'] },
-      { title: 'B', why: 'y', units: ['u2', 'u9'] },
-    ],
-    checks: 'approve',
-  }
-  const errors = checkReport(bad, inventory)
+test('checkReport: the direction either follows what settles it or is laid out, cited, with one option the change\'s', () => {
+  const r = issuesReport()
+  const { direction: _, ...settled } = r
+  assert.ok(checkReport(settled).some((e) => /^follows: what settles the direction/.test(e)))
+  assert.deepEqual(checkReport({ ...settled, follows: 'the approved plan' }), [])
+  assert.ok(checkReport({ ...r, follows: 'the approved plan' }).some((e) => /^direction and follows: one of them/.test(e)))
+  const d = r.direction!
+  const errors = checkReport({ ...r, direction: { ...d, options: [{ ...d.options[1] }], decisions: [{ ...d.decisions[0], cites: [] }] } })
   assert.ok(errors.some((e) => /direction.decisions: .* cites nothing/.test(e)))
-  assert.ok(errors.some((e) => /direction.only: with a single option, say why it is the only sensible one/.test(e)))
+  assert.ok(errors.some((e) => /direction.only: with a single option/.test(e)))
   assert.ok(errors.some((e) => /exactly one option is the change's \(pr: true\), found 0/.test(e)))
-  assert.ok(errors.some((e) => /u9 is no unit of the inventory/.test(e)))
-  assert.ok(errors.some((e) => /units in no change: u3, u4/.test(e)))
-  assert.ok(errors.some((e) => /u2 is in 2 changes/.test(e)))
-  // The agent's approve over a failed rule and a high risk is its judgment: no label decides the verdict.
-  assert.ok(!errors.some((e) => /^checks/.test(e)))
-  assert.ok(checkReport(r, null).some((e) => /no inventory yet/.test(e)))
-  // One option with why it is the only one: accepted, for a step and a PR alike.
-  const one = { ...r, direction: { ...r.direction, options: [r.direction.options[0]], only: 'the host is all the router has' } }
-  assert.deepEqual(checkReport(one, inventory, 'step'), [])
-  assert.deepEqual(checkReport(one, inventory), [])
-  // Without the reason it is refused.
-  assert.ok(checkReport({ ...one, direction: { ...one.direction, only: undefined } }, inventory, 'step').some((e) => /direction.only/.test(e)))
-  // Any number of options and changes: seven changes, one per unit and three empty ones refused only for being empty.
-  const seven = checkReport({ ...r, changes: Array.from({ length: 7 }, (_, i) => ({ title: `c${i}`, why: 'w', units: i < 4 ? [`u${i + 1}`] : [] })) }, inventory)
-  assert.deepEqual(seven, ['changes (c4): no units', 'changes (c5): no units', 'changes (c6): no units'])
-  assert.deepEqual(checkReport({ ...r, changes: [{ title: 'all', why: 'w', units: ['u1', 'u2', 'u3', 'u4'] }] }, inventory), [])
-  assert.ok(checkReport({ ...r, changes: [] }, inventory).some((e) => /group the inventory into changes/.test(e)))
+  assert.deepEqual(checkReport({ ...r, direction: { ...d, options: [d.options[0]], only: 'the host is all the router has' } }), [])
+})
+
+test('reportFindings of an issues report: mag\'s blockers first, then each issue as it is, its comment to post, its title the summary; a raised one not picked', () => {
+  const r = withFloor(issuesReport(), verdictFloor({ deviations: [], ci: ['build'], rules: [] }))
+  const f = reportFindings(r)
+  assert.deepEqual(f.map((x) => [x.level, x.summary ?? '-', x.where ?? '-', x.post ?? '-']), [
+    ['blocker', '-', '-', '-'],
+    ['blocker', 'A crafted host reaches another tenant', 'src/router.ts:41-44', '-'],
+    ['should_fix', 'Custom domains are not covered', '-', '-'],
+    ['nit', 'Handler calls the db client', 'mag:src/handler.ts:12', false],
+  ])
+  assert.equal(f[0].text, 'mag: CI failed: build')
+  assert.equal(f[1].text, raw.issues[0].comment)
+  assert.equal(issueFinding({ ...r.issues[1], kind: 'question' }).level, 'question')
+  assert.equal(issueFinding({ ...r.issues[1], severity: 'note' }).level, 'note')
+})
+
+test('issuesView: the first five shown, the rest folded, raised ones not new; the ready line counts the new ones', () => {
+  const r = issuesReport()
+  const many = { ...r, issues: Array.from({ length: 7 }, (_, i) => ({ ...r.issues[1], title: `i${i}`, ...(i === 6 ? { raisedBy: '@bo' } : {}) })) }
+  const v = issuesView(many)
+  assert.deepEqual([v.shown.length, v.folded.map((i) => i.title), v.fresh], [5, ['i5', 'i6'], 6])
+  assert.equal(reportLine(r), 'Request changes · 2 issues · Direction: your call')
+  assert.equal(reportLine(r, 'step'), 'Request changes · 2 issues')
+  const { direction: _, ...settled } = r
+  assert.equal(reportLine({ ...settled, follows: 'ADR-4', issues: [], checks: 'approve' }), 'Approve')
+  assert.equal(reportLine({ ...r, decided: decision() }), 'Request changes · 2 issues · Direction: Prefer Tenant id in the token')
 })
 
 test('the verdict is the agent\'s unless mag\'s floor is stricter; then mag attaches its blockers', () => {
-  const r = synthetic()
+  const r = issuesReport({ verdict: 'approve', issues: [], acceptance: raw.acceptance })
   const none = verdictFloor({ deviations: [], ci: [], rules: [] })
   assert.deepEqual(none, { verdict: 'approve', blockers: [] })
-  // The agent's verdict stands without a floor, even approve over a high risk, and look over nothing mag knows.
-  for (const verdict of ['approve', 'look', 'request_changes'] as const) assert.equal(finalVerdict({ verdict }, none), verdict)
-  const kept = withFloor({ ...r, checks: 'approve' }, none)
+  for (const verdict of ['approve', 'approve_with_comments', 'look', 'request_changes'] as const) assert.equal(finalVerdict({ verdict }, none), verdict)
+  const kept = withFloor(r, none)
   assert.equal(kept.checks, 'approve')
   assert.equal(kept.floor, undefined)
   assert.equal(kept.raisedFrom, undefined)
-  // A plan deviation is look: it raises approve, never lowers request_changes.
+  // A plan deviation is look: it raises approve and approve_with_comments, never lowers request_changes.
   const deviation = verdictFloor({ deviations: ['orchestrator setReview is off the plan'], ci: [], rules: [] })
   assert.equal(deviation.verdict, 'look')
   assert.equal(finalVerdict({ verdict: 'approve' }, deviation), 'look')
+  assert.equal(finalVerdict({ verdict: 'approve_with_comments' }, deviation), 'look')
   assert.equal(finalVerdict({ verdict: 'request_changes' }, deviation), 'request_changes')
-  // Failed CI or a failed architecture rule is request_changes.
   const ci = verdictFloor({ deviations: ['x is off the plan'], ci: ['typecheck'], rules: [] })
   assert.equal(ci.verdict, 'request_changes')
   assert.deepEqual(ci.blockers, ['CI failed: typecheck', 'x is off the plan'])
   assert.equal(verdictFloor({ deviations: [], ci: [], rules: ['services never use services: a -> b (a.ts:3)'] }).verdict, 'request_changes')
-  const raised = withFloor({ ...r, checks: 'approve' }, ci)
+  const raised = withFloor(r, ci)
   assert.equal(raised.checks, 'request_changes')
   assert.equal(raised.raisedFrom, 'approve')
   assert.deepEqual(raised.floor, ci)
-  // mag's blockers come first among the findings; the agent does not restate them.
-  assert.deepEqual(reportFindings(raised).slice(0, 2).map((f) => [f.text, f.level]), [['mag: CI failed: typecheck', 'blocker'], ['mag: x is off the plan', 'blocker']])
-  // A floor no stricter than the agent keeps its blockers attached but raises nothing.
+  assert.ok(isIssuesReport(raised))
   const same = withFloor({ ...r, checks: 'request_changes' }, deviation)
   assert.equal(same.checks, 'request_changes')
   assert.equal(same.raisedFrom, undefined)
   assert.deepEqual(same.floor, deviation)
   // Applied again, the reviewer's own verdict is the start, not mag's earlier raise.
-  const again = withFloor(withFloor({ ...r, checks: 'approve' }, deviation), none)
+  const again = withFloor(withFloor(r, deviation), none)
   assert.equal(again.checks, 'approve')
   assert.equal(again.raisedFrom, undefined)
   assert.equal(again.floor, undefined)
-})
-
-test('the direction view never affects the verdict', () => {
-  const r = synthetic()
+  // The reviewer's leaning on the direction never affects the verdict.
   const view = { leaning: 'Tenant id in the token', why: 'one source of truth', confidence: 'high' as const }
-  const floor = verdictFloor({ deviations: [], ci: [], rules: [] })
-  assert.equal(withFloor({ ...r, checks: 'approve', direction: { ...r.direction, view } }, floor).checks, 'approve')
-  assert.deepEqual(reportFindings({ ...r, direction: { ...r.direction, view } }), reportFindings(r))
+  assert.equal(withFloor({ ...r, direction: { ...r.direction!, view } }, none).checks, 'approve')
 })
 
-test('stepVerdict and prVerdictOf route the checks verdict', () => {
-  assert.deepEqual([stepVerdict('request_changes'), stepVerdict('look'), stepVerdict('approve')], ['changes', 'look', 'merge'])
-  assert.deepEqual([prVerdictOf('request_changes'), prVerdictOf('look'), prVerdictOf('approve')], ['request_changes', 'comment', 'approve'])
+test('stepVerdict and prVerdictOf route the verdict', () => {
+  assert.deepEqual(['request_changes', 'look', 'approve_with_comments', 'approve'].map((v) => stepVerdict(v as 'look')), ['changes', 'look', 'merge', 'merge'])
+  assert.deepEqual(['request_changes', 'look', 'approve_with_comments', 'approve'].map((v) => prVerdictOf(v as 'look')), ['request_changes', 'comment', 'approve', 'approve'])
 })
 
-test('markChecked: only a mechanical fact citing only verified units gets mag\'s badge; judgements keep theirs', () => {
-  const r = markChecked(synthetic(), ['u1', 'u2', 'u3'])
-  assert.equal(r.direction.facts[0].source, 'checked')
-  assert.equal(r.direction.decisions[0].source, 'agent')
-  assert.equal(r.problem[0].source, 'agent')
-  assert.equal(r.conventions[1].source, 'agent')
-  assert.equal(r.conventions[0].source, 'rule')
-  assert.equal(r.direction.references[0].source, 'yours')
-  assert.equal(markChecked(synthetic(), ['u1']).direction.facts[0].source, 'agent')
+test('markChecked: only a mechanical fact of the direction citing only verified units gets mag\'s badge; no direction, nothing to mark', () => {
+  const r = markChecked(issuesReport(), ['u1', 'u2', 'u3'])
+  assert.equal(r.direction?.facts[0].source, 'checked')
+  assert.equal(r.direction?.decisions[0].source, 'agent')
+  assert.equal(r.direction?.references[0].source, 'yours')
+  assert.equal(markChecked(issuesReport(), ['u1']).direction?.facts[0].source, 'agent')
+  const { direction: _, ...settled } = issuesReport()
+  assert.deepEqual(markChecked({ ...settled, follows: 'ADR-4' }, ['u1']), { ...settled, follows: 'ADR-4' })
+  const old = markChecked(synthetic(), ['u1', 'u2'])
+  assert.equal(old.direction.facts[0].source, 'checked')
+  assert.equal(old.conventions[0].source, 'rule')
 })
 
-test('checkReport: request_changes needs something to fix; look may rest on its why', () => {
-  const r = synthetic()
-  const clean = { ...r, problem: [r.problem[0]], conventions: [r.conventions[1]], risks: [], questions: [] }
-  assert.deepEqual(checkReport({ ...clean, checks: 'approve' }, inventory), [])
-  assert.deepEqual(checkReport({ ...clean, checks: 'look' }, inventory), [])
-  assert.ok(checkReport({ ...clean, checks: 'request_changes' }, inventory).some((e) => /request_changes with nothing to fix/.test(e)))
-  assert.deepEqual(checkReport({ ...clean, questions: r.questions, checks: 'request_changes' }, inventory), [])
+test('an issues report with a direction drafts and references like a legacy one; its open questions are its question issues', () => {
+  const r = issuesReport({ issues: [{ ...raw.issues[1], kind: 'question', comment: 'Are custom domains in scope?' }], verdict: 'request_changes' })
+  assert.equal(directionDraft(r, { choice: 'discuss' }), '- Why Suffix of the host over Tenant id in the token?\n- Are custom domains in scope?')
+  const { direction: _, ...settled } = r
+  assert.equal(directionDraft({ ...settled, follows: 'ADR-4' }, { choice: 'discuss' }), '- Are custom domains in scope?')
+  assert.equal(directionCardText({ direction: undefined }, []), '')
+  assert.deepEqual(directionReferences({ direction: undefined }, []), [])
+  assert.deepEqual(unknownDecisions({ ...r, direction: { ...r.direction!, references: [{ text: 'x', source: 'yours', cites: ['decision:zz'] }] } }, []), ['zz'])
 })
+
+// Reports stored before review-v3-concise-design-first.1 render as they were.
 
 test('reportFindings: unsolved criteria, failed rules, risks and questions, most severe first, with where and node', () => {
   const f = reportFindings(synthetic())

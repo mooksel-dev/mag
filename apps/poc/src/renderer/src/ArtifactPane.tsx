@@ -13,6 +13,8 @@ import {
   subtasksOf,
   taskPrs,
   workCard,
+  reviewStage,
+  reviewStageText,
   workStage,
   type AgentSession,
   type CardMove,
@@ -159,11 +161,10 @@ export function TaskArtifact({ target, task, state, onOpenKey, onSelect, onDelet
 }
 
 const WORK_STAGES: WorkStage[] = ['Plan', 'Approve', 'Build', 'Merge']
-const REVIEW_STAGES: ReviewStage[] = ['Running', 'Report ready', 'Waiting for author']
 
-/** A work's stages Plan → Merge, a review's Running → Waiting for author; Done shows them all past. */
-function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: (WorkStage | ReviewStage)[] }) {
-  const at = stage === 'Done' ? stages.length : stages.indexOf(stage)
+/** A work's stages Plan → Merge; Done shows them all past. A review has a status in words instead (reviewStageText). */
+function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: WorkStage[] }) {
+  const at = stage === 'Done' ? stages.length : stages.indexOf(stage as WorkStage)
   return (
     <span className="stepper" aria-label={`Stage: ${stage}`}>
       {stages.map((s, i) => <span key={s} className={i < at ? 'past' : i === at ? 'now' : ''}>{s}</span>)}
@@ -278,14 +279,11 @@ function DocArtifact({ work, state, onOpenKey }: { work: Task; state: AppState; 
 /** A teammate's PR review: the report, its fact and diagrams, as its own window shows them. */
 function PrReview({ work, state, onOpenKey, onDeleted }: { work: Task; state: AppState; onOpenKey: (key: string) => void; onDeleted: () => void }) {
   const now = useNow(15_000)
-  const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
-  const stage = workCard(work, tasks, state.sessions, now)?.stage
   if (!project) return null
   return (
     <div className="artbody">
-      {stage && <div className="artline"><Stepper stage={stage} stages={REVIEW_STAGES} /></div>}
-      <ReviewView key={work.id} work={work} project={project} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} />
+      <ReviewView key={work.id} work={work} project={project} state={state} status={reviewStageText(reviewStage(work, state.sessions))} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} />
     </div>
   )
 }

@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { hunksOf, type ChangeInventory, type ReviewReport, type ReviewResult, type Task } from '@mag/core'
+import { hunksOf, type ChangeInventory, type IssuesReport, type LegacyReport, type ReviewResult, type Task } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
 
-// A synthetic review of a PR: a v2 report over a two-unit inventory, its fact set of a Component and a Data diagram.
+// A synthetic review of a PR: a legacy v2 report over a two-unit inventory, its fact set of a Component and a Data diagram.
 const inventory: ChangeInventory = {
   summary: ['keeps one review per format'],
   units: [
@@ -16,7 +16,7 @@ const inventory: ChangeInventory = {
   noise: [],
 }
 const claim = (text: string, cites: string[]) => ({ text, source: 'agent' as const, cites })
-const report: ReviewReport = {
+const report: LegacyReport = {
   direction: { decisions: [claim('One result per format', ['u2'])], options: [{ name: 'Results map', tradeoffs: 'simple', pr: true }, { name: 'Two reviews', tradeoffs: 'duplication' }], facts: [], references: [] },
   problem: [{ ...claim('Both are kept', ['u2']), criterion: 'v1 and v2 side by side', status: 'solved' }],
   conventions: [],
@@ -47,7 +47,7 @@ const view = { files, fact: { id: 'c1', title: 'c1', version: 1 } } as unknown a
 test('a review of a PR: every block in page order, its fact set inline, the full diff by change', () => {
   const m = reviewWindowModel(review, canvases, view)
   assert.equal(m.kind, 'pr')
-  assert.deepEqual(m.blocks, ['strip', 'direction', 'questions', 'changes', 'diagrams', 'diff'])
+  assert.deepEqual(m.blocks, ['strip', 'direction', 'questions', 'changes', 'diagrams', 'conclusion', 'diff'])
   assert.deepEqual(m.sets.map((s) => [s.title, s.set.map((c) => c.id)]), [['Fact', ['c1', 'c2']]])
   assert.equal(m.inventory, inventory)
   assert.deepEqual(m.groups.map((g) => [g.title, g.files.map((f) => f.file.path)]), [
@@ -77,8 +77,46 @@ test('a v1 result shows in the legacy layout; a step shows plan ↔ fact with it
   ]
   const m = reviewWindowModel(step, stepCanvases, view)
   assert.equal(m.kind, 'step')
-  assert.deepEqual(m.blocks, ['strip', 'direction', 'questions', 'changes', 'comparison', 'diagrams', 'diff'])
+  assert.deepEqual(m.blocks, ['strip', 'direction', 'questions', 'changes', 'comparison', 'diagrams', 'conclusion', 'diff'])
   assert.deepEqual(m.sets.map((s) => [s.title, s.set.map((c) => c.id)]), [['Plan', ['p1']], ['Fact', ['f1']]])
+})
+
+// Today's report (review-v3-concise-design-first.1): issues and evidence, its one diagram.
+const issues: IssuesReport = {
+  intent: 'Keeps one result per format.',
+  checks: 'approve_with_comments',
+  why: 'one nit',
+  issues: [{ title: 'Old reviews lose their format', impact: 'a v1 review shows as v2', kind: 'data', severity: 'nit', owner: 'author', comment: 'Migrate the format too.', where: 'packages/core/src/pr-review.ts:12' }],
+  acceptance: [{ criterion: 'v1 and v2 side by side', source: 'ticket', evidence: 'pr-review.test.ts "both kept"', status: 'met' }],
+  verified: ['CI green'],
+  notChecked: [],
+  follows: 'decision:d1',
+  diagram: 'c2',
+  conclusion: 'Approve; the nit can go with the next PR.',
+}
+
+test('an issues report: intent → issues → acceptance → verified → direction → its one diagram → conclusion → the diff; no inventory groups', () => {
+  const withIssues = { ...review, prReview: { ...review.prReview!, results: { v2: { ...result, report: issues } } } } as Task
+  const m = reviewWindowModel(withIssues, canvases, view)
+  assert.deepEqual(m.blocks, ['intent', 'issues', 'acceptance', 'verified', 'direction', 'diagrams', 'conclusion', 'diff'])
+  // Only the set of its diagram, opened on it; never the rest of the fact.
+  assert.deepEqual(m.sets.map((s) => [s.title, s.set.map((c) => c.id), s.current]), [['Diagram', ['c1', 'c2'], 'c2']])
+  // The diff is reference: one group of every file, not the inventory's changes.
+  assert.deepEqual(m.groups.map((g) => [g.title, g.files.length]), [['Files', 3]])
+  assert.deepEqual(hunksOf({ kind: 'claim', cites: [issues.issues[0].where!] }, m.inventory, files).map((p) => p.hunk.id), ['H1'], 'an issue expands its file:line')
+  // Without a diagram, no fact diagram at all.
+  const { diagram: _, ...bare } = issues
+  const none = reviewWindowModel({ ...withIssues, prReview: { ...withIssues.prReview!, results: { v2: { ...result, report: bare } } } } as Task, canvases, view)
+  assert.deepEqual([none.blocks.includes('diagrams'), none.sets], [false, []])
+  // A step keeps its plan ↔ fact and plan diagrams.
+  const step = { ...review, id: 'st', type: 'dev', parentId: 'w', prReview: undefined, review: { verdict: 'merge', findings: [], report: bare, round: 1, heads: {}, withContext: false, at: 1 } } as unknown as Task
+  const stepCanvases = [
+    canvas('p1', { type: 'component', modules: [] }, { taskId: 'w', role: 'plan', stepId: 'st', root: true }),
+    canvas('f1', { type: 'component', modules: [] }, { taskId: 'w', role: 'fact', stepId: 'st', root: true, inventory }),
+  ]
+  const s = reviewWindowModel(step, stepCanvases, view)
+  assert.deepEqual(s.blocks, ['intent', 'issues', 'acceptance', 'verified', 'direction', 'comparison', 'diagrams', 'conclusion', 'diff'])
+  assert.deepEqual(s.sets.map((x) => x.title), ['Plan'])
 })
 
 test('no diagram of the window opens a separate window: the window never calls openWindow, the inline set hides ⧉', () => {
@@ -112,7 +150,7 @@ test('a hunk loads once per fact view, and again after the view refreshes', () =
 test('the static page and an imported review have no run, direction buttons, drawer or IPC (review-v2-part-2-v1-2.3)', () => {
   const src = readFileSync(new URL('./ReviewWindow.tsx', import.meta.url), 'utf8')
   assert.match(src, /const ro = isImported\(task\) \|\| !!still/)
-  assert.match(src, /\{!still && pr && review && <FormatSwitch/, 'no v1/v2 switch or Run on the static page')
+  assert.match(src, /\{!still && pr && review && <ReviewMenu/, 'no v1/v2 switch, Run or Export on the static page')
   assert.match(src, /direction=\{pr && !ro \?/, 'no direction buttons when read only')
   assert.match(src, /\{drawer && !ro && <ChatDrawer/, 'no agent drawer when read only')
   assert.match(src, /if \(still\) return <StaticDiagrams/, 'diagrams as their SVGs, never DiffSetView')
@@ -131,5 +169,31 @@ test('the report reads intent first and conclusion last; a report without them s
   assert.match(view, /return report\.conclusion \?[^\n]*: null/)
   const win = read('./ReviewWindow.tsx')
   assert.match(win, /conclusion=\{false\}/)
-  assert.match(win, /<\/FoldedDiff>\s*\{model\.report && <ReportConclusion report=\{model\.report\} \/>\}\s*<\/main>/, 'the window: the conclusion after everything')
+  assert.match(win, /\{model\.report && <ReportConclusion report=\{model\.report\} \/>\}\s*<FoldedDiff[\s\S]*<\/FoldedDiff>\s*<\/main>/, 'the window: the conclusion last to read, the folded diff after it as reference')
+  // Today's report reads the same way: intent first, conclusion last.
+  assert.match(view, /<div className="report">\s*<section className="reportcard verdictcard">/)
+  assert.match(view, /\{children\}\s*\{conclusion && <ReportConclusion report=\{report\} \/>\}\s*<\/div>\s*\)\s*\}\s*\/\*\*\s*\* A report from before/)
+})
+
+test('a review panel\'s header: one line (PR · author → base · tickets · CI), the status in words, Open review, the rest in ⋯ (review-v3-concise-design-first.1)', () => {
+  const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8')
+  const reviews = read('./Reviews.tsx')
+  const head = reviews.slice(reviews.indexOf('<div className="taskrow reviewhead">'))
+  const order = ['{repo}#{review.pr.number} ↗', '· @{review.pr.author} → {review.pr.base} ·', '<TicketLinks task={work} />', '<Checks work={work} />', '{status && ', '>Open review</button>', '<ReviewMenu ']
+  const at = order.map((x) => head.indexOf(x))
+  assert.ok(at.every((i) => i >= 0), `every part in the header: ${order.filter((_, i) => at[i] < 0)}`)
+  assert.deepEqual([...at].sort((a, b) => a - b), at, 'in this order')
+  assert.ok(head.indexOf('<ReviewMenu ') < head.indexOf('</div>\n      {error'), 'all in the one line')
+  assert.doesNotMatch(reviews, /<h1>\{shortTitle\(work\)\}<\/h1>/, 'the title once: the panel\'s header has it')
+  assert.doesNotMatch(reviews, /<FormatSwitch|<ExportReviewButton|>\s*Delete review\s*</, 'no big action buttons above the content')
+  // The actions live in the menu.
+  const menu = reviews.slice(reviews.indexOf('export function ReviewMenu'))
+  for (const item of ["'Review again' : 'Reopen review'", 'Show {f}', 'Run {f}', 'Export review', 'Close review', 'Delete review…']) assert.ok(menu.includes(item), item)
+  // The panel has no review stepper: the status is words.
+  const pane = read('./ArtifactPane.tsx')
+  assert.doesNotMatch(pane, /REVIEW_STAGES/)
+  assert.match(pane, /status=\{reviewStageText\(reviewStage\(work, state\.sessions\)\)\}/)
+  // The verdict big, the intent right below it; the direction only when the report lays one out.
+  const view = read('./ReportView.tsx')
+  assert.match(view, /<section className="reportcard verdictcard">\s*<div className="cardhead">\s*<span className=\{`verdict [^\n]*\n\s*\{kind === 'pr' && report\.direction && [^\n]*Direction: your call[^\n]*\n\s*<\/div>\s*<p className="intent">\{report\.intent\}<\/p>/)
 })

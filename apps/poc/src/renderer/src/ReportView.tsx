@@ -2,8 +2,18 @@ import { createContext, useContext, useId, useState, type ReactNode } from 'reac
 import {
   CHECKS_LABELS,
   choiceLine,
+  criteriaSources,
   decisionNote,
   directionReferences,
+  issuesView,
+  isIssuesReport,
+  type AcceptanceItem,
+  type EvidenceStatus,
+  type Issue,
+  type IssueOwner,
+  type IssuesReport,
+  type IssueSeverity,
+  type LegacyReport,
   type DirectionChoice,
   type DirectionDecision,
   type DirectionView as View,
@@ -21,7 +31,12 @@ import {
 } from '@mag/core'
 
 const TONE_PILLS: Record<Tone, string> = { good: 'green', warn: 'amber', bad: 'red', neutral: '' }
-const CHECKS_PILLS: Record<ChecksVerdict, string> = { request_changes: 'red', look: 'amber', approve: 'green' }
+const CHECKS_PILLS: Record<ChecksVerdict, string> = { request_changes: 'red', look: 'amber', approve_with_comments: 'green', approve: 'green' }
+const CHECKS_TONES: Record<ChecksVerdict, Tone> = { request_changes: 'bad', look: 'warn', approve_with_comments: 'good', approve: 'good' }
+const SEVERITY_PILLS: Record<IssueSeverity, string> = { blocker: 'red', should: 'amber', nit: '', note: '' }
+const EVIDENCE_PILLS: Record<EvidenceStatus, string> = { met: 'green', partly: 'amber', not: 'red', unverified: '' }
+const OWNER_LABELS: Record<IssueOwner, string> = { author: 'the author', po: 'the PO', user: 'you' }
+const SOURCE_LABELS: Record<AcceptanceItem['source'], string> = { pr: 'the PR', ticket: 'the ticket', design: 'the design', none: 'nowhere (inferred)' }
 const SOURCE_TITLES: Record<Claim['source'], string> = {
   checked: 'mag verified it against the inventory',
   agent: "the reviewer's reading, with code refs",
@@ -123,7 +138,7 @@ export interface DirectionActions {
  * Discuss with agent first (the topic argues the options with the user), then the call: Direction OK, Prefer an option
  * other than the PR's, Ask the author; the principle in the user's words goes with it.
  */
-function DirectionButtons({ report, actions }: { report: ReviewReport; actions: DirectionActions }) {
+function DirectionButtons({ report, actions }: { report: ReviewReport & { direction: NonNullable<ReviewReport['direction']> }; actions: DirectionActions }) {
   const [principle, setPrinciple] = useState('')
   const decide = (choice: DirectionChoice, option?: string) => actions.decide({ choice, ...(option ? { option } : {}), ...(principle.trim() ? { principle: principle.trim() } : {}) })
   return (
@@ -206,12 +221,8 @@ export function ReportConclusion({ report }: { report: ReviewReport }) {
   return report.conclusion ? <section className="reportcard"><h2>Conclusion</h2><p>{report.conclusion}</p></section> : null
 }
 
-/**
- * The review report (review-v2-questions-first-direction.1), as the mockup: verdict strip → direction card → question
- * cards → changes table. The evidence views, the inventory and the rest go below it (`children`); a claim's view opens
- * its diagram there (`onView`).
- */
-export function ReportView({ report, fact, kind, onView, decisions, direction, expand, staticPage = false, conclusion = true, children }: {
+/** What both report views take. */
+interface ReportViewProps {
   report: ReviewReport
   fact: Pick<StepFact, 'counts'> | null | undefined
   kind: ReportKind
@@ -220,23 +231,197 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
   decisions?: DirectionDecision[]
   /** The direction buttons; without them (a step's review: the approved plan) the card is read only. */
   direction?: DirectionActions
-  /** The review window: every claim and change row expands its code hunks in place. */
+  /** The review window: every claim, issue and change row expands its code hunks in place. */
   expand?: Expand
   /** Rendered for a static page: no buttons, folds and anchors instead (the direction buttons are not passed then). */
   staticPage?: boolean
   /** The conclusion after `children`; false when the page puts it last itself. */
   conclusion?: boolean
+  /** An issues report: a checkbox per row to pick it for Publish, by its index in the review's findings (mag's blockers first). */
+  pick?: { picked: (finding: number) => boolean; toggle: (finding: number) => void }
+  /** An issues report: its issues fold (the user prefers another direction). */
+  foldIssues?: boolean
   children?: ReactNode
-}) {
+}
+
+/** A report as it was recorded: issues and evidence (today's), or the fixed questions of before. */
+export function ReportView(props: ReportViewProps) {
+  return (
+    <StaticContext.Provider value={props.staticPage ?? false}>
+      {isIssuesReport(props.report) ? <IssuesReportView {...props} report={props.report} /> : <LegacyReportView {...props} report={props.report} />}
+    </StaticContext.Provider>
+  )
+}
+
+/** The direction card: the decision(s), the options, the reviewer's leaning, facts, references and the user's call. */
+function DirectionCard({ report, kind, onView, decisions, direction, expand, id }: Pick<ReportViewProps, 'kind' | 'onView' | 'decisions' | 'direction' | 'expand'> & { report: ReviewReport & { direction: NonNullable<ReviewReport['direction']> }; id?: string }) {
+  const d = report.direction
+  return (
+    <section id={id} className="reportcard direction">
+      <div className="cardhead">
+        <h2>Direction</h2>
+        <span className="pill violet">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</span>
+      </div>
+      {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
+      {d.options.length > 0 && (
+        <div className="options">
+          {d.options.map((o) => (
+            <div key={o.name} className={`option${o.pr ? ' pr' : ''}`}>
+              <div><b>{o.name}</b>{o.pr && <span className="pill small">{kind === 'pr' ? "the PR's" : 'chosen'}</span>}</div>
+              <div className="small muted">{o.tradeoffs}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {d.options.length === 1 && d.only && <div className="small muted">Only one option: {d.only}</div>}
+      {d.view && <DirectionView view={d.view} />}
+      {d.facts.length > 0 && <h3>Facts</h3>}
+      {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
+      {d.references.length > 0 && <h3>References</h3>}
+      {directionReferences(report, decisions).map((r, i) => (
+        <ClaimLine key={i} claim={r.claim} onView={onView} expand={expand}>
+          {r.decisions.map((x) => <div key={x.id} className="small muted">Your decision: {decisionNote(x).slice(2)}</div>)}
+        </ClaimLine>
+      ))}
+      {kind === 'pr' && report.decided && <Decided decided={report.decided} draft={report.draft} />}
+      {kind === 'pr' && direction && <DirectionButtons report={report} actions={direction} />}
+    </section>
+  )
+}
+
+/** A row of the issues card: mag's blocker, or an issue with its impact, place, who decides and its ready comment. */
+function IssueRow({ issue, mag, expand, pick }: { issue?: Issue; mag?: string; expand?: Expand; pick?: { checked: boolean; toggle: () => void } }) {
+  const { button, code } = useCode({ kind: 'claim', cites: issue?.where ? [issue.where] : [] }, issue?.where ? expand : undefined)
+  const still = useContext(StaticContext)
+  const box = pick && <input type="checkbox" title="Publish this issue" aria-label="Publish this issue" checked={pick.checked} onChange={pick.toggle} />
+  if (!issue) {
+    return (
+      <div className="finding">
+        {box}
+        <span className="pill red">blocker</span>
+        <div className="grow"><span className="badge src-checked" title="mag's own floor">mag</span> {mag}</div>
+      </div>
+    )
+  }
+  return (
+    <div className="finding">
+      {box}
+      <span className={`pill ${SEVERITY_PILLS[issue.severity]}`}>{issue.severity}</span>
+      <div className="grow">
+        <div>
+          <b>{issue.title}</b> <span className="muted small">{issue.kind} · decides {OWNER_LABELS[issue.owner]}</span>
+          {issue.raisedBy && <span className="pill small" title="Raised in the PR's threads before: not new"> raised by {issue.raisedBy}</span>}
+        </div>
+        <div className="small">{issue.impact}</div>
+        <div className="small muted">
+          {issue.where && <code>{issue.where}</code>}
+          {button}
+        </div>
+        {code}
+        <details className="inline">
+          <summary className="link small">comment</summary>
+          <div className="draft">
+            {!still && <button className="link small" title="Copy the comment" onClick={() => void navigator.clipboard.writeText(issue.comment)}>copy</button>}
+            <pre className="small">{issue.comment}</pre>
+          </div>
+        </details>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The issues report (review-v3-concise-design-first.1), as the review structure of its doc: intent with the verdict →
+ * issues (mag's blockers, then each issue once, the first five shown) → acceptance with its evidence → verified and not
+ * checked → the direction (its card only when unsettled, else one line) → `children` (diagram, …) → the conclusion.
+ */
+function IssuesReportView({ report, kind, onView, decisions, direction, expand, conclusion = true, pick, foldIssues = false, children }: ReportViewProps & { report: IssuesReport }) {
+  const floor = report.floor?.blockers ?? []
+  const { shown, folded, fresh } = issuesView(report)
+  const row = (issue: Issue, i: number) => {
+    const at = floor.length + i
+    return <IssueRow key={i} issue={issue} expand={expand} pick={pick && { checked: pick.picked(at), toggle: () => pick.toggle(at) }} />
+  }
+  const raised = report.issues.length - fresh
+  const issues = (
+    <>
+      {floor.map((b, i) => <IssueRow key={`mag${i}`} mag={b} pick={pick && { checked: pick.picked(i), toggle: () => pick.toggle(i) }} />)}
+      {shown.map((x, i) => row(x, i))}
+      {folded.length > 0 && (
+        <details className="inline">
+          <summary className="link small">{folded.length} more</summary>
+          {folded.map((x, i) => row(x, shown.length + i))}
+        </details>
+      )}
+      {!floor.length && !report.issues.length && <p className="muted small">None.</p>}
+    </>
+  )
+  return (
+    <div className="report">
+      <section className="reportcard verdictcard">
+        <div className="cardhead">
+          <span className={`verdict tone-${CHECKS_TONES[report.checks]}`} title="The reviewer's verdict, never below mag's floor">{CHECKS_LABELS[report.checks]}</span>
+          {kind === 'pr' && report.direction && <span className="pill violet">{report.decided ? `Direction: ${choiceLine(report.decided).replace(/^Direction /, '')}` : 'Direction: your call'}</span>}
+        </div>
+        <p className="intent">{report.intent}</p>
+        <ChecksWhy report={report} />
+      </section>
+
+      <section className="reportcard">
+        <div className="cardhead">
+          <h2>Issues</h2>
+          <span className="muted small">{fresh} new{raised ? ` · ${raised} raised before` : ''}</span>
+        </div>
+        {foldIssues ? <details className="reportfold"><summary>Folded: you prefer another direction</summary>{issues}</details> : issues}
+      </section>
+
+      <section className="reportcard">
+        <div className="cardhead">
+          <h2>Acceptance</h2>
+          <span className="muted small">criteria from {criteriaSources(report).map((s) => SOURCE_LABELS[s]).join(', ')}</span>
+        </div>
+        {report.acceptance.length ? report.acceptance.map((a, i) => (
+          <div key={i} className="finding">
+            <span className={`pill ${EVIDENCE_PILLS[a.status]}`}>{a.status}</span>
+            <div className="grow">
+              <div>{a.criterion} <span className="muted small">· {SOURCE_LABELS[a.source]}</span></div>
+              <div className="small muted">{a.evidence}</div>
+            </div>
+          </div>
+        )) : <p className="muted small">{report.trivial ? 'None needed: a trivial change.' : 'No criteria.'}</p>}
+      </section>
+
+      <section className="reportcard">
+        <div className="cardhead"><h2>Verified</h2></div>
+        {report.verified.length ? <ul className="small">{report.verified.map((v) => <li key={v}>{v}</li>)}</ul> : <p className="muted small">Nothing stated.</p>}
+        <h3>Not checked</h3>
+        {report.notChecked.length ? <ul className="small">{report.notChecked.map((v) => <li key={v}>{v}</li>)}</ul> : <p className="muted small">Nothing stated.</p>}
+      </section>
+
+      {report.direction ? (
+        <DirectionCard report={{ ...report, direction: report.direction }} kind={kind} onView={onView} decisions={decisions} direction={direction} expand={expand} />
+      ) : (
+        <p className="small muted">Direction: follows {report.follows ?? (kind === 'step' ? 'the approved plan' : 'what the reviewer did not say')}.</p>
+      )}
+      {children}
+      {conclusion && <ReportConclusion report={report} />}
+    </div>
+  )
+}
+
+/**
+ * A report from before review-v3-concise-design-first.1 (review-v2-questions-first-direction.1), as it was: verdict
+ * strip → direction card → question cards → changes table. The evidence views, the inventory and the rest go below it
+ * (`children`); a claim's view opens its diagram there (`onView`).
+ */
+function LegacyReportView({ report, fact, kind, onView, decisions, direction, expand, staticPage = false, conclusion = true, children }: ReportViewProps & { report: LegacyReport }) {
   const [routineOpen, setRoutineOpen] = useState(false)
   // Ids of the cards, unique on the page (a Diff tab shows the reports of several steps): a strip chip scrolls to its card.
   const at = useId()
   const cardId = (key: string) => `card${at.replace(/[^\w-]/g, '')}-${key}`
   const toCard = (key: string) => document.getElementById(cardId(key))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  const d = report.direction
   const { rows, routine } = reportChanges(report)
   return (
-    <StaticContext.Provider value={staticPage}>
     <div className="report">
       <ReportIntent report={report} />
       <div className="reportstrip">
@@ -251,36 +436,7 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
       </div>
       <ChecksWhy report={report} />
 
-      <section id={cardId('direction')} className="reportcard direction">
-        <div className="cardhead">
-          <h2>Direction</h2>
-          <span className="pill violet">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</span>
-        </div>
-        {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
-        {d.options.length > 0 && (
-          <div className="options">
-            {d.options.map((o) => (
-              <div key={o.name} className={`option${o.pr ? ' pr' : ''}`}>
-                <div><b>{o.name}</b>{o.pr && <span className="pill small">{kind === 'pr' ? "the PR's" : 'chosen'}</span>}</div>
-                <div className="small muted">{o.tradeoffs}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {d.options.length === 1 && d.only && <div className="small muted">Only one option: {d.only}</div>}
-        {d.view && <DirectionView view={d.view} />}
-        {d.facts.length > 0 && <h3>Facts</h3>}
-        {d.facts.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
-        {d.references.length > 0 && <h3>References</h3>}
-        {directionReferences(report, decisions).map((r, i) => (
-          <ClaimLine key={i} claim={r.claim} onView={onView} expand={expand}>
-            {r.decisions.map((x) => <div key={x.id} className="small muted">Your decision: {decisionNote(x).slice(2)}</div>)}
-          </ClaimLine>
-        ))}
-        {kind === 'pr' && report.decided && <Decided decided={report.decided} draft={report.draft} />}
-        {kind === 'pr' && direction && <DirectionButtons report={report} actions={direction} />}
-      </section>
-
+      <DirectionCard id={cardId('direction')} report={report} kind={kind} onView={onView} decisions={decisions} direction={direction} expand={expand} />
       {reportCards(report).map((card) => (
         <section key={card.key} id={cardId(card.key)} className="reportcard">
           <div className="cardhead">
@@ -325,6 +481,5 @@ export function ReportView({ report, fact, kind, onView, decisions, direction, e
       {children}
       {conclusion && <ReportConclusion report={report} />}
     </div>
-    </StaticContext.Provider>
   )
 }

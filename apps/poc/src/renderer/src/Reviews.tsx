@@ -5,6 +5,7 @@ import {
   PR_VERDICT_LABELS,
   findingCounts,
   findingsFolded,
+  isIssuesReport,
   findingsByLevel,
   pickedByDefault,
   isImported,
@@ -16,10 +17,8 @@ import {
   resultOutdated,
   shownResult,
   REVIEW_FORMATS,
-  shortTitle,
   type PrReview,
   type PrVerdict,
-  type ReviewFormat,
   type ReviewResult,
   type Project,
   type ReviewFinding,
@@ -32,14 +31,14 @@ import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ReportView } from './ReportView'
-import { ExportReviewButton, ImportedBanner } from './ReviewExport'
+import { ImportedBanner } from './ReviewExport'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
 
 const mag = window.mag
 
 const VERDICT_PILLS: Record<PrVerdict, string> = { approve: 'green', request_changes: 'red', comment: 'amber' }
-const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '' }
+const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '', note: '' }
 const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending: '…', skipping: '–', cancel: '–' }
 
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
@@ -88,11 +87,13 @@ function NodeLink({ node }: { node: string }) {
  * A review's page in the artifact pane (ux-odna-rozmova-na-robotu.2): the PR, what the agent understood, its fact, CI
  * and the findings by level. Its topic is the conversation beside it.
  */
-export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: {
+export function ReviewView({ work, project, state, now, status, onOpenKey, onDeleted }: {
   work: Task
   project: Project
   state: AppState
   now: number
+  /** Where the review stands, in words (reviewStageText); none while nothing is to say. */
+  status?: string | null
   onOpenKey: (key: string) => void
   /** The review is gone: the pane clears. */
   onDeleted: () => void
@@ -146,6 +147,8 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
   )
   // Preferring another option rejects the PR's direction: its detailed findings fold (review-v2-questions-first-direction.2).
   const folded = findingsFolded(r.report)
+  // An issues report is its own publish list (review-v3-concise-design-first.1): each issue once, picked in place.
+  const issues = isIssuesReport(r.report)
   const findingsBody = (
     <>
       <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}{r.report ? ' · from the report, to publish' : ''}</span>}</h2>
@@ -182,41 +185,21 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
   )
   return (
     <div className="reviewview">
-      <div className="taskrow">
+      {/* One line: the PR, its author and base, its tickets and CI; the status in words; Open review; the rest in ⋯. */}
+      <div className="taskrow reviewhead">
         <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{repo}#{review.pr.number} ↗</button>
-        <span className="muted small">@{review.pr.author} · into {review.pr.base} · {r.head ? `reviewed at ${r.head.slice(0, 7)}` : 'not reviewed yet'}{r.at ? ` · ${ago(r.at, now)}` : ''}</span>
+        <span className="muted small">· @{review.pr.author} → {review.pr.base} ·</span>
+        <TicketLinks task={work} />
+        <Checks work={work} />
         <div className="grow" />
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
-        <ExportReviewButton work={work} onError={setError} />
+        {status && <span className="muted small reviewstatus" title={r.head ? `${r.format} reviewed at ${r.head.slice(0, 7)}${r.at ? `, ${ago(r.at, now)}` : ''}` : `${r.format}: not reviewed yet`}>{status}</span>}
         <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
-      </div>
-      <h1>{shortTitle(work)}</h1>
-      <div className="taskrow">
-        <TicketLinks task={work} />
-        <div className="grow" />
-        <Checks work={work} />
+        <ReviewMenu work={work} review={review} running={running} onError={setError} onDeleted={onDeleted} />
       </div>
       {error && <div className="banner">{error}</div>}
       {work.needsInput && <div className="banner">{work.needsInput}</div>}
       <ImportedBanner work={work} />
-      <div className="taskrow">
-        {!ro && <button disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={act(() => mag.reviewAgain(work.id))}>
-          {work.status === 'in_progress' ? 'Review again' : 'Reopen review'}
-        </button>}
-        {!ro && work.status === 'in_progress' && <button onClick={act(() => mag.closeReview(work.id))}>Close review</button>}
-        <button
-          title="Delete the review for good, with its diagrams and the topic mag created for it; nothing changes on GitHub"
-          onClick={act(async () => {
-            if (!confirm(`Delete review ${work.key}? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`)) return
-            await mag.deleteReview(work.id)
-            onDeleted()
-          })}
-        >
-          Delete review
-        </button>
-        <div className="grow" />
-        <span className="muted small">Nothing goes to GitHub without your button.</span>
-      </div>
       {review.pr.outside && !ro && (
         <div className="banner">
           {review.pr.repo} is not one of the project's repositories: mag reads the PR from GitHub, and its fact has modules by folder, without the project architecture.{' '}
@@ -225,8 +208,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
           }))}>Connect repo</button>
         </div>
       )}
-      <FormatSwitch work={work} review={review} running={running} onError={setError} />
-      {running && !r.verdict && <p className="muted">{r.format === 'v1' ? 'The agent is reviewing: problem, fact, findings and a verdict.' : 'The agent is reviewing: fact, direction and its options, problem, conventions, risks.'}</p>}
+      {running && !r.verdict && <p className="muted">{r.format === 'v1' ? 'The agent is reviewing: problem, fact, findings and a verdict.' : 'The agent is reviewing: scope and design first, then the issues, the acceptance criteria and their evidence.'}</p>}
       {r.report ? (
         <ReportView
           report={r.report}
@@ -238,7 +220,8 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
             discuss: whileDeciding(() => mag.discussDirection(work.id)),
             decide: (d) => whileDeciding(() => mag.decideDirection(work.id, d))(),
           }}
-          onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}>
+          onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}
+          {...(issues ? { pick: r.verdict && !ro ? { picked: (i: number) => picks.has(i), toggle } : undefined, foldIssues: folded } : {})}>
           {evidence && fact.some((d) => d.id === evidence) && (
             <section>
               <div className="cardhead">
@@ -248,7 +231,7 @@ export function ReviewView({ work, project, state, now, onOpenKey, onDeleted }: 
               <DiffSetView key={evidence} set={fact} current={evidence} step={work} findings={r.findings} />
             </section>
           )}
-          {findingsSection}
+          {issues ? r.verdict && !ro && <Publish work={work} result={r} repo={repo} picks={picks} running={running} now={now} onError={setError} /> : findingsSection}
           <details className="reportfold">
             <summary>Problem and approach as the agent read them</summary>
             {r.problem && <Markdown text={r.problem} onOpenTask={onOpenKey} />}
@@ -292,34 +275,59 @@ function LegacyReviewView({ review: r, onOpenKey, diff, findings }: { review: Re
 }
 
 /**
- * v1 | v2 (review-v2-part-2-v1-2.1): which result of the review the page shows, each with its line; Run v1 / Run v2
- * for the other format when it has no result yet or one older than the PR's head, in its own topic (Review again is
- * the shown one's). The other result stays.
+ * A review's actions in one ⋯ menu: Review again (or Reopen), the other format's result to show (v1 | v2,
+ * review-v2-part-2-v1-2.1) and Run for one missing or older than the PR's head, in its own topic; Export; Close; Delete
+ * when `onDeleted` is given. An imported review only shows and exports. The other result stays.
  */
-export function FormatSwitch({ work, review, running, onError }: { work: Task; review: PrReview; running: boolean; onError: (e: string | null) => void }) {
-  const go = (f: () => Promise<unknown>) => {
+export function ReviewMenu({ work, review, running, onError, onDeleted }: {
+  work: Task
+  review: PrReview
+  running: boolean
+  onError: (e: string | null) => void
+  /** Delete is offered, and the page clears after it. */
+  onDeleted?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+  const ro = isImported(work)
+  const go = (f: () => Promise<unknown>) => () => {
+    setOpen(false)
     onError(null)
     f().catch((e) => onError(String((e as Error).message ?? e)))
   }
+  const remove = async () => {
+    if (!confirm(`Delete review ${work.key}? It goes for good, with its diagrams and the topic mag created for it; nothing changes on GitHub.`)) return
+    await mag.deleteReview(work.id)
+    onDeleted?.()
+  }
   return (
-    <div className="taskrow">
-      <div className="seg" role="group" aria-label="Review format">
-        {REVIEW_FORMATS.map((f: ReviewFormat) => {
-          const result = review.results[f]
-          return (
-            <button key={f} className={f === review.shown ? 'on' : ''} aria-pressed={f === review.shown} disabled={!result} title={result ? resultLine(result) || 'no result yet' : `No ${f} result yet: Run ${f}`} onClick={() => f !== review.shown && go(() => mag.showReviewResult(work.id, f))}>
-              {f}
-            </button>
-          )
-        })}
-      </div>
-      {!isImported(work) && REVIEW_FORMATS.filter((f) => f !== review.shown && resultOutdated(review, f)).map((f) => (
-        <button key={f} className="small" disabled={running || work.status !== 'in_progress'} title={review.results[f]?.at ? `The ${f} review is of an older head: look at the PR as it is now` : `A ${f} review of the PR in its own topic, beside the other result`} onClick={() => go(() => mag.runReviewFormat(work.id, f))}>
-          Run {f}
-        </button>
-      ))}
-      <span className="muted small">{resultLine(shownResult(review)) || `${review.shown}: not reviewed yet`}</span>
-    </div>
+    <span className="menu">
+      {saved && <span className="muted small" title={saved}>saved to {saved.split('/').pop()}</span>}
+      <button className="iconbtn" aria-label="Review actions" aria-haspopup="menu" aria-expanded={open} title={`Showing ${review.shown}. Review again, formats, export, close, delete`} onClick={() => setOpen(!open)}>⋯</button>
+      {open && (
+        <>
+          <div className="menuscrim" onClick={() => setOpen(false)} />
+          <div className="menulist wlmenu headmenu small" role="menu" aria-label="Review actions">
+            {!ro && (
+              <button role="menuitem" disabled={running} title="The agent looks at the PR as it is now: what changed, and whether its findings still hold" onClick={go(() => mag.reviewAgain(work.id))}>
+                {work.status === 'in_progress' ? 'Review again' : 'Reopen review'}
+              </button>
+            )}
+            {REVIEW_FORMATS.filter((f) => f !== review.shown && review.results[f]).map((f) => (
+              <button key={`show${f}`} role="menuitem" title={resultLine(review.results[f] ?? null) || 'no result yet'} onClick={go(() => mag.showReviewResult(work.id, f))}>Show {f} (showing {review.shown})</button>
+            ))}
+            {!ro && REVIEW_FORMATS.filter((f) => f !== review.shown && resultOutdated(review, f)).map((f) => (
+              <button key={`run${f}`} role="menuitem" disabled={running || work.status !== 'in_progress'} title={review.results[f]?.at ? `The ${f} review is of an older head: look at the PR as it is now` : `A ${f} review of the PR in its own topic, beside the other result`} onClick={go(() => mag.runReviewFormat(work.id, f))}>
+                Run {f}
+              </button>
+            ))}
+            <button role="menuitem" title="One .zip: the review page (opens offline), review.json, the PR's diff and details, the diagrams as SVG" onClick={go(() => mag.exportReview(work.id).then(setSaved))}>Export review</button>
+            {!ro && work.status === 'in_progress' && <button role="menuitem" onClick={go(() => mag.closeReview(work.id))}>Close review</button>}
+            {onDeleted && <button role="menuitem" className="danger" title="Delete the review for good, with its diagrams and the topic mag created for it; nothing changes on GitHub" onClick={go(remove)}>Delete review…</button>}
+          </div>
+        </>
+      )}
+    </span>
   )
 }
 

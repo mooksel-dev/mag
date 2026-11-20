@@ -21,7 +21,7 @@ import type { AppState } from '../../preload/api'
 const mag = window.mag
 
 const VERDICT_TAGS: Record<PrVerdict, string> = { approve: 'green', comment: 'amber', request_changes: 'red' }
-const LEVEL_TAGS: Record<FindingLevel, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '' }
+const LEVEL_TAGS: Record<FindingLevel, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '', note: '' }
 
 /**
  * The reviews of a topic as one table at the end of its conversation (review-table): a row per PR with its verdict and
@@ -146,6 +146,6 @@ function Findings({ work, findings, verdict, at, running, name }: {
   )
 }
 
-const LEVELS: FindingLevel[] = ['blocker', 'should_fix', 'question', 'nit']
+const LEVELS: FindingLevel[] = ['blocker', 'should_fix', 'question', 'nit', 'note']
 /** Findings shown before "… N more". */
 const FIRST = 6

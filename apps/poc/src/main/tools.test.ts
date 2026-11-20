@@ -474,12 +474,20 @@ test('set_review is the reviewer\'s alone and records the verdict of its step', 
   await assert.rejects(call('set_review', { verdict: 'changes', findings: [{ where: 'a.ts' }] }, reviewer.id), /needs a text/)
   await call('set_review', { verdict: 'changes', findings: JSON.stringify([{ text: ' no test ', where: 'a.ts:3' }, { text: 'scope' }]) }, reviewer.id)
   await call('set_review', { verdict: 'merge', findings: [] }, reviewer.id)
-  // A report needs the inventory of the review's fact; its checks give the verdict (review-v2-questions-first-direction.1).
-  const report = { intent: 'i', direction: { decisions: [], options: [], facts: [], references: [] }, problem: [], conventions: [], risks: [], questions: [], changes: [], checks: { verdict: 'approve', why: 'w' }, conclusion: 'c' }
+  // A report: issues and evidence; its verdict routes the review (review-v3-concise-design-first.1).
+  const report = {
+    intent: 'i', verdict: 'approve_with_comments', why: 'w', follows: 'the approved plan', verified: ['CI green'], notChecked: [],
+    issues: [{ title: 'No test for the empty case', impact: 'a regression goes unseen', kind: 'tests', severity: 'should', owner: 'author', comment: 'Add a test for an empty list.', where: 'src/a.ts:3' }],
+    acceptance: [{ criterion: 'lists work', source: 'design', evidence: 'a.test.ts "lists"', status: 'met' }],
+    conclusion: 'c',
+  }
   await assert.rejects(call('set_review', { report: { ...report, intent: '', conclusion: 'a\n\nb' } }, reviewer.id), /intent is required: one paragraph[\s\S]*conclusion: one paragraph, no blank lines or lists/)
-  await assert.rejects(call('set_review', { report }, reviewer.id), /Not recorded\. Fix the report[\s\S]*direction\.decisions: name the design decision[\s\S]*no inventory yet/)
-  await assert.rejects(call('set_review', { report: { ...report, checks: { verdict: 'merge' } } }, reviewer.id), /checks\.verdict must be one of[\s\S]*checks\.why is required/)
-  assert.deepEqual(calls, ['review big.1: changes a.ts:3|no test;|scope', 'review big.1: merge '])
+  await assert.rejects(call('set_review', { report: { ...report, verdict: 'approve', issues: [{ ...report.issues[0], severity: 'blocker', kind: 'bug' }] } }, reviewer.id), /Not recorded\. Fix the report[\s\S]*verdict: approve with 1 blocker/)
+  await assert.rejects(call('set_review', { report: { ...report, verdict: 'merge', checks: { verdict: 'merge' } } }, reviewer.id), /checks: the report has no checks; use verdict and why[\s\S]*verdict must be one of/)
+  await assert.rejects(call('set_review', { report: { ...report, diagram: 'canvas:nope' } }, reviewer.id), /diagram: no canvas nope in this project/)
+  await assert.rejects(call('set_review', { report, verdict: 'changes' }, reviewer.id), /the report's verdict approve_with_comments disagree; approve_with_comments is merge/)
+  await call('set_review', { report }, reviewer.id)
+  assert.deepEqual(calls, ['review big.1: changes a.ts:3|no test;|scope', 'review big.1: merge ', 'review big.1: merge src/a.ts:3|Add a test for an empty list.'])
 })
 
 test('the reviewer reads the task but changes nothing', async () => {

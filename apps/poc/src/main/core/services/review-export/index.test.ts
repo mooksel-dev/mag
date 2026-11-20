@@ -89,7 +89,7 @@ test('export → import gives the same review: both results, the decision, the d
   assert.deepEqual(Object.keys(results), ['v1', 'v2'])
   assert.deepEqual(results.v1, review.prReview!.results.v1)
   assert.deepEqual(results.v2!.report!.decided, { choice: 'prefer', option: 'B', at: 4 })
-  assert.equal(results.v2!.report!.direction.decisions[0].view, 'canvas:new1#api', 'a claim view follows the new id')
+  assert.equal(results.v2!.report!.direction!.decisions[0].view, 'canvas:new1#api', 'a claim view follows the new id')
   assert.equal(r.doc, '# Review doc\n\nsee canvas:new1')
   assert.deepEqual(r.canvases.map((c) => c.id), ['new1', 'new2'])
   assert.deepEqual(r.canvases[0].inventory, canvases[0].inventory)

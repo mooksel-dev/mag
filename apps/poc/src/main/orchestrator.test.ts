@@ -1165,7 +1165,7 @@ test('review: the first round forks the owner session; changes go to the develop
   // The owner reviewing its own plan looks hardest where it may be wrong, and knows where its changes go (prompts-use-the-models-to.5).
   assert.match(first.spec.prompt, /Look hardest where your own plan may be wrong/)
   assert.match(first.spec.prompt, /they go back to the developer: this is round 1 of the 2 that may/)
-  assert.match(first.spec.prompt, /say so in direction\.view: it never counts toward the verdict/)
+  assert.match(first.spec.prompt, /If you think the plan's direction is wrong, say so as an issue the user owns/)
   assert.ok(first.spec.disallowedTools?.includes('Edit'))
   const reviewer = store.data.sessions.find((s) => s.role === 'reviewer')!
   assert.equal(reviewer.stepId, step.id)
@@ -1208,12 +1208,12 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
-  assert.match(run.spec.prompt, /You write the fact, from the draft units and the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds\. If you would lean another way than the plan on direction, say so in direction\.view/)
+  assert.match(run.spec.prompt, /You write the fact, from the draft units and the hunks below[\s\S]*set_inventory's\s+schema says what a unit is[\s\S]*## Plan ↔ fact \(stub\)\nCall set_review once with the report; the verdict is your own call, and its schema says what each means and what mag adds\. If you think the plan's direction is wrong, say so as an issue the user owns/)
   // Each contract once (prompts-use-the-models-to.4): the code checks in mag's frame, the verdict mapping in set_review.
   assert.ok(run.spec.prompt.includes(CODE_CHECKS))
   assert.equal(run.spec.prompt.split(CODE_CHECKS).length, 2, 'the code checks once')
   assert.doesNotMatch(run.spec.prompt, /request_changes = changes|need not restate them as risks/)
-  assert.match(run.spec.prompt, /Direction is the approved plan/)
+  assert.match(run.spec.prompt, /The direction is the approved plan: follows/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
   store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
   assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
@@ -1582,29 +1582,33 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
       facts: [claim('one module learns it', ['u1'])],
       references: [{ text: 'your note: no constants', source: 'yours', cites: ['notes'] }],
     },
-    problem: [{ criterion: 'charges', status: 'solved', ...claim('it charges', ['src/charge.ts:1']) }],
-    conventions: [{ rule: 'no magic numbers', status: 'fail', ...claim('1 is magic', ['src/charge.ts:1']) }],
-    risks: [],
-    questions: [{ text: 'why 1?', cites: ['src/charge.ts:1'] }],
-    changes: [{ title: 'charge', why: 'the whole PR', units: ['u1'] }],
-    checks: { verdict: 'request_changes', why: 'a magic number' },
+    verdict: 'request_changes',
+    why: 'a magic number',
+    issues: [
+      { title: 'The fee is a magic number', impact: 'changing the fee needs a deploy', kind: 'design', severity: 'should', owner: 'author', comment: 'Move the fee to config.', where: 'src/charge.ts:1' },
+      { title: 'Why 1?', impact: 'the fee may be wrong', kind: 'question', severity: 'note', owner: 'po', comment: 'why 1?', where: 'src/charge.ts:1' },
+    ],
+    acceptance: [{ criterion: 'charges', source: 'ticket', evidence: 'charge.test.ts "charges a fee"', status: 'met' }],
+    verified: ['CI green'],
+    notChecked: [],
     conclusion: 'Ask the author to move the fee to config; otherwise it is ready.',
   }
-  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: 'approve' } }), /Not recorded\. Fix the report[\s\S]*checks\.verdict must be one of[\s\S]*checks\.why is required/)
-  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [] } }), /units in no change: u1/)
-  // The verdict is the agent's (prompts-use-the-models-to.1): approve over a failed rule is its judgment, mag has no floor here.
-  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: { verdict: 'approve', why: 'the rule does not fit a constant of 1' } } })
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, verdict: 'merge', checks: 'approve' } }), /Not recorded\. Fix the report[\s\S]*checks: the report has no checks; use verdict and why[\s\S]*verdict must be one of/)
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, changes: [] } }), /changes: the report has no changes; drop it/)
+  await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, verdict: 'approve' } }), /approve with should or nit issues of your own; that is approve_with_comments/)
+  // The verdict is the agent's (prompts-use-the-models-to.1): approve with comments over a should issue is its judgment, mag has no floor here.
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, verdict: 'approve_with_comments', why: 'the rule does not fit a constant of 1' } })
   assert.deepEqual([store.task(work.id).prReview!.results.v2!.verdict, store.task(work.id).prReview!.results.v2!.report?.why], ['approve', 'the rule does not fit a constant of 1'])
   // Failed CI is mag's floor: it raises the agent's approve and attaches the blocker itself.
   const withCi = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv), failedChecks: async () => ['build (https://ci/1)'] } as Partial<ToolActions> as ToolActions)
-  await withCi(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, checks: { verdict: 'approve', why: 'fine' } } })
+  await withCi(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...reportArg, verdict: 'approve_with_comments', why: 'fine' } })
   const raised = store.task(work.id).prReview!.results.v2!
-  assert.deepEqual([raised.verdict, raised.report?.raisedFrom, raised.findings[0]], ['request_changes', 'approve', { text: 'mag: CI failed: build (https://ci/1)', level: 'blocker' }])
+  assert.deepEqual([raised.verdict, raised.report?.raisedFrom, raised.findings[0]], ['request_changes', 'approve_with_comments', { text: 'mag: CI failed: build (https://ci/1)', level: 'blocker' }])
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const v2 = store.task(work.id).prReview!.results.v2!
-  assert.deepEqual([v2.verdict, v2.report?.direction.facts[0].source, v2.report?.problem[0].source, v2.findings.map((f) => f.level)], ['request_changes', 'checked', 'agent', ['blocker', 'question']])
+  assert.deepEqual([v2.verdict, v2.report?.direction?.facts[0].source, v2.findings.map((f) => [f.level, f.summary, f.text])], ['request_changes', 'checked', [['should_fix', 'The fee is a magic number', 'Move the fee to config.'], ['question', 'Why 1?', 'why 1?']]])
   assert.deepEqual([v2.report?.intent, v2.report?.conclusion], [reportArg.intent, reportArg.conclusion])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: your call'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: your call'])
 
   // The user's call on the direction (review-v2-questions-first-direction.2): the topic records it once they decide.
   const decideTools = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv), decideDirection: (id, d) => orch.decideDirection(id, d) } as ToolActions)
@@ -1620,7 +1624,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.equal(store.project(project.id).notes, [notesBefore, line].filter(Boolean).join('\n'))
   const decided = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual([decided.decided?.id, decided.draft], [first[0].id, "I'd rather go with config than constant: per tenant.\n\nno constants in billing"])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Prefer config'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Prefer config'])
   assert.match(store.data.events.at(-1)!.text, /^Direction: Prefer config$/)
   // Decided again (the page's button): it replaces the call in the review, the decisions and the notes; ok drafts nothing.
   orch.decideDirection(work.id, { choice: 'ok' })
@@ -1649,7 +1653,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.deepEqual(directionReferences(next, store.project(project.id).directionDecisions).map((r) => [r.claim.source, r.decisions.map((d) => d.choice)]), [['yours', ['discuss']]])
   // A new report of the same PR keeps the user's call and its draft; deciding again still replaces it.
   assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · Direction: Ask the author'])
+  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Ask the author'])
   orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const kept = store.task(work.id).prReview!.results.v2!.report!
@@ -1660,6 +1664,13 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const final = store.project(project.id)
   assert.deepEqual(final.directionDecisions!.map((d) => d.choice), ['ok'])
   assert.equal(final.notes, [notesBefore, `- Direction ${pr.url}: The charge is a constant → Direction OK`].filter(Boolean).join('\n'))
+  // A report whose direction a design settles lays out none: nothing to decide or discuss.
+  const { direction: _, ...settled } = reportArg
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: { ...settled, follows: 'ADR-4' } })
+  assert.throws(() => orch.decideDirection(work.id, { choice: 'ok' }), /lays out no direction to decide: it follows ADR-4/)
+  await assert.rejects(orch.discussDirection(work.id), /lays out no direction to discuss/)
+
+  await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   // The v2 topic records a report only; both results are kept, and the switch shows either.
   await assert.rejects(own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', verdict: 'comment', findings: [] }), /this is the v2 review of the PR: record it with report/)
   const both = store.task(work.id).prReview!
@@ -1783,12 +1794,12 @@ test("a PR outside the project: read from GitHub by folders; the user publishes 
     assert.match(first.job, /Its repository acme\/remote is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff/)
     assert.match(first.job, /Changed files \(mag\):\n[\s\S]*src-billing[\s\S]*src\/billing\/charge\.ts/)
     assert.doesNotMatch(first.job, /New commits since/)
-    // Options before the author's description; no verdict on the direction (review-v2-questions-first-direction.1).
-    assert.match(first.job, /the inventory first, then the direction and its options from the inventory and the code alone, and only then the PR's description and comments \(gh pr view\)/)
-    assert.match(first.job, /The user decides the direction; your own leaning, if you have one, goes in direction.view/)
+    // Scope and design before the author's description and threads; no verdict on the direction (review-v3-concise-design-first.1).
+    assert.match(first.job, /the inventory first, then the first pass on scope and design from the code alone, and only then the PR's description and its threads \(gh pr view\)[\s\S]*what a teammate already raised is not new/)
+    assert.match(first.job, /Your own leaning, if you have one, goes in direction.view/)
     assert.equal(first.job.split(CODE_CHECKS).length, 2, 'the code checks once, in mag\'s frame')
     assert.match(first.job, /Call set_pr_review with the report/)
-    assert.ok(first.job.indexOf('Direction, before you read') < first.job.indexOf('3. Only now read the PR: gh pr view'))
+    assert.ok(first.job.indexOf('2. First pass, scope and design') < first.job.indexOf('3. Only now read the PR: gh pr view'))
     assert.match(await orch.reviewFactOf(work.id), /Without the project architecture: the repository is outside the project/)
 
     orch.setPrReview(work.id, topic.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'charges twice', level: 'blocker', where: 'src/billing/charge.ts:1' }, { text: 'name', level: 'nit', where: 'charge' }] })
@@ -1867,7 +1878,7 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
     assert.match(first.job, /7\. Record it with set_pr_review: the findings/)
     assert.ok(first.job.includes(CODE_CHECKS), 'v1 gets the code checks too')
     assert.match(first.job, /Call set_pr_review with the verdict and the findings/)
-    assert.doesNotMatch(first.job, /decide_direction|Direction, before you read/)
+    assert.doesNotMatch(first.job, /decide_direction|First pass, scope and design/)
     assert.match(first.job, /The fact, by the project's playbook:\nThe fact is the change inventory/)
     await assert.rejects(orch.runReviewFormat(work.id, 'v1'), /The topic of .* is working; ask it there/)
     // The v1 run writes the inventory and its result.
@@ -1885,7 +1896,7 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
     assert.equal(store.task(work.id).prReview!.shown, 'v2')
     const job2 = opened.at(-1)!.sent.at(-1)!
     assert.match(job2, /you own the v2 review of /)
-    assert.match(job2, /Direction, before you read/)
+    assert.match(job2, /First pass, scope and design/)
     assert.match(job2, /The fact: the PR's change inventory at this head is already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
     assert.doesNotMatch(job2, /You reviewed it before/, 'v2 does not see the v1 result')
     await endTurn(t2.id)

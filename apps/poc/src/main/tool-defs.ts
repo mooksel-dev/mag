@@ -309,43 +309,87 @@ const FINDING = {
 }
 
 /** A claim of a review report: text, its source and what it cites. checked is mag's to give. */
-const claim = (extra: Record<string, unknown> = {}, required: string[] = []) => ({
+const claim = () => ({
   type: 'object',
-  required: ['text', 'cites', ...required],
+  required: ['text', 'cites'],
   properties: {
     text: { type: 'string' },
-    summary: { type: 'string', description: 'For a risk, a failed rule or criterion, a question: The essence for the user, one short line (≤ 15 words) that alone says what is wrong; text is the comment for the PR.' },
-    source: { type: 'string', enum: ['agent', 'user', 'question', 'rule'], description: "agent: your reading, with code refs; user: the user's own words (PR comments, notes, decisions); question; rule: a project rule fails. mag itself gives checked to a mechanical fact of the direction whose cites are all units it verified; never give it." },
-    cites: { type: 'array', items: { type: 'string' }, description: 'Inventory unit ids or file:line; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
-    view: { type: 'string', description: 'The diagram of the review\'s set that shows it: canvas:<id>#<node>.' },
-    ...extra,
+    source: { type: 'string', enum: ['agent', 'user'], description: "agent: your reading, with code refs; user: the user's own words (PR comments, notes, decisions). mag itself gives checked to a mechanical fact whose cites are all units it verified; never give it." },
+    cites: { type: 'array', items: { type: 'string' }, description: 'file:line or inventory unit ids; a PR comment, decision:<id> or a note for the user\'s words. At least one.' },
   },
 })
 
-/** The review report (review-v2-questions-first-direction.1): answers to fixed questions; mag checks it before it stores it. */
+/** The review report (review-v3-concise-design-first.1): issues and evidence; mag checks it before it stores it. */
 const REPORT = {
   type: 'object',
-  description: 'The answers to the review\'s fixed questions; every item is a claim with its source and cites.',
-  required: ['intent', 'direction', 'problem', 'conventions', 'risks', 'questions', 'changes', 'checks', 'conclusion'],
+  description: 'Issues and evidence, in the order the user reads them: intent, issues, acceptance, verified and not checked, the direction when open, the conclusion.',
+  required: ['intent', 'verdict', 'why', 'issues', 'acceptance', 'verified', 'notChecked', 'conclusion'],
   properties: {
     intent: { type: 'string', description: 'Shown first: one concise paragraph for a human on what the change does and why, not how; no blank lines or lists, up to 600 characters.' },
+    verdict: {
+      type: 'string',
+      enum: ['approve', 'approve_with_comments', 'look', 'request_changes'],
+      description:
+        'approve: you would merge it yourself, no issues of your own; approve_with_comments: mergeable, its issues are should, nit or note; look: the user must decide something first (an issue they or the PO own); request_changes: a blocker or should issue must be fixed first. Never approve with a blocker. mag keeps its own floor where it has the facts: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so they need no issue of yours.',
+    },
+    why: { type: 'string', description: 'One line on why this verdict.' },
+    issues: {
+      type: 'array',
+      description: 'Only what is wrong, each problem exactly once, ranked by impact (the user reads the first 5; the rest fold). No list of what passes. None is a fine answer.',
+      items: {
+        type: 'object',
+        required: ['title', 'impact', 'kind', 'severity', 'owner', 'comment'],
+        properties: {
+          title: { type: 'string', description: 'Its essence, one short line (≤ 15 words) that alone says what is wrong.' },
+          impact: { type: 'string', description: 'What goes wrong and for whom, concretely (an input, a user, a record).' },
+          kind: { type: 'string', enum: ['bug', 'data', 'security', 'ops', 'acceptance', 'design', 'scope', 'tests', 'convention', 'naming', 'docs', 'question'] },
+          severity: {
+            type: 'string',
+            enum: ['blocker', 'should', 'nit', 'note'],
+            description: 'By impact, not by kind of check. blocker: must not merge; only a bug, data, security or production-ops problem, or acceptance (criteria missing on a change of behaviour, or one not met); never conventions, naming, docs or ticket wording. should: fix before merge unless argued. nit: optional. note: no action.',
+          },
+          owner: { type: 'string', enum: ['author', 'po', 'user'], description: 'Who decides it: the author (the code), the PO (scope, the ticket), the user.' },
+          comment: { type: 'string', description: 'The PR comment, ready to post as it is: to the author, what to change and why; short.' },
+          where: { type: 'string', description: 'file:line or file:line-line of the PR\'s side (repo:file:line across repos); never an inventory unit id. Leave it out for an issue of the whole change.' },
+          raisedBy: { type: 'string', description: 'When a PR thread already raised it: who (@login). It is not counted as new and not published by default.' },
+        },
+      },
+    },
+    acceptance: {
+      type: 'array',
+      description: 'Each acceptance criterion → its evidence. Criteria from the PR first, then its ticket, then the design (the doc, a step\'s plan); none: you inferred it.',
+      items: {
+        type: 'object',
+        required: ['criterion', 'source', 'evidence', 'status'],
+        properties: {
+          criterion: { type: 'string' },
+          source: { type: 'string', enum: ['pr', 'ticket', 'design', 'none'] },
+          evidence: { type: 'string', description: 'A test by name, a CI check, a check you ran; for unverified, what would verify it. Not a retelling of the code.' },
+          status: { type: 'string', enum: ['met', 'partly', 'not', 'unverified'] },
+        },
+      },
+    },
+    trivial: { type: 'boolean', description: 'A config, version or typo change that changes no behaviour: it needs no criteria. Otherwise a change without criteria in the PR, ticket or design gets a blocker issue of kind acceptance.' },
+    verified: { type: 'array', items: { type: 'string' }, description: 'What you verified, one line each: earlier PR threads (fixed / still open, with who), CI checks, tests you ran.' },
+    notChecked: { type: 'array', items: { type: 'string' }, description: 'What the verdict does not cover, one line each.' },
+    follows: { type: 'string', description: 'When a design or decision settles the direction: what, one line (a step: "the approved plan"; a decision:<id>; the ticket\'s design). Either follows or direction.' },
     direction: {
       type: 'object',
-      description: 'The design decision(s) the change makes and its options. The call is the user\'s: your own leaning goes in view, never a verdict here.',
+      description: 'Only when no design or decision settles the direction: the design decision(s) the change makes and its options; the call is the user\'s, your own leaning goes in view.',
       required: ['decisions', 'options', 'facts', 'references'],
       properties: {
         decisions: { type: 'array', items: claim(), description: 'One sentence each.' },
         options: {
           type: 'array',
-          description: 'Every sensible way to make the decision, as many as there really are (a step: the plan\'s, the rejected ones from §Options); exactly one with pr: true, the change\'s own.',
+          description: 'Every sensible way to make the decision, as many as there really are; exactly one with pr: true, the change\'s own.',
           items: { type: 'object', required: ['name', 'tradeoffs'], properties: { name: { type: 'string' }, tradeoffs: { type: 'string' }, pr: { type: 'boolean' } } },
         },
         only: { type: 'string', description: 'With a single option: why it is the only sensible one ("only one, because…").' },
-        facts: { type: 'array', items: claim(), description: 'Mechanical facts about the change\'s option, citing units.' },
+        facts: { type: 'array', items: claim(), description: 'Mechanical facts about the change\'s option.' },
         references: { type: 'array', items: claim(), description: 'Notes, ADRs, CLAUDE.md rules, earlier decisions of the user, PR threads.' },
         view: {
           type: 'object',
-          description: 'Optional: your own leaning on the direction. It never affects checks; the user sees it folded after the options, once they could form their own view.',
+          description: 'Optional: your own leaning on the direction; it never affects the verdict, and the user sees it folded after the options.',
           required: ['leaning', 'why', 'confidence'],
           properties: {
             leaning: { type: 'string', description: 'The name of the option you lean to.' },
@@ -355,30 +399,8 @@ const REPORT = {
         },
       },
     },
-    problem: { type: 'array', items: claim({ criterion: { type: 'string' }, status: { type: 'string', enum: ['solved', 'partly', 'not'] } }, ['criterion', 'status']) },
-    conventions: { type: 'array', items: claim({ rule: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail'] } }, ['rule', 'status']) },
-    risks: {
-      type: 'array',
-      description: 'Bugs, missing tests, risky changes and failed checks of the code. The level informs the user; it does not decide the verdict.',
-      items: claim(
-        { level: { type: 'string', enum: ['high', 'medium', 'low'] }, kind: { type: 'string', enum: ['bug', 'data', 'ops', 'security', 'privacy'] }, mechanism: { type: 'string', description: 'How it goes wrong.' } },
-        ['level', 'kind', 'mechanism'],
-      ),
-    },
-    questions: { type: 'array', items: claim(), description: 'To the author.' },
-    changes: {
-      type: 'array',
-      description: 'The inventory grouped into changes by importance, as many as the change really has (a few is easiest to read), each with why it matters; every unit in exactly one; routine ones (wiring, renames, imports) in one row with routine: true, last.',
-      items: { type: 'object', required: ['title', 'why', 'units'], properties: { title: { type: 'string' }, why: { type: 'string' }, units: { type: 'array', items: { type: 'string' } }, routine: { type: 'boolean' } } },
-    },
-    checks: {
-      type: 'object',
-      description:
-        'Your verdict on problem, conventions and risks, with one line of why; the direction never counts. approve: you would merge it yourself; look: the user should decide or check something; request_changes: something must be fixed first, and it needs the criterion, rule, risk or question behind it. mag keeps its own floor where it has the facts: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so they need no risk of yours.',
-      required: ['verdict', 'why'],
-      properties: { verdict: { type: 'string', enum: ['request_changes', 'look', 'approve'] }, why: { type: 'string' } },
-    },
-    conclusion: { type: 'string', description: 'Shown last: one concise paragraph with your conclusion and advice; no blank lines or lists, up to 600 characters.' },
+    diagram: { type: 'string', description: 'canvas:<id> of the single diagram the review page shows (the system view or a scenario); leave it out when none adds to the issues.' },
+    conclusion: { type: 'string', description: 'Shown last: one concise paragraph with your conclusion and advice: what to publish, whom to ask; no blank lines or lists, up to 600 characters.' },
   },
 }
 
@@ -610,12 +632,12 @@ export const TOOL_DEFS = [
     scope: 'task',
     reviewer: 'only',
     description:
-      'Reviewer only: your review of the PRs of the step under review, once per review: the report (mag checks it against the inventory and derives the findings; your checks verdict, raised to mag\'s floor where that is stricter, routes it: request_changes → changes, look → look, approve → merge). changes: the findings go to the developer, not GitHub; merge: ready, nothing for the user to check; look: the user should decide or check something. Without a report (older form): verdict and findings.',
+      'Reviewer only: your review of the PRs of the step under review, once per review: the report (mag checks it; its issues are the findings; your verdict, raised to mag\'s floor where that is stricter, routes it: request_changes → changes, look → look, approve and approve_with_comments → merge). changes: the findings go to the developer, not GitHub; merge: ready, nothing for the user to check; look: the user should decide or check something. Without a report (older form): verdict and findings.',
     inputSchema: {
       type: 'object',
       properties: {
         report: REPORT,
-        verdict: { type: 'string', enum: ['changes', 'merge', 'look'], description: 'Only without a report; with one it must match its checks.' },
+        verdict: { type: 'string', enum: ['changes', 'merge', 'look'], description: "Only without a report; with one it must match the report's verdict." },
         findings: { type: 'array', description: 'Only without a report: one finding per item, each with its level; none for a clean merge.', items: FINDING },
       },
     },
@@ -624,7 +646,7 @@ export const TOOL_DEFS = [
     name: 'set_pr_review',
     scope: 'task',
     description:
-      "A topic that runs a review of a teammate's PR: record it into the result of its format, once you have it and again when it changes; the other format's result stays. v2 (your job says which): the report; mag checks it against the inventory, takes your checks verdict (raised to request_changes when CI fails, with that blocker attached) and derives the findings the user may publish. v1: verdict and findings, no report. It shows in the review's pane beside its conversation; nothing goes to GitHub.",
+      "A topic that runs a review of a teammate's PR: record it into the result of its format, once you have it and again when it changes; the other format's result stays. v2 (your job says which): the report; mag checks it, takes your verdict (raised to request_changes when CI fails, with that blocker attached), and its issues are the findings the user may publish, each comment as it is. v1: verdict and findings, no report. It shows in the review's pane beside its conversation; nothing goes to GitHub.",
     inputSchema: {
       type: 'object',
       properties: {
