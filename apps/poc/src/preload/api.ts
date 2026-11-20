@@ -1,5 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { Meeting, Recording } from '../main/core/services/meetings/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -119,6 +120,19 @@ export interface FactView {
   /** Read without the project's architecture (a PR outside the project): modules are folders. */
   outside: boolean
   at: number
+}
+
+/** Meetings (meetings-local-recording-transcript-and.1): the call being recorded, workspace-wide. */
+export interface MeetingStatus {
+  recording: Recording | null
+  /** The meeting saved last in this run and its folder. */
+  last: { meeting: Meeting; dir: string } | null
+  /** Where meetings are kept. */
+  root: string
+  /** The global Record / Stop hotkey (Electron accelerator); null when another app holds it. */
+  hotkey: string | null
+  /** Why the last Record did not start. */
+  error?: string
 }
 
 export interface MagApi {
@@ -294,6 +308,12 @@ export interface MagApi {
   lastCrash(): Promise<CrashReport | null>
   dismissCrash(): Promise<void>
   openLogs(): Promise<void>
+  meetingStatus(): Promise<MeetingStatus>
+  onMeetingStatus(cb: (s: MeetingStatus) => void): () => void
+  /** Starts recording the call; the first time macOS asks for the microphone and system audio. */
+  startRecording(title?: string): Promise<{ ok: true } | { error: string }>
+  /** Stops and saves the transcript; resolves once the last chunk is transcribed. */
+  stopRecording(): Promise<void>
   /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */
   runCommand(runId: string, sessionId: string, command: string, onOutput: (chunk: string) => void): Promise<{ code: number | null; cwd: string }>
   stopCommand(runId: string): Promise<void>

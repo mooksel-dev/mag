@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppState, MagApi, PickerMode } from './api'
+import type { AppState, MagApi, MeetingStatus, PickerMode } from './api'
 
 // Listen from the start: a window opened for a task or the picker gets the event before the page subscribes.
 let pendingTask: [projectId: string, taskId: string] | null = null
@@ -127,6 +127,14 @@ const api: MagApi = {
   lastCrash: () => ipcRenderer.invoke('crash:last'),
   dismissCrash: () => ipcRenderer.invoke('crash:dismiss'),
   openLogs: () => ipcRenderer.invoke('logs:open'),
+  meetingStatus: () => ipcRenderer.invoke('meetings:status'),
+  onMeetingStatus: (cb) => {
+    const fn = (_: unknown, s: MeetingStatus) => cb(s)
+    ipcRenderer.on('meetings:status', fn)
+    return () => ipcRenderer.removeListener('meetings:status', fn)
+  },
+  startRecording: (title) => ipcRenderer.invoke('meetings:start', title),
+  stopRecording: () => ipcRenderer.invoke('meetings:stop'),
 }
 
 contextBridge.exposeInMainWorld('mag', api)

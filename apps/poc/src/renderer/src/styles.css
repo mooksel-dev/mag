@@ -767,6 +767,16 @@ body.resizing iframe { pointer-events: none; }
 .newbtn:hover { border-color: var(--faint); }
 .newbtn.on { border-color: var(--accent); }
 .newbtn kbd, .wlsearch kbd { margin-left: auto; font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); }
+.recorder { display: flex; flex-direction: column; gap: 2px; }
+.recbtn { display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); font-weight: 600; text-align: left; }
+.recbtn:hover:not(:disabled) { border-color: var(--faint); }
+.recbtn kbd { margin-left: auto; font: var(--fs-xs) ui-monospace, monospace; color: var(--faint); }
+.recorder.on .recbtn { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger-fg); }
+.recdot { width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; flex: none; animation: recpulse 1.4s ease-in-out infinite; }
+.recdot.idle { animation: none; background: none; border: 2px solid #ff3b30; width: 7px; height: 7px; }
+.rectime { font: var(--fs-sm) ui-monospace, monospace; font-weight: 400; }
+.recnote { margin: 0; padding: 0 10px; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+@keyframes recpulse { 50% { opacity: .35; } }
 .wlsearch { display: flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r); color: var(--faint); font-size: var(--fs-sm); }
 .wlsearch:hover, .wlsearch:focus-within { background: var(--hover); }
 .wlsearch { width: 100%; border: none; background: none; font-weight: 400; text-align: left; }

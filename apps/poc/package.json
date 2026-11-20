@@ -5,9 +5,10 @@
   "description": "mag PoC desktop app: playground for ideas before they go into apps/desktop",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "start": "electron-vite preview",
+    "dev": "sh native/mag-audio/build.sh && electron-vite dev",
+    "build": "sh native/mag-audio/build.sh && electron-vite build",
+    "build:audio": "sh native/mag-audio/build.sh",
+    "start": "sh native/mag-audio/build.sh && electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "node --experimental-transform-types --no-warnings --test src/main/*.test.ts src/main/core/services/*/*.test.ts src/main/core/clients/*/*.test.ts src/renderer/src/*.test.ts"
   },

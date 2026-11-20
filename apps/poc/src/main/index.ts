@@ -22,6 +22,7 @@ import { startAppMenu } from './menu'
 import { startAttention } from './attention'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
+import { startMeetings } from './meetings'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
 
@@ -431,6 +432,7 @@ app.whenReady().then(async () => {
   handle('logs:open', () => openLogs())
   startAppMenu(store, windows, openLogs)
   startAttention(store, windows)
+  startMeetings()
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.
