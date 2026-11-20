@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, lastReplyId, rewindBase, rewindPoint, type RewindMode, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -456,7 +456,8 @@ export class Orchestrator {
   /** One process per turn. */
   private runs = new Map<string, RunHandle>()
   /** Live processes (see liveSession), kept between turns. */
-  private lives = new Map<string, { handle: LiveHandle; choice: ModelChoice; closing: boolean }>()
+  /** `echoes`: user messages written to it, oldest first, until the CLI echoes them with their uuids. */
+  private lives = new Map<string, { handle: LiveHandle; choice: ModelChoice; closing: boolean; echoes: { prompt: string; item: ChatItem }[] }>()
   /** Each provider's model catalogue (see agents), for a session's context window. */
   private models = new Map<AgentKind, AgentModel[]>()
   /** Context windows runs reported, by model id: they win over the catalogue's. */
@@ -612,9 +613,10 @@ export class Orchestrator {
    * with all of its context, the parent staying as it is (Claude Code only; the Branch of a topic). `brief`, if any, is
    * its first message: the user's own (`by` user), or a job from the parent's agent (`by` agent) that says whom to
    * report to; a general child with one is named after its first turn, as a topic is (nameChat). Without a brief the
-   * child waits for the user's first message. Returns the child, its run started.
+   * child waits for the user's first message. `point`: the fork copies the conversation of `of` up to the message `at`
+   * only (Branch from here); default: all of the parent's. Returns the child, its run started.
    */
-  startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent', subtopic = by === 'user'): AgentSession {
+  startChild(parentId: string, brief: string, role: ChildRole | null = null, fork = false, by: 'user' | 'agent' = 'agent', subtopic = by === 'user', point?: { of: string; at: string }): AgentSession {
     const parent = this.treeSession(parentId)
     if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
     if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
@@ -622,9 +624,11 @@ export class Orchestrator {
     const agent = this.roleChoice(parent.projectId, runRole({ role })).agent
     if (fork) {
       // Only Claude Code forks a session; Codex's resume would write into the parent's own.
-      if (parent.agent !== 'claude-code' || !parent.nativeSessionId) throw new Error('This session has no agent session to fork yet: send it a message first (Claude Code only)')
+      if (parent.agent !== 'claude-code' || !(point?.of ?? parent.nativeSessionId)) throw new Error('This session has no agent session to fork yet: send it a message first (Claude Code only)')
       if (agent !== 'claude-code') throw new Error(`A fork needs Claude Code as the agent of the ${runRole({ role })} role`)
     }
+    // Where its own conversation starts, for a rewind to its first message: the parent's reply it is branched after.
+    const baseAt = point?.at ?? lastReplyId(parent.items)
     const child = this.store.createSession({
       projectId: parent.projectId,
       taskId: null,
@@ -633,7 +637,8 @@ export class Orchestrator {
       status: 'idle',
       title: (text ? text.replace(/\s+/g, ' ') : `Branch of ${parent.title ?? 'a topic'}`).slice(0, 60),
       titleGenerated: !text || role !== null || !subtopic,
-      forkOf: fork ? parent.nativeSessionId : null,
+      forkOf: fork ? point?.of ?? parent.nativeSessionId : null,
+      ...(fork && { forkAt: point?.at ?? null, base: baseAt ? { at: baseAt } : {} }),
       parentId: parent.id,
       // The user's subtopic, or the agent's job: then it is the topic's agent, not a line in the sidebar.
       ...(role === null && !subtopic && { agentJob: true }),
@@ -1975,7 +1980,10 @@ export class Orchestrator {
     refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
     // What the user wrote in a turn stopped before any reply: the CLI dropped it, so it goes first now.
     const unheard = job ? [] : unheardBeforeStop(session.items)
-    session.items.push(job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() })
+    // A rewind is undone only until the conversation goes on.
+    session.rewound = null
+    const item: ChatItem = job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() }
+    session.items.push(item)
     // A topic the user renamed keeps its title.
     if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
       session.title = (job || text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
@@ -2000,14 +2008,14 @@ export class Orchestrator {
       // The user writing here answers what the works this topic owns asked them; one that still needs them asks again.
       if (!job) for (const t of this.store.data.tasks) if (t.ownerSessionId === session.id && !t.parentId && t.needsInput) this.store.updateTask(t.id, { needsInput: null, needsQuestions: null })
       this.store.changed()
-      return this.run(session, prompt)
+      return this.run(session, prompt, item)
     }
     this.store.updateTask(session.taskId, { needsInput: null })
     // Told anything (the owner's answer, or the user's), the developer no longer waits for its owner.
     if (session.role === 'developer' && session.stepId) this.store.updateTask(session.stepId, { ownerQuestion: null, ownerQuestionQueued: false })
     // A worktree may have failed earlier or been removed: recreate it before resuming.
     if (session.role === 'developer' && this.ownerOf(session).work && !(await this.prepareWorktrees(session))) return
-    return this.run(session, prompt)
+    return this.run(session, prompt, item)
   }
 
   /**
@@ -2052,6 +2060,76 @@ export class Orchestrator {
     // Stopping a task does not wake the agent: a run that waited only for its background tasks is over now.
     const session = this.store.session(sessionId)
     if (session.status !== 'running' && !session.background?.length) void this.afterRun(session)
+  }
+
+  /**
+   * A message action (chat-message-actions-rewind-edit.1; see RewindMode, rewindPoint) on item `n`: the live process
+   * closes, the chat keeps its items up to the cut and the next run forks the agent's conversation there (the old one
+   * stays on disk; undoRewind restores it until the next send). Refused while a turn or a background task runs. edit:
+   * returns the message's text for the composer; retry: sends that message again at once.
+   */
+  async rewindSession(sessionId: string, n: number, mode: RewindMode): Promise<{ text?: string }> {
+    if (mode !== 'rewind' && mode !== 'edit' && mode !== 'retry') throw new Error('mode must be rewind, edit or retry')
+    const session = this.store.session(sessionId)
+    const point = rewindPoint(session, n, mode)
+    if (!point) throw new Error(canRewindSession(session) ? 'This message cannot be rewound to: it has no id in the agent’s conversation (an older message)' : 'Rewind works on Claude Code topics only')
+    this.assertIdle(session)
+    await this.closeLive(sessionId)
+    // A background task may have woken the agent while its process closed.
+    this.assertIdle(session)
+    const from = point.from === undefined ? undefined : session.items[point.from]
+    const undo: RewindUndo = { items: session.items, nativeSessionId: session.nativeSessionId, forkOf: session.forkOf ?? null, forkAt: session.forkAt ?? null }
+    session.base = rewindBase(session)
+    session.items = session.items.slice(0, point.keep)
+    session.nativeSessionId = null
+    session.forkOf = point.forkOf
+    session.forkAt = point.forkAt
+    session.context = null
+    session.rewound = undo
+    this.store.changed()
+    log.info('agent', `rewound (${mode})`, { session: sessionId, keep: point.keep, fork: !!point.forkOf })
+    if (mode === 'retry' && (from?.kind === 'user' || from?.kind === 'job')) {
+      try {
+        if (from.kind === 'user') await this.send(sessionId, from.text, from.attachments, undefined, from.refs)
+        else await this.send(sessionId, from.text, [], from.title)
+      } finally {
+        // Retry's own send keeps the undo: the reply it replaced may have been the better one.
+        session.rewound = undo
+        this.store.changed()
+      }
+    }
+    return mode === 'edit' && from?.kind === 'user' ? { text: from.text } : {}
+  }
+
+  /** Undoes the last rewind: the items and agent conversation it replaced come back. Refused while the agent works. */
+  async undoRewind(sessionId: string) {
+    const session = this.store.session(sessionId)
+    if (!session.rewound) throw new Error('Nothing to undo')
+    this.assertIdle(session)
+    await this.closeLive(sessionId)
+    this.assertIdle(session)
+    const undo = session.rewound
+    if (!undo) throw new Error('Nothing to undo')
+    session.items = undo.items
+    session.nativeSessionId = undo.nativeSessionId
+    session.forkOf = undo.forkOf
+    session.forkAt = undo.forkAt
+    session.context = null
+    session.rewound = null
+    this.store.changed()
+    log.info('agent', 'rewind undone', { session: sessionId })
+  }
+
+  /** Branch from here: a subtopic whose agent has the conversation up to the end of item `n`'s turn; the parent stays. */
+  branchFrom(sessionId: string, n: number): AgentSession {
+    const point = rewindPoint(this.store.session(sessionId), n, 'rewind')
+    if (!point?.forkOf || !point.forkAt) throw new Error('This reply cannot be branched from: it has no id in the agent’s conversation (an older message), or this is not a Claude Code topic')
+    return this.startChild(sessionId, '', null, true, 'user', true, { of: point.forkOf, at: point.forkAt })
+  }
+
+  private assertIdle(session: AgentSession) {
+    if (this.runs.has(session.id) || this.preparing.has(session.id) || session.status === 'running') throw new Error('The agent is working: stop it first')
+    if (session.background?.length) throw new Error('Background tasks are running: stop them first')
   }
 
   /** On quit: live processes would outlive mag and keep waking for their background tasks. */
@@ -2293,10 +2371,10 @@ export class Orchestrator {
     }
   }
 
-  /** A turn of the session: on its live process (see liveSession), or on a process of its own. */
-  private async run(session: AgentSession, prompt: string) {
+  /** A turn of the session: on its live process (see liveSession), or on a process of its own. `item`: the message's. */
+  private async run(session: AgentSession, prompt: string, item?: ChatItem) {
     // The agent the session runs on next decides; a live process of an agent without them goes first.
-    if (liveSession({ role: session.role, agent: this.choice(session).agent })) return this.runLive(session, prompt)
+    if (liveSession({ role: session.role, agent: this.choice(session).agent })) return this.runLive(session, prompt, item)
     if (this.lives.has(session.id)) await this.closeLive(session.id)
     if (this.hasScratch(session)) await this.ensureScratch(session)
     this.runOnce(session, prompt)
@@ -2330,7 +2408,7 @@ export class Orchestrator {
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
     const handle = adapters[session.agent].start(
-      { ...spec, prompt, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, mcpConfigPath },
+      { ...spec, prompt, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, ...(fork && session.forkAt && { resumeAt: session.forkAt }), mcpConfigPath },
       onEvent,
     )
     this.runs.set(session.id, handle)
@@ -2368,7 +2446,7 @@ export class Orchestrator {
           if (e.integrations) this.store.saveIntegrations(e.integrations)
           return this.store.changed()
         case 'message':
-          return push({ kind: 'assistant', text: e.text, at })
+          return push({ kind: 'assistant', text: e.text, ...(e.nativeId && { nativeId: e.nativeId }), at })
         case 'tool.call':
           if (tree && SUBAGENT_TOOLS.includes(e.name)) this.subagentChild(session, e.id, e.input)
           return push({ kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
@@ -2518,7 +2596,7 @@ export class Orchestrator {
    * A live session's message (T-40): opens the process if there is none (resuming the agent's session) and writes the
    * message to it. During a turn the message joins that turn. The turn ends at its result, not at the process exit.
    */
-  private async runLive(session: AgentSession, prompt: string) {
+  private async runLive(session: AgentSession, prompt: string, item?: ChatItem) {
     this.clearIdle(session.id)
     const c = this.choice(session)
     let live = this.lives.get(session.id)
@@ -2537,6 +2615,7 @@ export class Orchestrator {
     }
     if (!live) live = this.openLive(session, c)
     if (!inTurn) this.turnStarted(session, true)
+    if (item) live.echoes.push({ prompt, item })
     live.handle.send(prompt)
   }
 
@@ -2559,8 +2638,9 @@ export class Orchestrator {
     log.info('agent', `${session.role} live process opened`, { ...who, resume: !!session.nativeSessionId, fork })
 
     const onEvent = this.onEvent(session)
-    const handle = adapter.open({ ...spec, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, mcpConfigPath }, (e) => {
+    const handle = adapter.open({ ...spec, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, ...(fork && session.forkAt && { resumeAt: session.forkAt }), mcpConfigPath }, (e) => {
       if (e.type === 'stopped' && session.status !== 'running') return // an idle close says nothing in the chat
+      if (e.type === 'user.echo') return this.echoed(live, e.text, e.nativeId)
       onEvent(e)
       if (e.type === 'turn.started') this.turnStarted(session)
       else if (e.type === 'background') {
@@ -2570,7 +2650,7 @@ export class Orchestrator {
         this.store.changed()
       } else if (e.type === 'turn.done') this.turnEnded(session)
     })
-    const live = { handle, choice: c, closing: false }
+    const live = { handle, choice: c, closing: false, echoes: [] as { prompt: string; item: ChatItem }[] }
     this.lives.set(session.id, live)
     session.live = true
     this.store.changed()
@@ -2591,6 +2671,20 @@ export class Orchestrator {
       this.store.changed()
     })
     return live
+  }
+
+  /**
+   * The CLI echoed a message it took: the user's item that sent it gets its uuid. Matched by text: a message it did not
+   * echo (a slash command) waits no more once a later one is echoed.
+   */
+  private echoed(live: { echoes: { prompt: string; item: ChatItem }[] }, text: string, nativeId: string) {
+    const k = live.echoes.findIndex((x) => x.prompt === text)
+    if (k < 0) return
+    const { item } = live.echoes[k]
+    live.echoes.splice(0, k + 1)
+    if (item.kind !== 'user') return
+    item.nativeId = nativeId
+    this.store.changed()
   }
 
   /** A turn of a live session began: our message (`ours`), or a background task woke the agent. */

@@ -80,7 +80,7 @@ function fromClaude(j: any): AgentEvent[] {
           contextUsed: u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
         })
       for (const b of j.message?.content ?? []) {
-        if (b.type === 'text' && b.text?.trim()) out.push({ type: 'message', text: b.text, ...parent })
+        if (b.type === 'text' && b.text?.trim()) out.push({ type: 'message', text: b.text, ...(typeof j.uuid === 'string' && !parent.parentToolUseId && { nativeId: j.uuid }), ...parent })
         else if (b.type === 'tool_use') out.push({ type: 'tool.call', id: b.id, name: b.name, input: b.input, ...parent })
       }
       return out
@@ -88,6 +88,11 @@ function fromClaude(j: any): AgentEvent[] {
     case 'user': {
       const out: AgentEvent[] = []
       const content = j.message?.content
+      // Our own message, echoed back with its uuid (--replay-user-messages).
+      if (j.isReplay === true && typeof j.uuid === 'string' && !parent.parentToolUseId) {
+        const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('') : ''
+        return [{ type: 'user.echo', text, nativeId: j.uuid }]
+      }
       if (Array.isArray(content))
         for (const b of content)
           if (b.type === 'tool_result') out.push({ type: 'tool.result', id: b.tool_use_id, ok: !b.is_error, ...parent })
@@ -186,7 +191,7 @@ export function liveParser(onControl: (requestId: string, ok: boolean, error?: s
 /** Everything but the prompt, shared by one-off and live runs. */
 function specArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
   const args: string[] = []
-  if (spec.resumeId) args.push('--resume', spec.resumeId, ...(spec.forkSession ? ['--fork-session'] : []))
+  if (spec.resumeId) args.push('--resume', spec.resumeId, ...(spec.forkSession ? ['--fork-session', ...(spec.resumeAt ? ['--resume-session-at', spec.resumeAt] : [])] : []))
   if (spec.model) args.push('--model', spec.model)
   if (spec.effort) args.push('--effort', spec.effort)
   if (spec.appendSystemPrompt) args.push('--append-system-prompt', spec.appendSystemPrompt)
@@ -218,9 +223,9 @@ export function buildArgs(spec: RunSpec): string[] {
   return ['-p', spec.prompt, '--output-format', 'stream-json', '--verbose', ...specArgs(spec)]
 }
 
-/** A live process: messages come as stream-json on stdin. */
+/** A live process: messages come as stream-json on stdin, echoed back with their uuids. */
 export function buildLiveArgs(spec: Omit<RunSpec, 'prompt'>): string[] {
-  return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', ...specArgs(spec)]
+  return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages', ...specArgs(spec)]
 }
 
 export const claudeCode: AgentAdapter = {

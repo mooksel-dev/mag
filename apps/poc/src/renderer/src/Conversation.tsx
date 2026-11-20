@@ -156,7 +156,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
             {chat && (chat.items.length || !topic) ? (
-              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
+              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} onOpenSession={(id) => onSelect({ kind: 'topic', id })} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
             ) : topic ? (
               <div className="chatbox">
                 <div className="items">

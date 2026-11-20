@@ -210,3 +210,24 @@ test('liveParser reports usage as parseClaudeLine does, also for a stopped turn'
   const stopped = live.parse(JSON.stringify({ type: 'result', is_error: true, modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 } } }))
   assert.deepEqual(stopped.map((e) => e.type), ['stopped', 'usage', 'turn.done'])
 })
+
+test('buildArgs: a fork at a message passes --resume-session-at, only with --fork-session (chat-message-actions-rewind-edit.1)', () => {
+  const at = buildArgs({ cwd: '/tmp', prompt: 'hi', resumeId: 'abc', forkSession: true, resumeAt: 'u1' })
+  assert.deepEqual(at.slice(at.indexOf('--resume'), at.indexOf('--resume') + 5), ['--resume', 'abc', '--fork-session', '--resume-session-at', 'u1'])
+  assert.ok(!buildArgs({ cwd: '/tmp', prompt: 'hi', resumeId: 'abc', resumeAt: 'u1' }).includes('--resume-session-at'), 'never a truncating resume in place')
+  assert.ok(buildLiveArgs({ cwd: '/tmp' }).includes('--replay-user-messages'))
+})
+
+test('parseClaudeLine: replies carry their uuid, echoed user messages theirs; tool results and subagents none (chat-message-actions-rewind-edit.1)', () => {
+  // Lines as CLI 2.1.319 prints them with --replay-user-messages.
+  const reply = parseClaudeLine(JSON.stringify({ type: 'assistant', uuid: 'r1', message: { content: [{ type: 'text', text: 'Hi' }] } }))
+  assert.deepEqual(reply, [{ type: 'message', text: 'Hi', nativeId: 'r1' }])
+  const echo = parseClaudeLine(JSON.stringify({ type: 'user', isReplay: true, uuid: 'u1', message: { role: 'user', content: 'say hi' } }))
+  assert.deepEqual(echo, [{ type: 'user.echo', text: 'say hi', nativeId: 'u1' }])
+  const blocks = parseClaudeLine(JSON.stringify({ type: 'user', isReplay: true, uuid: 'u2', message: { role: 'user', content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } }))
+  assert.deepEqual(blocks, [{ type: 'user.echo', text: 'ab', nativeId: 'u2' }])
+  const result = parseClaudeLine(JSON.stringify({ type: 'user', uuid: 'u3', message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] } }))
+  assert.deepEqual(result, [{ type: 'tool.result', id: 't1', ok: true }])
+  const sub = parseClaudeLine(JSON.stringify({ type: 'assistant', uuid: 'r2', parent_tool_use_id: 'a1', message: { content: [{ type: 'text', text: 'x' }] } }))
+  assert.deepEqual(sub, [{ type: 'message', text: 'x', parentToolUseId: 'a1' }])
+})

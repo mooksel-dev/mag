@@ -889,15 +889,19 @@ export interface CanvasRef {
 }
 
 export type ChatItem =
-  /** refs: chats the message references ("@"); the agent gets their summaries with it. */
-  | { kind: 'user'; text: string; attachments?: Attachment[]; refs?: ChatRef[]; at: number }
+  /**
+   * refs: chats the message references ("@"); the agent gets their summaries with it. nativeId: the message's uuid in
+   * the agent's transcript (Claude Code's echo on live runs); missing on older items and one-off runs.
+   */
+  | { kind: 'user'; text: string; attachments?: Attachment[]; refs?: ChatRef[]; nativeId?: string; at: number }
   /**
    * mag's instructions to an agent (a review's job, a review round, a developer's job): the agent gets `text` as its
    * prompt; the chat shows `title` as a card that expands to the text.
    */
   | { kind: 'job'; title: string; text: string; at: number }
   | { kind: 'canvas'; canvas: CanvasRef; at: number }
-  | { kind: 'assistant'; text: string; at: number }
+  /** nativeId: the reply's uuid in the agent's transcript, where a rewind forks (Claude Code); missing on older items. */
+  | { kind: 'assistant'; text: string; nativeId?: string; at: number }
   | { kind: 'tool'; id: string; name: string; summary: string; ok?: boolean; at: number }
   | { kind: 'result'; ok: boolean; costUsd?: number; at: number }
   | { kind: 'error'; text: string; at: number }
@@ -955,6 +959,15 @@ export interface AgentSession {
    * topic: its parent topic's.
    */
   forkOf?: string | null
+  /** With forkOf: the message (uuid) its first run forks at (`--resume-session-at`); missing or null = forkOf's end. */
+  forkAt?: string | null
+  /**
+   * Where the session's own items start (chat-message-actions-rewind-edit.1): null = in a session of its own; `at` = after
+   * that message of the session it forked (missing: not known, an older fork). Missing: see rewindBase.
+   */
+  base?: { at?: string } | null
+  /** The last rewind's undo (chat-message-actions-rewind-edit.1): what it replaced; cleared by the next send. */
+  rewound?: RewindUndo | null
   /**
    * A child session (topics-a-tree-of-agent.2): the session that started it, in its topic's tree; null or missing for a
    * topic (a root) and for a work's sessions. Was branchOf, a topic branched from another one.
@@ -1115,7 +1128,10 @@ export const SUBAGENT_TOOLS: readonly string[] = ['Agent', 'Task']
  */
 export type AgentEvent =
   | { type: 'session.started'; nativeSessionId: string; model?: string; commands?: string[]; integrations?: Integration[] }
-  | { type: 'message'; text: string; parentToolUseId?: string }
+  /** nativeId: the message's uuid in the agent's transcript (Claude Code). */
+  | { type: 'message'; text: string; nativeId?: string; parentToolUseId?: string }
+  /** Live process: the CLI echoed a user message it took (`--replay-user-messages`), with its uuid. */
+  | { type: 'user.echo'; text: string; nativeId: string }
   | { type: 'tool.call'; id: string; name: string; input: unknown; parentToolUseId?: string }
   | { type: 'tool.result'; id: string; ok: boolean; parentToolUseId?: string }
   /** The subagent of Agent call `toolUseId` began; `background`: it runs on after the call returns. */
@@ -1196,6 +1212,91 @@ export function interimReplies(items: ChatItem[]): Set<number> {
     } else if (i.kind === 'user' || i.kind === 'job' || i.kind === 'result') lastReply = -1
   })
   return interim
+}
+
+/** What a rewind replaced, for its undo (chat-message-actions-rewind-edit.1). */
+export interface RewindUndo {
+  items: ChatItem[]
+  nativeSessionId: string | null
+  forkOf: string | null
+  forkAt: string | null
+}
+
+/**
+ * Message actions (chat-message-actions-rewind-edit.1): `rewind` on a reply keeps the conversation up to the end of its
+ * turn; `edit` on the user's message drops it and what follows, its text back in the composer; `retry` on a reply sends
+ * the message that started its turn again.
+ */
+export type RewindMode = 'rewind' | 'edit' | 'retry'
+
+/** Message actions work on a topic or a session under it, on Claude Code: Codex's CLI cannot resume at a message. */
+export function canRewindSession(s: Pick<AgentSession, 'agent' | 'taskId' | 'role' | 'parentId' | 'origin'>): boolean {
+  return s.agent === 'claude-code' && !s.taskId && (s.role === 'chat' || !!s.parentId) && !isSubagent(s)
+}
+
+/** The session's base (see AgentSession.base); missing = a fork of an unknown point when forkOf is set, else its own. */
+export function rewindBase(s: Pick<AgentSession, 'base' | 'forkOf'>): { at?: string } | null {
+  return s.base !== undefined ? s.base : s.forkOf ? {} : null
+}
+
+/** The uuid of the last reply, if it has one. */
+export function lastReplyId(items: ChatItem[]): string | undefined {
+  const reply = [...items].reverse().find((i) => i.kind === 'assistant')
+  return reply?.kind === 'assistant' ? reply.nativeId : undefined
+}
+
+const startsTurn = (i: ChatItem) => i.kind === 'user' || i.kind === 'job'
+
+/**
+ * Where a message action on item `n` cuts the chat: `keep` items stay and the next run forks at the reply `at` (its
+ * uuid); `at` null = before every reply of this session. `from`: the message that goes again (edit, retry). null: the
+ * action does not apply to that item, or a reply it needs has no uuid (an older item).
+ */
+export function rewindCut(items: ChatItem[], n: number, mode: RewindMode): { keep: number; at: string | null; from?: number } | null {
+  const item = items[n]
+  if (!item) return null
+  if (mode === 'rewind') {
+    if (item.kind !== 'assistant') return null
+    let last = n
+    for (let k = n + 1; k < items.length && !startsTurn(items[k]); k++) if (items[k].kind === 'assistant') last = k
+    const reply = items[last] as Extract<ChatItem, { kind: 'assistant' }>
+    return reply.nativeId ? { keep: last + 1, at: reply.nativeId } : null
+  }
+  let from = n
+  if (mode === 'edit') {
+    if (item.kind !== 'user') return null
+  } else {
+    if (item.kind !== 'assistant') return null
+    while (from >= 0 && !startsTurn(items[from])) from--
+    if (from < 0) return null
+  }
+  let prev = from - 1
+  while (prev >= 0 && items[prev].kind !== 'assistant') prev--
+  if (prev < 0) return { keep: 0, at: null, from }
+  const reply = items[prev] as Extract<ChatItem, { kind: 'assistant' }>
+  return reply.nativeId ? { keep: prev + 1, at: reply.nativeId, from } : null
+}
+
+/**
+ * A message action on item `n` of `session`, resolved: the items to keep and the fork its next run starts as
+ * (`forkOf` null = a new session of its own). null: it does not apply (see rewindCut, canRewindSession), or the session's
+ * start is not known (an older fork, at its first message).
+ */
+export function rewindPoint(
+  session: Pick<AgentSession, 'agent' | 'taskId' | 'role' | 'parentId' | 'origin' | 'items' | 'nativeSessionId' | 'forkOf' | 'base'>,
+  n: number,
+  mode: RewindMode,
+): { keep: number; forkOf: string | null; forkAt: string | null; from?: number } | null {
+  if (!canRewindSession(session)) return null
+  const cut = rewindCut(session.items, n, mode)
+  if (!cut) return null
+  const base = rewindBase(session)
+  const at = cut.at ?? (base ? base.at ?? null : null)
+  if (cut.at === null && base && !base.at) return null
+  // The transcript the session's items are in: its own, or the one a pending fork copies.
+  const current = session.nativeSessionId ?? session.forkOf ?? null
+  if (at && !current) return null
+  return { keep: cut.keep, forkOf: at ? current : null, forkAt: at, ...(cut.from !== undefined && { from: cut.from }) }
 }
 
 /** States of a work that is over. */

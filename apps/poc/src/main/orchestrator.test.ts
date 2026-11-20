@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type PrReview } from '@mag/core'
+import { CODE_CHECKS, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -2875,4 +2875,124 @@ test('a PR review topic never runs on Codex: its own Codex choice is refused and
   await orch.send(topic, 'go on with the review')
   assert.equal(store.session(topic).agent, 'claude-code')
   assert.equal(specs.at(-1)!.model, undefined, 'Claude Code on its default model')
+})
+
+/** A live topic with two turns: 0 First (u1), 1 r1, 2 tool, 3 r2, 4 result | 5 Second (u2), 6 r3, 7 result. */
+async function rewindable(s: ReturnType<typeof setup>) {
+  const id = s.orch.newChat(s.project.id)
+  await s.orch.send(id, 'First')
+  const live = opened.at(-1)!
+  live.emit({ type: 'session.started', nativeSessionId: 'n1' })
+  live.emit({ type: 'user.echo', text: 'First', nativeId: 'u1' })
+  live.emit({ type: 'message', text: 'Looking', nativeId: 'r1' })
+  live.emit({ type: 'tool.call', id: 't1', name: 'Read', input: {} })
+  live.emit({ type: 'tool.result', id: 't1', ok: true })
+  live.emit({ type: 'message', text: 'Done one', nativeId: 'r2' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await s.orch.send(id, 'Second')
+  live.emit({ type: 'user.echo', text: 'Second', nativeId: 'u2' })
+  live.emit({ type: 'message', text: 'Done two', nativeId: 'r3' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  return { topic: s.store.session(id), live }
+}
+
+const kinds = (s: AgentSession) => s.items.map((i) => (i.kind === 'user' || i.kind === 'assistant' ? i.text : i.kind))
+
+test('a live topic stores the uuids of its messages and replies; an echo is matched by its text (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic, live } = await rewindable(s)
+  assert.deepEqual(topic.items.map((i) => ('nativeId' in i ? i.nativeId : null)), ['u1', 'r1', null, 'r2', null, 'u2', 'r3', null])
+  // An echo of something not sent (a message the CLI made up) changes nothing.
+  live.emit({ type: 'user.echo', text: 'Nope', nativeId: 'x' })
+  assert.ok(!topic.items.some((i) => 'nativeId' in i && i.nativeId === 'x'))
+})
+
+test('rewindSession rewind: the chat ends at the turn’s last reply, the next run forks there; Undo restores it until the next send (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic, live } = await rewindable(s)
+  const before = topic.items
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 1, 'rewind'), {})
+  assert.ok(live.closed, 'the live process closes')
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one'])
+  assert.deepEqual([topic.nativeSessionId, topic.forkOf, topic.forkAt, topic.base], [null, 'n1', 'r2', null])
+  assert.ok(topic.rewound)
+
+  await s.orch.undoRewind(topic.id)
+  assert.equal(topic.items, before)
+  assert.deepEqual([topic.nativeSessionId, topic.forkOf, topic.forkAt, topic.rewound], ['n1', null, null, null])
+  await assert.rejects(s.orch.undoRewind(topic.id), /Nothing to undo/)
+
+  await s.orch.rewindSession(topic.id, 3, 'rewind')
+  await s.orch.send(topic.id, 'Other')
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession, specs.at(-1)!.resumeAt], ['n1', true, 'r2'])
+  assert.equal(topic.rewound, null, 'a send ends the undo')
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one', 'Other'])
+})
+
+test('rewindSession edit: the message and what follows go, its text comes back; the first message starts a fresh session (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 5, 'edit'), { text: 'Second' })
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one'])
+  assert.deepEqual([topic.forkOf, topic.forkAt], ['n1', 'r2'])
+
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 0, 'edit'), { text: 'First' })
+  assert.deepEqual([topic.items.length, topic.nativeSessionId, topic.forkOf, topic.forkAt], [0, null, null, null])
+  await s.orch.send(topic.id, 'First, better')
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession, specs.at(-1)!.resumeAt], [undefined, false, undefined])
+})
+
+test('rewindSession retry: the turn’s message goes again at once, forked before its reply; Undo stays (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  assert.deepEqual(await s.orch.rewindSession(topic.id, 6, 'retry'), {})
+  const live = opened.at(-1)!
+  assert.deepEqual(live.sent, ['Second'])
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession, specs.at(-1)!.resumeAt], ['n1', true, 'r2'])
+  assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one', 'Second'])
+  assert.ok(topic.rewound, 'the reply it replaced can come back')
+  await assert.rejects(s.orch.undoRewind(topic.id), /stop it first/, 'not while the retry runs')
+  live.emit({ type: 'session.started', nativeSessionId: 'n2' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await s.orch.undoRewind(topic.id)
+  assert.deepEqual([kinds(topic).length, topic.nativeSessionId], [8, 'n1'])
+})
+
+test('rewindSession is refused while the agent works, on replies without a uuid and on Codex topics (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  await s.orch.send(topic.id, 'Third')
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'rewind'), /stop it first/)
+  assert.equal(topic.items.length, 9, 'nothing cut')
+  opened.at(-1)!.emit({ type: 'turn.done', ok: true })
+  await tick()
+  topic.items.push({ kind: 'assistant', text: 'old', at: 0 })
+  await assert.rejects(s.orch.rewindSession(topic.id, 10, 'rewind'), /no id in the agent/)
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'nope' as never), /mode must be/)
+  topic.agent = 'codex'
+  await assert.rejects(s.orch.rewindSession(topic.id, 6, 'rewind'), /Claude Code topics only/)
+  assert.throws(() => s.orch.branchFrom(topic.id, 6), /cannot be branched/)
+})
+
+test('branchFrom: a subtopic forks the parent at the end of the reply’s turn, the parent untouched; its first message can be edited (chat-message-actions-rewind-edit.1)', async () => {
+  const s = setup()
+  const { topic } = await rewindable(s)
+  const child = s.orch.branchFrom(topic.id, 1)
+  assert.deepEqual([child.parentId, child.forkOf, child.forkAt, child.base, child.items.length], [topic.id, 'n1', 'r2', { at: 'r2' }, 0])
+  assert.equal(topic.items.length, 8)
+  await s.orch.send(child.id, 'And then?')
+  const live = opened.at(-1)!
+  assert.deepEqual([specs.at(-1)!.resumeId, specs.at(-1)!.forkSession, specs.at(-1)!.resumeAt], ['n1', true, 'r2'])
+  live.emit({ type: 'session.started', nativeSessionId: 'c1' })
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  // Its first message again: its own transcript, at the parent's reply it began after.
+  assert.deepEqual(await s.orch.rewindSession(child.id, 0, 'edit'), { text: 'And then?' })
+  assert.deepEqual([child.forkOf, child.forkAt, child.items.length], ['c1', 'r2', 0])
+
+  // The topic's Branch (all of it) starts after the parent's last reply.
+  assert.deepEqual(s.orch.startChild(topic.id, '', null, true).base, { at: 'r3' })
 })
