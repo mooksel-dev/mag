@@ -26,7 +26,7 @@ import type { AppState } from '../../preload/api'
 import { agentName, useAgents } from './Agents'
 import type { AgentLine, ArtifactChip, ArtifactTarget, TopicAgents, TopicArtifacts } from './artifacts'
 import { MoveButton } from './Cards'
-import { CanvasOpener, Chat, Markdown } from './Chat'
+import { CanvasOpener, Chat, Markdown, SessionModelChip } from './Chat'
 import { FactPanel } from './FactPanel'
 import { prLabel } from './format'
 import { PrPill } from './LinkPill'
@@ -377,6 +377,7 @@ function WorkAgents({ work, state, onOpenKey }: { work: Task; state: AppState; o
 /** An agent's chat as a log: Stop while it runs, Restart when it is the work's latest of its role and can go on. */
 function AgentLog({ session, work, state, onBack, onOpenKey }: { session: AgentSession; work: Task; state: AppState; onBack: () => void; onOpenKey: (key: string) => void }) {
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
+  const project = state.projects.find((p) => p.id === work.projectId)
   const mine = state.sessions.filter((s) => s.taskId === work.id)
   const running = mine.some((s) => s.status === 'running')
   const latest = mine.filter((s) => s.role === session.role).at(-1) === session
@@ -392,7 +393,8 @@ function AgentLog({ session, work, state, onBack, onOpenKey }: { session: AgentS
       <div className="chathead">
         <button className="link small" onClick={onBack}>‹ Agents</button>
         <span>{session.role}{session.id === work.ownerSessionId ? ' · owner' : ''}</span>
-        <span className="chatmodel muted small">{session.activeModel ?? 'default'} · {session.status}</span>
+        {project && <SessionModelChip project={project} session={session} tasks={tasks} />}
+        <span className="muted small">{session.status}</span>
         <div className="grow" />
         {session.status === 'running' && <button className="small" onClick={() => mag.stop(session.id)}>Stop</button>}
         {restart && <button className="small" title="Run this agent again where it stopped" onClick={() => void restart()}>Restart</button>}
