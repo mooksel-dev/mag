@@ -983,7 +983,20 @@ input.topictitle { border-bottom: 1px solid var(--border); }
 .stepdetails > summary::after { content: ' ▸'; color: var(--faint); }
 .stepdetails[open] > summary::after { content: ' ▾'; }
 .stepdetails[open] { display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; }
-.stepdetails .md { font-size: 0.95em; }
+.stepdetails[open] > summary { font-weight: 500; }
+/* The step's points: one quiet column, no bullets or code pills; a point folds to two lines behind its own ▸. */
+.outline { list-style: none; margin: 0; padding: 0 0 0 2px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.45; }
+.outline .outline { margin-top: 4px; padding-left: 14px; border-left: 1px solid var(--line); color: var(--muted); }
+.outline > li { position: relative; padding-left: 14px; }
+.outline > li::before { content: '·'; position: absolute; left: 2px; color: var(--faint); }
+.outline > li:has(> details)::before { content: '▸'; font-size: 10px; top: 2px; }
+.outline > li:has(> details[open])::before { content: '▾'; }
+.outline details > summary { cursor: pointer; list-style: none; }
+.outline details > summary::-webkit-details-marker { display: none; }
+.outline details:not([open]) > summary .point { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.outline .point p, .outline .point ul, .outline .point ol { margin: 0; }
+.outline .point code { background: none; padding: 0; font-size: 0.95em; color: inherit; }
+.outline .point pre { margin: 4px 0; }
 .agentlog { display: flex; flex-direction: column; height: 70vh; min-height: 0; border: 1px solid var(--line); border-radius: var(--r); }
 .pagewrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pagewrap > .page { flex: 1; min-height: 0; }

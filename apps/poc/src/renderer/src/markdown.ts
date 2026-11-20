@@ -57,6 +57,64 @@ export function mdSegments(text: string, prose: (s: string) => string = (s) => s
   return out
 }
 
+/** A point of an outline: its own markdown and the points nested under it. */
+export interface OutlinePoint {
+  text: string
+  points: OutlinePoint[]
+}
+
+const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/
+
+/**
+ * Markdown as a tree of points, for reading it a level at a time: each list item is a point with its sub-items; a line
+ * that is not an item goes on the item it is indented under, else it is a point of its own (a paragraph). Fenced code
+ * stays with the point it is in.
+ */
+export function mdOutline(md: string): OutlinePoint[] {
+  const root: OutlinePoint[] = []
+  // Open list items, outermost first, with the column of their marker.
+  const stack: { point: OutlinePoint; indent: number }[] = []
+  let paragraph: OutlinePoint | null = null
+  let fence = false
+  // The column of the open fence: its lines are cut to it.
+  let fenceAt = 0
+  let blank = false
+  const newParagraph = (text: string) => {
+    stack.length = 0
+    paragraph = { text, points: [] }
+    root.push(paragraph)
+  }
+  for (const raw of md.split('\n')) {
+    const line = raw.replace(/\t/g, '    ')
+    const indent = line.length - line.trimStart().length
+    const top = stack[stack.length - 1]
+    const current = paragraph ?? top?.point
+    const isFence = /^\s*```/.test(line)
+    if (fence || isFence) {
+      if (isFence && !fence) fenceAt = indent
+      if (isFence) fence = !fence
+      if (current) current.text += `\n${line.slice(Math.min(indent, fenceAt))}`
+      else newParagraph(line)
+    } else if (!line.trim()) {
+      blank = true
+      continue
+    } else {
+      const item = LIST_ITEM.exec(line)
+      if (item) {
+        paragraph = null
+        while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop()
+        const point: OutlinePoint = { text: item[2], points: [] }
+        ;(stack.length ? stack[stack.length - 1].point.points : root).push(point)
+        stack.push({ point, indent })
+      } else if (top && !paragraph && indent > top.indent) top.point.text += `\n${line.trim()}`
+      else if (current && !blank) current.text += `\n${line.trim()}`
+      else newParagraph(line.trim())
+    }
+    blank = false
+  }
+  return root
+}
+
 /**
  * The composer's markdown as the user meant it: the editor's serializer writes a line break as "\\" + newline and
  * escapes `, *, _ and the like in plain text (a path like a_b, three backticks typed as text). Outside code, a break is
