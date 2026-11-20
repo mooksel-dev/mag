@@ -15,6 +15,8 @@ import {
   resultLine,
   reviewState,
   reviewTopicIds,
+  decodeEntities,
+  type ReviewState,
   shownResult,
   reviewTopic,
   subtasksOf,
@@ -32,9 +34,8 @@ import {
 export type WorkGroup = 'waiting' | 'working' | 'topics' | 'done'
 
 export type CardKind = 'work' | 'review' | 'topic'
-/** amber = waiting on you, green = an agent working, grey = idle or someone else's move. */
-/** blue = an agent works, amber = waits on you, green = done, ready for you, grey = closed or finished, red = failed. */
-export type CardDot = 'blue' | 'amber' | 'green' | 'grey' | 'red'
+/** The state of a row's agents, one colour language with its status line: green = working, amber = waits on you, grey = idle, finished or someone else's move, red = failed. */
+export type CardDot = 'green' | 'amber' | 'grey' | 'red'
 
 export type WorkStage = 'Plan' | 'Approve' | 'Build' | 'Merge' | 'Done'
 export type ReviewStage = 'Running' | 'Report ready' | 'Waiting for author' | 'Done'
@@ -99,8 +100,8 @@ export interface SessionNode {
   children: SessionNode[]
 }
 
-/** A session's dot by its state: running blue, waiting on you amber, idle green, failed red, closed grey. */
-const SESSION_DOTS: Record<SessionState, CardDot> = { running: 'blue', waiting: 'amber', idle: 'green', error: 'red', closed: 'grey' }
+/** A session's dot by its state (see CardDot). */
+const SESSION_DOTS: Record<SessionState, CardDot> = { running: 'green', waiting: 'amber', idle: 'grey', error: 'red', closed: 'grey' }
 
 /** The label of a child session's role: subagent for one read from its parent's stream. */
 export const sessionRole = (s: Pick<AgentSession, 'role' | 'origin' | 'agentJob'>): string =>
@@ -169,7 +170,7 @@ const prsText = (prs: RepoWork[]) => (prs.length === 1 ? `PR #${prNo(prs[0])}` :
  */
 export function shortTitle(of: Task | AgentSession): string {
   if ('type' in of) return isReview(of) ? of.title.replace(/^[^:]*#\d+: /, '') : of.title
-  return (of.titleGenerated && of.title?.trim()) || 'New topic'
+  return (of.titleGenerated && decodeEntities(of.title ?? '').trim()) || 'New topic'
 }
 
 /** Where a work is: planning, its plan waiting for Approve & Start, steps being built, PRs waiting for merge, or done. */
@@ -194,16 +195,41 @@ export function reviewStage(task: Task, sessions: AgentSession[]): ReviewStage |
   return task.prReview!.posted ? 'Waiting for author' : 'Report ready'
 }
 
-/** A review's stage as plain words for the header of its panel (review-v3-concise-design-first.1): a status, not steps. */
-export const REVIEW_STAGE_TEXT: Record<ReviewStage, string> = {
-  Running: 'The agent is reviewing',
-  'Report ready': 'Report ready · yours to publish',
-  'Waiting for author': 'Report ready · waiting for the author',
-  Done: 'Closed',
+/** A review's status in words, the same in its panel, its window and the reviews table: what, and what the agent does now. */
+export interface ReviewStatus {
+  state: ReviewState
+  /** "Reviewing · 2 min", "Report ready", "Outdated: new commits since the review". */
+  text: string
+  /** While reviewing: the agent's last message of this run, one line; null before it says anything. */
+  doing: string | null
 }
 
-/** A review's status line: its stage in words; null without a stage (the move line says what to do). */
-export const reviewStageText = (stage: ReviewStage | null | undefined): string | null => (stage ? REVIEW_STAGE_TEXT[stage] : null)
+/** A review's status (see ReviewStatus), from reviewState. */
+export function reviewStatus(task: Task, sessions: AgentSession[], now: number): ReviewStatus {
+  const state = reviewState(task, sessions)
+  const base = { state, doing: null }
+  switch (state) {
+    case 'closed':
+      return { ...base, text: 'Closed' }
+    case 'reviewing': {
+      const ids = reviewTopicIds(task)
+      const run = sessions.filter((s) => ids.includes(s.id) && s.status === 'running').sort((a, b) => (b.runStartedAt ?? 0) - (a.runStartedAt ?? 0))[0]
+      const since = run?.runStartedAt ?? run?.createdAt ?? now
+      const said = run && lastItem(run.items, 'assistant')
+      return { state, text: `Reviewing · ${span(now - since)}`, doing: said && said.at >= since ? cut(said.text, 120) || null : null }
+    }
+    case 'question':
+      return { ...base, text: `Asks you: ${cut(task.needsInput ?? '', 80)}` }
+    case 'ready':
+      return { ...base, text: task.prReview?.posted ? 'Report ready · waiting for the author' : 'Report ready' }
+    case 'failed':
+      return { ...base, text: 'Failed: review again' }
+    case 'outdated':
+      return { ...base, text: 'Outdated: new commits since the review' }
+    case 'waiting':
+      return { ...base, text: 'Not reviewed yet' }
+  }
+}
 
 /** A work's sessions: its own (groomer, developer, reviewer), its owner topic and, a review, the topic of each result. */
 function sessionsOf(task: Task, sessions: AgentSession[]): AgentSession[] {
@@ -354,8 +380,8 @@ function progressOf(task: Task, tasks: Task[]): string | null {
   return [where, prs.length ? prsText(prs) : null].filter(Boolean).join(' · ') || null
 }
 
-const dotOf = (group: WorkGroup, move: CardMove): CardDot =>
-  group === 'waiting' ? 'amber' : group === 'done' ? 'grey' : move.who === 'agent' ? 'blue' : 'green'
+const dotOf = (group: WorkGroup, move: CardMove, failed: boolean): CardDot =>
+  failed ? 'red' : group === 'waiting' ? 'amber' : group === 'done' ? 'grey' : move.who === 'agent' ? 'green' : 'grey'
 
 /**
  * The project chat topics of `mine`, mag's topics of reviews included: not an agent's session. Each has a row; the works
@@ -387,7 +413,7 @@ function taskCard(task: Task, item: InboxItem | undefined, mine: AgentSession[],
     id: task.id,
     kind: review ? 'review' : 'work',
     group,
-    dot: dotOf(group, move),
+    dot: dotOf(group, move, item?.kind === 'agent_failed'),
     title: shortTitle(task),
     stage: review ? reviewStage(task, mine) : workStage(task, tasks),
     progress: progressOf(task, tasks),
@@ -439,8 +465,9 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     : closed ? { who: 'other', text: 'Closed' }
     : works.length ? { who: 'other', text: 'Done' }
     : ownMove
-  // Green while the chat or any open child has an agent running.
-  const dot: CardDot = group === 'waiting' ? 'amber' : group === 'done' ? 'grey' : running || open.some((c) => c.dot === 'blue') ? 'blue' : 'green'
+  // Its agents' state: one failed (and nothing runs or asks for approval), else waits on you, else one working.
+  const failed = idle && (s.status === 'error' || flatNodes(tree).some((n) => n.state === 'error') || open.some((c) => c.dot === 'red'))
+  const dot: CardDot = group === 'done' ? 'grey' : failed ? 'red' : group === 'waiting' ? 'amber' : running || open.some((c) => c.dot === 'green') ? 'green' : 'grey'
   const last = [lastEvent(s, mine), ...children.map((c) => c.last)].filter((l) => !!l).sort((a, b) => b.at - a.at)[0] ?? null
   const under = flatNodes(tree).map((n) => n.session)
   return {
@@ -459,7 +486,7 @@ function chatCard(s: AgentSession, children: WorkCard[], tree: SessionNode[], ap
     session: s,
     // mag's topic of a review closes and deletes as that review.
     ...(s.reviewOf && { task: children.find((c) => c.id === s.reviewOf)?.task }),
-    own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'blue' : closed ? 'grey' : 'green' },
+    own: { group: ownGroup, dot: ownGroup === 'waiting' ? 'amber' : running ? 'green' : s.status === 'error' ? 'red' : 'grey' },
     ...(children.length ? { children } : {}),
     ...(tree.length ? { sessions: tree } : {}),
   }
@@ -540,7 +567,7 @@ export function headerWork(sessionId: string, tasks: Task[], sessions: AgentSess
 
 /** Home's order of a group's cards: the agent working before someone else's move, then the latest activity first. */
 export function byActivity(cards: WorkCard[]): WorkCard[] {
-  const grey = (c: WorkCard) => (c.group === 'working' && c.dot !== 'blue' ? 1 : 0)
+  const grey = (c: WorkCard) => (c.group === 'working' && c.dot !== 'green' ? 1 : 0)
   return [...cards].sort((a, b) => grey(a) - grey(b) || b.at - a.at)
 }
 
@@ -691,7 +718,7 @@ export function cardMatches(c: WorkCard, filter: CardFilter): boolean {
     case 'waiting':
       return own.group === 'waiting'
     case 'working':
-      return own.dot === 'blue'
+      return own.dot === 'green'
     case 'reviews':
       return c.kind === 'review'
   }

@@ -9,6 +9,7 @@ import {
   prRepoName,
   reportLine,
   reviewRunning,
+  reviewStatus,
   type ChangeGroup,
   type ChangeInventory,
   type HunkPick,
@@ -25,7 +26,7 @@ import { Comparison, useHunks } from './FactPanel'
 import { planFactLine } from './factView'
 import { ReportConclusion, ReportView, diagramAnchor } from './ReportView'
 import { ImportedBanner } from './ReviewExport'
-import { ReviewMenu } from './Reviews'
+import { ReviewMenu, ReviewRunLine } from './Reviews'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
 
 const mag = window.mag
@@ -340,7 +341,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
           )}
           {model.blocks.includes('legacy') && r && (
             <section className="reportcard">
-              {running && !r.verdict && <p className="muted">The agent is reviewing.</p>}
+              {running && !r.verdict && <ReviewRunLine status={reviewStatus(task, state.sessions, Date.now())} />}
               {r.problem && <><h2>Problem</h2><Markdown text={r.problem} /></>}
               {r.approach && <><h2>Does it solve it</h2><Markdown text={r.approach} /></>}
               <h2>Findings</h2>

@@ -179,7 +179,7 @@ test('a review panel\'s header: one line (PR · author → base · tickets · CI
   const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8')
   const reviews = read('./Reviews.tsx')
   const head = reviews.slice(reviews.indexOf('<div className="taskrow reviewhead">'))
-  const order = ['{repo}#{review.pr.number} ↗', '· @{review.pr.author} → {review.pr.base} ·', '<TicketLinks task={work} />', '<Checks work={work} />', '{status && ', '>Open review</button>', '<ReviewMenu ']
+  const order = ['{repo}#{review.pr.number} ↗', '· @{review.pr.author} → {review.pr.base} ·', '<TicketLinks task={work} />', '<Checks work={work} />', '{!firstRun && ', '>Open review</button>', '<ReviewMenu ']
   const at = order.map((x) => head.indexOf(x))
   assert.ok(at.every((i) => i >= 0), `every part in the header: ${order.filter((_, i) => at[i] < 0)}`)
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'in this order')
@@ -192,7 +192,11 @@ test('a review panel\'s header: one line (PR · author → base · tickets · CI
   // The panel has no review stepper: the status is words.
   const pane = read('./ArtifactPane.tsx')
   assert.doesNotMatch(pane, /REVIEW_STAGES/)
-  assert.match(pane, /status=\{reviewStageText\(reviewStage\(work, state\.sessions\)\)\}/)
+  assert.match(pane, /status=\{reviewStatus\(work, state\.sessions, now\)\}/)
+  // Its first run: one status line, nothing about fact, inventory or findings; "reviewing" said once.
+  assert.match(reviews, /\{firstRun \? \(\s*<ReviewRunLine status=\{status\} \/>\s*\) : r\.report \?/)
+  assert.match(reviews, /\{!firstRun && <span className="muted small reviewstatus"/)
+  assert.doesNotMatch(reviews, /The agent is reviewing/)
   // The verdict big, the intent right below it; the direction only when the report lays one out.
   const view = read('./ReportView.tsx')
   assert.match(view, /<section className="reportcard verdictcard">\s*<div className="cardhead">\s*<span className=\{`verdict [^\n]*\n\s*\{kind === 'pr' && report\.direction && [^\n]*Direction: your call[^\n]*\n\s*<\/div>\s*<p className="intent">\{report\.intent\}<\/p>/)

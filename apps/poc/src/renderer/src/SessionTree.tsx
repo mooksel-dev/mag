@@ -38,7 +38,7 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone }: {
                 title={`${title} · ${STATE_LABELS[n.state]}`}
                 onClick={() => onSelect({ kind: 'topic', id: s.id })}
               >
-                <span className={`sessdot ${n.dot}`} aria-hidden />
+                <span className={`sessdot ${n.dot}`} title={STATE_LABELS[n.state]} aria-hidden />
                 <span className="title">{title}</span>
               </button>
               <button className="wlmore" aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menu === s.id} title="New subtopic, rename, close, delete…" onClick={() => setMenu(menu === s.id ? null : s.id)}>⋯</button>

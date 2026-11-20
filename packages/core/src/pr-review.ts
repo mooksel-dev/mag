@@ -261,27 +261,6 @@ export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'need
   return 'waiting'
 }
 
-/** A review's line in a list: its state with its detail, "Request changes · 2 blockers", "the agent is reviewing…". */
-export function reviewLine(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): string {
-  const verdict = resultLine(shownResult(task.prReview))
-  switch (reviewState(task, sessions)) {
-    case 'closed':
-      return 'closed'
-    case 'reviewing':
-      return 'the agent is reviewing…'
-    case 'question':
-      return `asks: ${task.needsInput}`
-    case 'ready':
-      return verdict
-    case 'failed':
-      return 'the agent failed: review again'
-    case 'outdated':
-      return `${verdict} · new commits since`
-    case 'waiting':
-      return 'waits for the agent'
-  }
-}
-
 /** The job mag gave a review's topic before `reviewOf` was recorded: it opens with this. */
 const legacyJob = (url: string) => `Review the PR ${url} `
 

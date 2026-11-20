@@ -18,6 +18,7 @@ import {
   shownResult,
   REVIEW_FORMATS,
   type PrReview,
+  type ReviewStatus,
   type PrVerdict,
   type ReviewResult,
   type Project,
@@ -93,8 +94,8 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
   project: Project
   state: AppState
   now: number
-  /** Where the review stands, in words (reviewStageText); none while nothing is to say. */
-  status?: string | null
+  /** Where the review stands, in words (reviewStatus). */
+  status: ReviewStatus
   onOpenKey: (key: string) => void
   /** The review is gone: the pane clears. */
   onDeleted: () => void
@@ -127,6 +128,8 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
   const [deciding, setDeciding] = useState(false)
   const whileDeciding = (f: () => Promise<unknown>) => act(() => (setDeciding(true), f().finally(() => setDeciding(false))))
   if (!review || !r) return <p className="muted">This review has no PR.</p>
+  // Its first run, nothing recorded yet: one status line instead of empty sections.
+  const firstRun = running && !r.report && !r.verdict
   const repo = prRepoName(project, review.pr)
   const diffSection = (
     <>
@@ -194,7 +197,7 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
         <Checks work={work} />
         <div className="grow" />
         {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
-        {status && <span className="muted small reviewstatus" title={r.head ? `${r.format} reviewed at ${r.head.slice(0, 7)}${r.at ? `, ${ago(r.at, now)}` : ''}` : `${r.format}: not reviewed yet`}>{status}</span>}
+        {!firstRun && <span className="muted small reviewstatus" title={r.head ? `${r.format} reviewed at ${r.head.slice(0, 7)}${r.at ? `, ${ago(r.at, now)}` : ''}` : `${r.format}: not reviewed yet`}>{status.text}</span>}
         <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
         <ReviewMenu work={work} review={review} running={running} onError={setError} onDeleted={onDeleted} />
       </div>
@@ -209,8 +212,9 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
           }))}>Connect repo</button>
         </div>
       )}
-      {running && !r.verdict && <p className="muted">{r.format === 'v1' ? 'The agent is reviewing: problem, fact, findings and a verdict.' : 'The agent is reviewing: scope and design first, then the issues, the acceptance criteria and their evidence.'}</p>}
-      {r.report ? (
+      {firstRun ? (
+        <ReviewRunLine status={status} />
+      ) : r.report ? (
         <ReportView
           report={r.report}
           fact={work.fact}
@@ -250,6 +254,11 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
       )}
     </div>
   )
+}
+
+/** A review at work, one line: "Reviewing · 2 min · <the agent's last message>". */
+export function ReviewRunLine({ status }: { status: ReviewStatus }) {
+  return <p className="muted reviewrun" title={status.doing ?? undefined}>{[status.text, status.doing].filter(Boolean).join(' · ')}</p>
 }
 
 /** A v1 result, or a review recorded before the report (review-v2-questions-first-direction.1): in the layout it had. */

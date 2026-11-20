@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewLine, reviewOf, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewOf, reviewStatus, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -127,18 +127,27 @@ test('reviewPollOutcome: done when merged or closed; new commits alone get no lo
 test('reviewState: one state of a review for every view, in order (reviews-normalnyi-ux-stan-reviu.1)', () => {
   const ready = prReview({ verdict: 'request_changes', head: 'abc', at: 2, findings: [{ text: 'x', level: 'blocker' }] })
   const old = prReview({ verdict: 'request_changes', head: 'old', at: 2, findings: [{ text: 'x', level: 'blocker' }] })
-  const states = (t: Task, s: AgentSession['status']) => [reviewState(t, [topic(s)]), reviewLine(t, [topic(s)])]
-  assert.deepEqual(states(review('r', { status: 'done', prReview: ready }), 'running'), ['closed', 'closed'])
-  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'q' }), 'running'), ['reviewing', 'the agent is reviewing…'])
-  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'No access' }), 'error'), ['question', 'asks: No access'])
-  assert.deepEqual(states(review('r', { prReview: ready }), 'idle'), ['ready', 'Request changes · 1 blocker'])
+  const states = (t: Task, s: AgentSession['status']) => [reviewState(t, [topic(s)]), reviewStatus(t, [{ ...topic(s), runStartedAt: 1 }], 1 + 2 * 60_000).text]
+  assert.deepEqual(states(review('r', { status: 'done', prReview: ready }), 'running'), ['closed', 'Closed'])
+  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'q' }), 'running'), ['reviewing', 'Reviewing · 2 min'])
+  assert.deepEqual(states(review('r', { prReview: ready, needsInput: 'No access' }), 'error'), ['question', 'Asks you: No access'])
+  assert.deepEqual(states(review('r', { prReview: ready }), 'idle'), ['ready', 'Report ready'])
   // A borrowed topic that errors later in another chat keeps the review ready.
   assert.equal(reviewState(review('r', { prReview: ready }), [topic('error')]), 'ready')
-  assert.deepEqual(states(review('r'), 'error'), ['failed', 'the agent failed: review again'])
-  assert.deepEqual(states(review('r', { prReview: old }), 'error'), ['failed', 'the agent failed: review again'])
-  assert.deepEqual(states(review('r', { prReview: old }), 'idle'), ['outdated', 'Request changes · 1 blocker · new commits since'])
-  assert.deepEqual(states(review('r'), 'idle'), ['waiting', 'waits for the agent'])
+  assert.deepEqual(states(review('r'), 'error'), ['failed', 'Failed: review again'])
+  assert.deepEqual(states(review('r', { prReview: old }), 'error'), ['failed', 'Failed: review again'])
+  assert.deepEqual(states(review('r', { prReview: old }), 'idle'), ['outdated', 'Outdated: new commits since the review'])
+  assert.deepEqual(states(review('r'), 'idle'), ['waiting', 'Not reviewed yet'])
   assert.equal(reviewState(review('r', { ownerSessionId: 'gone' }), []), 'waiting')
+})
+
+test('reviewStatus: reviewing for how long, and the agent\'s last message of this run in one line', () => {
+  const run = (items: AgentSession['items']): AgentSession => ({ ...topic('running'), runStartedAt: 1000, items })
+  const at = (n: number) => reviewStatus(review('r'), [run([{ kind: 'assistant', text: 'Before this run', at: 500 }, ...(n ? [{ kind: 'tool' as const, id: 't', name: 'Bash', summary: 'ls', at: 2000 }, { kind: 'assistant' as const, text: '\nReading the threads\nthen the diff', at: 3000 }] : [])])], 1000 + 3 * 60_000)
+  assert.deepEqual(at(1), { state: 'reviewing', text: 'Reviewing · 3 min', doing: 'Reading the threads' })
+  assert.equal(at(0).doing, null, 'a message of an earlier run is not what it does now')
+  const posted = review('r', { prReview: prReview({ verdict: 'approve', head: 'abc', at: 2, posted: { at: 3, url: 'u' } }) })
+  assert.equal(reviewStatus(posted, [topic('idle')], 10).text, 'Report ready · waiting for the author')
 })
 
 test('Needs you: a review whose topic failed before a verdict on its head is Review failed', () => {
@@ -190,8 +199,8 @@ test('both results are kept: the shown one makes the state and the line; Run for
   assert.equal(shownResult(both), v1)
   const rv = (r: PrReview) => review('r', { prReview: r, ownerSessionId: 't1' })
   const s = (id: string, status: AgentSession['status']) => ({ ...topic(status), id })
-  assert.deepEqual([reviewState(rv(both), [s('t1', 'idle'), s('t2', 'idle')]), reviewLine(rv(both), [])], ['ready', 'Approve · no findings'])
-  assert.deepEqual([reviewState(rv({ ...both, shown: 'v2' }), []), reviewLine(rv({ ...both, shown: 'v2' }), [])], ['outdated', 'Request changes · 1 blocker · new commits since'])
+  assert.deepEqual([reviewState(rv(both), [s('t1', 'idle'), s('t2', 'idle')]), reviewStatus(rv(both), [], 0).text], ['ready', 'Report ready'])
+  assert.deepEqual([reviewState(rv({ ...both, shown: 'v2' }), []), reviewStatus(rv({ ...both, shown: 'v2' }), [], 0).text], ['outdated', 'Outdated: new commits since the review'])
   // A run of the other format in a turn: the review is reviewing.
   assert.equal(reviewRunning(rv(both), [s('t2', 'running')]), true)
   assert.equal(reviewState(rv(both), [s('t2', 'running')]), 'reviewing')

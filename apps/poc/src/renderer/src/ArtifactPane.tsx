@@ -13,8 +13,7 @@ import {
   subtasksOf,
   taskPrs,
   workCard,
-  reviewStage,
-  reviewStageText,
+  reviewStatus,
   workStage,
   type AgentSession,
   type CardMove,
@@ -162,7 +161,7 @@ export function TaskArtifact({ target, task, state, onOpenKey, onSelect, onDelet
 
 const WORK_STAGES: WorkStage[] = ['Plan', 'Approve', 'Build', 'Merge']
 
-/** A work's stages Plan → Merge; Done shows them all past. A review has a status in words instead (reviewStageText). */
+/** A work's stages Plan → Merge; Done shows them all past. A review has a status in words instead (reviewStatus). */
 function Stepper({ stage, stages }: { stage: WorkStage | ReviewStage; stages: WorkStage[] }) {
   const at = stage === 'Done' ? stages.length : stages.indexOf(stage as WorkStage)
   return (
@@ -283,7 +282,7 @@ function PrReview({ work, state, onOpenKey, onDeleted }: { work: Task; state: Ap
   if (!project) return null
   return (
     <div className="artbody">
-      <ReviewView key={work.id} work={work} project={project} state={state} status={reviewStageText(reviewStage(work, state.sessions))} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} />
+      <ReviewView key={work.id} work={work} project={project} state={state} status={reviewStatus(work, state.sessions, now)} onOpenKey={onOpenKey} onDeleted={onDeleted} now={now} />
     </div>
   )
 }
