@@ -393,15 +393,23 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   }
   const acts = (n: number, text: string): MessageAction[] => {
     const can = (mode: RewindMode) => actions && !!rewindPoint(session, n, mode)
-    const item = session.items[n]
+    const user = session.items[n]?.kind === 'user'
+    const branch = (title: string): MessageAction => ({ label: 'Branch from here', icon: 'branch', title, always: true, run: () => void mag.branchFrom(session.id, n).then((c) => onOpenSession?.(c.id)).catch((e: Error) => alert(e.message)) })
+    const copy: MessageAction = { label: 'Copy', icon: 'copy', title: 'Copy as markdown', always: true, run: () => void navigator.clipboard.writeText(text) }
+    // Branch on a user message forks at the reply before it: there is none before the first one.
+    const branchable = user ? !!rewindPoint(session, n, 'edit')?.forkAt : can('rewind')
     return [
-      { label: 'Copy', title: 'Copy as markdown', always: true, run: () => void navigator.clipboard.writeText(text) },
-      ...(item?.kind === 'user'
-        ? can('edit') ? [{ label: 'Edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => setChoosing({ n, mode: 'edit' }) }] : []
+      copy,
+      ...(user
+        ? [
+            ...(can('edit') ? [{ label: 'Edit', icon: 'edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => setChoosing({ n, mode: 'edit' }) } as MessageAction] : []),
+            ...(can('retry') ? [{ label: 'Retry', icon: 'retry', title: 'Drop what follows this message and send it again', run: () => rewind(n, 'retry') } as MessageAction] : []),
+            ...(actions && branchable ? [branch('A subtopic with the conversation before this message; this topic stays as it is')] : []),
+          ]
         : [
-            ...(can('rewind') ? [{ label: 'Rewind here', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => setChoosing({ n, mode: 'rewind' }) }] : []),
-            ...(can('retry') ? [{ label: 'Retry', title: 'Drop this reply and send the message before it again', run: () => rewind(n, 'retry') }] : []),
-            ...(can('rewind') ? [{ label: 'Branch from here', title: 'A subtopic with the conversation up to this reply; this topic stays as it is', always: true, run: () => void mag.branchFrom(session.id, n).then((c) => onOpenSession?.(c.id)).catch((e: Error) => alert(e.message)) }] : []),
+            ...(can('rewind') ? [{ label: 'Rewind here', icon: 'rewind', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => setChoosing({ n, mode: 'rewind' }) } as MessageAction] : []),
+            ...(can('retry') ? [{ label: 'Retry', icon: 'retry', title: 'Drop this reply and send the message before it again', run: () => rewind(n, 'retry') } as MessageAction] : []),
+            ...(branchable ? [branch('A subtopic with the conversation up to this reply; this topic stays as it is')] : []),
           ]),
     ]
   }
@@ -515,21 +523,52 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   )
 }
 
+type ActionIcon = 'copy' | 'edit' | 'retry' | 'rewind' | 'branch' | 'done'
+
 interface MessageAction {
   label: string
+  icon: ActionIcon
   title: string
   /** Works while the agent works too (Copy, Branch from here); the rest wait for its turn to end. */
   always?: boolean
   run: () => void
 }
 
-/** A message's actions, shown on hover (chat-message-actions-rewind-edit.1). */
+const ICON_PATHS: Record<ActionIcon, string> = {
+  copy: 'M9 9h10v10H9zM5 15V5h10',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
+  retry: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',
+  rewind: 'M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5M12 8v4l3 2',
+  branch: 'M6 4v12M6 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM18 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM18 8a8 8 0 0 1-8 8H8',
+  done: 'M5 12l5 5L20 7',
+}
+
+function Icon({ name }: { name: ActionIcon }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ICON_PATHS[name]} />
+    </svg>
+  )
+}
+
+/** A message's actions as icons, shown on hover (chat-message-actions-rewind-edit.1). */
 function MessageActions({ actions, busy }: { actions: MessageAction[]; busy: boolean }) {
+  const [done, setDone] = useState<string | null>(null)
+  useEffect(() => {
+    if (!done) return
+    const t = setTimeout(() => setDone(null), 1500)
+    return () => clearTimeout(t)
+  }, [done])
   return (
     <div className="msgacts">
       {actions.map((a) => {
         const off = busy && !a.always
-        return <button key={a.label} type="button" className="link small" disabled={off} title={off ? 'Stop the agent first' : a.title} onClick={a.run}>{a.label}</button>
+        const title = off ? 'Stop the agent first' : done === a.label ? 'Copied' : a.title
+        return (
+          <button key={a.label} type="button" className="iconbtn" disabled={off} title={`${a.label} · ${title}`} aria-label={a.label} onClick={() => { a.run(); if (a.icon === 'copy') setDone(a.label) }}>
+            <Icon name={done === a.label ? 'done' : a.icon} />
+          </button>
+        )
       })}
     </div>
   )

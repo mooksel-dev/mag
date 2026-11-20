@@ -1266,7 +1266,7 @@ export function rewindCut(items: ChatItem[], n: number, mode: RewindMode): { kee
   let from = n
   if (mode === 'edit') {
     if (item.kind !== 'user') return null
-  } else {
+  } else if (item.kind !== 'user') {
     if (item.kind !== 'assistant') return null
     while (from >= 0 && !startsTurn(items[from])) from--
     if (from < 0) return null
