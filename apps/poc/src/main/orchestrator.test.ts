@@ -2854,3 +2854,22 @@ test("usage: the session's context fill, its window from the catalogue until the
   assert.deepEqual([context()?.used, context()?.window], [70_000, 400_000])
   assert.ok(context()!.at > 0)
 })
+
+test('a PR review topic never runs on Codex: its own Codex choice is refused and a Codex chat default gives way to Claude Code', async () => {
+  const { store, orch, project } = setup()
+  const topic = orch.newChat(project.id)
+  const plain = orch.newChat(project.id)
+  store.createTask({ projectId: project.id, title: 'Review acme/api#4', type: 'review', description: 'https://github.com/acme/api/pull/4', status: 'in_progress', ownerSessionId: topic })
+  const codex = { agent: 'codex' as const, model: null, effort: null }
+  assert.throws(() => orch.setSessionChoice(topic, codex), /Codex can't review/)
+  const own = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  own.reviewOf = 'some-review'
+  assert.throws(() => orch.setSessionChoice(own.id, codex), /Codex can't review/)
+  orch.setSessionChoice(plain, codex)
+  assert.equal(store.session(plain).choice?.agent, 'codex', 'a topic that reviews nothing may run on Codex')
+
+  store.updateProject(project.id, { agents: { chat: { agent: 'codex', model: 'gpt-6-luna', effort: null } } })
+  await orch.send(topic, 'go on with the review')
+  assert.equal(store.session(topic).agent, 'claude-code')
+  assert.equal(specs.at(-1)!.model, undefined, 'Claude Code on its default model')
+})

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_CHOICE, DEFAULT_TEMPLATES, TASK_KEY_RE, agentAllowed, findModel, resolveChoice, rewriteKeys, sessionChoice, subtaskKey, type AgentModel, type ModelChoice } from './index.ts'
+import { DEFAULT_CHOICE, DEFAULT_TEMPLATES, TASK_KEY_RE, agentAllowed, findModel, resolveChoice, rewriteKeys, sessionChoice, sessionJob, subtaskKey, type AgentModel, type ModelChoice } from './index.ts'
 
 const opus: ModelChoice = { agent: 'claude-code', model: 'opus', effort: null }
 const haiku: ModelChoice = { agent: 'claude-code', model: 'haiku', effort: 'low' }
@@ -60,6 +60,23 @@ test('sessionChoice: a Codex choice on a reviewer session is skipped, so Codex n
   assert.deepEqual(sessionChoice({ agents: { developer: opus } }, { role: 'reviewer', choice: gpt }), opus)
   assert.deepEqual(sessionChoice({ agents: { developer: gpt } }, { role: 'reviewer', choice: gpt }), DEFAULT_CHOICE)
   assert.deepEqual(sessionChoice({ agents: {} }, { role: 'developer', choice: gpt }), gpt)
+})
+
+test('sessionChoice for a pr-review job: Codex is skipped, its own and the role default', () => {
+  const gpt: ModelChoice = { agent: 'codex', model: 'gpt-6-luna', effort: null }
+  assert.deepEqual(sessionChoice({ agents: { chat: opus } }, { role: 'chat', choice: gpt }, 'pr-review'), opus)
+  assert.deepEqual(sessionChoice({ agents: { chat: gpt } }, { role: 'chat', choice: gpt }, 'pr-review'), DEFAULT_CHOICE)
+  assert.deepEqual(sessionChoice({ agents: { chat: gpt } }, { role: 'chat', choice: haiku }, 'pr-review'), haiku)
+  assert.deepEqual(sessionChoice({ agents: { chat: gpt } }, { role: 'chat' }), gpt, 'any other job: as chosen')
+})
+
+test('sessionJob: a review topic (mag\'s, or one that owns or ran a review) is a pr-review; else its role', () => {
+  const review = { type: 'review' as const, parentId: null, ownerSessionId: 'owner', prReview: null }
+  assert.equal(sessionJob({ id: 'x', role: 'chat', reviewOf: 'r1' }, []), 'pr-review')
+  assert.equal(sessionJob({ id: 'owner', role: 'chat' }, [review]), 'pr-review')
+  assert.equal(sessionJob({ id: 'owner', role: 'chat' }, [{ ...review, type: 'dev' }]), 'chat')
+  assert.equal(sessionJob({ id: 'x', role: null }, [review]), 'chat')
+  assert.equal(sessionJob({ id: 'x', role: 'developer' }, [review]), 'developer')
 })
 
 test('findModel matches the id, the alias, or the id without [1m]', () => {

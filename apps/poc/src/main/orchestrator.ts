@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -514,17 +514,21 @@ export class Orchestrator {
   }
 
   /**
-   * What the session runs on: its own choice, else its role's default (sessionChoice). Read on every run, so a change
-   * applies to the next turn.
+   * What the session runs on: its own choice, else its role's default (sessionChoice), never Codex for a review
+   * (sessionJob). Read on every run, so a change applies to the next turn.
    */
   private choice(session: AgentSession): ModelChoice {
-    return sessionChoice(this.store.project(session.projectId), session)
+    return sessionChoice(this.store.project(session.projectId), session, this.job(session))
+  }
+
+  private job(session: AgentSession) {
+    return sessionJob(session, this.store.data.tasks.filter((t) => t.projectId === session.projectId))
   }
 
   /**
    * The session's own agent, model and effort (model-picker-full-model-list.1); null = its role's default again. Applies
-   * from the next turn: a live process between turns is replaced then (see runLive). An agent that may not run the
-   * session's role (Codex on a reviewer) is refused.
+   * from the next turn: a live process between turns is replaced then (see runLive). An agent that may not do the
+   * session's job (Codex on a reviewer or a PR review's topic, see sessionJob) is refused.
    */
   setSessionChoice(sessionId: string, choice: ModelChoice | null) {
     const session = this.store.data.sessions.find((s) => s.id === sessionId)
@@ -533,7 +537,7 @@ export class Orchestrator {
     if (choice) {
       if (!adapters[choice.agent]) throw new Error(`Unknown agent: ${choice.agent}`)
       if (choice.effort != null && !EFFORTS.includes(choice.effort)) throw new Error(`Unknown effort: ${choice.effort}`)
-      const allowed = agentAllowed(runRole(session), choice.agent)
+      const allowed = agentAllowed(this.job(session), choice.agent)
       if (!allowed.ok) throw new Error(allowed.why)
     }
     session.choice = choice ? { agent: choice.agent, model: choice.model || null, effort: choice.effort ?? null } : null
@@ -2380,14 +2384,17 @@ export class Orchestrator {
         case 'subagent.done':
           if (tree) this.endSubagent(session, e.toolUseId, e.ok, e.summary)
           return
-        case 'usage':
+        case 'usage': {
           if (e.contextWindow && e.model) this.windows.set(e.model, e.contextWindow)
+          const was = session.context
           if (e.contextUsed !== undefined) {
             model = e.model ?? model ?? session.activeModel
-            session.context = { used: e.contextUsed, window: this.contextWindow(session.agent, model) ?? session.context?.window ?? null, at }
-          } else if (e.contextWindow && session.context && e.model === (model ?? session.activeModel))
-            session.context = { ...session.context, window: e.contextWindow }
-          return this.store.changed()
+            session.context = { used: e.contextUsed, window: this.contextWindow(session.agent, model) ?? was?.window ?? null, at }
+          } else if (e.contextWindow && was && e.model === (model ?? session.activeModel)) session.context = { ...was, window: e.contextWindow }
+          // The CLI repeats a request's usage on each of its content blocks: an unchanged fill is no store change.
+          if (session.context !== was && (session.context?.used !== was?.used || session.context?.window !== was?.window)) this.store.changed()
+          return
+        }
         case 'context.compacted':
           return push({ kind: 'notice', text: `Context compacted${e.preTokens ? ` (was ≈${Math.round(e.preTokens / 1000)}k tokens)` : ''}`, at })
         case 'turn.done':

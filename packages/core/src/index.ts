@@ -6,7 +6,7 @@ import type { CanvasRole } from './canvases.ts'
 import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
-import { isReview, reviewReadyText, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
+import { isReview, reviewReadyText, reviewTopicIds, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
 import type { SidebarNode } from './sidebar.ts'
@@ -778,12 +778,22 @@ function withEffort(c: ModelChoice): ModelChoice {
 
 /**
  * What a session runs on: its own choice (set in that session), else its role's default (resolveChoice, by runRole).
- * The session's own is skipped when its agent may not run that role (agentAllowed), so Codex never reviews.
+ * `job` (see sessionJob) decides what may run it: an agent agentAllowed refuses is skipped, the session's own and then
+ * the role's default, down to DEFAULT_CHOICE, so Codex never reviews.
  */
-export function sessionChoice(project: Pick<Project, 'agents'>, session: Pick<AgentSession, 'role' | 'choice'>): ModelChoice {
-  const role = runRole(session)
-  if (session.choice && agentAllowed(role, session.choice.agent).ok) return withEffort(session.choice)
-  return resolveChoice(project, role)
+export function sessionChoice(project: Pick<Project, 'agents'>, session: Pick<AgentSession, 'role' | 'choice'>, job: AgentJob = runRole(session)): ModelChoice {
+  if (session.choice && agentAllowed(job, session.choice.agent).ok) return withEffort(session.choice)
+  const c = resolveChoice(project, runRole(session))
+  return agentAllowed(job, c.agent).ok ? c : DEFAULT_CHOICE
+}
+
+/**
+ * The job a session does, for agentAllowed: pr-review for a topic of a teammate's PR review (mag's topic of it, or a
+ * topic that owns one or ran one of its formats, e.g. one that asked review_pr), even after the review; else its role.
+ */
+export function sessionJob(session: Pick<AgentSession, 'id' | 'role' | 'reviewOf'>, tasks: Pick<Task, 'type' | 'parentId' | 'ownerSessionId' | 'prReview'>[]): AgentJob {
+  if (session.reviewOf || tasks.some((t) => isReview(t) && reviewTopicIds(t).includes(session.id))) return 'pr-review'
+  return runRole(session)
 }
 
 /**
@@ -971,8 +981,11 @@ export interface AgentSession {
    * (see sessionChoice). Applies from the next turn.
    */
   choice?: ModelChoice | null
-  /** How full the agent's context was at its last report, in tokens; missing = not reported yet. */
-  context?: SessionContext | null
+  /**
+   * How full the agent's context was at its last report: `used` of `window` tokens (window null = not known), reported
+   * at `at`; missing = not reported yet.
+   */
+  context?: { used: number; window: number | null; at: number } | null
   /** Slash commands and skills the agent reported when its session last started, without the "/". */
   commands?: string[]
   /** A project topic the user closed: its history stays, the list shows it under Done; writing to it reopens it. */
@@ -1000,14 +1013,6 @@ export interface AgentSession {
   createdAt: number
   /** When the current (or last) run started. */
   runStartedAt?: number
-}
-
-/** A session's context fill: `used` of `window` tokens, reported at `at`. */
-export interface SessionContext {
-  used: number
-  /** null = the window is not known (a model outside the catalogue that never reported one). */
-  window: number | null
-  at: number
 }
 
 export type EventKind = 'status' | 'needs_input' | 'check_failed' | 'agent_started' | 'agent_failed' | 'architecture' | 'approval' | 'review' | 'chat'
