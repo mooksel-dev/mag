@@ -102,6 +102,18 @@ export async function dirtyFiles(repo: string): Promise<string[]> {
   return files
 }
 
+/**
+ * A checkout's uncommitted changes to tracked files (`git diff --stat HEAD`) as one line: the total, then the files
+ * ("2 files changed, 3 insertions(+): a.ts, b.ts"); "no changes" when clean. Rejects outside a git checkout.
+ */
+export async function diffStat(repo: string): Promise<string> {
+  const lines = (await run('git', ['diff', '--stat=1000', 'HEAD'], repo)).split('\n').filter((l) => l.trim())
+  const total = lines.pop()?.trim()
+  if (!total) return 'no changes'
+  const files = lines.map((l) => l.split('|')[0].trim())
+  return `${total}: ${files.length > 5 ? `${files.slice(0, 5).join(', ')} +${files.length - 5} more` : files.join(', ')}`
+}
+
 /** The checkout's current branch; empty on a detached HEAD. */
 export async function currentBranch(repo: string): Promise<string> {
   return run('git', ['branch', '--show-current'], repo)

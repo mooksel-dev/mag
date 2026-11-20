@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentEvent } from '@mag/core'
-import { buildArgs, buildLiveArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code.ts'
+import { buildArgs, buildEnv, buildLiveArgs, buildRewindFilesArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code.ts'
 
 test('buildArgs passes --model when set', () => {
   const args = buildArgs({ cwd: '/tmp', prompt: 'hi', model: 'sonnet', resumeId: 'abc' })
@@ -230,4 +232,29 @@ test('parseClaudeLine: replies carry their uuid, echoed user messages theirs; to
   assert.deepEqual(result, [{ type: 'tool.result', id: 't1', ok: true }])
   const sub = parseClaudeLine(JSON.stringify({ type: 'assistant', uuid: 'r2', parent_tool_use_id: 'a1', message: { content: [{ type: 'text', text: 'x' }] } }))
   assert.deepEqual(sub, [{ type: 'message', text: 'x', parentToolUseId: 'a1' }])
+})
+
+test('file checkpoints: runs that keep them get the env; a file rewind resumes the session at a user message (chat-message-actions-rewind-edit.2)', () => {
+  assert.deepEqual(buildEnv({ env: { A: '1' }, fileCheckpoints: true }), { A: '1', CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' })
+  assert.deepEqual(buildEnv({ env: { A: '1' } }), { A: '1' })
+  assert.deepEqual(buildRewindFilesArgs('n1', 'u1'), ['--resume', 'n1', '--rewind-files', 'u1'])
+})
+
+test('rewindFiles: runs the CLI in the session’s cwd with checkpoints on; its error is the reason (chat-message-actions-rewind-edit.2)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-rewind-'))
+  const bin = join(dir, 'claude')
+  // A CLI that records how it ran, and fails like 2.1.319 does for a message without a checkpoint.
+  writeFileSync(bin, `#!/bin/sh\necho "$PWD $CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING $*" > "${join(dir, 'ran')}"\n[ "$4" = bad ] && { echo "Error: No file checkpoint found for this message." >&2; exit 1; }\necho "Files rewound"\n`)
+  chmodSync(bin, 0o755)
+  const was = process.env.MAG_CLAUDE_BIN
+  process.env.MAG_CLAUDE_BIN = bin
+  try {
+    await claudeCode.rewindFiles!(dir, 'n1', 'u1')
+    assert.equal(readFileSync(join(dir, 'ran'), 'utf8').trim().replace(/^\/private/, ''), `${dir.replace(/^\/private/, '')} 1 --resume n1 --rewind-files u1`)
+    await assert.rejects(claudeCode.rewindFiles!(dir, 'n1', 'bad'), { message: 'No file checkpoint found for this message.' })
+    await assert.rejects(claudeCode.rewindFiles!(join(dir, 'gone'), 'n1', 'u1'), /does not exist/)
+  } finally {
+    if (was === undefined) delete process.env.MAG_CLAUDE_BIN
+    else process.env.MAG_CLAUDE_BIN = was
+  }
 })

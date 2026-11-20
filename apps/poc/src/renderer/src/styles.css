@@ -139,6 +139,8 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .umsg .msg.user { max-width: 100%; }
 .msgacts { display: flex; gap: var(--sp-2); padding: 0 4px; visibility: hidden; }
 .umsg:hover .msgacts, .reply:hover .msgacts { visibility: visible; }
+.rewindchoice { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-1); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r); max-width: 420px; text-align: left; }
+.rewindbtns { display: flex; align-items: center; gap: var(--sp-2); }
 .msg.agent { padding: 0; background: none; max-width: none; }
 .agentmsg { display: flex; gap: 10px; }
 .agentmsg.cont { margin-top: calc(-1 * var(--sp-2)); }

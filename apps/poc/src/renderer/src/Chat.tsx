@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, rewindPoint, type RewindMode, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
+import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, filesRestorePoint, rewindPoint, type RewindMode, type RewindScope, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
@@ -379,9 +379,17 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   /** Edit's text for the composer: a new object each edit. */
   const [prefill, setPrefill] = useState<{ text: string } | null>(null)
   const actions = !readOnly && canRewindSession(session)
-  const rewind = (n: number, mode: RewindMode) => {
-    if (mode === 'rewind' && !confirm('Rewind the conversation to this reply? What came after it goes from the chat and from the agent’s context; Undo brings it back until you send.')) return
-    mag.rewind(session.id, n, mode).then((r) => r.text !== undefined && setPrefill({ text: r.text })).catch((e: Error) => alert(e.message))
+  /** Rewind or Edit waiting for what it restores (chat-message-actions-rewind-edit.2). */
+  const [choosing, setChoosing] = useState<{ n: number; mode: 'rewind' | 'edit' } | null>(null)
+  const rewind = (n: number, mode: RewindMode, scope?: RewindScope) => {
+    setChoosing(null)
+    mag.rewind(session.id, n, mode, scope).then((r) => r.text !== undefined && setPrefill({ text: r.text })).catch((e: Error) => alert(e.message))
+  }
+  const choice = (n: number) => {
+    if (choosing?.n !== n) return null
+    const point = filesRestorePoint(session.items, n, choosing.mode)
+    const codeOff = !point ? 'Nothing came after this reply' : !point.nativeId ? 'No code checkpoint for this message (an older message)' : null
+    return <RewindChoice mode={choosing.mode} codeOff={codeOff} busy={busy} onPick={(scope) => rewind(n, choosing.mode, scope)} onCancel={() => setChoosing(null)} />
   }
   const acts = (n: number, text: string): MessageAction[] => {
     const can = (mode: RewindMode) => actions && !!rewindPoint(session, n, mode)
@@ -389,9 +397,9 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
     return [
       { label: 'Copy', title: 'Copy as markdown', always: true, run: () => void navigator.clipboard.writeText(text) },
       ...(item?.kind === 'user'
-        ? can('edit') ? [{ label: 'Edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => rewind(n, 'edit') }] : []
+        ? can('edit') ? [{ label: 'Edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => setChoosing({ n, mode: 'edit' }) }] : []
         : [
-            ...(can('rewind') ? [{ label: 'Rewind here', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => rewind(n, 'rewind') }] : []),
+            ...(can('rewind') ? [{ label: 'Rewind here', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => setChoosing({ n, mode: 'rewind' }) }] : []),
             ...(can('retry') ? [{ label: 'Retry', title: 'Drop this reply and send the message before it again', run: () => rewind(n, 'retry') }] : []),
             ...(can('rewind') ? [{ label: 'Branch from here', title: 'A subtopic with the conversation up to this reply; this topic stays as it is', always: true, run: () => void mag.branchFrom(session.id, n).then((c) => onOpenSession?.(c.id)).catch((e: Error) => alert(e.message)) }] : []),
           ]),
@@ -445,6 +453,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
                     {i.refs && <RefChips refs={i.refs} tasks={tasks ?? []} sessions={sessions} onOpen={onOpenRef} />}
                   </div>
                   {i.text && <MessageActions actions={acts(n, i.text)} busy={busy} />}
+                  {choice(n)}
                 </div>
               )
             case 'assistant': {
@@ -458,6 +467,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
                       <Markdown className="msg agent md" text={i.text} canvases={shown} onOpenTask={onOpenTask} />
                       {meta && <div className="turnmeta">{meta}</div>}
                       <MessageActions actions={acts(n, i.text)} busy={busy} />
+                      {choice(n)}
                     </div>
                   )}
                 </AgentReply>
@@ -521,6 +531,31 @@ function MessageActions({ actions, busy }: { actions: MessageAction[]; busy: boo
         const off = busy && !a.always
         return <button key={a.label} type="button" className="link small" disabled={off} title={off ? 'Stop the agent first' : a.title} onClick={a.run}>{a.label}</button>
       })}
+    </div>
+  )
+}
+
+const SCOPE_LABELS: Record<RewindScope, string> = { conversation: 'Conversation', code: 'Code', both: 'Both' }
+
+const SCOPE_TITLES: Record<RewindScope, string> = { conversation: 'The chat and the agent’s context; the files stay', code: 'Only the files; the chat stays', both: 'The chat and the files' }
+
+/**
+ * What a Rewind or Edit restores: the conversation (the default), the files Claude edited, or both. `codeOff`: why the
+ * files cannot be restored here, if they cannot.
+ */
+function RewindChoice({ mode, codeOff, busy, onPick, onCancel }: { mode: 'rewind' | 'edit'; codeOff: string | null; busy: boolean; onPick: (scope: RewindScope) => void; onCancel: () => void }) {
+  const what = mode === 'rewind' ? 'what came after this reply goes from the chat and the agent’s context' : 'this message and what follows go, its text back to the composer'
+  return (
+    <div className="rewindchoice small">
+      <div>Conversation: {what}; Undo brings it back until you send.</div>
+      <div className="muted">Code: the files go back to before {mode === 'rewind' ? 'the next message' : 'this message'}. Only Claude’s own file edits, not Bash’s or yours; Undo does not bring them back.</div>
+      <div className="rewindbtns">
+        {(['conversation', 'code', 'both'] as const).map((s) => {
+          const off = busy ? 'Stop the agent first' : s !== 'conversation' ? codeOff : null
+          return <button key={s} type="button" className={s === 'conversation' ? 'primary small' : 'small'} autoFocus={s === 'conversation'} disabled={!!off} title={off ?? SCOPE_TITLES[s]} onClick={() => onPick(s)}>{SCOPE_LABELS[s]}</button>
+        })}
+        <button type="button" className="link small" onClick={onCancel}>Cancel</button>
+      </div>
     </div>
   )
 }

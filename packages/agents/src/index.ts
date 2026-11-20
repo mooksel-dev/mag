@@ -36,6 +36,8 @@ export interface RunSpec {
   askTools?: string[]
   addDirs?: string[]
   env?: Record<string, string>
+  /** Keep a checkpoint of the files the agent edits at each user message, for rewindFiles. Claude Code only. */
+  fileCheckpoints?: boolean
   /** Plain completion: no tools and no MCP servers. Codex runs read-only anyway. */
   noTools?: boolean
   /**
@@ -77,6 +79,12 @@ export interface AgentAdapter {
   start(spec: RunSpec, onEvent: (e: AgentEvent) => void): RunHandle
   /** Long-lived session: messages go through `send`, the turn ends at its result. Claude Code only. */
   open?(spec: Omit<RunSpec, 'prompt'>, onEvent: (e: AgentEvent) => void): LiveHandle
+  /**
+   * Restores the files the agent edited in session `nativeSessionId` (run in `cwd`) to their state at user message
+   * `userMessageId`, from the checkpoints of runs with fileCheckpoints; Bash's changes and the user's own are not in them.
+   * Resolves once done; rejects with the CLI's reason (no checkpoint, not a user message). Claude Code only.
+   */
+  rewindFiles?(cwd: string, nativeSessionId: string, userMessageId: string): Promise<void>
 }
 
 export const adapters: Record<AgentKind, AgentAdapter> = {
@@ -84,5 +92,5 @@ export const adapters: Record<AgentKind, AgentAdapter> = {
   codex,
 }
 
-export { buildArgs, buildLiveArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code.ts'
+export { buildArgs, buildEnv, buildLiveArgs, buildRewindFilesArgs, claudeCode, liveParser, parseClaudeLine } from './claude-code.ts'
 export { buildArgs as buildCodexArgs, codex, parseCodexLine } from './codex.ts'
