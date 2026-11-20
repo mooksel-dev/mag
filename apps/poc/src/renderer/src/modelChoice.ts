@@ -17,6 +17,13 @@ export function fillPercent(used: number, window: number | null): number | null 
   return window ? Math.min(100, Math.round((used / window) * 100)) : null
 }
 
+const EFFORT_LABELS: Record<Effort, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max' }
+
+/** "High"; null (the provider's default effort) is "Auto". */
+export function effortLabel(effort: Effort | null): string {
+  return effort ? EFFORT_LABELS[effort] : 'Auto'
+}
+
 /** The efforts a model takes; the provider's default model (null or unknown): any its models take. */
 export function effortsFor(provider: AgentInfo | undefined, model: string | null): Effort[] {
   const m = findModel(provider?.models ?? [], model)
@@ -31,7 +38,7 @@ export function keptEffort(provider: AgentInfo | undefined, model: string | null
 }
 
 /**
- * "Opus 5.5 · high": the model's label (a stored alias shows its model) and the effort when one is set. The provider's
+ * "Opus 5.5 · High": the model's label (a stored alias shows its model) and the effort when one is set. The provider's
  * default model shows what the last run reported, e.g. "Default (Opus 5.5)"; an id the catalogue lacks shows as is.
  */
 export function choiceLabel(agents: AgentInfo[], choice: ModelChoice, activeModel?: string): string {
@@ -44,5 +51,5 @@ export function choiceLabel(agents: AgentInfo[], choice: ModelChoice, activeMode
     const ran = findModel(models, activeModel)?.label
     model = ran ? `Default (${ran})` : `${name} default`
   }
-  return choice.effort ? `${model} · ${choice.effort}` : model
+  return choice.effort ? `${model} · ${effortLabel(choice.effort)}` : model
 }

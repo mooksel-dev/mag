@@ -775,18 +775,19 @@ export function Composer({
 }
 
 /**
- * "Opus 5.5 · high · ▮▮▯ 62%" (model-picker-full-model-list.2): the model and effort a session runs on (its own choice,
+ * "Opus 5.5 · High · ◔ 62%" (model-picker-full-model-list.2): the model and effort a session runs on (its own choice,
  * else its role's project default; see sessionChoice) and how full its context is; the popover sets the session's own
  * choice, from its next turn. A subagent's is a plain label: it runs on its parent's process. Without `session` (a
- * new chat, Home) it shows and sets the project's default for chats. `up`: the popover opens above (in a composer).
+ * new chat, Home) it shows and sets the project's default for chats. The same chip sits on a session's header and in
+ * its composer.
  */
-export function SessionModelChip(props: { project: Project; up?: boolean } & ({ session: AgentSession; tasks: Task[] } | { session?: undefined })) {
-  const { project, up } = props
+export function SessionModelChip(props: { project: Project } & ({ session: AgentSession; tasks: Task[] } | { session?: undefined })) {
+  const { project } = props
   const agents = useAgents()
   if (!props.session) {
     const choice = resolveChoice(project, 'chat')
     return (
-      <ChoiceChip label={choiceLabel(agents, choice)} title="Agent, model and effort of new chats in this project" up={up}>
+      <ChoiceChip label={choiceLabel(agents, choice)} title="Agent, model and effort of new chats in this project">
         <ModelPopover agents={agents} choice={choice} job="chat" onChange={(c) => c && void mag.updateProject(project.id, { agents: { ...project.agents, chat: c } })} />
       </ChoiceChip>
     )
@@ -814,8 +815,8 @@ export function SessionModelChip(props: { project: Project; up?: boolean } & ({ 
   )
   const set = (c: ModelChoice | null) => void mag.setSessionChoice(session.id, c).catch((e: Error) => alert(e.message))
   return (
-    <ChoiceChip label={label} title={title} up={up}>
-      {!isSubagent(session) && <ModelPopover agents={agents} choice={own} fallback={fallback} job={job} onChange={set} />}
+    <ChoiceChip label={label} title={title}>
+      {!isSubagent(session) && <ModelPopover agents={agents} choice={own} fallback={fallback} job={job} context={session.context && { used: session.context.used, window }} onChange={set} />}
     </ChoiceChip>
   )
 }

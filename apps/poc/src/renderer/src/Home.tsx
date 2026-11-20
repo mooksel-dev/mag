@@ -123,7 +123,7 @@ export function HomeScreen({ project, state, group, onSelect, onCreated }: {
             placeholder="Ask anything, describe a task, or paste a PR / ticket link…"
             commands={chatCommands({ projectId: project.id, agent: resolveChoice(project, 'chat').agent }, state.sessions)}
             onSend={send}
-            chip={<SessionModelChip project={project} up />}
+            chip={<SessionModelChip project={project} />}
             intent={intent}
             onFiles={onFiles}
             autoFocus

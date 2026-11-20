@@ -123,6 +123,8 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
     else onDeleted()
   }
   const refsFrom = topic && { tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
+  // The same chip on the header and in the composer (mockup canvas:08554ac6).
+  const chip = project && chat ? <SessionModelChip project={project} session={chat} tasks={tasks} /> : undefined
   const parent = topic?.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
   const subject = topic ? null : work!
   const menu: MenuCard = review ? workMenuCard(review) : topic ? { kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt } : workMenuCard(subject!)
@@ -136,7 +138,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
             {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
-            {project && chat && <SessionModelChip project={project} session={chat} tasks={tasks} />}
+            {chip}
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
             {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
             {hasPanel && (
@@ -156,7 +158,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
             {chat && (chat.items.length || !topic) ? (
-              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
+              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} chip={chip} readOnly={!!topic && isSubagent(topic)} />
             ) : topic ? (
               <div className="chatbox">
                 <div className="items">
@@ -168,7 +170,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
                   </p>
                   {cards}
                 </div>
-                <Composer busy={false} placeholder="Reply…" draftKey={topic.id} commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} refsFrom={refsFrom!} />
+                <Composer busy={false} placeholder="Reply…" draftKey={topic.id} commands={chatCommands(topic, state.sessions)} onSend={(t: string, a: Attachment[], r: ChatRef[]) => mag.send(topic.id, t, a, r)} chip={chip} refsFrom={refsFrom!} />
               </div>
             ) : (
               <div className="chatbox">

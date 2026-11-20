@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentInfo } from '@mag/core'
-import { choiceLabel, effortsFor, fillPercent, formatTokens, gaugeLevel, keptEffort } from './modelChoice.ts'
+import { choiceLabel, effortLabel, effortsFor, fillPercent, formatTokens, gaugeLevel, keptEffort } from './modelChoice.ts'
 
 const claude: AgentInfo = {
   id: 'claude-code',
@@ -61,10 +61,16 @@ test('keptEffort: kept when the new model takes it, else the default', () => {
 })
 
 test('choiceLabel: model label (an alias shows its model), the effort when set; the default names the last run', () => {
-  assert.equal(choiceLabel(agents, { agent: 'claude-code', model: 'claude-opus-5-5', effort: 'high' }), 'Opus 5.5 · high')
+  assert.equal(choiceLabel(agents, { agent: 'claude-code', model: 'claude-opus-5-5', effort: 'high' }), 'Opus 5.5 · High')
   assert.equal(choiceLabel(agents, { agent: 'claude-code', model: 'opus', effort: null }), 'Opus 5.5')
   assert.equal(choiceLabel(agents, { agent: 'claude-code', model: null, effort: null }, 'claude-haiku-5-5'), 'Default (Haiku 5.5)')
-  assert.equal(choiceLabel(agents, { agent: 'claude-code', model: null, effort: 'low' }), 'Claude Code default · low')
+  assert.equal(choiceLabel(agents, { agent: 'claude-code', model: null, effort: 'low' }), 'Claude Code default · Low')
   assert.equal(choiceLabel(agents, { agent: 'codex', model: 'gpt-legacy', effort: null }), 'gpt-legacy')
   assert.equal(choiceLabel([], { agent: 'codex', model: null, effort: null }), 'codex default')
+})
+
+test('effortLabel: capitalised; no effort is Auto', () => {
+  assert.equal(effortLabel(null), 'Auto')
+  assert.equal(effortLabel('xhigh'), 'XHigh')
+  assert.equal(effortLabel('max'), 'Max')
 })
