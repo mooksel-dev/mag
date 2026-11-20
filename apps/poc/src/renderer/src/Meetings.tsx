@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { taskByKey, type Project } from '@mag/core'
-import type { Meeting, MeetingContent, MeetingLink } from '../../main/core/services/meetings/types.ts'
+import type { Meeting, MeetingContent, MeetingHit, MeetingLink } from '../../main/core/services/meetings/types.ts'
 import type { AppState, MeetingStatus } from '../../preload/api'
 import { Markdown } from './Chat'
-import { linkKey, meetingWhen, transcriptLines } from './meetingText'
+import { linkKey, meetingWhen, snippetParts, transcriptLines } from './meetingText'
 import { Recorder, useMeetingStatus } from './Recorder'
 import type { Selection } from './WorkList'
 
@@ -22,9 +22,32 @@ export function useMeetings(): Meeting[] | null {
   return list
 }
 
-/** Workspace-wide, on top of every project's sidebar: Record, then the meetings, newest first. */
-export function MeetingsSection({ selectedId, onOpen }: { selectedId: string | null; onOpen: (id: string) => void }) {
+/** Search as the user types, a little after; null while the box is empty. */
+function useMeetingSearch(q: string): MeetingHit[] | null {
+  const [hits, setHits] = useState<MeetingHit[] | null>(null)
+  const [version, setVersion] = useState(0)
+  useEffect(() => mag.onMeetingsChanged(() => setVersion((v) => v + 1)), [])
+  useEffect(() => {
+    if (!q.trim()) return setHits(null)
+    let live = true
+    const t = setTimeout(() => void mag.searchMeetings(q).then((h) => live && setHits(h), () => live && setHits([])), 150)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [q, version])
+  return hits
+}
+
+function Snippet({ text }: { text: string }) {
+  return <>{snippetParts(text).map((p, i) => (p.hit ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>))}</>
+}
+
+/** Workspace-wide, on top of every project's sidebar: Record, search, then the meetings, newest first. */
+export function MeetingsSection({ selectedId, onOpen }: { selectedId: string | null; onOpen: (id: string, at?: string) => void }) {
   const meetings = useMeetings()
+  const [q, setQ] = useState('')
+  const hits = useMeetingSearch(q)
   const status = useMeetingStatus()
   const [open, setOpen] = useState(() => localStorage.getItem('mag.meetings.open') !== '0')
   const [all, setAll] = useState(false)
@@ -39,7 +62,21 @@ export function MeetingsSection({ selectedId, onOpen }: { selectedId: string | n
         <button className="wlfold" aria-expanded={open} onClick={toggle}>{open ? '▾' : '▸'} Meetings{meetings?.length ? ` · ${meetings.length}` : ''}</button>
       </div>
       <Recorder />
-      {open && (
+      {open && !!meetings?.length && (
+        <input className="mtgsearch" type="search" value={q} placeholder="Search meetings" aria-label="Search meetings" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setQ('')} />
+      )}
+      {open && hits && (
+        <div className="mtglist" role="list" aria-label="Search results">
+          {!hits.length && <p className="muted small pad">Nothing matches.</p>}
+          {hits.map((h, i) => (
+            <button key={`${h.meetingId}:${h.part}:${h.at}:${i}`} role="listitem" className="mtghit" onClick={() => onOpen(h.meetingId, h.at ?? undefined)}>
+              <span className="mtgtop"><span className="mtgtitle">{h.title}</span><span className="wltime">{h.at ?? 'summary'} · {meetingWhen(h)}</span></span>
+              <span className="mtgsnip"><Snippet text={h.snippet} /></span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && !hits && (
         <div className="mtglist">
           {meetings && !meetings.length && <p className="muted small pad">No meetings yet. Record a call: mic and system audio, transcribed on this Mac.</p>}
           {shown.map((m) => (
@@ -72,8 +109,10 @@ function linkLabel(state: AppState, l: MeetingLink): string {
 }
 
 /** One meeting: summary on top, transcript below; rename, links, Show in Finder, summarize again, delete. */
-export function MeetingView({ id, state, project, onClose, onSelect }: {
+export function MeetingView({ id, at, state, project, onClose, onSelect }: {
   id: string
+  /** hh:mm:ss of a transcript line to show, from a search hit. */
+  at?: string
   state: AppState
   project: Project
   onClose: () => void
@@ -88,6 +127,9 @@ export function MeetingView({ id, state, project, onClose, onSelect }: {
     load()
     return mag.onMeetingsChanged(load)
   }, [id])
+  useEffect(() => {
+    if (content && at) document.getElementById(`line-${at}`)?.scrollIntoView({ block: 'center' })
+  }, [content !== null, at]) // eslint-disable-line react-hooks/exhaustive-deps
   const act = (f: () => Promise<unknown>) => void f().catch((e: Error) => setError(e.message))
   if (error && !content) return <main className="pagewrap"><div className="pagehead"><span>Meeting</span><div className="grow" /><button className="small" onClick={onClose}>✕ Close</button></div><p className="err pad">{error}</p></main>
   if (!content) return null
@@ -148,7 +190,7 @@ export function MeetingView({ id, state, project, onClose, onSelect }: {
         {lines.length ? (
           <div className="transcript">
             {lines.map((l, i) => (
-              <p key={i} id={`line-${l.at}`} className={`tline ${l.speaker}`}><span className="tat">{l.at}</span><span className="tspk">{l.speaker}</span><span>{l.text}</span></p>
+              <p key={i} id={i === lines.findIndex((x) => x.at === l.at) ? `line-${l.at}` : undefined} className={`tline ${l.speaker}${l.at === at ? ' hit' : ''}`}><span className="tat">{l.at}</span><span className="tspk">{l.speaker}</span><span>{l.text}</span></p>
             ))}
           </div>
         ) : (

@@ -1,6 +1,6 @@
 // Meetings on disk, one visible folder each: <root>/YYYY/MM/<YYYY-MM-DD-HHMM-slug>/ with transcript.md, summary.md and
 // meta.json. The folders are the record; deleting one deletes the meeting.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingContent, MeetingMeta, TranscriptLine } from './types.ts'
 
@@ -25,6 +25,8 @@ export interface MeetingFiles {
   remove(id: string): void
   /** The folder of a meeting id (whether it exists or not). */
   dirOf(id: string): string
+  /** When any of its files last changed, whole ms; 0 when there are none. */
+  changedAt(id: string): number
 }
 
 export const NOTICE = '> Recorded and transcribed locally by mag; no audio is kept. Make sure everyone on the call and your workplace allow transcripts.'
@@ -129,6 +131,10 @@ export function createMeetingFiles(root: () => string): MeetingFiles {
     },
     remove(id) {
       rmSync(existing(id), { recursive: true, force: true })
+    },
+    changedAt(id) {
+      const dir = dirOf(id)
+      return Math.floor(Math.max(0, ...['meta.json', 'transcript.md', 'summary.md'].map((f) => statSync(join(dir, f), { throwIfNoEntry: false })?.mtimeMs ?? 0)))
     },
   }
 }

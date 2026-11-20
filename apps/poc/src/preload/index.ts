@@ -141,6 +141,7 @@ const api: MagApi = {
   renameMeeting: (id, title) => ipcRenderer.invoke('meetings:rename', id, title),
   linkMeeting: (id, ref) => ipcRenderer.invoke('meetings:link', id, ref),
   unlinkMeeting: (id, ref) => ipcRenderer.invoke('meetings:unlink', id, ref),
+  searchMeetings: (q, filters) => ipcRenderer.invoke('meetings:search', q, filters),
   summarizeMeeting: (id) => ipcRenderer.invoke('meetings:summarize', id),
   revealMeeting: (id) => ipcRenderer.invoke('meetings:reveal', id),
   chooseMeetingsRoot: () => ipcRenderer.invoke('meetings:chooseRoot'),

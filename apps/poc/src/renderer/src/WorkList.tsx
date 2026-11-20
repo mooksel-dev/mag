@@ -112,7 +112,8 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   onOpenPage: (p: ListPage) => void
   /** The meeting open in place of the conversation. */
   meetingId: string | null
-  onOpenMeeting: (id: string) => void
+  /** `at`: hh:mm:ss of a transcript line a search hit points at. */
+  onOpenMeeting: (id: string, at?: string) => void
 }) {
   const now = useNow(15_000)
   const tasks = state.tasks.filter((t) => t.projectId === project.id)

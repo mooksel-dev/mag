@@ -51,6 +51,7 @@ export function App({ projectId }: { projectId: string }) {
   const [page, setPage] = useState<Page | null>(null)
   // A meeting is workspace-wide; it opens in this window in place of the conversation.
   const [meetingId, setMeetingId] = useState<string | null>(null)
+  const [meetingAt, setMeetingAt] = useState<string | undefined>(undefined)
   const [picker, setPicker] = useState<PickerMode | null>(null)
   // The open work or topic, per project.
   const selKey = `mag.selected.${projectId}`
@@ -134,9 +135,10 @@ export function App({ projectId }: { projectId: string }) {
     setMeetingId(null)
     setPage(p)
   }
-  const openMeeting = (id: string) => {
+  const openMeeting = (id: string, at?: string) => {
     setPage(null)
     setMeetingId(id)
+    setMeetingAt(at)
   }
   const screen = meetingId ? 'Meeting' : page ? PAGE_NAMES[page] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
 
@@ -156,7 +158,7 @@ export function App({ projectId }: { projectId: string }) {
         <PaneHandle side="left" onResize={leftPane.set} />
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {meetingId ? (
-            <MeetingView key={meetingId} id={meetingId} state={state} project={project} onClose={() => setMeetingId(null)} onSelect={select} />
+            <MeetingView key={meetingId} id={meetingId} at={meetingAt} state={state} project={project} onClose={() => setMeetingId(null)} onSelect={select} />
           ) : page ? (
             <main className="pagewrap">
               <div className="pagehead">

@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { Meeting, MeetingContent, MeetingLink, Recording } from '../main/core/services/meetings/types.ts'
+import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -324,6 +324,8 @@ export interface MagApi {
   renameMeeting(id: string, title: string): Promise<Meeting>
   linkMeeting(id: string, ref: MeetingLink): Promise<Meeting>
   unlinkMeeting(id: string, ref: MeetingLink): Promise<Meeting>
+  /** Ranked lines of meetings matching every word of `q`. */
+  searchMeetings(q: string, filters?: SearchFilters): Promise<MeetingHit[]>
   /** Writes summary.md again. */
   summarizeMeeting(id: string): Promise<void>
   /** The meeting's folder in Finder; without an id, the storage root. */

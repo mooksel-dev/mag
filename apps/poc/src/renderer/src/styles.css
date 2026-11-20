@@ -777,6 +777,12 @@ body.resizing iframe { pointer-events: none; }
 .mtgrename input { font: inherit; }
 .mtglinks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0; }
 .mtglinks .pill { display: inline-flex; gap: 4px; }
+.mtgsearch { margin: 0 4px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+.mtghit { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 4px 10px; border: none; border-radius: var(--r); background: none; font-weight: 400; text-align: left; }
+.mtghit:hover { background: var(--hover); }
+.mtgtop { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.mtgsnip { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+.mtgsnip mark { background: none; color: var(--text); font-weight: 600; }
 .transcript { display: flex; flex-direction: column; gap: 2px; }
 .tline { display: grid; grid-template-columns: 70px 52px 1fr; gap: var(--sp-2); margin: 0; padding: 2px 4px; border-radius: var(--r); }
 .tline.hit { background: var(--hover); outline: 1px solid var(--accent); }

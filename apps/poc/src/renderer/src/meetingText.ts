@@ -26,3 +26,8 @@ export function meetingWhen(m: Pick<Meeting, 'startedAt' | 'endedAt'>, locale?: 
 }
 
 export const linkKey = (l: MeetingLink) => `${l.projectId}:${l.topicId ?? ''}:${l.workKey ?? ''}`
+
+/** A search snippet's text, its matched words (between \u0002 and \u0003) apart. */
+export function snippetParts(snippet: string): { text: string; hit: boolean }[] {
+  return snippet.split(/(\u0002[^\u0003]*\u0003)/).filter(Boolean).map((p) => (p.startsWith('\u0002') ? { text: p.slice(1, -1), hit: true } : { text: p, hit: false }))
+}

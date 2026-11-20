@@ -10,6 +10,8 @@ import { log } from './log.ts'
 import { planCheck } from './plan-check.ts'
 import { changes as factChanges, draftListing, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepFact, stepSet } from './fact.ts'
+import type { Meetings } from './core/services/meetings/index.ts'
+import { meetingTool } from './meeting-tools.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -85,6 +87,8 @@ export interface ToolActions {
   restore(kind: 'work' | 'topic', id: string): void
   /** The failed CI checks of a PR, by name (with link), for mag's review floor; without it, CI sets no floor. */
   failedChecks?(url: string): Promise<string[]>
+  /** The user's meetings, workspace-wide (search_meetings, read_meeting); set once they are started. */
+  meetings?: Pick<Meetings, 'search' | 'read'>
 }
 
 /**
@@ -916,6 +920,10 @@ function sharedTool(
         2,
       )
     }
+
+    case 'search_meetings':
+    case 'read_meeting':
+      return meetingTool(actions.meetings, name, args)
 
     case 'read_chat': {
       const id = String(args.id ?? '').trim()
