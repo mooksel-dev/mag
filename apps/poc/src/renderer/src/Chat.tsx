@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
+import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, rewindPoint, type RewindMode, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
@@ -347,8 +347,9 @@ const AGENT_NAMES: Record<string, string> = { chat: 'agent', groomer: 'owner', d
  * `cards`: what the work needs from the user, after the last item. `name`: over the agent's replies (default by role).
  * `tasks`: the project's; with them the composer references chats ("@") and a bubble's ref chips open with `onOpenRef`.
  * `self`: the chat this is, which it does not reference. `canvases`: the app's; its messages show the project's ones they link.
+ * `onOpenSession`: opens a subtopic made by Branch from here.
  */
-export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self }: {
+export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self, onOpenSession }: {
   session: AgentSession
   sessions: AgentSession[]
   canvases: Pick<Canvas, 'id' | 'title' | 'version' | 'projectId'>[]
@@ -361,8 +362,30 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   tasks?: Task[]
   onOpenRef?: (ref: ChatRef) => void
   self?: ChatRef
+  onOpenSession?: (id: string) => void
 }) {
   const busy = session.status === 'running'
+  /** Edit's text for the composer: a new object each edit. */
+  const [prefill, setPrefill] = useState<{ text: string } | null>(null)
+  const actions = !readOnly && canRewindSession(session)
+  const rewind = (n: number, mode: RewindMode) => {
+    if (mode === 'rewind' && !confirm('Rewind the conversation to this reply? What came after it goes from the chat and from the agent’s context; Undo brings it back until you send.')) return
+    mag.rewind(session.id, n, mode).then((r) => r.text !== undefined && setPrefill({ text: r.text })).catch((e: Error) => alert(e.message))
+  }
+  const acts = (n: number, text: string): MessageAction[] => {
+    const can = (mode: RewindMode) => actions && !!rewindPoint(session, n, mode)
+    const item = session.items[n]
+    return [
+      { label: 'Copy', title: 'Copy as markdown', always: true, run: () => void navigator.clipboard.writeText(text) },
+      ...(item?.kind === 'user'
+        ? can('edit') ? [{ label: 'Edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => rewind(n, 'edit') }] : []
+        : [
+            ...(can('rewind') ? [{ label: 'Rewind here', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => rewind(n, 'rewind') }] : []),
+            ...(can('retry') ? [{ label: 'Retry', title: 'Drop this reply and send the message before it again', run: () => rewind(n, 'retry') }] : []),
+            ...(can('rewind') ? [{ label: 'Branch from here', title: 'A subtopic with the conversation up to this reply; this topic stays as it is', always: true, run: () => void mag.branchFrom(session.id, n).then((c) => onOpenSession?.(c.id)).catch((e: Error) => alert(e.message)) }] : []),
+          ]),
+    ]
+  }
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [session.items.length, busy])
   // Only the last mention of a canvas renders it; earlier ones point forward.
@@ -404,10 +427,13 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
           switch (i.kind) {
             case 'user':
               return (
-                <div key={n} className="msg user">
-                  {i.text && <div className="plain">{i.text}</div>}
-                  {i.attachments && <Attachments items={i.attachments} />}
-                  {i.refs && <RefChips refs={i.refs} tasks={tasks ?? []} sessions={sessions} onOpen={onOpenRef} />}
+                <div key={n} className="umsg">
+                  <div className="msg user">
+                    {i.text && <div className="plain">{i.text}</div>}
+                    {i.attachments && <Attachments items={i.attachments} />}
+                    {i.refs && <RefChips refs={i.refs} tasks={tasks ?? []} sessions={sessions} onOpen={onOpenRef} />}
+                  </div>
+                  {i.text && <MessageActions actions={acts(n, i.text)} busy={busy} />}
                 </div>
               )
             case 'assistant': {
@@ -420,6 +446,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
                     <div className="reply">
                       <Markdown className="msg agent md" text={i.text} canvases={shown} onOpenTask={onOpenTask} />
                       {meta && <div className="turnmeta">{meta}</div>}
+                      <MessageActions actions={acts(n, i.text)} busy={busy} />
                     </div>
                   )}
                 </AgentReply>
@@ -441,6 +468,11 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}
+        {session.rewound && !readOnly && (
+          <div className="muted small rewound">
+            Rewound · <button type="button" className="link small" disabled={busy} title={busy ? 'Stop the agent first' : 'Bring back what the rewind dropped'} onClick={() => void mag.undoRewind(session.id).catch((e: Error) => alert(e.message))}>Undo</button>
+          </div>
+        )}
         {cards}
         <div ref={end} />
       </div>
@@ -451,6 +483,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
         placeholder={placeholder ?? 'Answer, push back, ask why…'}
         commands={chatCommands(session, sessions)}
         draftKey={session.id}
+        prefill={prefill}
         onSend={(text, att, refs) => mag.send(session.id, text, att, refs)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
@@ -458,6 +491,26 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
       />}
     </div>
     </CommandRunner.Provider>
+  )
+}
+
+interface MessageAction {
+  label: string
+  title: string
+  /** Works while the agent works too (Copy, Branch from here); the rest wait for its turn to end. */
+  always?: boolean
+  run: () => void
+}
+
+/** A message's actions, shown on hover (chat-message-actions-rewind-edit.1). */
+function MessageActions({ actions, busy }: { actions: MessageAction[]; busy: boolean }) {
+  return (
+    <div className="msgacts">
+      {actions.map((a) => {
+        const off = busy && !a.always
+        return <button key={a.label} type="button" className="link small" disabled={off} title={off ? 'Stop the agent first' : a.title} onClick={a.run}>{a.label}</button>
+      })}
+    </div>
   )
 }
 
@@ -649,7 +702,10 @@ export function Composer({
   autoFocus,
   refsFrom,
   draftKey,
+  prefill,
 }: {
+  /** Text put into the field (an edited message's); a new object puts it again. */
+  prefill?: { text: string } | null
   /** Where its unsent text is kept (a chat's id): it is there again when the user comes back, until it is sent. */
   draftKey?: string
   busy: boolean
@@ -696,6 +752,9 @@ export function Composer({
   const picker = useRef<HTMLInputElement>(null)
   const ta = useRef<RichInputHandle>(null)
   const menu = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (prefill) ta.current?.setMarkdown(prefill.text)
+  }, [prefill])
 
   // "/" + a name being typed (no space yet) opens the menu, filtered by prefix. A command is sent as typed.
   const isCommand = commands.length > 0 && plain.startsWith('/')

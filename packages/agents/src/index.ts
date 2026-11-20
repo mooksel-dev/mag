@@ -9,6 +9,8 @@ export interface RunSpec {
   resumeId?: string
   /** With resumeId: continue in a new session that starts as a copy of it; the original stays as it was. Claude Code only. */
   forkSession?: boolean
+  /** With forkSession: the fork keeps the conversation up to this message (uuid) only (`--resume-session-at`). */
+  resumeAt?: string
   /** Provider model id or alias; omitted = the provider's default. */
   model?: string
   /** How hard the model thinks; omitted = the provider's default. Codex has no max: it runs at xhigh. */

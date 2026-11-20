@@ -135,6 +135,10 @@ form.ticketlink input { width: 320px; padding: 3px 8px; font-size: 12px; }
 .msg { padding: var(--sp-2) var(--sp-3); border-radius: var(--r); white-space: pre-wrap; max-width: 92%; }
 /* The conversation (redesign-start-screen-big-composer.4): the user's bubbles, the agent's text under a small name. */
 .msg.user { align-self: flex-end; max-width: 78%; padding: 9px 13px; border-radius: var(--r-xl) var(--r-xl) var(--sp-1) var(--r-xl); background: var(--soft); }
+.umsg { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; max-width: 78%; }
+.umsg .msg.user { max-width: 100%; }
+.msgacts { display: flex; gap: var(--sp-2); padding: 0 4px; visibility: hidden; }
+.umsg:hover .msgacts, .reply:hover .msgacts { visibility: visible; }
 .msg.agent { padding: 0; background: none; max-width: none; }
 .agentmsg { display: flex; gap: 10px; }
 .agentmsg.cont { margin-top: calc(-1 * var(--sp-2)); }
