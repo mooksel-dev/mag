@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, lastReplyId, rewindBase, rewindPoint, type RewindMode, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, lastReplyId, rewindBase, rewindPoint, type RewindMode, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -859,6 +859,7 @@ export class Orchestrator {
     const ready = canApprove(task, this.store.data.tasks.filter((t) => t.projectId === task.projectId))
     if (!ready.ok) throw new Error(`${task.key} cannot be approved: ${ready.reason}`)
     this.store.updateTask(taskId, { status: 'ready', needsInput: null })
+    this.ownerEvent(taskId, `${task.key}: the user approved the plan`)
   }
 
   /** The user's Approve & Start (the button, or start_work on a work in planning): approve, then Start. */
@@ -990,12 +991,13 @@ export class Orchestrator {
 
   /**
    * A notice line about the work in its owner's conversation (ux-odna-rozmova-na-robotu.1): what happened, without a
-   * turn of the agent. `taskId`: the work or one of its steps. Nothing without an owner.
+   * turn of the agent; the agent gets it with the next message (eventsSinceTurn). `taskId`: the work or one of its steps.
+   * Nothing without an owner.
    */
   ownerEvent(taskId: string, text: string) {
     const t = this.store.task(taskId)
     const owner = this.ownerSession(t.parentId ? this.store.task(t.parentId) : t)
-    if (owner) this.store.pushItem(owner.id, { kind: 'notice', text, at: Date.now() })
+    if (owner) this.store.pushItem(owner.id, { kind: 'notice', text, at: Date.now(), forAgent: true })
   }
 
   /** The owner's answer to its step developer's question: the developer's session goes on with it. */
@@ -1980,6 +1982,8 @@ export class Orchestrator {
     refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
     // What the user wrote in a turn stopped before any reply: the CLI dropped it, so it goes first now.
     const unheard = job ? [] : unheardBeforeStop(session.items)
+    // What happened to its works since its last turn: the user's buttons, steps, PRs.
+    const events = eventsSinceTurn(session.items)
     // A rewind is undone only until the conversation goes on.
     session.rewound = null
     const item: ChatItem = job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() }
@@ -1992,7 +1996,7 @@ export class Orchestrator {
     let prompt = attachments.length && !command
       ? `${text}\n\nAttached files (open them with Read):\n${attachments.map((a) => `- ${a.path}`).join('\n')}`
       : text
-    if (!command) prompt = withUnheard(prompt, unheard)
+    if (!command) prompt = withEvents(withUnheard(prompt, unheard), events)
     if (refs.length && !command) {
       this.store.changed()
       this.preparing.add(sessionId)

@@ -2609,7 +2609,7 @@ test('fixPr: a failed CI goes back to the developer twice, then to the owner; cl
     await tick()
     assert.equal(live.sent.length, sent)
     const owner = opened.at(-1)!
-    assert.match(owner.sent.at(-1)!, /^mag could not settle this on its own for login\.1 \("s"\): its PR CI fails after 2 automatic fixes by its developer:\n- b: test\n[\s\S]*answer_developer\(step: "login\.1", text\)/)
+    assert.match(owner.sent.at(-1)!, /^Since your last turn in mag:\n- login\.1: CI fails, the developer fixes it \(try 1\/2\)\n[\s\S]*\n\nmag could not settle this on its own for login\.1 \("s"\): its PR CI fails after 2 automatic fixes by its developer:\n- b: test\n[\s\S]*answer_developer\(step: "login\.1", text\)/)
     assert.equal(store.task(step.id).ownerQuestionFrom, 'mag')
     assert.equal(orch.fixPr(step.id, 'ci', '- b: test'), false, 'the owner has it')
     assert.deepEqual(notices(store, groomer.id), [

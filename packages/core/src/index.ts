@@ -906,7 +906,8 @@ export type ChatItem =
   | { kind: 'result'; ok: boolean; costUsd?: number; at: number }
   | { kind: 'error'; text: string; at: number }
   /** Service line from mag itself, e.g. "context compacted". */
-  | { kind: 'notice'; text: string; at: number }
+  /** forAgent: an event of a work the conversation owns, which its agent gets with the next message (see eventsSinceTurn). */
+  | { kind: 'notice'; text: string; at: number; forAgent?: boolean }
   /**
    * A tool call waiting for (or answered by) the user: an integration's in ask mode (`server` its name), or a Bash call
    * that matched an ask rule (chat-publishes-to-github-prs.2: a GitHub write; no `server`, `input.command` the command).
@@ -1739,4 +1740,24 @@ export function withUnheard(prompt: string, unheard: string[]): string {
   if (!unheard.length) return prompt
   const quoted = unheard.map((t) => t.split('\n').map((l) => `> ${l}`).join('\n')).join('\n>\n')
   return `Before you were stopped I wrote this, and it may not have reached you:\n${quoted}\n\n${prompt}`
+}
+
+/**
+ * What happened to the works a conversation owns since its agent's last turn (the user's Approve, a step started, a PR
+ * ready, a step done): the notices for it after its last result. Its agent never sees notices, so the next message
+ * carries them.
+ */
+export function eventsSinceTurn(items: ChatItem[]): string[] {
+  const out: string[] = []
+  for (let n = items.length - 1; n >= 0; n--) {
+    const i = items[n]
+    if (i.kind === 'result') break
+    if (i.kind === 'notice' && i.forAgent) out.unshift(i.text)
+  }
+  return out
+}
+
+/** The next prompt with the events of its works first (see eventsSinceTurn). */
+export function withEvents(prompt: string, events: string[]): string {
+  return events.length ? `Since your last turn in mag:\n${events.map((e) => `- ${e}`).join('\n')}\n\n${prompt}` : prompt
 }
