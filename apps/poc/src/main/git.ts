@@ -209,6 +209,7 @@ export interface PrInfo {
   repo: string
   base: string
   head: string
+  draft: boolean
   additions: number
   deletions: number
   changedFiles: number
@@ -216,9 +217,9 @@ export interface PrInfo {
 
 /** The PR a link names, from GitHub. */
 export async function prInfo(url: string): Promise<PrInfo> {
-  const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,author,state,baseRefName,headRefOid,additions,deletions,changedFiles']))
+  const v = JSON.parse(await run('gh', ['pr', 'view', url, '--json', 'url,number,title,author,state,isDraft,baseRefName,headRefOid,additions,deletions,changedFiles']))
   const repo = String(v.url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//i)?.[1]?.toLowerCase() ?? ''
-  return { url: v.url, number: v.number, title: v.title, author: v.author?.login ?? '?', state: v.state, repo, base: v.baseRefName, head: v.headRefOid, additions: v.additions ?? 0, deletions: v.deletions ?? 0, changedFiles: v.changedFiles ?? 0 }
+  return { url: v.url, number: v.number, title: v.title, author: v.author?.login ?? '?', state: v.state, repo, base: v.baseRefName, head: v.headRefOid, draft: !!v.isDraft, additions: v.additions ?? 0, deletions: v.deletions ?? 0, changedFiles: v.changedFiles ?? 0 }
 }
 
 /** A PR as a review's archive keeps it (review-v2-part-2-v1-2.3): title, body, files, commits and checks, from GitHub. */

@@ -31,6 +31,7 @@ import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ReportView } from './ReportView'
+import { paneShowsFact } from './reviewWindowModel'
 import { ImportedBanner } from './ReviewExport'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
@@ -237,10 +238,12 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
             {r.problem && <Markdown text={r.problem} onOpenTask={onOpenKey} />}
             {r.approach && <Markdown text={r.approach} onOpenTask={onOpenKey} />}
           </details>
-          <details className="reportfold">
-            <summary>Inventory and fact diagrams</summary>
-            {diffSection}
-          </details>
+          {paneShowsFact(r.report) && (
+            <details className="reportfold">
+              <summary>Inventory and fact diagrams</summary>
+              {diffSection}
+            </details>
+          )}
         </ReportView>
       ) : (
         <LegacyReviewView review={r} onOpenKey={onOpenKey} diff={diffSection} findings={findingsSection} />

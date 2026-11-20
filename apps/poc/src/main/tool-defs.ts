@@ -330,9 +330,18 @@ const REPORT = {
       type: 'string',
       enum: ['approve', 'approve_with_comments', 'look', 'request_changes'],
       description:
-        'approve: you would merge it yourself, no issues of your own; approve_with_comments: mergeable, its issues are should, nit or note; look: the user must decide something first (an issue they or the PO own); request_changes: a blocker or should issue must be fixed first. Never approve with a blocker. mag keeps its own floor where it has the facts: a plan deviation or an incomplete fact makes it look at least, a failed CI check or architecture rule request_changes; it attaches those blockers itself, so they need no issue of yours.',
+        'approve: you would merge it yourself, no issues of your own; approve_with_comments: mergeable, its issues are should, nit or note; look: the user must decide something first (an issue they or the PO own); request_changes: a blocker or should issue must be fixed first. Never approve with a blocker. mag keeps its own floor where it has the facts: a failed CI check or architecture rule makes it request_changes; it attaches those blockers itself, so they need no issue of yours. Plan ↔ fact is no floor: the user reads it as one line.',
     },
     why: { type: 'string', description: 'One line on why this verdict.' },
+    delta: {
+      type: 'array',
+      description: "A re-review only, required there: the table against the previous round the user reads first. Each issue of the previous round once, fixed or open; each issue of this report once, open or new. mag counts them against both rounds' issues.",
+      items: {
+        type: 'object',
+        required: ['title', 'status'],
+        properties: { title: { type: 'string', description: "The issue's title as its round gave it." }, status: { type: 'string', enum: ['fixed', 'open', 'new'] } },
+      },
+    },
     issues: {
       type: 'array',
       description: 'Only what is wrong, each problem exactly once, ranked by impact (the user reads the first 5; the rest fold). No list of what passes. None is a fine answer.',
@@ -685,6 +694,7 @@ export const TOOL_DEFS = [
       properties: {
         url: { type: 'string', description: 'https://github.com/<owner>/<repo>/pull/<n>' },
         format: { type: 'string', enum: ['v1', 'v2'], description: "v1: findings by level and a verdict; v2: the report of questions with the direction for the user. Without it: the project's setting (v2 by default)." },
+        again: { type: 'boolean', description: 'Review it again at a head this format has reviewed already; only when the user asks for another look at the same commits. Without it mag answers with the recorded review.' },
       },
       required: ['url'],
     },

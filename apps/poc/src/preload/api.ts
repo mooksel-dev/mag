@@ -1,7 +1,7 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
-import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanOverlay } from '@mag/diff/types'
+import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
@@ -103,7 +103,10 @@ export interface FactView {
   additions: (Addition & { line: string })[]
   /** Changes inside existing modules the plan does not touch, and their line ('Also changed outside the plan: …'). */
   outsidePlan: { modules: Addition[]; line: string }
+  /** What keeps the review from merge: the inventory's gaps. */
   blockers: string[]
+  /** The deviations from the plan, never blockers; each backed by the doc or not. */
+  deviations: PlanDeviation[]
   plans: FactCanvas[]
   /** The plan's Component diagram (its root, else the first) and the comparison over it; null without one. */
   planDiagram: (FactCanvas & { diagram: ComponentDiagram; overlay: PlanOverlay }) | null

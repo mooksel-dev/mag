@@ -107,16 +107,21 @@ test('reviewToPost: only picked findings, in level order; lines become line comm
   assert.equal(reviewToPost('comment', []).body, 'Comment')
 })
 
-test('reviewPollOutcome: done when merged or closed; new commits after a review get a look once', () => {
+test('reviewPollOutcome: done when merged or closed; new commits alone get no look, a draft marked ready does (review-v3-concise-design-first.3)', () => {
   const reviewed = prReview({ verdict: 'approve', head: 'abc' })
   assert.equal(reviewPollOutcome(reviewed, { state: 'MERGED', head: 'abc' }), 'done')
   assert.equal(reviewPollOutcome(prReview(), { state: 'CLOSED', head: 'abc' }), 'done')
   assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'abc' }), null)
-  assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'def' }), 'rereview')
-  // Asked about def already (the PR's head is def), the agent has not recorded it yet.
-  assert.equal(reviewPollOutcome({ ...reviewed, pr: { ...reviewed.pr, head: 'def' } }, { state: 'OPEN', head: 'def' }), null)
+  assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'def' }), null, 'a push alone: the review shows as outdated')
+  // The author turns it into a draft: only recorded.
+  assert.equal(reviewPollOutcome(reviewed, { state: 'OPEN', head: 'def', draft: true }), 'draft')
+  const draft = { ...reviewed, pr: { ...reviewed.pr, draft: true } }
+  assert.equal(reviewPollOutcome(draft, { state: 'OPEN', head: 'def', draft: true }), null)
+  // Marked ready with new commits: a look; at the head reviewed, nothing new to look at.
+  assert.equal(reviewPollOutcome(draft, { state: 'OPEN', head: 'def', draft: false }), 'rereview')
+  assert.equal(reviewPollOutcome(draft, { state: 'OPEN', head: 'abc' }), 'draft')
   // Not reviewed yet: the agent is at it.
-  assert.equal(reviewPollOutcome(prReview(), { state: 'OPEN', head: 'def' }), null)
+  assert.equal(reviewPollOutcome({ ...prReview(), pr: { ...prReview().pr, draft: true } }, { state: 'OPEN', head: 'def' }), 'draft')
 })
 
 test('reviewState: one state of a review for every view, in order (reviews-normalnyi-ux-stan-reviu.1)', () => {

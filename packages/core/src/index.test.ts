@@ -120,3 +120,10 @@ test('dev template: options link their sketches, plan steps list changes and dia
   assert.match(plan, /per repository it changes: what changes there and the diagrams of that change/)
   assert.match(plan, /in <repo>: <what> \(\[title\]\(canvas:<id>\)/)
 })
+
+test('dev template: §Acceptance holds checkable criteria per step, after the plan (review-v3-concise-design-first.2)', () => {
+  const t = DEFAULT_TEMPLATES.dev
+  const acceptance = t.slice(t.indexOf('# Acceptance'), t.indexOf('# Assumptions'))
+  assert.ok(t.indexOf('# Plan') < t.indexOf('# Acceptance'))
+  assert.match(acceptance, /"## <step key> <title>" subsection .* per step, one criterion per line, each observable and checkable/)
+})

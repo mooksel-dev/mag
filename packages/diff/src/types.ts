@@ -131,6 +131,14 @@ export interface Comparison {
   outside: Addition[]
 }
 
+/** A deviation from the plan as the user reads it: in words (phrase), its level, and whether the doc backs it. */
+export interface PlanDeviation {
+  text: string
+  level: Level
+  /** The doc's text the deviation is checked against (§Decisions, the step's plan) names it: resolved. */
+  backed: boolean
+}
+
 /** How a plan change came out, as the plan diagram paints it. */
 export type OverlayStatus = 'match' | 'differs' | 'missing'
 

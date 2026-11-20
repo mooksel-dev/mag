@@ -1,9 +1,9 @@
 // Plan ↔ fact (T-57.4, T-58; at plan level since plan-fact-porivniannia-na-rivni.1): the changes a step's plan diagrams
 // draw against those of its fact, generated from the change inventory (diff-iak-inventar-zmin-ai.1). Done by mag, not
 // by an LLM.
-import { walkArch, type ArchNode } from '@mag/core'
+import { deviationsLine, walkArch, type ArchNode } from '@mag/core'
 import { LEVELS, significance } from './significance.ts'
-import type { Addition, Change, CompareItem, CompareStatus, Comparison, Level, OverlayStatus, PlanOverlay } from './types.ts'
+import type { Addition, Change, CompareItem, CompareStatus, Comparison, Level, OverlayStatus, PlanDeviation, PlanOverlay } from './types.ts'
 
 const highest = (levels: (Level | undefined)[]): Level => LEVELS.find((l) => levels.includes(l)) ?? 'medium'
 
@@ -226,13 +226,35 @@ export function sameCall(p?: string, f?: string): boolean {
 /** A deviation: done otherwise, planned and not done, or off the plan. Additions and matches are none. */
 export const isDeviation = (i: CompareItem) => i.status !== 'match'
 
+/** The identifier a change goes by: `setPrReview` of `setPrReview(id, r): string`, `IssuesReport` of `IssuesReport (core)`. */
+function nameOf(c: Change): string {
+  const raw = c.kind === 'module' ? c.module : c.name
+  const id = /^[\w$.]+/.exec(raw.replace(/\s*\([^)]*\)\s*$/, '').trim())?.[0] ?? ''
+  return id.split('.').pop() ?? ''
+}
+
+const mentions = (text: string, name: string) => name.length > 2 && new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$')}(?![\\w$])`, 'i').test(text)
+
 /**
- * Why the review may not say merge: what the fact itself blocks on (no inventory yet, its check against the hunks:
- * diff-iak-inventar-zmin-ai.1), then every deviation from the plan in words (phrase), whatever its level. [] when
- * nothing does.
+ * The doc backs a deviation when `backing` (its §Decisions and the step's plan) names what it is about, or, for a
+ * module or entity with changes folded under it, every one of them (a plan that lists an entity field by field).
  */
-export function mergeBlockers(comparison: Comparison, fact: string[]): string[] {
-  return [...fact, ...comparison.items.filter(isDeviation).map(phrase)]
+export function backedBy(i: CompareItem, backing: string): boolean {
+  if (!backing.trim()) return false
+  const c = (i.plan ?? i.fact)!
+  if (mentions(backing, nameOf(c))) return true
+  const folded = i.folded ?? []
+  return folded.length > 0 && folded.every((f) => mentions(backing, nameOf(f)))
+}
+
+/**
+ * The deviations from the plan (review-v3-concise-design-first.3): never a blocker, one line for the user. A
+ * dependency between modules is left out: the plan draws dependencies loosely, so an edge is no deviation.
+ */
+export function planDeviations(comparison: Comparison, backing = ''): PlanDeviation[] {
+  return comparison.items
+    .filter((i) => isDeviation(i) && (i.plan ?? i.fact)!.kind !== 'edge')
+    .map((i) => ({ text: phrase(i), level: i.level, backed: backedBy(i, backing) }))
 }
 
 const mark = (c: Change) => (c.diff === 'mod' && c.part ? `mod (${c.part})` : c.diff === 'move' && c.from ? `move from ${c.from}` : c.diff)
@@ -341,14 +363,17 @@ export function describe(c: Change): string {
 }
 
 /**
- * The comparison and the threshold as the reviewer reads them: the deviations with their levels, notes and the changes
- * folded under them, the additions by module with their names, and what was done as planned.
+ * The comparison as the reviewer reads it: whether the fact is complete (`blockers`, the inventory's gaps), the
+ * deviations with their levels, notes, whether the doc (`backing`) backs them and the changes folded under them, the
+ * additions by module with their names, and what was done as planned. Deviations never block.
  */
-export function formatComparison(comparison: Comparison, blockers: string[]): string {
+export function formatComparison(comparison: Comparison, blockers: string[], backing = ''): string {
+  const deviations = planDeviations(comparison, backing)
   const lines = [
     blockers.length
-      ? `Threshold: merge is NOT allowed (verdict look at most), because:\n${blockers.map((b) => `  - ${b}`).join('\n')}`
-      : 'Threshold: merge is allowed (the inventory accounts for every block of changed code and rests on its hunks, the fact keeps to the plan).',
+      ? `The fact is not complete, so merge is not allowed yet:\n${blockers.map((b) => `  - ${b}`).join('\n')}`
+      : 'The fact is complete: the inventory accounts for every block of changed code and rests on its hunks.',
+    `Plan ↔ fact: ${deviationsLine(deviations)}. It never blocks: the user reads it as one line beside your report. A deviation the doc backs (§Decisions, the step's plan) is resolved; a dependency between modules is none.`,
   ]
   const label: Record<CompareStatus, string> = {
     differs: 'Done otherwise than planned',
@@ -366,7 +391,8 @@ export function formatComparison(comparison: Comparison, blockers: string[]): st
     }
     for (const i of of) {
       const c = (i.plan ?? i.fact)!
-      lines.push(`  - [${i.level}] ${mark(c)} ${describe(c)}${i.note ? `; ${i.note}` : ''}`)
+      const backed = c.kind !== 'edge' && backedBy(i, backing) ? ' [backed by the doc]' : ''
+      lines.push(`  - [${i.level}] ${mark(c)} ${describe(c)}${i.note ? `; ${i.note}` : ''}${backed}`)
       for (const f of i.folded ?? []) lines.push(`      ${mark(f)} ${describe(f)}`)
     }
   }

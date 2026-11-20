@@ -88,7 +88,8 @@ costs a review round. Meet the bar in your own review first.
 - The reviewer applies these checks of the code; apply them to your diff too.
 ${CODE_CHECKS}
 - Deviations: mag and the reviewer compare your PRs with the plan and its diagrams. A planned change done otherwise or
-  not done, or a module, entity or dependency the plan lacks, keeps the PR from merge until the user accepts it. State
+  not done, or a module or entity the plan lacks, is a deviation the user reads beside the review; it does not block
+  merge, and one the doc's §Decisions or the step's plan names counts as resolved. State
   each deviation and why in §Progress and in the PR body, so it can be accepted rather than guessed at. A deviation
   that changes what was decided is a question before it is code.`
 
@@ -149,6 +150,10 @@ in short sentences without filler.
 - §Plan says, for each step and each repository it changes, what changes there with links to the diagrams of that
   change, or "no structural changes: <why>". Place each plan diagram with place_diagram (role plan, step, repo): that
   is how the step's developer and reviewer get it.
+- §Acceptance gives each step its criteria: what a user or a test can observe when the step is done, each checkable
+  on its own ("a plan without criteria gets a warning"), not how the code does it. The developer proves each in the PR
+  and the reviewer checks each, so a step without them has no agreed "done"; set_needs_input warns of every step
+  that has none.
 - When nothing is open, call set_needs_input("Plan ready for review") and stop: the user approves, or asks for changes
   in chat and you ask for review again after them.
 Stay within the brief: work nobody asked for goes to the project's ideas with add_idea (one line: what and where), not
@@ -156,8 +161,10 @@ into the doc or a step; ask the user only when it changes this work.`,
   step: `1. Implement it. Add or update tests and run them; run lint/typecheck if the repo has them.
 2. Review your own diff in every repo you changed (git diff <base>...HEAD) like a strict reviewer and fix what you find.
 3. In every repo with changes: commit with clear messages, push the branch and open a PR against base with gh pr create.
-   A draft PR only if the decisions say so. Body: short summary, how you tested, and any assumptions you were not sure
-   about.
+   A draft PR only if the decisions say so. Body: short summary; acceptance, each of the step's criteria in the doc's
+   §Acceptance → how it is verified (a test by name, or a manual check and what it showed), so the reviewer and the user
+   check the evidence rather than retell the code; and any assumptions you were not sure about. A criterion you could
+   not meet or verify says so, with why.
 4. At the end, append to §Progress in the doc (update_doc): what was done in the step and what changed against the plan.
    The next step's developer starts fresh and learns about this step only from there.
 Something worth doing outside this step is not fixed here, so the PR stays about one thing: add_idea, one line with
@@ -167,8 +174,10 @@ what and where.`,
 2. Write the fact: the change inventory of the PRs (set_inventory), as the fact section says.
 3. First pass, scope and design: does every part of the diff serve the step, is there a simpler design, is any of it
    not needed at all? What you find is an issue of kind scope or design.
-4. Acceptance: each item of the step's plan and the doc's acceptance (source design) → its evidence: a test by name,
-   CI, a check you ran.
+4. Acceptance: each criterion of the step in the doc's §Acceptance (source design) → its evidence: a test by name,
+   CI, a check you ran; the PR body's criterion → evidence lines are where to start, not proof. A criterion without
+   evidence is unverified, never met. Without criteria for the step, use the items of its plan and say in notChecked that §Acceptance
+   gives none.
 5. Issues: only what is wrong, each once, with the checks of the code your job lists. Where the PRs leave the plan,
    say whether the code or the plan is right. Nothing that passes goes in the report.
 6. The direction is the approved plan: follows. Lay out a direction only when the PRs make a design decision the plan
@@ -255,9 +264,9 @@ title, status and link, saying which already have a work in mag (list_tasks show
 noise. path: a file, a folder or a glob relative to the repository, matched against the files a line of the fact gives;
 empty for any. name: a glob over the name the line is about (a method, field, type or tool), any case. Without a
 matching rule: new and removed modules, dependencies between modules, new, removed, moved and re-signed interface lines
-are high; a line marked mod, a changed module and a call medium. Levels only order what the reviewer reads: every
-deviation from the plan keeps the review from merge, whatever its level. A deviation is at plan level: a planned change
-done otherwise or not done, a new, removed or moved module, entity or dependency the plan lacks. Lines, calls and fields
+are high; a line marked mod, a changed module and a call medium. Levels only order what the reviewer reads: no
+deviation from the plan blocks merge, whatever its level. A deviation is at plan level: a planned change done otherwise
+or not done, a new, removed or moved module or entity the plan lacks; a dependency between modules is none. Lines, calls and fields
 the fact adds inside planned modules and entities, and changes inside existing modules the plan does not touch, are not.
 critical marks an external contract (a tool, an API, a stored format): a critical change off the plan is a deviation
 even inside a planned module, e.g. "critical: apps/poc/src/main/tool-defs.ts". mag's default has no critical rule.
@@ -335,16 +344,44 @@ export function docDecisions(doc: string, stepKey?: string): string {
 /** Headings of the plan section of a task doc, at any level. */
 const PLAN_HEADING = /^(#{1,6})\s+(plan|план)\s*$/i
 
+/** Headings of the acceptance section of a task doc, at any level. */
+const ACCEPTANCE_HEADING = /^(#{1,6})\s+(acceptance(?: criteria)?|приймання|критерії приймання)\s*$/i
+
 /**
  * The part of a doc's §Plan about one step, for the plan card's details: a subheading naming the step (its key, ".<n>",
  * "<n>.", "Step <n>" or its title) with its body, else the top-level list item <position> (or naming the key) with its
  * sub-items. `position`: the step's 1-based place in its work. Empty when the doc says nothing of it.
  */
 export function docStepPlan(doc: string, step: { key: string; title: string }, position: number): string {
+  return docStepSection(doc, PLAN_HEADING, step, position)
+}
+
+/**
+ * The acceptance criteria of one step (review-v3-concise-design-first.2): its part of the doc's §Acceptance, found as
+ * docStepPlan finds its part of §Plan. Empty when the doc gives the step none.
+ */
+export function docStepAcceptance(doc: string, step: { key: string; title: string }, position: number): string {
+  return docStepSection(doc, ACCEPTANCE_HEADING, step, position)
+}
+
+/**
+ * The doc's text that backs a step's deviations from its plan (review-v3-concise-design-first.3): the work's
+ * §Decisions (this step's and the work's) and the step's part of §Plan.
+ */
+export function deviationBacking(doc: string, step: { key: string; title: string }, position: number): string {
+  return [docDecisions(doc, step.key), docStepPlan(doc, step, position)].filter(Boolean).join('\n')
+}
+
+/** The keys of `steps` (in their order in the work) that have no criteria in the doc's §Acceptance. */
+export function stepsWithoutAcceptance(doc: string, steps: { key: string; title: string }[]): string[] {
+  return steps.filter((s, i) => !docStepAcceptance(doc, s, i + 1)).map((s) => s.key)
+}
+
+function docStepSection(doc: string, heading: RegExp, step: { key: string; title: string }, position: number): string {
   const lines = doc.split('\n')
-  const start = lines.findIndex((l) => PLAN_HEADING.test(l.trim()))
+  const start = lines.findIndex((l) => heading.test(l.trim()))
   if (start < 0) return ''
-  const level = PLAN_HEADING.exec(lines[start].trim())![1].length
+  const level = heading.exec(lines[start].trim())![1].length
   const body: string[] = []
   let fence = false
   for (const line of lines.slice(start + 1)) {

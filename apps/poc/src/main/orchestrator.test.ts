@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
+import { CODE_CHECKS, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -1204,7 +1204,7 @@ test('review: the first round forks the owner session; changes go to the develop
   assert.equal(runs.at(-1), second)
 })
 
-test('review: the reviewer writes the inventory and reads plan ↔ fact; merge is refused over the threshold (T-57.4, T-58)', async () => {
+test('review: the reviewer writes the inventory and reads plan ↔ fact; merge is refused while the fact is incomplete, never for a deviation (T-57.4, T-58; review-v3-concise-design-first.3)', async () => {
   const { store, orch, step, dir } = await inReview(false)
   await orch.review(step.id, { [dir]: 'a1' })
   const run = runs.at(-1)!
@@ -1215,8 +1215,11 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   assert.doesNotMatch(run.spec.prompt, /request_changes = changes|need not restate them as risks/)
   assert.match(run.spec.prompt, /The direction is the approved plan: follows/)
   const counts = { match: 0, differs: 0, missing: 0, unplanned: 1, unaccounted: 0, ungrounded: 0 }
-  store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: ['high: app fn x is not on the plan'], canvasId: null, at: 1 } })
-  assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold[\s\S]*- high: app fn x is not on the plan/)
+  // A deviation never holds merge; an incomplete fact does.
+  store.updateTask(step.id, { fact: { heads: { [dir]: 'a1' }, counts, blockers: [], deviations: [{ text: 'app fn x is not on the plan', backed: false }], canvasId: null, at: 1 } })
+  assert.match(orch.setReview(step.id, 'merge', []), /user gets your verdict/)
+  store.updateTask(step.id, { review: undefined, fact: { heads: { [dir]: 'a1' }, counts, blockers: ['H1.1 is changed code in no unit'], canvasId: null, at: 1 } })
+  assert.throws(() => orch.setReview(step.id, 'merge', []), /the fact is not complete, so merge is not allowed yet:\n- H1\.1 is changed code in no unit/)
   assert.equal(store.task(step.id).review, undefined)
   assert.match(orch.setReview(step.id, 'look', [{ text: 'x is unplanned' }]), /user gets your verdict/)
   // A fact of other heads does not hold this review.
@@ -1231,6 +1234,44 @@ test('review: the reviewer writes the inventory and reads plan ↔ fact; merge i
   await tick()
 })
 
+test("review: the step reviewer gets the step's criteria from §Acceptance, or is told there are none (review-v3-concise-design-first.2)", async () => {
+  const { store, orch, task, step, dir } = await inReview(false)
+  store.data.docs[task.id] = `# Plan\n1. x\n\n# Acceptance\n## ${step.key} ${step.title}\n- the login page signs a user in\n\n# Assumptions`
+  await orch.review(step.id, { [dir]: 'c1' })
+  const run = runs.at(-1)!
+  assert.match(run.spec.prompt, /The step's criteria in the doc's §Acceptance, each to its evidence:\n- the login page signs a user in\n/)
+  run.end()
+  await tick()
+  store.data.docs[task.id] = '# Plan\n1. x'
+  await orch.review(step.id, { [dir]: 'c2' })
+  const again = runs.at(-1)!
+  assert.notEqual(again, run)
+  assert.match(again.spec.prompt, new RegExp(`The doc's §Acceptance gives ${step.key.replace('.', '\\.')} no criteria\\.`))
+  again.end()
+  await tick()
+})
+
+test('review: a re-review is a delta against the round before; mag refuses a report without it (review-v3-concise-design-first.3)', async () => {
+  const { store, orch, step, dir } = await inReview(false)
+  const raw = {
+    intent: 'Signs a user in on the login page.', verdict: 'request_changes', why: 'a crash', follows: 'the approved plan', conclusion: 'Fix the crash.',
+    issues: [{ title: 'Empty password crashes', impact: 'a user sees a 500', kind: 'bug', severity: 'blocker', owner: 'author', comment: 'Guard the empty password.', where: 'src/login.ts:3' }],
+    acceptance: [{ criterion: 'signs in', source: 'design', evidence: 'login.test.ts', status: 'met' }], verified: [], notChecked: [],
+  }
+  const previous = normalizeReport(raw).report
+  store.updateTask(step.id, { review: { verdict: 'changes', findings: [], report: previous, round: 1, heads: { [dir]: 'd1' }, withContext: false, at: 1 } })
+  await orch.review(step.id, { [dir]: 'd2' })
+  const run = runs.at(-1)!
+  assert.match(run.spec.prompt, /This is a re-review: record delta against your last review \(round 1\)[\s\S]*fixed or open \(Empty password crashes\)/)
+  const fixed = normalizeReport({ ...raw, verdict: 'approve', why: 'fixed', issues: [] }).report
+  assert.throws(() => orch.setReview(step.id, 'merge', [], fixed), /delta is required on a re-review/)
+  assert.match(orch.setReview(step.id, 'merge', [], { ...fixed, delta: [{ title: 'Empty password crashes', status: 'fixed' }] }), /user gets your verdict/)
+  // Recorded again in the same round: still against the round before, not its own first record.
+  assert.match(orch.setReview(step.id, 'merge', [], { ...fixed, delta: [{ title: 'Empty password crashes', status: 'fixed' }] }), /user gets your verdict/)
+  run.end()
+  await tick()
+})
+
 test('review: a failed plan ↔ fact keeps merge from the reviewer (T-57.4)', async () => {
   const { store, orch, step, dir } = await inReview(false)
   delete (orch as unknown as { factOf?: unknown }).factOf
@@ -1238,7 +1279,7 @@ test('review: a failed plan ↔ fact keeps merge from the reviewer (T-57.4)', as
   const run = runs.at(-1)!
   assert.match(run.spec.prompt, /mag could not compare/)
   assert.match(store.task(step.id).fact!.blockers[0], /^mag could not compare the PRs with the plan/)
-  assert.throws(() => orch.setReview(step.id, 'merge', []), /over the threshold/)
+  assert.throws(() => orch.setReview(step.id, 'merge', []), /the fact is not complete, so merge is not allowed yet/)
   run.end()
   await tick()
 })
@@ -1916,6 +1957,12 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
     assert.match(again.job, /already written \(one per head, for both formats of the review\)[\s\S]*never to write it anew/)
     await endTurn(t1.id)
     assert.equal(store.task(work.id).prReview!.results.v2?.verdict, 'request_changes', 'the other result stays')
+    // A topic asking again at the head reviewed gets the recorded verdict, no run; with again it runs (review-v3-concise-design-first.3).
+    const sent = opened.at(-1)!.sent.length
+    const same = await orch.reviewPr(project.id, url, t1.id, 'v1')
+    assert.match(same.job, /has its v1 review at this head \(\w{12}\) already: Approve\. Nothing new to review[\s\S]*again: true/)
+    assert.equal(opened.at(-1)!.sent.length, sent)
+    assert.match((await orch.reviewPr(project.id, url, t1.id, 'v1', true)).job, /Look again: whether each finding still holds/)
     await assert.rejects(Promise.resolve().then(() => orch.runReviewFormat(work.id, 'v3' as 'v1')), /format must be one of v1, v2/)
   } finally {
     gh.restore()

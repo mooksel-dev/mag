@@ -76,12 +76,17 @@ test('check: no inventory blocks; the inventory is checked against the hunks and
   assert.deepEqual(fact.comparison.items.map((i) => [i.status, (i.plan ?? i.fact)!.key]).sort(), [['match', 'api -> jobs'], ['match', 'api#list'], ['match', 'jobs'], ['match', 'jobs#sync']], 'a planned call is not compared with the call units; list(limit) is list(limit: number)')
   assert.deepEqual(fact.overlay?.modules, { api: 'match', jobs: 'match' })
   assert.match(factReport(fact), /### Inventory against the hunks\nInventory: 3 unit\(s\) over 2 block\(s\) of changed code \(3 in all\)\.\nEvery block/)
-  assert.match(factReport(fact), /Threshold: merge is allowed/)
+  assert.match(factReport(fact), /The fact is complete[\s\S]*Plan ↔ fact: as planned\. It never blocks/)
 
   // A unit left out: its block is in no unit; a planned line not on the fact is missing.
   const less = { ...INVENTORY, units: INVENTORY.units.filter((u) => u.id !== 'u2') }
   const short = check(project, changed, [canvas('root', factDiagrams(less, changed, project, []).component, { root: true, inventory: less })], plan)
-  assert.deepEqual(short.blockers, ['H2.1 (app:src/jobs/sync.ts, jobs) is changed code in no unit and not in noise', 'module jobs is planned, not done', 'jobs: sync is planned, not done'])
+  assert.deepEqual(short.blockers, ['H2.1 (app:src/jobs/sync.ts, jobs) is changed code in no unit and not in noise'])
+  // Deviations are never blockers (review-v3-concise-design-first.3); one the doc names is backed.
+  assert.deepEqual(short.deviations.map((d) => [d.text, d.backed]), [['module jobs is planned, not done', false], ['jobs: sync is planned, not done', false]])
+  const backed = check(project, changed, [canvas('root', factDiagrams(less, changed, project, []).component, { root: true, inventory: less })], plan, '- sync moves to step 2')
+  assert.deepEqual(backed.deviations.map((d) => d.backed), [false, true])
+  assert.match(factReport(backed), /Plan ↔ fact: 2 deviations \(1 backed by the doc\)\. It never blocks[\s\S]*sync.*\[backed by the doc\]/)
   assert.deepEqual(short.overlay?.modules, { api: 'match', jobs: 'missing' })
 })
 

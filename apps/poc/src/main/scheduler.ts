@@ -133,8 +133,9 @@ export function startScheduler(store: Store, orch: Orchestrator) {
 
   /**
    * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.3): done once the PR is merged or closed (Decision
-   * 12); new commits after the head the agent reviewed get another look at what they change (Decision 8), once its
-   * topic is free. A review the agent has not finished is left to it.
+   * 12); another look at what changed only when the author marks the draft ready (review-v3-concise-design-first.3),
+   * once its topic is free; new commits alone wait for the user's Review again. A review the agent has not finished is
+   * left to it.
    */
   const pollReview = async (work: Task) => {
     const r = work.prReview!
@@ -154,8 +155,12 @@ export function startScheduler(store: Store, orch: Orchestrator) {
       store.updateTask(work.id, { status: 'done', needsInput: null })
       return
     }
+    if (outcome === 'draft') {
+      store.updateTask(work.id, { prReview: { ...now.prReview!, pr: { ...now.prReview!.pr, draft: pr.draft } } })
+      return
+    }
     if (outcome !== 'rereview' || orch.isRunning(now.ownerSessionId ?? '')) return
-    log.info('scheduler', `${work.key}: new commits on its PR (${pr.head!.slice(0, 12)}), looking again`)
+    log.info('scheduler', `${work.key}: its PR was marked ready (${pr.head!.slice(0, 12)}), looking again`)
     await orch.rereview(work.id).catch((e) => checkError(work.key, e))
   }
 

@@ -6,7 +6,7 @@ import { FALLBACK_BASE } from '@mag/core'
 // (reviews-prybraty-spysok-pr-i.1); read from GitHub when the project has no checkout of its repository
 // (reviews-ahent-reviuit-pr-timeitiv.3).
 import { existsSync, readFileSync } from 'node:fs'
-import { COMPARE_VERSION, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, type Canvas, type ComponentDiagram, type Project, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { COMPARE_VERSION, deviationBacking, prHeads, prRepoName, repoWorkName, setRoot, staleFact, stepDiagrams, subtasksOf, type Canvas, type ComponentDiagram, type Project, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import { additionCount, additionLine, outsideLine, phrase, type HunkRef } from '@mag/diff'
 import type { FactCanvas, FactView } from '../preload/api'
 import { changes, check, hunk, withoutLines, type ChangeSource, type ChangeTarget, type Changes, type ChangesOptions, type Fact } from './core/services/fact/index.ts'
@@ -102,10 +102,20 @@ export async function stepChanges(project: Project, step: Task, heads: Record<st
   return changes(project, await stepTargets(project, step, heads), localGit, stepSet(canvases, step.id, 'plan'), options)
 }
 
-/** The fact of a step's PRs at `heads`: their changes against the step's fact set and plan set. */
-export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[], changed?: Changes): Promise<Fact> {
+/**
+ * The fact of a step's PRs at `heads`: their changes against the step's fact set and plan set; `backing` (stepBacking)
+ * is the doc's text its deviations are checked against.
+ */
+export async function stepFact(project: Project, step: Task, heads: Record<string, string>, canvases: Canvas[], changed?: Changes, backing = ''): Promise<Fact> {
   const plans = stepSet(canvases, step.id, 'plan')
-  return check(project, changed ?? (await stepChanges(project, step, heads, canvases)), stepSet(canvases, step.id, 'fact'), plans)
+  return check(project, changed ?? (await stepChanges(project, step, heads, canvases)), stepSet(canvases, step.id, 'fact'), plans, backing)
+}
+
+/** What backs a step's deviations from its plan: its work's §Decisions and its part of §Plan (deviationBacking). */
+export function stepBacking(step: Task, tasks: Task[], docs: Record<string, string>): string {
+  const workId = step.parentId ?? step.id
+  const position = subtasksOf(workId, tasks).findIndex((t) => t.id === step.id) + 1
+  return deviationBacking(docs[workId] ?? '', step, position)
 }
 
 /** The counts of a fact, as a step records them. */
@@ -122,7 +132,7 @@ export function factCounts(fact: Fact): NonNullable<Task['fact']>['counts'] {
 
 /** A step's (or a review's) fact as it records it, by this version of plan ↔ fact. */
 export function factRecord(fact: Fact, heads: Record<string, string>): NonNullable<Task['fact']> {
-  return { heads, counts: factCounts(fact), compareVersion: COMPARE_VERSION, blockers: fact.blockers, canvasId: fact.canvas?.id ?? null, at: Date.now() }
+  return { heads, counts: factCounts(fact), compareVersion: COMPARE_VERSION, blockers: fact.blockers, deviations: fact.deviations.map(({ text, backed }) => ({ text, backed })), canvasId: fact.canvas?.id ?? null, at: Date.now() }
 }
 
 /** The heads a step's fact is of: its open PRs, else the heads its fact was recorded at (a merged step). */
@@ -138,10 +148,10 @@ const canvasRef = (c: Canvas): FactCanvas => ({ id: c.id, title: c.title, versio
  * inventory against the hunks. null when the step has no heads. `record`: told the fact when the step's recorded one
  * is of an older compare at the same heads (a merged step's, plan-fact-porivniannia-na-rivni.1), to record it again.
  */
-export async function factView(project: Project, step: Task, canvases: Canvas[], record?: (fact: NonNullable<Task['fact']>) => void): Promise<FactView | null> {
+export async function factView(project: Project, step: Task, canvases: Canvas[], record?: (fact: NonNullable<Task['fact']>) => void, backing = ''): Promise<FactView | null> {
   const heads = factHeads(step)
   if (!Object.keys(heads).length || !step.work) return null
-  const fact = await stepFact(project, step, heads, canvases)
+  const fact = await stepFact(project, step, heads, canvases, undefined, backing)
   if (record && staleAt(step, heads)) record(factRecord(fact, heads))
   return view(heads, fact)
 }
@@ -172,6 +182,7 @@ function view(heads: Record<string, string>, fact: Fact): FactView {
     additions: fact.comparison.additions.map((a) => ({ ...a, line: additionLine(a) })),
     outsidePlan: { modules: fact.comparison.outside, line: outsideLine(fact.comparison.outside) },
     blockers: fact.blockers,
+    deviations: fact.deviations,
     plans: (fact.plan ?? []).map(canvasRef),
     planDiagram: planDiagram(fact),
     fact: fact.canvas ? canvasRef(fact.canvas) : null,

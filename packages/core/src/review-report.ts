@@ -176,6 +176,17 @@ export interface AcceptanceItem {
   status: EvidenceStatus
 }
 
+/** Where an issue stands against the previous round: fixed since, still open, or new in this one. */
+export type DeltaStatus = 'fixed' | 'open' | 'new'
+export const DELTA_STATUSES: DeltaStatus[] = ['fixed', 'open', 'new']
+
+/** One row of a re-review's delta (review-v3-concise-design-first.3): an issue of the previous round or of this one. */
+export interface DeltaItem {
+  /** The issue's title as its round gave it. */
+  title: string
+  status: DeltaStatus
+}
+
 /** The review report as issues and evidence (review-v3-concise-design-first.1). */
 export interface IssuesReport {
   /** What the change does and why, one paragraph, shown first. */
@@ -189,6 +200,11 @@ export interface IssuesReport {
   acceptance: AcceptanceItem[]
   /** A config, version or typo change: no criteria needed. */
   trivial?: boolean
+  /**
+   * A re-review's delta against the previous round (review-v3-concise-design-first.3): each previous issue fixed or
+   * still open, and each new one; none on a first review.
+   */
+  delta?: DeltaItem[]
   /** What the reviewer verified: earlier threads (fixed / open), CI, tests run. */
   verified: string[]
   /** What the verdict does not cover. */
@@ -277,11 +293,10 @@ export interface AgentChecks {
 }
 
 /**
- * What only mag knows and owns about the change under review: plan deviations and an incomplete fact (plan ↔ fact's
- * blockers), failed CI checks, failed architecture rules. Each a line of what is wrong.
+ * What only mag knows and owns about the change under review: failed CI checks, failed architecture rules. Each a line
+ * of what is wrong. Plan ↔ fact is no floor (review-v3-concise-design-first.3): its deviations are one line for the user.
  */
 export interface MagFloors {
-  deviations: string[]
   ci: string[]
   rules: string[]
 }
@@ -294,13 +309,11 @@ export interface VerdictFloor {
 
 /**
  * mag's floor from what it owns: a failed CI check or architecture rule is request_changes (the developer must fix it
- * before anyone looks); a plan deviation or an incomplete fact is look (the user decides whether the plan or the code
- * is right); otherwise approve.
+ * before anyone looks); otherwise approve.
  */
 export function verdictFloor(floors: MagFloors): VerdictFloor {
-  const blockers = [...floors.ci.map((c) => `CI failed: ${c}`), ...floors.rules.map((r) => `Architecture rule failed: ${r}`), ...floors.deviations]
-  const verdict: ChecksVerdict = floors.ci.length || floors.rules.length ? 'request_changes' : floors.deviations.length ? 'look' : 'approve'
-  return { verdict, blockers }
+  const blockers = [...floors.ci.map((c) => `CI failed: ${c}`), ...floors.rules.map((r) => `Architecture rule failed: ${r}`)]
+  return { verdict: blockers.length ? 'request_changes' : 'approve', blockers }
 }
 
 /** The verdict that stands: the reviewer's, unless mag's floor is stricter. */
@@ -458,6 +471,16 @@ export function normalizeReport(raw: unknown): { report: IssuesReport; errors: s
     if (typeof r.direction === 'object' && !Array.isArray(r.direction)) report.direction = readDirection(r.direction as Raw, errors)
     else errors.push('direction must be an object: decisions, options, facts, references')
   }
+  if (r.delta != null) {
+    if (!Array.isArray(r.delta)) errors.push('delta must be a list of { title, status }')
+    else
+      report.delta = list(r.delta).map((x, i): DeltaItem => {
+        const item: DeltaItem = { title: text(x?.title), status: text(x?.status) as DeltaStatus }
+        if (!item.title) errors.push(`delta[${i}]: title is required, the issue's title`)
+        if (!DELTA_STATUSES.includes(item.status)) errors.push(`delta[${i}] (${item.title}): status must be one of ${DELTA_STATUSES.join(', ')}`)
+        return item
+      })
+  }
   if (text(r.follows)) report.follows = text(r.follows)
   const diagram = text(r.diagram).replace(/^canvas:/, '').replace(/#.*$/, '')
   if (diagram) report.diagram = diagram
@@ -516,6 +539,28 @@ export function checkReport(report: IssuesReport): string[] {
     if (own !== 1) errors.push(`direction.options: exactly one option is the change's (pr: true), found ${own}`)
   }
   return errors
+}
+
+/**
+ * What is wrong with a re-review's delta (review-v3-concise-design-first.3) against `previous`, the report of the round
+ * before: after an issues report, a delta with each of its issues fixed or open and each issue of this round open or
+ * new (matched by count, the titles are the reviewer's); after a legacy report, any delta; on a first review, none.
+ */
+export function deltaErrors(report: IssuesReport, previous: ReviewReport | null | undefined): string[] {
+  if (!previous) return report.delta ? ['delta: only a re-review has one; this is the first review, leave it out'] : []
+  if (!isIssuesReport(previous)) return []
+  const before = previous.issues.map((i) => i.title)
+  if (!report.delta) return [`delta is required on a re-review: each issue of the previous round fixed or open (${before.length ? before.join('; ') : 'it had none'}), and each new one`]
+  const count = (...st: DeltaStatus[]) => report.delta!.filter((d) => st.includes(d.status)).length
+  const errors: string[] = []
+  if (count('fixed', 'open') !== before.length) errors.push(`delta: ${count('fixed', 'open')} fixed or open, but the previous round had ${before.length} issue${before.length === 1 ? '' : 's'} (${before.join('; ') || 'none'}); give each once`)
+  if (count('open', 'new') !== report.issues.length) errors.push(`delta: ${count('open', 'new')} open or new, but this report has ${report.issues.length} issue${report.issues.length === 1 ? '' : 's'}; each issue is one of them`)
+  return errors
+}
+
+/** A re-review's delta by status, fixed first, as the page shows it. */
+export function deltaView(report: Pick<IssuesReport, 'delta'>): { status: DeltaStatus; titles: string[] }[] {
+  return DELTA_STATUSES.map((status) => ({ status, titles: (report.delta ?? []).filter((d) => d.status === status).map((d) => d.title) })).filter((g) => g.titles.length)
 }
 
 /**

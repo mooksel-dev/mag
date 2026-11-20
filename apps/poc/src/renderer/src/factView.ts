@@ -1,7 +1,7 @@
 // Plan ↔ fact as Diff shows it (T-57.5, T-58; at plan level since plan-fact-porivniannia-na-rivni.1): what a change is
 // in a few words, which files it rests on, and a step's fact in one line.
 import type { Change, CompareStatus, FileChange, HunkRef } from '@mag/diff/types'
-import type { StepFact } from '@mag/core'
+import { deviationsLine, type StepFact } from '@mag/core'
 import type { FactView } from '../../preload/api'
 
 export type FactItem = FactView['items'][number]
@@ -47,18 +47,26 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /**
  * A step's recorded fact in one line, as the collapsed panel says it: 'As planned · +67 additions · 13 outside the
- * plan', or 'N deviations', with what the inventory leaves out. An open step adds ': look before merge' when anything
- * blocks; a merged one (`merged`) has no threshold any more.
+ * plan', or 'N deviations (M backed by the doc)', with what the inventory leaves out. Deviations never block
+ * (review-v3-concise-design-first.3); an open step adds ': the fact is not complete' while the inventory has gaps.
+ * A fact of an older compare (no deviations) counts them by status.
  */
-export function summary(fact: Pick<StepFact, 'counts' | 'blockers'>, merged: boolean): string {
+export function summary(fact: Pick<StepFact, 'counts' | 'blockers' | 'deviations'>, merged: boolean): string {
   const c = fact.counts
-  const n = deviations(c)
-  const parts = [n ? plural(n, 'deviation') : 'As planned']
+  const parts = [fact.deviations ? (fact.deviations.length ? capital(deviationsLine(fact.deviations)) : 'As planned') : deviations(c) ? plural(deviations(c), 'deviation') : 'As planned']
   if (c.additions) parts.push(`+${plural(c.additions, 'addition')}`)
   if (c.outside) parts.push(`${c.outside} outside the plan`)
   if (c.unaccounted) parts.push(`in no unit ${c.unaccounted}`)
   if (c.ungrounded) parts.push(`ungrounded ${c.ungrounded}`)
-  return `${parts.join(' · ')}${!merged && fact.blockers.length ? ': look before merge' : ''}`
+  return `${parts.join(' · ')}${!merged && fact.blockers.length ? ': the fact is not complete' : ''}`
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** Plan ↔ fact as the review window says it (review-v3-concise-design-first.3): one line, never a blocker. */
+export function planFactLine(view: Pick<FactView, 'deviations'> | null | undefined, fact: Pick<StepFact, 'deviations'> | null | undefined): string {
+  const list = view?.deviations ?? fact?.deviations
+  return list ? `Plan ↔ fact: ${deviationsLine(list)}; it never blocks merge.` : 'Plan ↔ fact: not compared yet.'
 }
 
 /** A stable key for a file of a repository. */

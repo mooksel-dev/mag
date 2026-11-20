@@ -40,6 +40,8 @@ export interface PrRef {
   base: string
   /** Its head commit when mag last looked. */
   head: string
+  /** A draft when mag last looked (review-v3-concise-design-first.3): marked ready, it gets another look. */
+  draft?: boolean
 }
 
 /**
@@ -352,12 +354,17 @@ export function reviewToPost(verdict: PrVerdict, findings: ReviewFinding[], inli
 
 /**
  * What a poll of a review's PR leads to (reviews-ahent-reviuit-pr-timeitiv.3): done once it is merged or closed
- * (Decision 12); a look at new commits after the agent's review (Decision 8) once mag has not asked about that head yet;
- * else nothing. A review the agent has not finished is left to it.
+ * (Decision 12). New commits alone get no look (review-v3-concise-design-first.3): the review shows as outdated and the
+ * user asks for one. The author marking a draft ready is that ask: a look when the shown result is of another head
+ * ('rereview'); any other change of draft state is only recorded ('draft'). A review the agent has not finished is
+ * left to it.
  */
-export function reviewPollOutcome(review: PrReview, live: { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: string | null }): 'done' | 'rereview' | null {
+export function reviewPollOutcome(review: PrReview, live: { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: string | null; draft?: boolean }): 'done' | 'rereview' | 'draft' | null {
   if (live.state !== 'OPEN') return 'done'
-  return live.head && shownResult(review)?.head && live.head !== review.pr.head ? 'rereview' : null
+  const draft = !!live.draft
+  if (draft === !!review.pr.draft) return null
+  const shown = shownResult(review)
+  return !draft && shown?.verdict && live.head && shown.head !== live.head ? 'rereview' : 'draft'
 }
 
 /** The label a finding drawn from a report starts with ("Risk (bug): "), which its level already says. */
