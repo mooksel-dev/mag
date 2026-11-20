@@ -575,6 +575,10 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .canvascard { flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .canvashead { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .canvashead .title { font-weight: 600; }
+.canvascard.folded .canvashead { border-bottom: none; }
+.canvasfold { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; min-width: 0; }
+.canvasfold > span[aria-hidden] { color: var(--faint); }
+.canvasslot:has(> .canvascard.folded) { margin: 4px 0; }
 .canvasframe { display: block; width: 100%; border: 0; background: var(--surface); }
 .canvaspage { overflow: auto; background: var(--surface); }
 .canvasfit { display: block; width: 100%; border: 0; background: var(--surface); }

@@ -92,6 +92,7 @@ function CanvasDrawer({ canvas, focus, state, onClose }: { canvas: AppState['can
       <aside className="drawer set" aria-label={`Diagrams: ${canvas.title}`}>
         <div className="drawerhead">
           <span className="title">Diagrams · {set.length}</span>
+          <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>⧉</button>
           <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
         </div>
         <div className="drawerbody">
