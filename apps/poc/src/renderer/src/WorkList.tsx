@@ -35,6 +35,7 @@ import { SearchPalette } from './SearchPalette'
 import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
 import { DraftRow, SubtopicRows } from './SessionTree'
+import { Recorder } from './Recorder'
 
 const mag = window.mag
 
@@ -233,6 +234,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           </button>
           {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => onPicker(null)} />}
         </div>
+        <Recorder />
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
           ＋ New topic <kbd>⌘N</kbd>
         </button>

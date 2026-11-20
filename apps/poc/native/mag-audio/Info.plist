@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.mag.audio</string>
+<key>CFBundleName</key><string>mag-audio</string>
+<key>NSMicrophoneUsageDescription</key><string>mag transcribes your side of a call.</string>
+<key>NSAudioCaptureUsageDescription</key><string>mag transcribes the other side of a call.</string>
+</dict></plist>
