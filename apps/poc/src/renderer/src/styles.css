@@ -33,7 +33,7 @@ h2 { font-size: var(--fs-lg); margin: var(--sp-7) 0 10px; }
 .list { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; max-width: 900px; }
 .item { display: flex; align-items: center; gap: 10px; text-align: left; padding: 12px; }
 /* The one Pill (ui/Pill): a status, verdict, tag or count; its tone says what it means. */
-.pill { display: inline-flex; align-items: center; gap: 5px; height: 20px; max-width: 100%; padding: 0 7px; border: none; border-radius: 5px; background: var(--select); color: var(--t2); font: 500 var(--fs-xs) / 1 var(--sans); white-space: nowrap; vertical-align: middle; text-decoration: none; }
+.pill { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 20px; max-width: 100%; padding: 0 7px; border: none; border-radius: 5px; background: var(--select); color: var(--t2); font: 500 var(--fs-xs) / 1 var(--sans); white-space: nowrap; vertical-align: middle; text-decoration: none; }
 .pill .d { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .pill.acc { background: var(--acc-t); color: var(--acc-fg); }
 .pill.amber { background: var(--amber-t); color: var(--amber); }
