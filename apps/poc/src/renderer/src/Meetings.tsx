@@ -9,6 +9,8 @@ import { Recorder, useMeetingStatus } from './Recorder'
 import type { Selection } from './WorkList'
 import { Caret, Icon } from './ui/Icon'
 import { Pill } from './ui/Pill'
+import { FollowUpForm } from './FollowUpForm'
+import { actionItems } from './followUpView'
 
 const mag = window.mag
 /** Meetings the section shows before "All". */
@@ -227,6 +229,7 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
         </div>
         <h2>Summary</h2>
         {content.summary ? <Markdown text={content.summary} /> : <p className="muted small">{recording ? 'Written after the call.' : summarizing ? 'The Claude CLI is writing it…' : lines.length ? 'None yet.' : 'Nothing was said.'}</p>}
+        {content.summary && <ActionFollowUps meetingId={id} summary={content.summary} state={state} project={project} />}
         <h2>Transcript</h2>
         {lines.length ? (
           <div className="transcript">
@@ -240,6 +243,31 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
         <p className="muted small">Folder: <code>{content.dir}</code></p>
       </section>
     </main>
+  )
+}
+
+/** The summary's action items, each with Follow up, or when it comes back once it has one (routines-scheduled-drafts-and-a.3). */
+function ActionFollowUps({ meetingId, summary, state, project }: { meetingId: string; summary: string; state: AppState; project: Project }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const items = actionItems(summary)
+  if (!items.length) return null
+  return (
+    <>
+      <h3>Follow up on action items</h3>
+      <ul className="mtgactions">
+        {items.map((a, i) => {
+          const ref = `mtg:${meetingId}#${i}`
+          const f = (state.followUps ?? []).find((x) => x.sourceRef === ref && x.status !== 'done')
+          return (
+            <li key={ref}>
+              <span><b>{a.who}</b>: {a.what}</span>
+              {f ? <span className="muted small">back {new Date(f.dueAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span> : open !== i && <button className="small" onClick={() => setOpen(i)}>Follow up</button>}
+              {open === i && !f && <FollowUpForm workspaceId={project.workspaceId} projectId={project.id || null} sourceRef={ref} who={a.who} what={a.what} onDone={() => setOpen(null)} />}
+            </li>
+          )
+        })}
+      </ul>
+    </>
   )
 }
 

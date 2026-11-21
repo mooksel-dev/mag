@@ -71,6 +71,7 @@ ${routine.prompt}
 How a run ends:
 - Something for the user to read, review or send: save it with save_deliverable; it is a draft the user reviews.
 - Something that needs the user (a decision, a reply, a blocker): add_inbox_item, one per thing.
+- Something someone owes by a date (a reply, an action item): add_follow_up; it comes back to the Inbox then.
 - Don't write outside mag (a post, a comment, a doc edit): put the text in the draft; the user publishes it.
 - Your last message is one line on what this run did: the user sees it in the Inbox.`
 }

@@ -35,6 +35,7 @@ import type { Meetings } from './core/services/meetings/index.ts'
 import { createSearchFeed } from './search-feed.ts'
 import { startPacks } from './packs'
 import { startRoutines } from './routines'
+import { doneInboxItem } from './follow-ups.ts'
 import { paletteSearch, type PaletteQuery } from './search-tools.ts'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
@@ -225,7 +226,7 @@ app.whenReady().then(async () => {
 
   handle('state:get', () => snapshot())
   handle('inbox:snooze', (_, key: string, until: number | 'activity') => inbox.snooze(key, until))
-  handle('inbox:done', (_, key: string) => inbox.done(key))
+  handle('inbox:done', (_, key: string) => doneInboxItem({ routines: actions.routines?.routines, inbox }, key))
   handle('session:items', (_, sid: string, from?: number) => store.items(sid, from))
   handle('search:all', (_, projectId: string, query: string) => searchAll(query, projectTasks(projectId), store.data.sessions.filter((s) => s.projectId === projectId)))
   handle('dialog:pickDir', async () => {

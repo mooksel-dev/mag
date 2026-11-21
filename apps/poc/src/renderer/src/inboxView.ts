@@ -49,9 +49,13 @@ const rootSession = <S extends Session>(id: string, sessions: S[]): S | undefine
 export type OpenTarget = { kind: 'work'; id: string } | { kind: 'topic'; id: string } | { kind: 'new' }
 
 export function openTarget(e: InboxEntry, tasks: Pick<Task, 'id' | 'parentId'>[], sessions: Session[]): OpenTarget {
-  const work = e.taskId ? topTask(e.taskId, tasks) : undefined
+  // An added item about a work or topic (a follow-up made from one) opens it.
+  const about = /^(work|topic):(.+)$/.exec(e.ref ?? '')
+  const taskId = e.taskId ?? (about?.[1] === 'work' ? about[2] : null)
+  const sessionId = e.sessionId ?? (about?.[1] === 'topic' ? about[2] : null)
+  const work = taskId ? topTask(taskId, tasks) : undefined
   if (work) return { kind: 'work', id: work.id }
-  const s = e.sessionId ? sessions.find((x) => x.id === e.sessionId) : undefined
+  const s = sessionId ? sessions.find((x) => x.id === sessionId) : undefined
   const sessionWork = s?.taskId ? topTask(s.taskId, tasks) : undefined
   if (sessionWork) return { kind: 'work', id: sessionWork.id }
   if (s) return { kind: 'topic', id: s.id }

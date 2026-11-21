@@ -4,7 +4,7 @@ import type { Deliverable, DeliverableKind } from '../main/core/services/deliver
 import type { MeetingPerson, OverrideInput, PeopleList, PeopleSystem, SyncReport } from '../main/core/services/people/types.ts'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
-import type { Routine, RoutineInput, RoutineRun } from '../main/core/services/routines/types.ts'
+import type { FollowUp, FollowUpInput, Routine, RoutineInput, RoutineRun } from '../main/core/services/routines/types.ts'
 import type { Hit, SearchKind } from '../main/core/services/search/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
@@ -32,6 +32,8 @@ export interface AppState {
   /** Routines (a trigger and a prompt) and their runs (routines-scheduled-drafts-and-a.1, .2). */
   routines: Routine[]
   routineRuns: RoutineRun[]
+  /** Follow-ups (who, what, due); done ones too (routines-scheduled-drafts-and-a.3). */
+  followUps: FollowUp[]
   claudeBin: string | null
   appVersion: string
   /** Projects that have a window filtered to them. */
@@ -422,6 +424,8 @@ export interface MagApi {
   removeRoutine(id: string): Promise<void>
   /** Runs it now, outside its schedule; resolves once the run started. Throws while one runs. */
   runRoutine(id: string): Promise<RoutineRun>
+  /** Adds a follow-up; `fromKey`: the Inbox item it was made from, marked Done (the follow-up brings it back when due). */
+  addFollowUp(input: FollowUpInput & { fromKey?: string }): Promise<FollowUp>
   meetingStatus(): Promise<MeetingStatus>
   onMeetingStatus(cb: (s: MeetingStatus) => void): () => void
   /** Starts recording the call; the first time macOS asks for the microphone and system audio. */

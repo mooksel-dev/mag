@@ -10,6 +10,7 @@ import { Caret } from './ui/Icon'
 import { failedKey, routineOfRef, runOfKey } from '../../main/core/services/routines/refs.ts'
 import { ArtifactDrawer } from './Drawer'
 import type { ArtifactTarget } from './artifacts'
+import { FollowUpForm } from './FollowUpForm'
 
 const mag = window.mag
 
@@ -109,7 +110,7 @@ export function Inbox({ workspace, state, onSelect }: { workspace: Workspace; st
               {!closed && (
                 <div className="colbody">
                   {items.map(({ e, labelIds }) => (
-                    <InboxRow key={e.key} entry={e} chips={labelIds.flatMap((id) => labels.get(id) ?? [])} state={state} onOpen={() => open(e)} onArtifact={setShownArtifact} run={run} />
+                    <InboxRow key={e.key} entry={e} workspaceId={workspace.id} chips={labelIds.flatMap((id) => labels.get(id) ?? [])} state={state} onOpen={() => open(e)} onArtifact={setShownArtifact} run={run} />
                   ))}
                 </div>
               )}
@@ -122,8 +123,9 @@ export function Inbox({ workspace, state, onSelect }: { workspace: Workspace; st
   )
 }
 
-function InboxRow({ entry: e, chips, state, onOpen, onArtifact, run }: {
+function InboxRow({ entry: e, workspaceId, chips, state, onOpen, onArtifact, run }: {
   entry: InboxEntry
+  workspaceId: string
   chips: { id: string; name: string; color: string }[]
   state: AppState
   onOpen: () => void
@@ -131,6 +133,7 @@ function InboxRow({ entry: e, chips, state, onOpen, onArtifact, run }: {
   run: (p: Promise<unknown>) => void
 }) {
   const [snoozing, setSnoozing] = useState(false)
+  const [following, setFollowing] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   useDismiss(snoozing, box, setSnoozing)
   const task = e.taskId ? state.tasks.find((t) => t.id === e.taskId) : undefined
@@ -162,7 +165,8 @@ function InboxRow({ entry: e, chips, state, onOpen, onArtifact, run }: {
         {log && <button className="small" title="The run's session" onClick={() => onArtifact({ kind: 'agent', sessionId: log })}>Log</button>}
         {draft && <button className="small" title="The draft it made" onClick={() => onArtifact({ kind: 'deliverable', id: draft.id })}>Draft</button>}
         <button className="small" aria-haspopup="menu" aria-expanded={snoozing} onClick={() => setSnoozing((s) => !s)}>Snooze</button>
-        <button className="small" title="Hide until it has new activity" onClick={() => run(mag.doneInbox(e.key))}>Done</button>
+        {e.kind !== 'follow_up' && <button className="small" title="Bring it back on a date, with who and what" aria-expanded={following} onClick={() => setFollowing((f) => !f)}>Follow up</button>}
+        <button className="small" title={e.kind === 'follow_up' ? 'Close the follow-up' : 'Hide until it has new activity'} onClick={() => run(mag.doneInbox(e.key))}>Done</button>
         {snoozing && (
           <div className="chippop inboxsnooze" role="menu" aria-label="Snooze until">
             {snoozePresets(Date.now()).map((p) => (
@@ -171,6 +175,9 @@ function InboxRow({ entry: e, chips, state, onOpen, onArtifact, run }: {
           </div>
         )}
       </div>
+      {following && (
+        <FollowUpForm workspaceId={e.workspaceId ?? workspaceId} projectId={e.projectId} sourceRef={e.ref ?? entryRef(e, state.tasks, state.sessions)} fromKey={e.key} what={e.text} onDone={() => setFollowing(false)} />
+      )}
     </div>
   )
 }

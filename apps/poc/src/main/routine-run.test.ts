@@ -21,6 +21,8 @@ function memoryRoutines(now: () => number) {
       runs: () => rows.runs,
       putRun: (r) => put(rows.runs, r),
       removeRuns: (ids) => void (rows.runs = rows.runs.filter((r) => !ids.includes(r.id))),
+      followUps: () => [],
+      putFollowUp: () => {},
     },
   })
 }

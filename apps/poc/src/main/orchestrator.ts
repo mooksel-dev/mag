@@ -2405,7 +2405,7 @@ export class Orchestrator {
         cwd: first,
         addDirs: [...rest, this.paths.attachmentsDir],
         appendSystemPrompt:
-          `You run a routine of the user's in "mag": a headless run of its prompt. Nobody reads this chat while you run. You read (files, the web, CLIs and integrations) and never write outside mag: no posts, comments, tickets or file edits. What the user should read goes in a draft (save_deliverable), what needs them in the Inbox (add_inbox_item); the user publishes.` +
+          `You run a routine of the user's in "mag": a headless run of its prompt. Nobody reads this chat while you run. You read (files, the web, CLIs and integrations) and never write outside mag: no posts, comments, tickets or file edits. What the user should read goes in a draft (save_deliverable), what needs them in the Inbox (add_inbox_item, or add_follow_up for a date); the user publishes.` +
           blocks(this.orientationOf(session, project)) +
           blocks(contextBlocks({ notes: project.notes })),
         // Bash for read-only CLIs (gh, acli, gws), by the prompt; their writes are denied, not asked: nobody would answer.

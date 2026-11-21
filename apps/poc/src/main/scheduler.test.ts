@@ -137,6 +137,8 @@ test('routineTick: a due slot starts once across ticks and a restart; a start th
     runs: () => rows.runs,
     putRun: (r: RoutineRun) => put(rows.runs, r),
     removeRuns: () => {},
+    followUps: () => [],
+    putFollowUp: () => {},
   }
   const clock = { t: new Date(2026, 10, 17, 12).getTime() }
   const open = () => createRoutines({ records, now: () => clock.t })
