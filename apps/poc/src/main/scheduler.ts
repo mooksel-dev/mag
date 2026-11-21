@@ -1,10 +1,11 @@
 import { FALLBACK_BASE } from '@mag/core'
 import { rmdir } from 'node:fs'
-import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewActivity, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewActivity, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork, type Workspace } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prChecks, prFeedback, prMergeable, prState, removeWorktree, type PrFeedback } from './git.ts'
 import { log } from './log.ts'
+import type { People } from './core/services/people/index.ts'
 
 const PR_POLL_EVERY_MS = 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
@@ -227,4 +228,38 @@ function checkError(key: string, e: unknown) {
   const msg = (e as Error).message ?? String(e)
   log.warn('scheduler', `PR check failed for ${key}: ${msg}`)
   return msg.split('\n')[0]
+}
+
+/** People sync once a day per workspace (who-is-who-people-from.1). */
+export const PEOPLE_SYNC_EVERY_MS = 24 * 60 * 60_000
+const PEOPLE_CHECK_EVERY_MS = 60 * 60_000
+
+/** Workspaces with a directory whose last people sync is a day old or more. */
+export function peopleSyncDue(workspaces: Workspace[], lastSyncedAt: (id: string) => number, now: number): string[] {
+  return workspaces.filter((w) => (w.directories?.slack || w.directories?.atlassian || w.directories?.githubOrgs?.length) && now - lastSyncedAt(w.id) >= PEOPLE_SYNC_EVERY_MS).map((w) => w.id)
+}
+
+/** Syncs the people of each workspace that is due, now and every hour after; `onSynced` after each. */
+export function startPeopleSync(store: Pick<Store, 'workspaces'>, people: Pick<People, 'sync' | 'lastSyncedAt'>, onSynced: () => void = () => {}) {
+  let running = false
+  const check = async () => {
+    if (running) return
+    running = true
+    try {
+      for (const id of peopleSyncDue(store.workspaces(), people.lastSyncedAt, Date.now())) {
+        try {
+          const r = await people.sync(id)
+          log.info('scheduler', `people of ${id}: ${r.matched} matched, ${r.new} new, ${r.unmatched} unmatched${r.errors.length ? `; ${r.errors.join('; ')}` : ''}`)
+        } catch (e) {
+          log.warn('scheduler', `people of ${id}: sync failed: ${(e as Error).message}`)
+        }
+        onSynced()
+      }
+    } finally {
+      running = false
+    }
+  }
+  void check()
+  setInterval(check, PEOPLE_CHECK_EVERY_MS).unref()
+  return { checkNow: check }
 }

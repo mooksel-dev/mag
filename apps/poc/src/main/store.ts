@@ -9,6 +9,7 @@ import { createLabels, type Labels } from './core/services/labels/index.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
 import type { Deliverable, DeliverableRecords } from './core/services/deliverables/types.ts'
+import type { Identity, IdentityOverride, Person } from './core/services/people/types.ts'
 
 interface Data {
   workspaces: Workspace[]
@@ -32,6 +33,10 @@ interface Data {
   itemLabels: ItemLabel[]
   /** Non-code results; their versions' text is in the workspace folder (deliverables-library-claims-review-and.1). */
   deliverables: Deliverable[]
+  /** People of each workspace (who-is-who-people-from.1); kept by services/people, not sent to the renderer. */
+  persons: Person[]
+  identities: Identity[]
+  identityOverrides: IdentityOverride[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
   /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
@@ -188,7 +193,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label', deliverables: 'deliverable' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label', deliverables: 'deliverable', persons: 'person', identities: 'identity', identityOverrides: 'identity_override' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -255,7 +260,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -281,6 +286,9 @@ export class Store {
     this.data.labelGroups ??= []
     this.data.labels ??= []
     this.data.itemLabels ??= []
+    this.data.persons ??= []
+    this.data.identities ??= []
+    this.data.identityOverrides ??= []
     this.data.events ??= []
     this.data.integrations ??= []
     this.data.inboxStates ??= []
@@ -393,7 +401,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)

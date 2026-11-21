@@ -113,3 +113,11 @@ test('scheduler: a review work records author replies, new commits and the merge
     gh.restore()
   }
 })
+
+test('peopleSyncDue: workspaces with a directory, a day after their last sync (who-is-who-people-from.1)', async () => {
+  const { peopleSyncDue, PEOPLE_SYNC_EVERY_MS } = await import('./scheduler.ts')
+  const w = (id: string, directories?: object) => ({ id, name: id, profile: '', notes: '', repos: [], agents: {}, integrations: {}, createdAt: 0, ...(directories && { directories }) })
+  const last: Record<string, number> = { slack: 0, fresh: 10, orgs: 0 }
+  const now = PEOPLE_SYNC_EVERY_MS + 5
+  assert.deepEqual(peopleSyncDue([w('none'), w('off', { slack: false, githubOrgs: [] }), w('slack', { slack: true }), w('fresh', { atlassian: true }), w('orgs', { githubOrgs: ['aura'] })], (id) => last[id] ?? 0, now), ['slack', 'orgs'])
+})

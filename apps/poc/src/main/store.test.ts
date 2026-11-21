@@ -1094,3 +1094,23 @@ test('deliverable records persist as rows of their own and reach the renderer st
   again.flush()
   assert.deepEqual(new Store(file).data.deliverables.map((x) => x.id), ['d1'])
 })
+
+test('people rows persist on SQLite and stay out of the renderer state (who-is-who-people-from.1)', async () => {
+  const { appState } = await import('./state.ts')
+  const { createPeople } = await import('./core/services/people/index.ts')
+  const { file, store, aura } = withTopics()
+  store.updateWorkspace(aura.id, { directories: { slack: true } })
+  const none = async () => []
+  const people = createPeople(store.data, { workspace: (id) => store.data.workspaces.find((w) => w.id === id), repos: () => [], jiraKeys: () => [] }, { slackUsers: async () => [{ system: 'slack', handle: 'U1', name: 'Ihor Koval' }], atlassianUsers: none, githubMembers: none, commitEmails: async () => new Map(), githubOwners: none }, () => store.changed())
+  await people.sync(aura.id)
+  people.override({ workspaceId: aura.id, system: 'github', handle: 'ikoval', personId: 'ihor-koval' })
+  people.notPerson(aura.id, 'ihor-koval')
+  people.override({ workspaceId: aura.id, system: 'github', handle: 'bot', personId: null })
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.data.identityOverrides.map((o) => [o.handle, o.personId]).sort(), [['U1', null], ['bot', null], ['ikoval', null]])
+  assert.deepEqual(again.data.identities.map((i) => i.handle), ['U1'])
+  assert.equal(again.workspace(aura.id).directories?.slack, true)
+  const state = appState(again, { claudeBin: null, appVersion: '', openProjects: [], inbox: [] }) as unknown as Record<string, unknown>
+  assert.equal('persons' in state || 'identities' in state || 'identityOverrides' in state, false)
+})
