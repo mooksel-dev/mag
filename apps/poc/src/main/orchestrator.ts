@@ -362,7 +362,7 @@ const prReviewPrompt = (project: Project, work: Task, files: string, since: stri
     ? `Its repository ${pr.repo} is not one of the project's, so mag has no checkout of it: read the PR with gh pr diff ${pr.url}, gh pr view and gh api (read only). Its fact is drawn without the project's architecture: its modules are its folders, as get_pr_changes lists them; say so in the review.`
     : `Its repository is ${pr.repo}, the user's main checkout: never change it there; mag fetched the PR, so git diff ${pr.base}...${pr.head} works there.${scratch ? ` The code at the PR's head is in ${scratch}.` : ''}`
   const fact = shared
-    ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic with show_diagram without role where the review needs them, by the project's playbook:`
+    ? `The fact: the PR's change inventory at this head is already written (one per head, for both formats of the review): read it with get_pr_changes and get_diagrams(work: "${work.key}") and build on it; call set_inventory only to fix a unit that is wrong, never to write it anew. Scenarios and method logic for the fact with show_diagram without role where the review needs them; the essential diagram the user reads (the system view) with role review. By the project's playbook:`
     : "The fact, by the project's playbook:"
   const order = v1
     ? 'Review it following the project\'s playbook (the v1 format: findings by level and a verdict, no report):'
