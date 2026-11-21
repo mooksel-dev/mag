@@ -2,6 +2,8 @@
 // how mag works as goal + why + what mag does with it, who reads the agent's output, and the words mag uses. mag's
 // frame, never the editable playbook: these are facts only mag knows (Principle 4), so a project's text cannot drop them.
 
+import type { Project, Workspace } from './index.ts'
+
 /**
  * How mag works, said once for every role: the lifecycle, who reads what, steps and PRs, the doc as the only handoff,
  * the diagram kinds, plan ↔ fact and what mag checks. `rounds`: the playbook's reviewRounds.
@@ -37,16 +39,19 @@ time. Everything below serves that.
   never goes below what these show.`
 }
 
-/** Who reads an agent's output and how (audit, missing guidance): the reason to be short and to lead with the answer. */
+/**
+ * Who reads an agent's output and how (audit, missing guidance): the reason to be short and to lead with the answer. No
+ * role: the user's comes from their workspace profile (workspaces-and-labels-project-as.3).
+ */
 export const THE_USER = `## Who reads you
-The user: a developer who leads several works at once through mag and reads you between other things, in a narrow
-chat pane, the doc and the diagrams. Lead with the answer and your view, keep chat short, and put detail where it lasts:
-the doc, a diagram or a canvas.`
+The user leads several works at once through mag and reads you between other things, in a narrow chat pane, the doc
+and the diagrams. Their role and how they work come from their profile below, when there is one; assume no role beyond
+it. Lead with the answer and your view, keep chat short, and put detail where it lasts: the doc, a diagram or a canvas.`
 
 /** mag's house words in plain terms (audit F9), so the model reads them as the user does. */
 export const GLOSSARY = `## Words mag uses
-- work: one problem the user wants solved, from plan to merged PRs (stored as a task); its key is a ticket key or a
-  slug, e.g. ABC-12. step: one part of a work that ships on its own, e.g. ABC-12.3.
+- work: one problem the user wants solved, from plan to done: merged PRs, or a doc or a decision (stored as a task);
+  its key is a ticket key or a slug, e.g. ABC-12. step: one part of a work that ships on its own, e.g. ABC-12.3.
 - owner: the agent that planned a work (a chat topic or a groomer); it answers the developers and reviews first.
 - the doc: the work's document: problem, options, decisions, plan, progress.
 - fact: the change as made, written by a reviewer from the PR's diff as the change inventory (its units: modules,
@@ -56,7 +61,55 @@ export const GLOSSARY = `## Words mag uses
 - canvas: an HTML page mag shows the user; diagrams are drawn by mag from typed data.
 - user (as a source of a claim): the user's own words, in PR comments, notes or decisions, as opposed to your reading.`
 
-/** The three blocks every system prompt of a role in a work, or of the project chat, carries. */
-export function orientation(rounds: number): string {
-  return `${howMagWorks(rounds)}\n\n${THE_USER}\n\n${GLOSSARY}`
+/** The user's workspace profile, in their words; empty without one. */
+export function profileBlock(profile: string): string {
+  const text = profile.trim()
+  return text ? `## The user\nIn their own words, from the workspace profile:\n${text}` : ''
+}
+
+/** What the workspace card may take of a prompt, in tokens. */
+export const CARD_TOKENS = 200
+
+/** A rough count of tokens: about four characters each, as for English text. */
+export const approxTokens = (text: string) => Math.ceil(text.length / 4)
+
+const NAME_CHARS = 40
+const clip = (name: string) => (name.length > NAME_CHARS ? `${name.slice(0, NAME_CHARS - 1)}…` : name)
+
+/** The prefix of a workspace's refs: its name in lower case, spaces and colons as dashes (aura:topic:…). */
+export const workspacePrefix = (w: Pick<Workspace, 'name'>) => w.name.trim().toLowerCase().replace(/[\s:]+/g, '-')
+
+/**
+ * Where an agent is (workspaces-and-labels-project-as.3), in at most CARD_TOKENS: its workspace, project and labels, how
+ * refs look, the other workspaces and the tools that reach them. Lists that do not fit end with "+N more".
+ */
+export function workspaceCard(ws: Pick<Workspace, 'name'>, project: Pick<Project, 'name'> | null, labels: { group: string; name: string }[], others: Pick<Workspace, 'name'>[] = []): string {
+  const render = (ls: string[], lsMore: number, os: string[], osMore: number) => {
+    const more = (n: number) => (n ? ` +${n} more` : '')
+    const lines = [
+      `## Where you are`,
+      `Workspace ${clip(ws.name)}, ${project ? `project ${clip(project.name)}` : 'no project'}${ls.length || lsMore ? `; labels: ${ls.join(', ')}${more(lsMore)}` : ''}.`,
+      `Refs here: topic:<id>, work:<key>.${os.length || osMore ? ` Other workspaces: ${os.join(', ')}${more(osMore)}; their refs start with the workspace, e.g. ${workspacePrefix(others[0])}:work:<key>.` : ''}`,
+      `On the user's ask, list_chats (scope project, workspace or all), read_chat and read_task read any project or workspace; list_workspaces lists them.`,
+    ]
+    return lines.join('\n')
+  }
+  const ls = labels.map((l) => clip(`${l.group}: ${l.name}`))
+  const os = others.map((o) => clip(o.name))
+  let [nl, no] = [ls.length, os.length]
+  let card = render(ls, 0, os, 0)
+  while (approxTokens(card) > CARD_TOKENS && (nl || no)) {
+    if (nl >= no) nl--
+    else no--
+    card = render(ls.slice(0, nl), ls.length - nl, os.slice(0, no), os.length - no)
+  }
+  return card
+}
+
+/**
+ * The blocks every system prompt of a role in a work, or of a topic, carries: how mag works, who reads, the user's
+ * profile and where the agent is (both left out when empty), and the glossary.
+ */
+export function orientation(rounds: number, profile = '', card = ''): string {
+  return [howMagWorks(rounds), THE_USER, profileBlock(profile), card.trim(), GLOSSARY].filter(Boolean).join('\n\n')
 }

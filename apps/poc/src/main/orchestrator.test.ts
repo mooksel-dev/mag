@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, projectInbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
+import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, projectInbox, howMagWorks, THE_USER, GLOSSARY, approxTokens, CARD_TOKENS, workspaceCard, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator, codexPublishBlock } from './orchestrator.ts'
@@ -422,6 +422,55 @@ test('stance: the playbook\'s stance goes into the groomer, step developer and p
   assert.ok(!dev.includes(DEFAULT_PLAYBOOK.stance))
   await orch.send(orch.newChat(project.id), 'hi')
   assert.ok(specs.at(-1)!.appendSystemPrompt!.includes('OUR STANCE'))
+})
+
+test('prompts are role-neutral: the workspace profile and a card of where the agent is, at most 200 tokens, in the topic, groomer and step developer prompts (workspaces-and-labels-project-as.3)', async () => {
+  const { store, orch, project, task } = setup()
+  const ws = store.workspace(project.workspaceId)
+  store.updateWorkspace(ws.id, { profile: 'Team lead of 3 teams; mostly docs and decisions.' })
+  store.createWorkspace('Aura')
+  const area = store.labels.upsertGroup({ workspaceId: ws.id, name: 'Area', exclusive: false })
+  const ux = store.labels.upsertLabel({ groupId: area.id, name: 'UX' })
+  const chat = orch.newChat(project.id)
+  store.labels.setLabel(`topic:${chat}`, ux.id, 'user')
+  await orch.send(chat, 'hi')
+  const prompt = specs.at(-1)!.appendSystemPrompt!
+  const card = /## Where you are\n[\s\S]*?(?=\n\n)/.exec(prompt)?.[0] ?? ''
+  // Snapshot of the card.
+  assert.equal(
+    card,
+    `## Where you are
+Workspace ${ws.name}, project ${project.name}; labels: Area: UX.
+Refs here: topic:<id>, work:<key>. Other workspaces: Aura; their refs start with the workspace, e.g. aura:work:<key>.
+On the user's ask, list_chats (scope project, workspace or all), read_chat and read_task read any project or workspace; list_workspaces lists them.`,
+  )
+  assert.ok(approxTokens(card) <= CARD_TOKENS)
+  assert.ok(prompt.includes('## The user\nIn their own words, from the workspace profile:\nTeam lead of 3 teams; mostly docs and decisions.'))
+  assert.doesNotMatch(prompt, /the user: a developer/i)
+  assert.ok(prompt.indexOf('## Who reads you') < prompt.indexOf('## The user') && prompt.indexOf('## The user') < prompt.indexOf('## Where you are') && prompt.indexOf('## Where you are') < prompt.indexOf('## Words mag uses'))
+
+  orch.groom(task.id)
+  await tick()
+  const groomer = specs.at(-1)!.appendSystemPrompt!
+  assert.match(groomer, /Team lead of 3 teams/)
+  assert.match(groomer, new RegExp(`## Where you are\nWorkspace ${ws.name}, project ${project.name}\\.`))
+  store.updateTask(task.id, { status: 'ready' })
+  store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
+  await orch.develop(task.id)
+  const dev = specs.at(-1)!.appendSystemPrompt!
+  assert.match(dev, /You are a developer agent/)
+  assert.match(dev, /Team lead of 3 teams/)
+  assert.doesNotMatch(dev, /the user: a developer/i)
+})
+
+test('workspaceCard: long lists end with +N more and the card stays within 200 tokens; no project says so', () => {
+  const labels = Array.from({ length: 40 }, (_, i) => ({ group: `Group number ${i}`, name: `A rather long label name ${i}` }))
+  const others = Array.from({ length: 30 }, (_, i) => ({ name: `Workspace with a long name ${i}` }))
+  const card = workspaceCard({ name: 'W'.repeat(80) }, null, labels, others)
+  assert.ok(approxTokens(card) <= CARD_TOKENS, String(approxTokens(card)))
+  assert.match(card, /no project; labels: .* \+\d+ more\./)
+  assert.match(card, /Other workspaces: .*\+\d+ more;/)
+  assert.doesNotMatch(workspaceCard({ name: 'Personal' }, { name: 'mag' }, [], []), /labels|Other workspaces/)
 })
 
 test('step developer prompt: how it is judged, the code checks and the deviation rule after the playbook\'s step, also with a project\'s own step (prompts-use-the-models-to.3)', async () => {
@@ -1316,7 +1365,7 @@ test('review: without an owner a fresh reviewer reads the doc; no verdict fails,
   assert.match(run.spec.prompt, /did not take part in planning/)
   assert.match(run.spec.appendSystemPrompt!, /first reviewer/)
   // A fresh reviewer has no owner's system prompt to fork: it gets mag's orientation itself (prompts-use-the-models-to.5).
-  assert.ok(run.spec.appendSystemPrompt!.includes(orientation(DEFAULT_PLAYBOOK.reviewRounds)))
+  for (const block of [howMagWorks(DEFAULT_PLAYBOOK.reviewRounds), THE_USER, GLOSSARY]) assert.ok(run.spec.appendSystemPrompt!.includes(block))
   assert.doesNotMatch(run.spec.prompt, /Look hardest where your own plan/)
   assert.throws(() => orch.setReview('nope', 'merge', []))
   run.end()
@@ -2277,10 +2326,11 @@ test('list_chats: every topic and top-level work and review, compact, with close
   const other = store.createProject('q')
   store.createSession({ projectId: other.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
 
-  const rows = JSON.parse(await call('list_chats', {})) as Record<string, unknown>[]
+  assert.equal((JSON.parse(await call('list_chats', {})) as unknown[]).length, 7, 'by default the workspace: the topic of q too')
+  const rows = JSON.parse(await call('list_chats', { scope: 'project' })) as Record<string, unknown>[]
   const row = (id: string) => rows.find((r) => r.id === id || r.key === id)!
   assert.equal(rows.length, 6, 'three topics of this project and three works: no steps, groomers or other projects')
-  assert.deepEqual(row(topic.id), { id: topic.id, kind: 'topic', title: 'New topic', state: 'idle', closed: false, owns: [], lastAt: row(topic.id).lastAt, items: 0, this: true })
+  assert.deepEqual(row(topic.id), { id: topic.id, ref: `topic:${topic.id}`, kind: 'topic', title: 'New topic', state: 'idle', closed: false, owns: [], lastAt: row(topic.id).lastAt, items: 0, this: true })
   assert.deepEqual(row(owner).owns, ['login'])
   assert.deepEqual([row(mags.id).owns, row(mags.id).lastAt, row(mags.id).items], [[review.key], '2026-11-05', 1])
   assert.deepEqual([row(review.key).kind, row(review.key).items, row(review.key).closed], ['review', 1, false])
@@ -2305,6 +2355,7 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
   const done = store.createTask({ projectId: project.id, title: 'Old fix', type: 'dev', description: '', status: 'done', ownerSessionId: doneOwner })
   const gone = store.createTask({ projectId: project.id, title: 'Gone', type: 'dev', description: '' })
   await orch.cancel(gone.id, null)
+  // A topic of another project is no further away (workspaces-and-labels-project-as.3).
   const foreign = store.createSession({ projectId: store.createProject('q').id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
 
   const closed = await call('close_chats', { targets: [idle, owner, 'login', done.key, topic.id, step.key, foreign.id, idle, gone.key] })
@@ -2315,10 +2366,11 @@ test('close_chats / delete_chats / restore_chat: each target on its own with its
     `${done.key}: closed`,
     `${topic.id}: refused: this is the topic you are in; the user does it with the button`,
     `${step.key}: no such topic or work (${step.key} is a step: pass its work)`,
-    `${foreign.id}: no such topic or work in this project`,
+    `${foreign.id}: closed`,
     `${idle}: already closed`,
     `${gone.key}: already closed`,
   ])
+  assert.equal(await call('close_chats', { targets: ['nope'] }), 'nope: no such topic or work')
   assert.ok(store.session(idle).closedAt && store.task(done.id).closedAt)
   assert.equal(store.session(owner).closedAt ?? null, null)
 
@@ -2787,22 +2839,24 @@ test('approveAndStart: approves and starts; the Start choice is remembered; star
 test('orientation: every role\'s system prompt says how mag works, who reads it and mag\'s words, as mag\'s frame (prompts-use-the-models-to.5)', async () => {
   const { store, orch, project, task } = setup()
   store.updateProject(project.id, { playbook: { plan: 'OUR PLANNING', step: 'OUR STEP', reviewRounds: 3 } })
-  const frame = orientation(3)
+  // The workspace card goes between who reads and the glossary (workspaces-and-labels-project-as.3): each block is there.
+  const frame = howMagWorks(3)
+  const framed = (p: string) => [frame, THE_USER, GLOSSARY].every((b) => p.includes(b))
   orch.groom(task.id)
   await tick()
   const groomer = specs.at(-1)!.appendSystemPrompt!
-  assert.ok(groomer.includes(frame), 'groomer, even with its own plan section')
+  assert.ok(framed(groomer), 'groomer, even with its own plan section')
   assert.match(groomer, /it is all a fresh developer and a fresh\s+reviewer get besides the\s+code/)
   assert.ok(groomer.indexOf(frame) < groomer.indexOf('OUR PLANNING'), 'orientation before the job')
   await orch.send(orch.newChat(project.id), 'hi')
   const chat = specs.at(-1)!.appendSystemPrompt!
-  assert.ok(chat.includes(frame), 'chat')
+  assert.ok(framed(chat), 'chat')
   assert.match(chat, /mag shows each text you write as a\s+message in the user's pane/, 'one answer per turn, with its reason')
   store.updateTask(task.id, { status: 'ready' })
   store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: task.id, status: 'todo', repos: [] })
   await orch.develop(task.id)
   const dev = specs.at(-1)!.appendSystemPrompt!
-  assert.ok(dev.includes(frame), 'step developer')
+  assert.ok(framed(dev), 'step developer')
   assert.match(dev, /You start fresh: what the owner planned is in the doc and the diagrams/)
   assert.match(frame, /up to 3 review rounds in a row; after that the user decides/, 'the project\'s round limit')
   for (const p of [groomer, chat, dev]) assert.doesNotMatch(p, /\b(NEVER|ALWAYS|MUST|IMPORTANT|ONLY|DO NOT)\b/, 'no ALL-CAPS emphasis')
