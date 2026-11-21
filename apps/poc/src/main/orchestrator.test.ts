@@ -311,6 +311,17 @@ test('project chat: Bash allowed, integrations by the chat modes (T-37)', async 
   assert.match(spec.appendSystemPrompt ?? '', /Pass a role only when the user\n  named it; otherwise ask which role to use, or start with none/)
 })
 
+test('with topicsMerge a topic may merge; a push to a base stays denied', async () => {
+  const { store, orch, project } = setup()
+  store.updateProject(project.id, { topicsMerge: true })
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'merge #4')
+  const spec = specs.at(-1)!
+  assert.ok(!anyMatches(spec.disallowedTools, 'gh pr merge 4 --merge --admin'))
+  assert.ok(!anyMatches(spec.askTools, 'gh pr merge 4 --merge --admin'))
+  assert.ok(anyMatches(spec.disallowedTools, 'git push origin main'))
+})
+
 test('a topic is full Claude Code: edits, free Bash and worktrees run without a card; only merge and push to a base are denied (topics-a-tree-of-agent.1)', async () => {
   const { store, orch, project } = setup()
   const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })

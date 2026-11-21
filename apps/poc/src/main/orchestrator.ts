@@ -2442,7 +2442,11 @@ export class Orchestrator {
         // Listed so they run without a card: under -p, a tool neither allowed nor denied goes to approve_tool, which denies
         // all but GitHub writes. Never a merge or a push to a base.
         allowedTools: reads ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
-        disallowedTools: [...(reads ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] : []), ...(preset ? NO_PR_WRITES : NEVER_MERGE), ...noPushTo(this.projectBases(project))],
+        disallowedTools: [
+          ...(reads ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] : []),
+          ...(preset ? NO_PR_WRITES : project.topicsMerge ? [] : NEVER_MERGE),
+          ...noPushTo(this.projectBases(project)),
+        ],
         // A topic may own a review of a teammate's PR: what it writes to GitHub (a push too) waits for the user's Approve.
         ...(preset ? {} : this.askingWrites()),
         readOnly: reads,
