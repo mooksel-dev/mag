@@ -34,25 +34,31 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
 import { Logo } from './Logo'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
-import { useTheme, type ThemeMode } from './useTheme'
-import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkList'
+import { useTheme } from './useTheme'
+import { type HomeGroup, type Selection } from './WorkList'
+import { Rail } from './shell/Rail'
+import { TopicsColumn, type OpenPage, type RailSection } from './shell/TopicsColumn'
+import { allCards, columnCards, waitingCount } from './topicsColumn'
+import { SearchPalette } from './SearchPalette'
 import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 import { MeetingView, MeetingsRootSetting } from './Meetings'
 import { WorkspaceSettings } from './WorkspaceSettings'
 import { Icon } from './ui/Icon'
 import { Pill } from './ui/Pill'
-import { Seg, type SegOption } from './ui/Seg'
 
 const mag = window.mag
-/** Pages the list's footer opens; they take the place of the conversation. */
-type Page = ListPage
-const PAGE_NAMES: Record<Page, string> = { architecture: 'Architecture', settings: 'Settings' }
+/** What opens in place of the conversation: a project's page (its section's ⋯) or the workspace's settings (the rail's profile). */
+type Page = OpenPage | { kind: 'workspace' }
+const PAGE_NAMES: Record<Page['kind'], string> = { architecture: 'Architecture', settings: 'Settings', workspace: 'Workspace' }
+/** Home, creating in a project and, from a group's +, first in that group. */
+interface HomeIn { projectId: string; group: HomeGroup | null }
 
 /**
- * One project's window; the project is fixed for the window's lifetime (ux-odna-rozmova-na-robotu.2): the work list on
- * the left, the open topic's screen (or Home) in the rest; what a topic made is in its artifacts list and opens in a
- * drawer (topics-a-tree-of-agent.3). Architecture and Settings open from the list's footer.
+ * One project's window (ux-odna-rozmova-na-robotu.2), laid out as rail | topics column | the open screen
+ * (slack-like-shell-rail-resizable.1): the rail picks what the column shows (Topics, Meetings); the column lists the
+ * project's whole workspace, a section per project, and is resized by its edge; the open topic's screen (or Home) is in
+ * the rest, what a topic made in its artifacts pane or drawer (topics-a-tree-of-agent.3).
  */
 export function App({ projectId }: { projectId: string }) {
   const [state, setState] = useState<AppState | null>(null)
@@ -61,20 +67,26 @@ export function App({ projectId }: { projectId: string }) {
   const [meetingId, setMeetingId] = useState<string | null>(null)
   const [meetingAt, setMeetingAt] = useState<string | undefined>(undefined)
   const [picker, setPicker] = useState<PickerMode | null>(null)
-  // The open work or topic, per project.
+  const [searching, setSearching] = useState(false)
+  // The open work or topic, per window.
   const selKey = `mag.selected.${projectId}`
   const [selected, setSelected] = useState<Selection | null>(() => {
     try { return JSON.parse(localStorage.getItem(selKey) ?? 'null') as Selection | null } catch { return null }
   })
+  const railKey = `mag.rail.${projectId}`
+  const [section, setSection] = useState<RailSection>(() => (localStorage.getItem(railKey) === 'meetings' ? 'meetings' : 'topics'))
+  const pickSection = (s: RailSection) => {
+    setSection(s)
+    try { localStorage.setItem(railKey, s) } catch { /* ignore */ }
+  }
   const [theme, setTheme] = useTheme()
-  const leftPane = usePaneWidth('left')
-  // A group's + opened Home: what it creates goes first in that group.
-  const [homeGroup, setHomeGroup] = useState<HomeGroup | null>(null)
+  const leftPane = usePaneWidth('left', projectId)
+  const [homeIn, setHomeIn] = useState<HomeIn | null>(null)
   // This window renders a review's static page for its archive when main asks (review-v2-part-2-v1-2.3).
   useRenderReviewExport(state)
   const select = (s: Selection | null) => {
     setSelected(s)
-    setHomeGroup(null)
+    setHomeIn(null)
     setPage(null)
     setMeetingId(null)
     // A New subtopic draft is this window's state only: reopened, its topic shows.
@@ -86,7 +98,7 @@ export function App({ projectId }: { projectId: string }) {
     mag.getState().then((s) => {
       setState(s)
       // A new project has nothing to show until it has repositories.
-      if (s.projects.find((p) => p.id === projectId)?.repos.length === 0) setPage('settings')
+      if (s.projects.find((p) => p.id === projectId)?.repos.length === 0) setPage({ kind: 'settings', projectId })
     })
     return mag.onState(setState)
   }, [projectId])
@@ -102,12 +114,18 @@ export function App({ projectId }: { projectId: string }) {
   }, [openTaskId, state]) // eslint-disable-line react-hooks/exhaustive-deps
   // ⌘O, File → Open Project… / New Project…, the dock menu.
   useEffect(() => mag.onOpenPicker(setPicker), [])
-  // ⌘N opens Home, as New does.
+  // ⌘N opens Home, as New does; ⌘K the search palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'n') return
-      e.preventDefault()
-      select(null)
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+      const key = e.key.toLowerCase()
+      if (key === 'n') {
+        e.preventDefault()
+        select(null)
+      } else if (key === 'k') {
+        e.preventDefault()
+        setSearching(true)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -120,16 +138,19 @@ export function App({ projectId }: { projectId: string }) {
 
   if (!state) return null
   if (!project) return <div className="app"><main className="main empty">This project no longer exists.</main></div>
-  const tasks = state.tasks.filter((t) => t.projectId === project.id)
+  const workspace = state.workspaces.find((w) => w.id === project.workspaceId) ?? null
+  if (!workspace) return <div className="app"><main className="main empty">This project's workspace no longer exists.</main></div>
+  // The column lists the whole workspace, so what is open can be in any of its projects or without one.
+  const inWorkspace = new Set(state.projects.filter((p) => p.workspaceId === workspace.id).map((p) => p.id))
+  const tasks = state.tasks.filter((t) => inWorkspace.has(t.projectId))
+  const sessions = state.sessions.filter((s) => s.workspaceId === workspace.id)
   const openKey = (key: string) => {
-    const t = taskByKey(tasks, key)
+    const t = taskByKey(tasks.filter((x) => x.projectId === project.id), key) ?? taskByKey(tasks, key)
     if (t) select({ kind: 'work', id: t.parentId ?? t.id })
   }
   // The selection, while it still exists; else Home. A work opens through its owner topic, with its card in the drawer;
   // a work whose owner is its groomer (or nobody) on a screen of its own (topics-a-tree-of-agent.3). A topic a review
   // shows through opens with the review. A session under a topic opens on its own page, as a topic does.
-  // The project's sessions, and its workspace's topics without a project (the list's No project).
-  const sessions = state.sessions.filter((s) => s.projectId === project.id || (s.projectId === null && s.workspaceId === project.workspaceId))
   const isTopic = (s: SessionHeader) => !s.taskId && (s.role === 'chat' || !!s.parentId)
   const pickedTopic = selected?.kind === 'topic' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const work = selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null
@@ -140,6 +161,11 @@ export function App({ projectId }: { projectId: string }) {
   // A New subtopic draft under a topic or subtopic that still exists (topic-screen-one-new-compact.2).
   const draftParent = selected?.kind === 'draft' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const current: Selection | null = draftParent ? { kind: 'draft', id: draftParent.id } : work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
+  // A page of a project gone (deleted, moved to another workspace) shows nothing: Home.
+  const pageProject = page && page.kind !== 'workspace' ? state.projects.find((p) => p.id === page.projectId && inWorkspace.has(p.id)) ?? null : null
+  const shownPage = page && (page.kind === 'workspace' || pageProject) ? page : null
+  const homeProject = (homeIn && state.projects.find((p) => p.id === homeIn.projectId && inWorkspace.has(p.id))) || project
+  const homeGroup = homeIn && homeProject.id === homeIn.projectId ? homeIn.group : null
   const openPage = (p: Page | null) => {
     setMeetingId(null)
     setPage(p)
@@ -149,7 +175,12 @@ export function App({ projectId }: { projectId: string }) {
     setMeetingId(id)
     setMeetingAt(at)
   }
-  const screen = meetingId ? 'Meeting' : page ? PAGE_NAMES[page] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
+  const newIn = (pid: string, group: HomeGroup | null) => {
+    select(null)
+    setHomeIn({ projectId: pid, group })
+  }
+  const screen = meetingId ? 'Meeting' : shownPage ? PAGE_NAMES[shownPage.kind] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
+  const topicsWaiting = waitingCount(allCards(columnCards(workspace.id, state.projects, state.tasks, state.sessions, Date.now())))
 
   return (
     <div className="app">
@@ -158,27 +189,57 @@ export function App({ projectId }: { projectId: string }) {
         <div className="grow" />
         <AgentCounter state={state} />
         {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude."><Icon name="alert" size={14} /> Claude CLI not found</span>}
-        <ThemeSwitch mode={theme} onChange={setTheme} />
       </div>
       <div className="layout" style={leftPane.style}>
-        <ErrorBoundary key={`${project.id}:list`} screen="Work list" appVersion={state.appVersion}>
-          <WorkList project={project} state={state} selected={page || meetingId ? null : current} home={!page && !meetingId && !current} page={page} picker={picker} onPicker={setPicker} onSelect={select} onNew={() => select(null)} onNewIn={(g) => { select(null); setHomeGroup(g) }} onOpenPage={openPage} meetingId={meetingId} onOpenMeeting={openMeeting} />
+        <Rail
+          section={section}
+          onSection={pickSection}
+          badges={{ topics: topicsWaiting }}
+          onSearch={() => setSearching(true)}
+          onNew={() => select(null)}
+          theme={theme}
+          onTheme={setTheme}
+          workspace={workspace}
+          profileOn={shownPage?.kind === 'workspace'}
+          onProfile={() => openPage({ kind: 'workspace' })}
+        />
+        <ErrorBoundary key={`${project.id}:list`} screen="Topics column" appVersion={state.appVersion}>
+          <TopicsColumn
+            workspace={workspace}
+            project={project}
+            state={state}
+            section={section}
+            selected={shownPage || meetingId ? null : current}
+            home={!shownPage && !meetingId && !current}
+            page={shownPage && shownPage.kind !== 'workspace' ? shownPage : null}
+            picker={picker}
+            onPicker={setPicker}
+            onSelect={select}
+            onNew={() => select(null)}
+            onNewIn={newIn}
+            onOpenPage={openPage}
+            onSearch={() => setSearching(true)}
+            meetingId={meetingId}
+            onOpenMeeting={openMeeting}
+          />
         </ErrorBoundary>
         <PaneHandle side="left" onResize={leftPane.set} />
         <ErrorBoundary key={`${project.id}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
           {meetingId ? (
             <MeetingView key={meetingId} id={meetingId} at={meetingAt} state={state} project={project} onClose={() => setMeetingId(null)} onSelect={select} />
-          ) : page ? (
+          ) : shownPage ? (
             <main className="pagewrap">
               <div className="pagehead">
-                <span>{PAGE_NAMES[page]}</span>
+                <span>{PAGE_NAMES[shownPage.kind]}{pageProject && pageProject.id !== project.id ? ` · ${pageProject.name}` : ''}</span>
                 <div className="grow" />
                 <button className="small" onClick={() => openPage(null)}><Icon name="x" size={14} /> Close</button>
               </div>
-              {page === 'architecture' ? (
-                <Architecture key={project.id} project={project} />
+              {shownPage.kind === 'workspace' ? (
+                <WorkspaceSettings key={workspace.id} workspace={workspace} projects={state.projects} state={state} />
+              ) : shownPage.kind === 'architecture' ? (
+                <Architecture key={pageProject!.id} project={pageProject!} />
               ) : (
-                <Settings project={project} integrations={state.integrations} workspaces={state.workspaces} projects={state.projects} state={state} />
+                <Settings key={pageProject!.id} project={pageProject!} integrations={state.integrations} workspaces={state.workspaces} projects={state.projects} state={state} />
               )}
             </main>
           ) : draftParent ? (
@@ -187,25 +248,26 @@ export function App({ projectId }: { projectId: string }) {
             <TopicConversation key={`${shownTopic?.id ?? ''}:${work?.id ?? ''}`} topic={shownTopic} work={work} initial={initial} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
           ) : (
             <HomeScreen
-              key={homeGroup?.id ?? ''}
-              project={project}
+              key={`${homeProject.id}:${homeGroup?.id ?? ''}`}
+              project={homeProject}
               state={state}
               group={homeGroup}
               onSelect={select}
-              onCreated={(ref) => { if (homeGroup) void mag.updateProject(project.id, { sidebar: placeNew(project.sidebar ?? [], ref, homeGroup.id) }) }}
+              onCreated={(ref) => { if (homeGroup) void mag.updateProject(homeProject.id, { sidebar: placeNew(homeProject.sidebar ?? [], ref, homeGroup.id) }) }}
             />
           )}
         </ErrorBoundary>
       </div>
+      {searching && (
+        <SearchPalette
+          projectId={project.id}
+          onPick={(ref) => select({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })}
+          onClose={() => setSearching(false)}
+        />
+      )}
     </div>
   )
 }
-
-const THEMES: SegOption<ThemeMode>[] = [
-  { value: 'light', label: <Icon name="sun" size={14} />, title: 'Light' },
-  { value: 'dark', label: <Icon name="moon" size={14} />, title: 'Dark' },
-  { value: 'system', label: 'Auto', title: 'Follow the system' },
-]
 
 /** Agents running now across all projects; there is no limit on how many. */
 function AgentCounter({ state }: { state: AppState }) {
@@ -220,12 +282,6 @@ function AgentCounter({ state }: { state: AppState }) {
     <span className="agentcount" title={running.map(line).join('\n')}>
       <span className="pdot" aria-hidden /> {running.length} {running.length === 1 ? 'agent' : 'agents'}
     </span>
-  )
-}
-
-function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
-  return (
-    <Seg options={THEMES} value={mode} onChange={onChange} label="Theme" />
   )
 }
 
