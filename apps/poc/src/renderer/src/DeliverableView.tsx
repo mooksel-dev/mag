@@ -65,9 +65,9 @@ function VerdictPanel({ verdict, claims, unplaced, verifying }: { verdict: Versi
  * markdown or as a diff with the one before, Mark final, Show in Finder and Publish (a final one: its topic posts it,
  * the Publish card's Allow marks it published).
  */
-export function DeliverableView({ deliverable: d, onClose }: { deliverable: Deliverable; onClose: () => void }) {
+export function DeliverableView({ deliverable: d, version: first, onClose }: { deliverable: Deliverable; version?: number; onClose: () => void }) {
   const last = d.versions.at(-1)?.n ?? null
-  const [picked, setPicked] = useState<number | null>(null)
+  const [picked, setPicked] = useState<number | null>(first ?? null)
   const shown = picked !== null && d.versions.some((v) => v.n === picked) ? picked : last
   const [diff, setDiff] = useState(false)
   const before = shown === null ? null : (d.versions.filter((v) => v.n < shown).at(-1)?.n ?? null)

@@ -9,6 +9,12 @@ ipcRenderer.on('open-task', (_, projectId: string, taskId: string) => {
   if (openTaskCb) openTaskCb(projectId, taskId)
   else pendingTask = [projectId, taskId]
 })
+let pendingHit: [ref: string, title: string] | null = null
+let searchOpenCb: ((ref: string, title: string) => void) | null = null
+ipcRenderer.on('search:open', (_, ref: string, title: string) => {
+  if (searchOpenCb) searchOpenCb(ref, title)
+  else pendingHit = [ref, title]
+})
 let pendingPicker: PickerMode | null = null
 let pickerCb: ((mode: PickerMode) => void) | null = null
 ipcRenderer.on('picker:open', (_, mode: PickerMode) => {
@@ -111,6 +117,16 @@ const api: MagApi = {
     }
   },
   openTask: (taskId) => ipcRenderer.invoke('window:openTask', taskId),
+  searchWorkspace: (query, opts) => ipcRenderer.invoke('search:query', query, opts),
+  openHit: (workspaceId, ref, title) => ipcRenderer.invoke('search:open', workspaceId, ref, title),
+  onSearchOpen: (cb) => {
+    searchOpenCb = cb
+    if (pendingHit) cb(...pendingHit)
+    pendingHit = null
+    return () => {
+      if (searchOpenCb === cb) searchOpenCb = null
+    }
+  },
   onOpenTask: (cb) => {
     openTaskCb = cb
     if (pendingTask) cb(...pendingTask)

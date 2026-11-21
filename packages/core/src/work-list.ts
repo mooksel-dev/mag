@@ -610,14 +610,24 @@ export function stepsLine(work: Task, tasks: Task[]): StepLine[] {
 }
 
 /** A chat to open or reference: a topic (its session id) or a work or review (its task id). */
-export interface ChatRef {
+export interface ChatLink {
   kind: 'topic' | 'task'
   id: string
 }
 
+/** A search hit referenced from the palette (⌘↵): its ref, opened with read(ref), and its title as the palette showed it. */
+export interface HitRef {
+  kind: 'hit'
+  id: string
+  title: string
+}
+
+/** What a message references: chats, and search hits of any kind (unified-search-across-the-workspace.2). */
+export type ChatRef = ChatLink | HitRef
+
 /** One result of searchAll. */
 export interface SearchHit {
-  ref: ChatRef
+  ref: ChatLink
   title: string
   /** A work's or review's key. */
   key: string | null

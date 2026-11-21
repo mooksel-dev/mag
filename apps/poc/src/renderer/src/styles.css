@@ -617,7 +617,7 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .seg.fill button { flex: 1; }
 
 /* The one selected row: every list's current item. */
-.wlrow.on, .wlsess.on, .wlsub.on, .wlsub.on .wlsess, .wlidea.on, .mtgrow.on, .prow.on, .sphit.on, .setitem.on, .mprow.on, .cmdmenu button.sel { background: var(--select); color: var(--t1); }
+.wlrow.on, .wlsess.on, .wlsub.on, .wlsub.on .wlsess, .wlidea.on, .mtgrow.on, .prow.on, .sphit.on, .sptabs button.on, .sppeople.on, .setitem.on, .mprow.on, .cmdmenu button.sel { background: var(--select); color: var(--t1); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; align-self: start; }
 .card h2 { margin: 0 0 8px; font-size: 14px; }
 .ideatext { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; max-width: 900px; }
@@ -848,6 +848,19 @@ body.resizing iframe { pointer-events: none; }
 .sptime { flex: none; margin-left: auto; font-size: var(--fs-xs); color: var(--faint); }
 .spline { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spempty { padding: 6px 10px; margin: 0; }
+.spfilters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: 0 12px 10px; }
+.spfilters select { font-size: var(--fs-sm); }
+.splabel { display: inline-flex; align-items: center; gap: 2px; }
+.splabel .x { border: none; background: none; padding: 0 2px; color: var(--faint); }
+.sptabs { display: flex; gap: 2px; padding: 4px 8px; border-top: 1px solid var(--line); overflow-x: auto; }
+.sptabs button { border: none; background: none; padding: 4px 8px; border-radius: var(--r); font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+.spcount { color: var(--faint); font-size: var(--fs-xs); }
+.spsource { font-size: var(--fs-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spline mark { background: var(--select); color: var(--t1); border-radius: 2px; }
+.spnote { margin: 0; padding: 6px 16px; color: var(--muted); border-top: 1px solid var(--line); }
+.spkeys { padding: 6px 16px; border-top: 1px solid var(--line); }
+.jumped { animation: jumped 2s ease-out; }
+@keyframes jumped { from { background: var(--select); } to { background: transparent; } }
 .wlscroll { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 10px; }
 .wlfilters { display: flex; flex-wrap: wrap; gap: 4px; }
 .wlfilters button { border: 1px solid var(--border); background: none; border-radius: var(--r-pill); padding: 2px 9px; font-size: 12px; font-weight: 400; color: var(--muted); }

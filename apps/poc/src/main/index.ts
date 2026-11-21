@@ -35,6 +35,7 @@ import type { Meetings } from './core/services/meetings/index.ts'
 import { createSearchFeed } from './search-feed.ts'
 import { startPacks } from './packs'
 import { startRoutines } from './routines'
+import { paletteSearch, type PaletteQuery } from './search-tools.ts'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
 
@@ -474,14 +475,19 @@ app.whenReady().then(async () => {
   const search = createSearch({ index: searchIndex, onError: (message, e) => log.warn('search', message, e) })
   actions.search = search
   let meetings: Meetings | undefined
-  const feed = createSearchFeed({ search, store, meetings: () => meetings, log: (message, e) => (e ? log.warn('search', message, e) : log.info('search', message)) })
+  const feed = createSearchFeed({ search, store, meetings: () => meetings, deliverables: () => deliverables, log: (message, e) => (e ? log.warn('search', message, e) : log.info('search', message)) })
   let onMeetingPeople = () => {}
   actions.meetings = meetings = startMeetings({ search, indexPath, onMeetingsChanged: () => (feed.onChanged('meetings'), onMeetingPeople()) })
-  store.onChange(() => feed.onChanged('store'))
-  store.onItem(() => feed.onChanged('store'))
-  void feed.indexAll()
   const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
+  store.onChange(() => {
+    feed.onChanged('store')
+    feed.onChanged('deliverables')
+  })
+  store.onItem(() => feed.onChanged('store'))
+  void feed.indexAll()
+  handle('search:query', (_, q: string, opts: PaletteQuery) => paletteSearch(search, q, opts))
+  handle('search:open', (e, workspaceId: string, ref: string, title: string) => windows.openHit(e.sender, workspaceId, ref, String(title ?? '')))
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
   const library = createLibrary({ store, deliverables, meetings: () => meetings })
   handle('library:list', (_, ws: string, filter?: LibraryFilter) => library.list(ws, filter ?? {}))

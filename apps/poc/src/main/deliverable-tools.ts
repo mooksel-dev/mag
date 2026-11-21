@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { DESTINATION_LABELS, type Destination, type DestinationKind } from '@mag/core'
 import type { AgentSession, FindingLevel } from '@mag/core'
-import { currentVersion, isKind, type Claim, type ClaimInput, type Deliverable, type DeliverableState, type Deliverables, type Origin, type RefResolver } from './core/services/deliverables/index.ts'
+import { currentVersion, isKind, refVersion, type Claim, type ClaimInput, type Deliverable, type DeliverableState, type Deliverables, type Origin, type RefResolver } from './core/services/deliverables/index.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
 import type { Store } from './store'
 
@@ -53,7 +53,7 @@ export function deliverableTool(dlv: Deliverables | undefined, origin: Origin, n
   if (!ref) throw new Error('Pass ref, e.g. dlv:weekly-report')
   if (!/(^|:)dlv:/.test(ref)) throw new Error(`read takes deliverable refs (<workspace>:dlv:<slug>); ${ref} is not one`)
   const d = dlv.resolve(ref, origin.workspaceId)
-  const n = typeof args.version === 'number' ? args.version : currentVersion(d)
+  const n = typeof args.version === 'number' ? args.version : (refVersion(ref) ?? currentVersion(d))
   const claims = d.versions.find((v) => v.n === n)?.claims
   return `${dlv.refOf(d)} v${n} · ${d.kind} · ${d.title} · ${d.state}${d.finalVersion ? ` · final v${d.finalVersion}` : ''}\n\n${dlv.read(d.id, n)}${claims?.length ? `\n\n## Claims (set_claims)\n${claimLines(claims)}` : ''}`
 }

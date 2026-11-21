@@ -4,13 +4,13 @@
 
 import type { AgentSession, ChatItem, SessionLike, Task } from './index.ts'
 import { isArchived } from './summary.ts'
-import { shortTitle, type ChatRef } from './work-list.ts'
+import { shortTitle, type ChatLink, type ChatRef, type HitRef } from './work-list.ts'
 
 const isTask = (item: SessionLike | Task): item is Task => 'type' in item
 
 /** A referenced chat as the composer, the bubble and the prompt show it. */
 export interface RefTarget<S extends SessionLike = AgentSession> {
-  ref: ChatRef
+  ref: ChatLink
   item: S | Task
   title: string
   /** A work's or review's key. */
@@ -18,8 +18,11 @@ export interface RefTarget<S extends SessionLike = AgentSession> {
   archived: boolean
 }
 
-/** The chat a ref points at, or null when it is gone. */
+export const isHitRef = (ref: ChatRef): ref is HitRef => ref.kind === 'hit'
+
+/** The chat a ref points at, or null when it is gone (or is a search hit). */
 export function resolveRef<S extends SessionLike>(ref: ChatRef, tasks: Task[], sessions: S[]): RefTarget<S> | null {
+  if (isHitRef(ref)) return null
   const item = ref.kind === 'topic' ? sessions.find((s) => s.id === ref.id) : tasks.find((t) => t.id === ref.id)
   if (!item) return null
   return { ref, item, title: shortTitle(item), key: 'key' in item ? item.key : null, archived: isArchived(item) }
@@ -29,22 +32,27 @@ export function resolveRef<S extends SessionLike>(ref: ChatRef, tasks: Task[], s
 export function uniqueRefs(refs: unknown): ChatRef[] {
   if (!Array.isArray(refs)) return []
   const seen = new Set<string>()
-  return refs.filter((r): r is ChatRef => {
-    if (!r || (r.kind !== 'topic' && r.kind !== 'task') || typeof r.id !== 'string' || !r.id) return false
+  return refs.flatMap((r): ChatRef[] => {
+    if (!r || (r.kind !== 'topic' && r.kind !== 'task' && r.kind !== 'hit') || typeof r.id !== 'string' || !r.id.trim()) return []
     const k = `${r.kind}:${r.id}`
-    if (seen.has(k)) return false
+    if (seen.has(k)) return []
     seen.add(k)
-    return true
+    return [r.kind === 'hit' ? { kind: 'hit', id: r.id.trim(), title: typeof r.title === 'string' && r.title.trim() ? r.title.replace(/\s+/g, ' ').trim() : r.id.trim() } : { kind: r.kind, id: r.id }]
   })
 }
 
 /**
  * What goes before the user's text when the message references chats: per chat its title, key, whether it is
- * archived, its summary (title only without one) and how to read it whole. Empty when no ref resolves.
+ * archived, its summary (title only without one) and how to read it whole; then the search hits, each with its ref.
+ * Empty when no ref resolves.
  */
 export function referencesBlock(refs: ChatRef[], tasks: Task[], sessions: AgentSession[]): string {
-  const targets = uniqueRefs(refs).flatMap((r) => resolveRef(r, tasks, sessions) ?? [])
-  if (!targets.length) return ''
+  const all = uniqueRefs(refs)
+  const targets = all.flatMap((r) => resolveRef(r, tasks, sessions) ?? [])
+  const hits = all.filter(isHitRef)
+  if (!targets.length && !hits.length) return ''
+  const found = hits.length ? ['<referenced-search-hits>', 'The user references these search hits; open each with read(ref) when you need it.', '', ...hits.map((h) => `- ${h.title}: read ref ${h.id}`), '</referenced-search-hits>'].join('\n') : ''
+  if (!targets.length) return found
   const id = (t: RefTarget) => t.key ?? t.ref.id
   const parts = targets.map((t) => {
     const s = t.item.summary
@@ -58,13 +66,14 @@ export function referencesBlock(refs: ChatRef[], tasks: Task[], sessions: AgentS
     } else lines.push('(no summary yet)')
     return lines.join('\n')
   })
-  return [
+  const chats = [
     '<referenced-chats>',
     'The user references these chats of this project. Their summaries follow; call read_chat(id) for the full history when you need more.',
     '',
     parts.join('\n\n'),
     '</referenced-chats>',
   ].join('\n')
+  return found ? `${chats}\n\n${found}` : chats
 }
 
 /** Characters of one read_chat page. */

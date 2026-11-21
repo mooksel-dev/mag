@@ -31,9 +31,12 @@ import type { AppState } from '../../preload/api'
  */
 export type ArtifactTarget =
   | { kind: 'canvas'; id: string; focus?: string }
-  | { kind: 'work' | 'doc' | 'review'; taskId: string }
+  | { kind: 'work' | 'review'; taskId: string }
+  /** section: a doc section's slug (docSections) to scroll to; decisions: its §Decisions. */
+  | { kind: 'doc'; taskId: string; section?: string; decisions?: boolean }
   | { kind: 'agent'; sessionId: string }
-  | { kind: 'deliverable'; id: string }
+  /** version: the one shown first (a search hit's); else the latest. */
+  | { kind: 'deliverable'; id: string; version?: number }
 
 /** One line of Documents and diagrams. */
 export interface ArtifactChip {

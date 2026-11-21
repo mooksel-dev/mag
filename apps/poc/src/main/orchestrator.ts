@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, ASKING_ROLES, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, workspaceCard, type ItemRef, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, ASKING_ROLES, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, workspaceCard, type ItemRef, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, isHitRef, type ChatRef, type ChatLink, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -2098,7 +2098,8 @@ export class Orchestrator {
     // Only chats of the session's project: their summaries go into its prompt.
     const tasks = this.store.data.tasks.filter((t) => t.projectId === session.projectId)
     const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId && s.workspaceId === session.workspaceId)
-    refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
+    // A search hit (⌘↵ in the palette) can be of any workspace: the agent opens it with read(ref).
+    refs = job ? [] : uniqueRefs(refs).filter((r) => isHitRef(r) || resolveRef(r, tasks, sessions))
     // What the user wrote in a turn stopped before any reply: the CLI dropped it, so it goes first now.
     const unheard = job ? [] : unheardBeforeStop(session.items)
     // What happened to its works since its last turn: the user's buttons, steps, PRs.
@@ -2122,7 +2123,7 @@ export class Orchestrator {
       this.store.changed()
       this.preparing.add(sessionId)
       try {
-        await Promise.all(refs.map((r) => this.ensureSummary(r)))
+        await Promise.all(refs.flatMap((r) => (isHitRef(r) ? [] : [this.ensureSummary(r)])))
       } finally {
         this.preparing.delete(sessionId)
       }
@@ -3073,7 +3074,7 @@ export class Orchestrator {
    * A referenced chat, archived or not, gets a summary covering its last item before the message goes (decision 6).
    * Waits at most SUMMARY_WAIT_MS: a slow or failed run leaves the block with what there is (the title at least).
    */
-  async ensureSummary(ref: ChatRef): Promise<void> {
+  async ensureSummary(ref: ChatLink): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<void>((resolve) => { timer = setTimeout(resolve, SUMMARY_WAIT_MS) })
     try {

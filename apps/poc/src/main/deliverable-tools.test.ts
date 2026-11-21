@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { claimRefResolver } from './deliverable-tools.ts'
+import { claimRefResolver, deliverableTool } from './deliverable-tools.ts'
 
 test('claimRefResolver: topics, files, meetings and transcript times resolve; missing ones say why', () => {
   const store = { data: { sessions: [{ id: 't1' }] } } as never
@@ -16,4 +16,13 @@ test('claimRefResolver: topics, files, meetings and transcript times resolve; mi
   assert.equal(resolve('transcript', 'mtg:m1@10:02:40'), null)
   assert.equal(resolve('transcript', 'mtg:m1@11:00'), 'no transcript line at 11:00')
   assert.equal(claimRefResolver(store, undefined)('meeting', 'mtg:m1'), 'meetings are not ready yet')
+})
+
+test('read of a search hit\'s ref opens the version it names; without one, the current version', () => {
+  const d = { id: 'd1', slug: 'weekly', folder: 'aura', kind: 'report', title: 'Weekly', state: 'draft', finalVersion: null, labels: [], versions: [{ n: 1, at: 1, by: 'agent' }, { n: 2, at: 2, by: 'agent' }] }
+  const dlv = { resolve: () => d, refOf: () => 'aura:dlv:weekly', read: (_: string, n: number) => `text v${n}` } as never
+  const origin = { workspaceId: 'w1', folder: 'aura', projectId: null, topicId: null, taskId: null }
+  assert.match(deliverableTool(dlv, origin, 'read', { ref: 'aura:dlv:weekly@1' }), /^aura:dlv:weekly v1 · report · Weekly · draft\n\ntext v1$/)
+  assert.match(deliverableTool(dlv, origin, 'read', { ref: 'aura:dlv:weekly' }), /v2 [\s\S]*text v2$/)
+  assert.match(deliverableTool(dlv, origin, 'read', { ref: 'aura:dlv:weekly@1', version: 2 }), /text v2$/, 'version wins')
 })

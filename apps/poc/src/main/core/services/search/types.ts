@@ -3,6 +3,7 @@ import type { Sensitivity } from '../../clients/search-index/types.ts'
 import type { SearchKind } from '../../lib/search-rows/index.ts'
 
 export type { Sensitivity } from '../../clients/search-index/types.ts'
+export { MARK_END, MARK_START } from '../../clients/search-index/types.ts'
 export type { SearchKind } from '../../lib/search-rows/index.ts'
 
 /** One hit per source: its best row. `ref` opens it (read), `labels` are label ids. */

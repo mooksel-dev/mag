@@ -1,27 +1,32 @@
-// Feeds the search index (unified-search-across-the-workspace.1): the store's topics, docs and decisions and the
-// meetings, backfilled on start and kept in step with their changes. Services stay independent: this app-layer module
+// Feeds the search index (unified-search-across-the-workspace.1, .2): the store's topics, docs, decisions and persons,
+// the meetings and the deliverables' versions, backfilled on start and kept in step with their changes. Services stay independent: this app-layer module
 // reads each source and hands the search service its IndexDocs.
 import type { AgentSession, Task } from '@mag/core'
-import { rowsOfDecisions, rowsOfDoc, rowsOfMeeting, rowsOfSession, textHash } from './core/lib/search-rows/index.ts'
+import { rowsOfDecisions, rowsOfDeliverable, rowsOfDoc, rowsOfMeeting, rowsOfPerson, rowsOfSession, textHash } from './core/lib/search-rows/index.ts'
+import { currentVersion, type Deliverables } from './core/services/deliverables/index.ts'
 import type { Meeting as MeetingMeta, Meetings } from './core/services/meetings/index.ts'
 import type { IndexDoc, Search, Sensitivity } from './core/services/search/index.ts'
 import type { Store } from './store.ts'
 
 /** Sources of each feed, by the prefix of their names. */
-export const STORE_SOURCES = ['session:', 'doc:', 'dec:']
+export const STORE_SOURCES = ['session:', 'doc:', 'dec:', 'person:']
 export const MEETING_SOURCES = ['mtg:']
+export const DELIVERABLE_SOURCES = ['dlv:']
+export type Feed = 'store' | 'meetings' | 'deliverables'
+const FEEDS: Feed[] = ['store', 'meetings', 'deliverables']
 /** A change is indexed this long after it, with the ones that follow it. */
 export const FEED_DELAY_MS = 1000
 
 export type MeetingSource = Pick<Meetings, 'list' | 'read' | 'changedAt' | 'recordingId'>
+export type DeliverableSource = Pick<Deliverables, 'list' | 'read' | 'refOf'>
 
 export interface SearchFeed {
-  /** Backfills both feeds: what changed since the index was built, what is gone dropped. */
+  /** Backfills every feed: what changed since the index was built, what is gone dropped. */
   indexAll(): Promise<void>
   /** A feed's sources changed: it is brought in step after FEED_DELAY_MS. */
-  onChanged(feed: 'store' | 'meetings'): void
-  /** Brings a feed in step now; runs one at a time. */
-  sync(feed: 'store' | 'meetings'): Promise<{ updated: number; removed: number; sources: number }>
+  onChanged(feed: Feed): void
+  /** Brings a feed in step now; runs one at a time. A feed whose source is not started yet does nothing. */
+  sync(feed: Feed): Promise<{ updated: number; removed: number; sources: number }>
 }
 
 /** A workspace named Personal holds the user's own life: its rows are left out of other scopes. */
@@ -42,7 +47,7 @@ export function itemOf(s: AgentSession, sessions: Map<string, AgentSession>, tas
   return `topic:${root.id}`
 }
 
-/** IndexDocs of the store: every session mag runs (not subagents), and each work's doc and decisions. */
+/** IndexDocs of the store: every session mag runs (not subagents), each work's doc and decisions, every person (sensitivity people). */
 export function storeDocs(store: Store, docHashes = new Map<string, { text: string; hash: string }>()): IndexDoc[] {
   const labelsOf = labelIndex(store)
   const personal = new Set(store.data.workspaces.filter((w) => isPersonal(w.name)).map((w) => w.id))
@@ -85,12 +90,62 @@ export function storeDocs(store: Store, docHashes = new Map<string, { text: stri
     docs.push({ source: `doc:${t.id}`, version: base, ...common, rows: () => rowsOfDoc(t, doc) })
     docs.push({ source: `dec:${t.id}`, version: base, ...common, rows: () => rowsOfDecisions(t, doc) })
   }
+  const handles = new Map<string, { system: string; handle: string; name?: string }[]>()
+  for (const i of store.data.identities) if (i.personId) handles.set(i.personId, [...(handles.get(i.personId) ?? []), { system: i.system, handle: i.handle, ...(i.name && { name: i.name }) }])
+  for (const p of store.data.persons) {
+    const person = { ...p, handles: (handles.get(p.id) ?? []).sort((a, b) => `${a.system}:${a.handle}`.localeCompare(`${b.system}:${b.handle}`)) }
+    const text = JSON.stringify([person.name, person.email, person.title, person.handles])
+    docs.push({ source: `person:${p.id}`, version: textHash(text), workspaceId: p.workspaceId, labels: [], sensitivity: 'people', rows: () => rowsOfPerson(person) })
+  }
   return docs
 }
 
 /** A meeting's label ids: those of the topics and works it is linked to, their projects included. */
 export function meetingLabels(m: Pick<MeetingMeta, 'links'>, labelsOf: ReturnType<typeof labelIndex>, tasks: Task[]): string[] {
   return [...new Set((m.links ?? []).flatMap((l) => labelsOf(l.topicId ? `topic:${l.topicId}` : `work:${tasks.find((t) => t.projectId === l.projectId && t.key === l.workKey)?.id}`, l.projectId)))].sort()
+}
+
+/**
+ * IndexDocs of the deliverables at their current version (the final one, else the latest: what read shows), so a hit
+ * never opens an older text than the one in use; labeled with their project and topic's labels and the workspace labels
+ * their own names match. People-sensitive ones (assessments) stay out unless asked, as Personal ones do.
+ */
+export function deliverableDocs(dlv: DeliverableSource, store: Store): IndexDoc[] {
+  const labelsOf = labelIndex(store)
+  const personal = new Set(store.data.workspaces.filter((w) => isPersonal(w.name)).map((w) => w.id))
+  const groupWs = new Map(store.data.labelGroups.map((g) => [g.id, g.workspaceId]))
+  const readOr = (id: string, n: number) => {
+    try {
+      return dlv.read(id, n)
+    } catch {
+      return ''
+    }
+  }
+  return dlv.list().map((d) => {
+    const named = new Set(d.labels.map((l) => l.toLowerCase()))
+    const matched = store.data.labels.filter((l) => groupWs.get(l.groupId) === d.workspaceId && named.has(l.name.toLowerCase())).map((l) => l.id)
+    const labels = [...new Set([...(d.topicId ? labelsOf(`topic:${d.topicId}`, d.projectId) : d.projectId ? [d.projectId] : []), ...matched])].sort()
+    const sensitivity: Sensitivity = d.sensitivity === 'people' ? 'people' : personal.has(d.workspaceId) ? 'personal' : 'work'
+    const ref = dlv.refOf(d)
+    const n = currentVersion(d)
+    const current = d.versions.find((v) => v.n === n)
+    return {
+      source: `dlv:${d.id}`,
+      version: [current ? `${current.n}@${current.at}` : '', textHash(`${ref}\n${d.title}\n${d.kind}\n${d.labels.join(',')}`), labels.join(','), sensitivity].join(':'),
+      workspaceId: d.workspaceId,
+      labels,
+      sensitivity,
+      rows: () =>
+        rowsOfDeliverable({
+          ref,
+          title: d.title,
+          kind: d.kind,
+          labels: d.labels,
+          // A version file deleted by hand leaves only the title row.
+          versions: current ? [{ n: current.n, at: current.at, text: readOr(d.id, current.n) }] : [],
+        }),
+    }
+  })
 }
 
 /** IndexDocs of the meetings, workspace-wide; the one being recorded waits for its end. */
@@ -121,6 +176,8 @@ export function createSearchFeed(deps: {
   store: Store
   /** Set once meetings are started. */
   meetings: () => MeetingSource | undefined
+  /** Set once deliverables are started. */
+  deliverables?: () => DeliverableSource | undefined
   log: (message: string, e?: unknown) => void
   delayMs?: number
 }): SearchFeed {
@@ -128,13 +185,21 @@ export function createSearchFeed(deps: {
   let queue: Promise<unknown> = Promise.resolve()
   const timers = new Map<string, NodeJS.Timeout>()
 
-  const sync = (feed: 'store' | 'meetings') => {
-    const run = queue.then(async () => {
+  const sourcesOf = (feed: Feed): { docs: IndexDoc[]; prefixes: string[] } | null => {
+    if (feed === 'store') return { docs: storeDocs(deps.store, docHashes), prefixes: STORE_SOURCES }
+    if (feed === 'meetings') {
       const meetings = deps.meetings()
-      if (feed === 'meetings' && !meetings) return { updated: 0, removed: 0, sources: 0 }
-      const docs = feed === 'store' ? storeDocs(deps.store, docHashes) : meetingDocs(meetings!, deps.store)
-      const r = await deps.search.rebuild(docs, feed === 'store' ? STORE_SOURCES : MEETING_SOURCES)
-      return { ...r, sources: docs.length }
+      return meetings ? { docs: meetingDocs(meetings, deps.store), prefixes: MEETING_SOURCES } : null
+    }
+    const dlv = deps.deliverables?.()
+    return dlv ? { docs: deliverableDocs(dlv, deps.store), prefixes: DELIVERABLE_SOURCES } : null
+  }
+  const sync = (feed: Feed) => {
+    const run = queue.then(async () => {
+      const got = sourcesOf(feed)
+      if (!got) return { updated: 0, removed: 0, sources: 0 }
+      const r = await deps.search.rebuild(got.docs, got.prefixes)
+      return { ...r, sources: got.docs.length }
     })
     queue = run.catch(() => {})
     return run
@@ -145,7 +210,7 @@ export function createSearchFeed(deps: {
     async indexAll() {
       const t0 = Date.now()
       const counts: string[] = []
-      for (const feed of ['store', 'meetings'] as const) {
+      for (const feed of FEEDS) {
         try {
           const r = await sync(feed)
           counts.push(`${feed}: ${r.sources} sources, ${r.updated} updated, ${r.removed} removed`)

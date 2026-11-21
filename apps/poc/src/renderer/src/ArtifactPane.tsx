@@ -1,4 +1,4 @@
-import { Fragment, useContext, useEffect, useState } from 'react'
+import { Fragment, useContext, useEffect, useRef, useState } from 'react'
 import {
   agentState,
   currentStep,
@@ -32,6 +32,7 @@ import { MoveButton } from './Cards'
 import { CanvasOpener, Chat, Markdown, SessionModelChip } from './Chat'
 import { FactPanel } from './FactPanel'
 import { prLabel } from './format'
+import { headingIndex } from './searchView'
 import { PrPill } from './LinkPill'
 import { ReportView } from './ReportView'
 import { ReviewView } from './Reviews'
@@ -173,7 +174,7 @@ export function TaskArtifact({ target, task, state, onOpenKey, onSelect, onDelet
   onSelect: (s: Selection) => void
   onDeleted: () => void
 }) {
-  if (target.kind === 'doc') return <DocArtifact work={task} state={state} onOpenKey={onOpenKey} />
+  if (target.kind === 'doc') return <DocArtifact work={task} state={state} onOpenKey={onOpenKey} section={target.section} decisions={target.decisions} />
   if (target.kind === 'review') return task.parentId ? <StepReview step={task} state={state} /> : <PrReview work={task} state={state} onOpenKey={onOpenKey} onDeleted={onDeleted} />
   return <WorkArtifact work={task} state={state} onOpenKey={onOpenKey} onSelect={onSelect} onDeleted={onDeleted} />
 }
@@ -288,10 +289,22 @@ function WorkArtifact({ work, state, onOpenKey, onSelect, onDeleted }: { work: T
 }
 
 /** A work's doc; its canvases open in the drawer, ⧉ in the drawer's head pops it out. */
-function DocArtifact({ work, state, onOpenKey }: { work: Task; state: AppState; onOpenKey: (key: string) => void }) {
+/** A work's doc; opened from a search hit at `section` (or its §Decisions), scrolled there once. */
+function DocArtifact({ work, state, onOpenKey, section, decisions }: { work: Task; state: AppState; onOpenKey: (key: string) => void; section?: string; decisions?: boolean }) {
   const doc = state.docs[work.id]
   const canvases = state.canvases.filter((c) => c.projectId === work.projectId)
-  return doc ? <Markdown className="md docmd" text={doc} canvases={canvases} onOpenTask={onOpenKey} /> : <p className="muted">No document yet: the owner writes it while planning.</p>
+  const box = useRef<HTMLDivElement>(null)
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    if (scrolled || !doc || !box.current || (!section && !decisions)) return
+    const n = headingIndex(doc, section, decisions)
+    const el = n < 0 ? null : box.current.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')[n]
+    if (!el) return
+    el.scrollIntoView({ block: 'start' })
+    el.classList.add('jumped')
+    setScrolled(true)
+  }, [doc, section, decisions, scrolled])
+  return doc ? <div ref={box}><Markdown className="md docmd" text={doc} canvases={canvases} onOpenTask={onOpenKey} /></div> : <p className="muted">No document yet: the owner writes it while planning.</p>
 }
 
 /** A teammate's PR review: the report, its fact and diagrams, as its own window shows them. */

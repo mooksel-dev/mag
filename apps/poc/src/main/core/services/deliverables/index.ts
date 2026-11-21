@@ -94,7 +94,13 @@ export interface Deliverables {
   setVerdict(id: string, n: number, input: VerdictInput, sessionId: string): Deliverable
 }
 
-const REF = /^(?:([\p{L}\p{N}][\p{L}\p{N}-]*):)?dlv:([\p{L}\p{N}][\p{L}\p{N}-]*)$/u
+/** `<folder>:dlv:<slug>`, `dlv:<slug>`; `@<n>` (a search hit's version) names the same deliverable. */
+const REF = /^(?:([\p{L}\p{N}][\p{L}\p{N}-]*):)?dlv:([\p{L}\p{N}][\p{L}\p{N}-]*)(?:@(\d+))?$/u
+/** The version a ref names (`…@<n>`); undefined without one. */
+export const refVersion = (ref: string): number | undefined => {
+  const n = REF.exec(ref.trim())?.[3]
+  return n === undefined ? undefined : Number(n)
+}
 
 /** A folder name from a title: lowercase letters, digits and dashes, ≤ 40 characters. */
 export const slugOf = (title: string, fallback = 'deliverable') =>

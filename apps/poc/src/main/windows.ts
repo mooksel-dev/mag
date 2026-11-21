@@ -260,6 +260,20 @@ export function createWindows(store: Store) {
     return findMain((v) => v.projectId === projectId) ?? findMain((v) => viewShows(v, p)) ?? null
   }
 
+  /**
+   * A search hit of another workspace (or of the sender's, when it is gone): a window showing that workspace whole, else a
+   * new one, opens it.
+   */
+  function openHit(sender: WebContents, workspaceId: string, ref: string, title: string) {
+    store.workspace(workspaceId)
+    const from = BrowserWindow.fromWebContents(sender)
+    const shows = (v: WindowView) => v.workspaceId === workspaceId && !v.projectId
+    const own = from && mains.get(from)
+    const win = own && shows(own) ? from : findMain(shows)
+    if (win) focusWin(win)
+    sendWhenLoaded(win ?? openWorkspace(workspaceId), 'search:open', ref, title)
+  }
+
   /** Shows the task in a window that shows its project, else in a new window filtered to its project. */
   function focusTask(taskId: string) {
     const task = store.task(taskId)
@@ -299,6 +313,7 @@ export function createWindows(store: Store) {
     openPopout,
     openUiFixtures,
     focusTask,
+    openHit,
     broadcast,
     sendAll,
     focusedShows,

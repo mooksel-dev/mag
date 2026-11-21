@@ -76,3 +76,14 @@ test('chatTranscript pages: next until the end, the pages make up the whole', ()
   assert.equal(joined, whole)
   assert.equal(pages, Math.ceil(whole.length / 30))
 })
+
+test('search hit refs: kept with their title (the ref when none), deduplicated, listed with read refs after the chats', () => {
+  assert.deepEqual(uniqueRefs([{ kind: 'hit', id: 'mtg:m1@00:01:02', title: ' Weekly\n sync ' }, { kind: 'hit', id: 'mtg:m1@00:01:02', title: 'again' }, { kind: 'hit', id: 'w:person:p' }, { kind: 'hit', id: ' ' }]), [
+    { kind: 'hit', id: 'mtg:m1@00:01:02', title: 'Weekly sync' },
+    { kind: 'hit', id: 'w:person:p', title: 'w:person:p' },
+  ])
+  assert.equal(resolveRef({ kind: 'hit', id: 'x', title: 'x' }, [], []), null)
+  const hit = { kind: 'hit' as const, id: 'aura:dlv:weekly@2', title: 'Weekly · v2' }
+  assert.equal(referencesBlock([hit], [], []), '<referenced-search-hits>\nThe user references these search hits; open each with read(ref) when you need it.\n\n- Weekly · v2: read ref aura:dlv:weekly@2\n</referenced-search-hits>')
+  assert.match(referencesBlock([{ kind: 'topic', id: 's' }, hit], [], [topic()]), /<\/referenced-chats>\n\n<referenced-search-hits>\n[\s\S]*read ref aura:dlv:weekly@2/)
+})

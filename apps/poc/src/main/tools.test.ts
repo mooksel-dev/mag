@@ -958,7 +958,13 @@ test('search_workspace and read: this workspace by default, scope all, kinds, la
   assert.match(await call('read', { ref: `${ws}:dec:${work.id}#0` }), /## Decisions\n- Drain the queue every hour/)
   assert.match(await call('read', { ref: `${ws}:work:${work.id}` }), /^Work .*: Queue work \(planning\)/)
   await assert.rejects(call('read', { ref: 'nonsense' }), /Pass ref/)
-  await assert.rejects(call('read', { ref: `${ws}:person:x` }), /not in the index yet/)
+  await assert.rejects(call('read', { ref: `${ws}:person:x` }), /No person x/)
+  store.data.persons.push({ id: 'olena-k', workspaceId: ws, name: 'Olena K', email: 'olena@aura.com', title: 'Backend lead', avatar: null, external: false, syncedAt: 1 })
+  store.data.identities.push({ id: `${ws}|slack|U1`, workspaceId: ws, system: 'slack', handle: 'U1', personId: 'olena-k', source: 'directory', name: 'olena.k', syncedAt: 1 })
+  assert.equal(await call('read', { ref: `${ws}:person:olena-k` }), 'Person Olena K · workspace Aura\nTitle: Backend lead\nEmail: olena@aura.com\nHandles:\n- slack: U1 (olena.k)\n\n(end)')
+  await feed.sync('store')
+  assert.doesNotMatch(await call('search_workspace', { query: 'olena' }), /person:/, 'persons only with people')
+  assert.match(await call('search_workspace', { query: 'olena', people: true }), new RegExp(`^- ${ws}:person:olena-k · person · Olena K`))
 
   // read_chat reads a topic of another workspace.
   assert.match(await call('read_chat', { id: mine.id }), /My own queue at the bank/)
