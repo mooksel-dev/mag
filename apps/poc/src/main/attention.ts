@@ -32,7 +32,7 @@ export function startAttention(store: Store, windows: Windows, inbox: Inbox) {
     if (next !== badge) app.dock?.setBadge((badge = next))
     if (!Notification.isSupported()) return
     for (const item of newAttention(seen, attentionItems(items, store.data.projects, store.data.tasks))) {
-      if (windows.focusedProject() === item.projectId) continue
+      if (windows.focusedShows(item.projectId)) continue
       const n = new Notification({ title: item.title, body: item.body })
       shown.add(n)
       n.on('click', () => {

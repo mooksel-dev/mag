@@ -161,21 +161,33 @@ test('new works: keyed by their first ticket or title, in planning; steps by the
   assert.equal('nextTaskNo' in p, false)
 })
 
-test('project windows and recent projects persist', () => {
+test('workspace windows and recent projects persist', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
   writeFileSync(file, JSON.stringify({ projects: [], tasks: [], sessions: [], ui: { windows: {} } }))
   const store = new Store(file)
-  assert.deepEqual(store.projectWindows(), [], 'older files get an empty list')
+  assert.deepEqual(store.workspaceWindows(), [], 'older files get an empty list')
   assert.deepEqual(store.recent(), [])
   const b = { x: 0, y: 0, width: 900, height: 700 }
-  store.setProjectWindows([{ projectId: 'a', bounds: b }])
+  store.setWorkspaceWindows([{ workspaceId: 'w', projectId: null, bounds: b }, { workspaceId: 'w', projectId: 'a', bounds: b }])
   store.touchRecent('a')
   store.touchRecent('b')
   store.touchRecent('a')
   store.flush()
   const again = new Store(file)
-  assert.deepEqual(again.projectWindows(), [{ projectId: 'a', bounds: b }])
+  assert.deepEqual(again.workspaceWindows(), [{ workspaceId: 'w', projectId: null, bounds: b }, { workspaceId: 'w', projectId: 'a', bounds: b }])
   assert.deepEqual(again.recent(), ['a', 'b'])
+})
+
+test('saved project windows read as workspace windows filtered to their project, until windows are saved again', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const b = { x: 0, y: 0, width: 900, height: 700 }
+  const project = { id: 'a', name: 'A', workspaceId: 'w', repos: [], notes: '', integrations: {}, enforceArchitecture: false, createdAt: 0 }
+  writeFileSync(file, JSON.stringify({ workspaces: [{ id: 'w', name: 'W', repos: [], notes: '', profile: '', createdAt: 0 }], projects: [project], tasks: [], sessions: [], ui: { windows: {}, projectWindows: [{ projectId: 'a', bounds: b }, { projectId: 'gone', bounds: b }], recent: [] } }))
+  const store = new Store(file)
+  assert.deepEqual(store.workspaceWindows(), [{ workspaceId: 'w', projectId: 'a', bounds: b }])
+  store.setWorkspaceWindows([])
+  store.flush()
+  assert.deepEqual(new Store(file).workspaceWindows(), [], 'the old list is gone once saved')
 })
 
 test('T-28 migration: steps for todo and in-progress tasks, legacy tasks untouched, once', () => {
@@ -627,7 +639,7 @@ test('the state windows get has sessions without items; it does not grow with a 
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
   const p = store.createProject('p')
   const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
-  const extra = { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }
+  const extra = { claudeBin: null, appVersion: '0', openProjects: [], openWorkspaces: [], inbox: [] }
   const size = () => JSON.stringify(appState(store, extra)).length
   const reply = (at: number): ChatItem => ({ kind: 'assistant', text: 'x'.repeat(1000), at })
   store.pushItem(s.id, reply(1000))
@@ -948,7 +960,7 @@ test('a project moved to another workspace, or given a repo, adds its repos ther
 
 test('the state windows get has the workspaces', () => {
   const store = new Store(beforeWorkspaces())
-  assert.deepEqual(appState(store, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }).workspaces, store.workspaces())
+  assert.deepEqual(appState(store, { claudeBin: null, appVersion: '0', openProjects: [], openWorkspaces: [], inbox: [] }).workspaces, store.workspaces())
 })
 
 test('inbox state and added items persist one row per key, on SQLite and on JSON (inbox-what-waits-on-me.1)', () => {
@@ -965,7 +977,7 @@ test('inbox state and added items persist one row per key, on SQLite and on JSON
     const again = new Store(file, backend)
     assert.deepEqual(again.data.inboxStates, [{ ...state, snoozedUntil: 9 }], backend)
     assert.deepEqual(again.data.inboxItems.map((i) => i.key), ['r:1'], backend)
-    assert.equal('inboxStates' in appState(again, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }), false, 'windows get the inbox, not its rows')
+    assert.equal('inboxStates' in appState(again, { claudeBin: null, appVersion: '0', openProjects: [], openWorkspaces: [], inbox: [] }), false, 'windows get the inbox, not its rows')
   }
 })
 
@@ -1089,7 +1101,7 @@ test('deliverable records persist as rows of their own and reach the renderer st
   db.close()
   const again = new Store(file)
   assert.deepEqual(again.data.deliverables.map((x) => x.title), ['Weekly, renamed', 'Weekly'])
-  assert.deepEqual(appState(again, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }).deliverables.map((x) => x.id), ['d1', 'd2'])
+  assert.deepEqual(appState(again, { claudeBin: null, appVersion: '0', openProjects: [], openWorkspaces: [], inbox: [] }).deliverables.map((x) => x.id), ['d1', 'd2'])
   again.deliverableRecords().remove('d2')
   again.flush()
   assert.deepEqual(new Store(file).data.deliverables.map((x) => x.id), ['d1'])
@@ -1111,6 +1123,6 @@ test('people rows persist on SQLite and stay out of the renderer state (who-is-w
   assert.deepEqual(again.data.identityOverrides.map((o) => [o.handle, o.personId]).sort(), [['U1', null], ['bot', null], ['ikoval', null]])
   assert.deepEqual(again.data.identities.map((i) => i.handle), ['U1'])
   assert.equal(again.workspace(aura.id).directories?.slack, true)
-  const state = appState(again, { claudeBin: null, appVersion: '', openProjects: [], inbox: [] }) as unknown as Record<string, unknown>
+  const state = appState(again, { claudeBin: null, appVersion: '', openProjects: [], openWorkspaces: [], inbox: [] }) as unknown as Record<string, unknown>
   assert.equal('persons' in state || 'identities' in state || 'identityOverrides' in state, false)
 })

@@ -27,6 +27,11 @@ export function columnCards(workspaceId: string, projects: Project[], tasks: Tas
   }
 }
 
+/** The column of a window filtered to project `projectId` (null: not filtered): its section only, no loose topics. */
+export function onlyProject(c: ColumnCards, projectId: string | null): ColumnCards {
+  return projectId ? { projects: c.projects.filter((p) => p.project.id === projectId), loose: [] } : c
+}
+
 /** Every row of the column, sections in order. */
 export const allCards = (c: ColumnCards): WorkCard[] => [...c.projects.flatMap((p) => p.cards), ...c.loose]
 

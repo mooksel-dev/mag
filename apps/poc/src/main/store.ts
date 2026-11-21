@@ -6,6 +6,7 @@ import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 import { log } from './log.ts'
 import { createLabels, type Labels } from './core/services/labels/index.ts'
+import { fromProjectWindows, type LegacyProjectWindow, type WorkspaceWindow } from './windowViews.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
 import type { Deliverable, DeliverableRecords } from './core/services/deliverables/types.ts'
@@ -58,17 +59,13 @@ interface LegacyIdea {
 
 type LegacyData = Data & { ideas?: LegacyIdea[] }
 
-/** A project window that was open, to reopen on start. */
-export interface ProjectWindow {
-  projectId: string
-  bounds: Bounds
-}
-
 interface UiState {
   /** Last bounds per pop-out kind. */
   windows: Partial<Record<WindowKind, Bounds>>
-  /** Project windows open on quit (or now), in opening order. */
-  projectWindows: ProjectWindow[]
+  /** Workspace windows open on quit (or now), in opening order; missing until the first save since project windows. */
+  workspaceWindows?: WorkspaceWindow[]
+  /** Project windows saved before workspace windows; read once into `workspaceWindows`. */
+  projectWindows?: LegacyProjectWindow[]
   /** Project ids, most recently opened first. */
   recent: string[]
 }
@@ -260,7 +257,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], ui: { windows: {}, workspaceWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -294,9 +291,8 @@ export class Store {
     this.data.inboxStates ??= []
     this.data.inboxItems ??= []
     this.data.deliverables ??= []
-    this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
+    this.data.ui ??= { windows: {}, workspaceWindows: [], recent: [] }
     this.data.ui.windows ??= {}
-    this.data.ui.projectWindows ??= []
     this.data.ui.recent ??= []
     // Runs and live processes don't survive a restart, nor do their pending approvals and background tasks.
     for (const s of this.data.sessions) {
@@ -917,14 +913,15 @@ export class Store {
     this.save()
   }
 
-  /** Project windows to reopen on start. */
-  projectWindows(): ProjectWindow[] {
-    return this.data.ui.projectWindows
+  /** Workspace windows to reopen on start; old project windows come as windows filtered to their project. */
+  workspaceWindows(): WorkspaceWindow[] {
+    return this.data.ui.workspaceWindows ?? fromProjectWindows(this.data.ui.projectWindows ?? [], this.data.projects)
   }
 
-  /** Remembers the open project windows; not app state, so listeners are not told. */
-  setProjectWindows(list: ProjectWindow[]) {
-    this.data.ui.projectWindows = list
+  /** Remembers the open workspace windows; not app state, so listeners are not told. */
+  setWorkspaceWindows(list: WorkspaceWindow[]) {
+    this.data.ui.workspaceWindows = list
+    delete this.data.ui.projectWindows
     this.save()
   }
 

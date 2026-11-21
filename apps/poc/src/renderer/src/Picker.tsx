@@ -92,7 +92,7 @@ function ProjectList({ state, currentId, mode, onClose }: { state: AppState; cur
 }
 
 /** Popover under the project name in the header. */
-export function ProjectPicker({ state, currentId, mode, onClose }: { state: AppState; currentId: string; mode: PickerMode; onClose: () => void }) {
+export function ProjectPicker({ state, currentId, mode, onClose }: { state: AppState; currentId: string | null; mode: PickerMode; onClose: () => void }) {
   return (
     <>
       <div className="menuscrim" onClick={onClose} />
@@ -120,7 +120,12 @@ export function Welcome() {
       <div className="dragbar" />
       <div className="wbody">
         <h1><Logo size={30} />mag</h1>
-        <p className="muted">Open a project, or start a new one.</p>
+        <p className="muted">Open a workspace or a project, or start a new one.</p>
+        {state.workspaces.length > 0 && (
+          <div className="wspaces" aria-label="Workspaces">
+            {state.workspaces.map((w) => <button key={w.id} onClick={() => void mag.openWorkspace(w.id)}>{w.name}</button>)}
+          </div>
+        )}
         <div className="wlist">
           <ProjectList key={mode} state={state} currentId={null} mode={mode} onClose={mode === 'new' ? () => setMode('open') : undefined} />
         </div>

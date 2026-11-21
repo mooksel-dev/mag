@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { SessionItemEvent } from '@mag/core'
-import type { AppState, MagApi, MeetingStatus, PickerMode } from './api'
+import type { AppState, MagApi, MeetingStatus, PickerMode, WindowView } from './api'
 
 // Listen from the start: a window opened for a task or the picker gets the event before the page subscribes.
 let pendingTask: [projectId: string, taskId: string] | null = null
@@ -16,9 +16,10 @@ ipcRenderer.on('picker:open', (_, mode: PickerMode) => {
   else pendingPicker = mode
 })
 
-// Project windows load with `#project=<id>`; Welcome and pop-outs have no project. (The preload is typed for Node.)
+// Main windows load with `#workspace=<id>[&project=<id>]`; Welcome and pop-outs have neither. (The preload is typed for Node.)
 const { hash } = (globalThis as unknown as { location: { hash: string } }).location
-const windowProject = new URLSearchParams(hash.slice(1)).get('project')
+const viewParams = new URLSearchParams(hash.slice(1))
+const windowView: WindowView | null = viewParams.get('workspace') || viewParams.get('project') ? { workspaceId: viewParams.get('workspace'), projectId: viewParams.get('project') } : null
 
 const api: MagApi = {
   getState: () => ipcRenderer.invoke('state:get'),
@@ -96,8 +97,10 @@ const api: MagApi = {
   decideApproval: (sessionId, approvalId, allow, note) => ipcRenderer.invoke('approval:decide', sessionId, approvalId, allow, note),
   enableIntegration: (sessionId, itemId, mode) => ipcRenderer.invoke('integration:enable', sessionId, itemId, mode),
   openWindow: (target) => ipcRenderer.invoke('window:open', target),
-  windowProjectId: () => windowProject,
+  windowView: () => windowView,
   openProject: (projectId) => ipcRenderer.invoke('window:openProject', projectId),
+  openWorkspace: (workspaceId) => ipcRenderer.invoke('window:openWorkspace', workspaceId),
+  switchWorkspace: (workspaceId) => ipcRenderer.invoke('window:switchWorkspace', workspaceId),
   onOpenPicker: (cb) => {
     pickerCb = cb
     if (pendingPicker) cb(pendingPicker)

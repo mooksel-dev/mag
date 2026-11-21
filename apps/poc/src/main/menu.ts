@@ -21,12 +21,14 @@ export function rebuildOnChange(store: Store, key: () => string, build: () => vo
   store.onChange(run)
 }
 
-/** The application menu: File → New Project…, Open Project… (⌘O), Open Recent; Develop → UI fixtures when not packaged. */
+/** The application menu: File → New Window (⌘⇧N, of the focused window's workspace), New Project…, Open Project… (⌘O), Open Recent; Develop → UI fixtures when not packaged. */
 export function startAppMenu(store: Store, windows: Windows, openLogs: () => void) {
   const build = () => {
     const recent = recentProjects(store)
     const file: MenuItemConstructorOptions[] = [
-      { label: 'New Project…', accelerator: 'CmdOrCtrl+Shift+N', click: () => windows.showPicker('new') },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => windows.openWorkspaceFrom(null) },
+      { type: 'separator' },
+      { label: 'New Project…', click: () => windows.showPicker('new') },
       { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: () => windows.showPicker('open') },
       {
         label: 'Open Recent',

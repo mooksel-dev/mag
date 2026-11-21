@@ -29,8 +29,20 @@ export interface AppState {
   deliverables: Deliverable[]
   claudeBin: string | null
   appVersion: string
-  /** Projects that have a window open. */
+  /** Projects that have a window filtered to them. */
   openProjects: string[]
+  /** Workspaces that have a window of their own (not filtered to a project). */
+  openWorkspaces: string[]
+}
+
+/**
+ * What a main window shows (slack-like-shell-rail-resizable.2): a workspace, its column filtered to one project when
+ * `projectId` is set. Its URL hash is `workspace=<id>[&project=<id>]`; `project=<id>` alone (an old window) has no
+ * workspace yet: the window takes its project's.
+ */
+export interface WindowView {
+  workspaceId: string | null
+  projectId: string | null
 }
 
 /** What the main process asks a window to show: the project picker or the new-project form. */
@@ -273,10 +285,14 @@ export interface MagApi {
   enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto'): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */
   openWindow(target: WindowTarget): Promise<void>
-  /** Project this window shows; null in the Welcome window. */
-  windowProjectId(): string | null
-  /** Focus the project's window, or open one. */
+  /** What this main window shows (its workspace, filtered to a project or not); null in Welcome and pop-outs. */
+  windowView(): WindowView | null
+  /** Focus the window filtered to the project, or open one. */
   openProject(projectId: string): Promise<void>
+  /** A new window of the workspace (no id: of this window's); the Welcome window closes after it. */
+  openWorkspace(workspaceId?: string): Promise<void>
+  /** This window shows workspace `workspaceId` whole from now on; it reloads. */
+  switchWorkspace(workspaceId: string): Promise<void>
   /** The main process asks to show the project picker (⌘O, File menu, dock menu). */
   onOpenPicker(cb: (mode: PickerMode) => void): () => void
   /** Focus the task's project window (opening it if closed) and show this task there. */
