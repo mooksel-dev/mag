@@ -177,6 +177,19 @@ export function createWindows(store: Store) {
     win.on('closed', () => popouts.delete(key))
   }
 
+  /** Dev only (Develop → UI fixtures): the shared ui components in every state; one window, a second call focuses it. */
+  function openUiFixtures() {
+    const open = popouts.get('ui-fixtures')
+    if (open) {
+      focusWin(open)
+      return
+    }
+    const win = new BrowserWindow({ ...POPOUT_SIZE, title: 'UI fixtures', icon: ICON, webPreferences: base.webPreferences })
+    popouts.set('ui-fixtures', win)
+    load(win, 'ui-fixtures')
+    win.on('closed', () => popouts.delete('ui-fixtures'))
+  }
+
   /** Shows the task in its project's window, opening the window if it is closed. */
   function focusTask(taskId: string) {
     const task = store.task(taskId)
@@ -209,6 +222,7 @@ export function createWindows(store: Store) {
     restore,
     showPicker,
     openPopout,
+    openUiFixtures,
     focusTask,
     broadcast,
     sendAll,

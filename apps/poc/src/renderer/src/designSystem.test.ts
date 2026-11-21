@@ -41,3 +41,11 @@ test('one Pill, one Seg, one selected row: the old chip and segmented variants a
     assert.doesNotMatch(styles.replace(selected[0], ''), new RegExp(`\\.${row}\\.on\\s*\\{`), `${row} has no selected style of its own`)
   }
 })
+
+test('PublishCard and Claim are not used in production yet: only the dev fixtures page imports them, lazily', () => {
+  const importers = sources.filter((f) => /from '\.\.?\/(ui\/)?(PublishCard|Claim)'/.test(code(f)))
+  assert.deepEqual(importers.sort(), ['UiFixtures.tsx'])
+  const all = (readdirSync(here, { recursive: true }) as string[]).filter((f) => /\.tsx?$/.test(f) && f !== 'UiFixtures.tsx')
+  assert.deepEqual(all.filter((f) => /from '\.\/UiFixtures'/.test(code(f))), [], 'no static import of the fixtures page')
+  assert.match(code('main.tsx'), /lazy\(\(\) => import\('\.\/UiFixtures'\)\)/)
+})
