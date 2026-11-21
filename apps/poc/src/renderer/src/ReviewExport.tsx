@@ -96,7 +96,7 @@ export async function renderReviewExport(state: AppState, taskId: string): Promi
   const model = reviewWindowModel(task, canvases, view)
   const inline: Record<string, string> = {}
   const files: Record<string, string> = {}
-  for (const { set } of model.sets) {
+  for (const { set } of [...(model.essence ? [model.essence] : []), ...model.sets]) {
     for (const c of set) {
       const svg = await drawSvg(c, set)
       inline[c.id] = svg.inline

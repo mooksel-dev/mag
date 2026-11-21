@@ -213,7 +213,7 @@ export interface IssuesReport {
   direction?: Direction
   /** Otherwise: what settles it, one line ("the approved plan", "decision:<id>", "ADR-4"). */
   follows?: string
-  /** The one diagram that shows the essence (the system view or a scenario): its canvas id. */
+  /** The essential diagram the page opens on (the system view or a scenario): its canvas id. */
   diagram?: string
   /** The reviewer's conclusion and advice, one paragraph, shown last. */
   conclusion: string
@@ -539,6 +539,15 @@ export function checkReport(report: IssuesReport): string[] {
     if (own !== 1) errors.push(`direction.options: exactly one option is the change's (pr: true), found ${own}`)
   }
   return errors
+}
+
+/**
+ * What a recorded report still lacks, said to the reviewer without refusing it: on a non-trivial change, an essential
+ * diagram (`essential`: how many diagrams of role review the review has).
+ */
+export function reportWarnings(report: Pick<IssuesReport, 'trivial'>, essential: number): string[] {
+  if (report.trivial || essential) return []
+  return ['diagram: no essential diagram of a change of behaviour; draw the system view with show_diagram, role review (component: the changed app as a boundary of kind app, its layers inside, the rest collapsed into one block, the calls on the arrows), plus a sequence where order matters; or set trivial: true for a config, version or typo change']
 }
 
 /**

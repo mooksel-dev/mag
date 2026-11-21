@@ -208,8 +208,14 @@ have done it. Where its direction is still open, it is the user's call: prepare 
 7. CI: gh pr checks. CI runs the suite; to check a doubt, run a focused test in your scratch worktree, as the job
    says. mag reads the checks too and holds a failing one as its floor under your verdict; what you checked goes in
    verified, what you did not in notChecked.
-8. Record it with set_pr_review: problem, approach and the report, as the report below says.
-9. When the report lays out a direction, the call is the user's: argue its options with them when they ask, and once
+8. The essential diagram, for a change of behaviour (none for a config, version or typo change): one system view with
+   show_diagram, role review, marked root. A component diagram: the changed app as a boundary of kind app, its modules
+   inside by layer (handlers and workers → services → clients → storage), what has no changes collapsed into one block,
+   the calls on the arrows; outer frames from get_architecture, none when the project records no architecture. Plus a
+   sequence, role review, linked from it, only where order matters (races, retries, pagination). The review page shows
+   them above the issues; report.diagram names the one it opens on.
+9. Record it with set_pr_review: problem, approach and the report, as the report below says.
+10. When the report lays out a direction, the call is the user's: argue its options with them when they ask, and once
    they decide, record it with decide_direction (ok, prefer an option, or discuss with the author; the principle in
    their words; the comment to the author you worded together). An earlier decision of the user that bears on it is a
    reference with source user citing decision:<id>, or what the direction follows.
@@ -248,9 +254,11 @@ It covers every change at the level the code is designed at, named as the code n
 has already parsed the bookkeeping into draft units (signatures, blocks): spend your effort on meaning, what each change
 does, how much logic it changes, and on the units no parser sees, and fix a draft unit that is wrong. set_inventory's
 schema says what a unit is and how mag checks it; you never draw the component and data diagrams.
-The report names one diagram that shows the essence of the change, if any: the system view mag draws from the
-inventory, or a scenario you draw with show_diagram (no role, so it joins the fact set) when that view does not show
-it; the page shows only that one. mag answers each save with its check: fix the blockers, and answer each warning
+The fact set stays the reviewer's, for mag's checks; the review page does not show it. What the page shows is the
+essential diagram: for a change of behaviour, the system view you draw with show_diagram, role review (the changed app
+as a boundary of kind app with its layered modules inside, the rest collapsed into one block, the calls on the
+arrows), and a sequence, role review, where order matters; none for a config, version or typo change. Scenarios and
+method logic for the fact go without role. mag answers each save with its check: fix the blockers, and answer each warning
 with a fix or a reason.`,
   tracker: `mag knows a ticket only as a link. Read tickets (Jira, Linear, GitHub…) any way you have: the tracker's MCP
 server, a CLI like acli or gh through Bash, the web. Through Bash you only read the tracker. Change nothing in the tracker (no

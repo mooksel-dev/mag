@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   checkReport,
+  reportWarnings,
   deltaErrors,
   deltaView,
   criteriaSources,
@@ -418,4 +419,10 @@ test('a re-review is a delta against the round before: each previous issue fixed
   ])
   assert.deepEqual(normalizeReport({ ...raw, delta: [{ title: '', status: 'gone' }] }).errors, ['delta[0]: title is required, the issue\'s title', 'delta[0] (): status must be one of fixed, open, new'])
   assert.deepEqual(normalizeReport({ ...raw, delta: 'x' }).errors, ['delta must be a list of { title, status }'])
+})
+
+test('reportWarnings: a change of behaviour without an essential diagram warns; with one, or trivial, it does not', () => {
+  assert.match(reportWarnings({}, 0).join('\n'), /no essential diagram[\s\S]*show_diagram, role review[\s\S]*boundary of kind app[\s\S]*trivial: true/)
+  assert.deepEqual(reportWarnings({}, 1), [])
+  assert.deepEqual(reportWarnings({ trivial: true }, 0), [])
 })

@@ -32,7 +32,7 @@ import { diagramsOf } from './DiffTab'
 import { DiffSetView } from './DiffSetView'
 import { FactPanel } from './FactPanel'
 import { ReportView } from './ReportView'
-import { paneShowsFact } from './reviewWindowModel'
+import { essentialSet, paneShowsFact } from './reviewWindowModel'
 import { ImportedBanner } from './ReviewExport'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
@@ -153,6 +153,7 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
   const folded = findingsFolded(r.report)
   // An issues report is its own publish list (review-v3-concise-design-first.1): each issue once, picked in place.
   const issues = isIssuesReport(r.report)
+  const essence = essentialSet(work, r.report ?? null, state.canvases)
   const findingsBody = (
     <>
       <h2>Findings {r.verdict && <span className="muted small">{findingCounts(r.findings)}{r.report ? ' · from the report, to publish' : ''}</span>}</h2>
@@ -226,6 +227,12 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
             decide: (d) => whileDeciding(() => mag.decideDirection(work.id, d))(),
           }}
           onView={(id) => (fact.some((d) => d.id === id) ? setEvidence(id) : mag.openWindow({ kind: 'canvas', canvasId: id }))}
+          essence={essence && (
+            <section className="reportcard">
+              <h2>Diagram</h2>
+              <DiffSetView key={essence.set[0].id} set={essence.set} current={essence.current} findings={r.findings} />
+            </section>
+          )}
           {...(issues ? { pick: r.verdict && !ro ? { picked: (i: number) => picks.has(i), toggle } : undefined, foldIssues: folded } : {})}>
           {evidence && fact.some((d) => d.id === evidence) && (
             <section>

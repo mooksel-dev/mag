@@ -245,6 +245,8 @@ interface ReportViewProps {
   pick?: { picked: (finding: number) => boolean; toggle: (finding: number) => void }
   /** An issues report: its issues fold (the user prefers another direction). */
   foldIssues?: boolean
+  /** An issues report: its essential diagrams, right under the intent and verdict. */
+  essence?: ReactNode
   children?: ReactNode
 }
 
@@ -339,7 +341,7 @@ function IssueRow({ issue, mag, expand, pick }: { issue?: Issue; mag?: string; e
  * issues (mag's blockers, then each issue once, the first five shown) → acceptance with its evidence → verified and not
  * checked → the direction (its card only when unsettled, else one line) → `children` (diagram, …) → the conclusion.
  */
-function IssuesReportView({ report, kind, onView, decisions, direction, expand, conclusion = true, pick, foldIssues = false, children }: ReportViewProps & { report: IssuesReport }) {
+function IssuesReportView({ report, kind, onView, decisions, direction, expand, conclusion = true, pick, foldIssues = false, essence, children }: ReportViewProps & { report: IssuesReport }) {
   const floor = report.floor?.blockers ?? []
   const { shown, folded, fresh } = issuesView(report)
   const row = (issue: Issue, i: number) => {
@@ -370,6 +372,7 @@ function IssuesReportView({ report, kind, onView, decisions, direction, expand, 
         <p className="intent">{report.intent}</p>
         <ChecksWhy report={report} />
       </section>
+      {essence}
 
       {report.delta && (
         <section className="reportcard">
