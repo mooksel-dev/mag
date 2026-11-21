@@ -37,6 +37,8 @@ import { canReference, referenceInCurrentChat } from './Chat'
 import { useNow } from './Tasks'
 import { DraftRow, SubtopicRows } from './SessionTree'
 import { MeetingsSection } from './Meetings'
+import { Caret, Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
 
 const mag = window.mag
 
@@ -91,7 +93,7 @@ const hasNode = (nodes: SessionNode[], id: string | undefined): boolean => !!id 
 type Drop = { groupId: string | null; before: string | null }
 
 /**
- * The sidebar in the user's order (redesign-start-screen-big-composer.2, decision 9): the project switcher, ＋ New
+ * The sidebar in the user's order (redesign-start-screen-big-composer.2, decision 9): the project switcher, New
  * (Home), search (⌘K) and filters, then one list laid out by core sidebarRows from project.sidebar. Nothing re-sorts:
  * rows and groups move only by drag & drop, a new item shows on top; status is a badge; filters only hide; closed items
  * are under Archive at the bottom. Search (⌘K or its field) opens the SearchPalette over all chats, archive included. Groups are the user's (create, rename, collapse, delete, + starts something
@@ -101,7 +103,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   project: Project
   state: AppState
   selected: Selection | null
-  /** Home is open: ＋ New is the current row. */
+  /** Home is open: New is the current row. */
   home: boolean
   page: ListPage | null
   picker: PickerMode | null
@@ -235,16 +237,16 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
           <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => onPicker(picker ? null : 'open')}>
             <ProjectSquare project={project} />
             <span className="pname">{project.name}</span>
-            <span className="caret" aria-hidden>▾</span>
+            <Icon name="chev-d" size={12} className="caret" />
           </button>
           {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => onPicker(null)} />}
         </div>
         <MeetingsSection selectedId={meetingId} onOpen={onOpenMeeting} />
         <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
-          ＋ New topic <kbd>⌘N</kbd>
+          <Icon name="compose" /> New topic <kbd>⌘N</kbd>
         </button>
         <button className="wlsearch" aria-haspopup="dialog" aria-expanded={searching} title="Search topics by title, summary and messages, archive included" onClick={() => setSearching(true)}>
-          <span aria-hidden>⌕</span>
+          <Icon name="search" />
           <span className="wlsearchtext">Search topics</span>
           <kbd>⌘K</kbd>
         </button>
@@ -267,7 +269,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
       </div>
       <div className="wlscroll">
         {crash && <CrashRow crash={crash} onDismiss={() => mag.dismissCrash().then(() => setCrash(null))} />}
-        {!all.length && <p className="muted small pad">No topics yet. Start one with ＋ New topic: a conversation opens with the agent.</p>}
+        {!all.length && <p className="muted small pad">No topics yet. Start one with New topic: a conversation opens with the agent.</p>}
         {!empty && hiding && !sidebar.entries.length && <p className="muted small pad">Nothing here.</p>}
         {sidebar.entries.map((e) => e.kind === 'row' ? row(e.card, null) : (
           <Group
@@ -288,14 +290,14 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         ))}
         {!hiding && (
           <button className={`wlfold wlend${over === 'end' ? ' over' : ''}`} title="A group of your own; drag rows into it" onClick={newGroup} {...target('end', { groupId: null, before: null })}>
-            ＋ New group
+            <Icon name="plus" size={14} /> New group
           </button>
         )}
         {!hiding && <Ideas topics={ideas} projectId={project.id} selectedId={selected?.kind === 'topic' ? selected.id : null} now={now} onSelect={onSelect} />}
         {sidebar.closed.length > 0 && (
           <div className="wlclosed">
             <button className="wlfold" aria-expanded={showClosed} onClick={() => setShowClosed((d) => !d)}>
-              {showClosed ? '▾' : '▸'} Archive · {sidebar.closed.length}
+              <Caret open={showClosed} /> Archive · {sidebar.closed.length}
             </button>
             {showClosed && sidebar.closed.map((c) => row(c, null))}
           </div>
@@ -303,7 +305,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
       </div>
       <div className="wlfoot">
         <button className={`link${page === 'architecture' ? ' on' : ''}`} onClick={() => onOpenPage('architecture')}>Architecture</button>
-        <button className={`link wlgear${page === 'settings' ? ' on' : ''}`} title="Settings" aria-label="Settings" onClick={() => onOpenPage('settings')}>⚙</button>
+        <button className={`link wlgear${page === 'settings' ? ' on' : ''}`} title="Settings" aria-label="Settings" onClick={() => onOpenPage('settings')}><Icon name="sliders" /></button>
       </div>
     </nav>
   )
@@ -338,7 +340,7 @@ function Ideas({ topics, projectId, selectedId, now, onSelect }: {
   return (
     <div className="wlideas">
       <button className="wlfold" aria-expanded={shown} onClick={toggle}>
-        {shown ? '▾' : '▸'} Ideas · {topics.length}
+        <Caret open={shown} /> Ideas · {topics.length}
       </button>
       {shown && (
         <>
@@ -357,7 +359,7 @@ function Ideas({ topics, projectId, selectedId, now, onSelect }: {
             </div>
           ))}
           {draft === null ? (
-            <button className="wlfold" onClick={() => setDraft('')}>＋ Idea</button>
+            <button className="wlfold" onClick={() => setDraft('')}><Icon name="plus" size={14} /> Idea</button>
           ) : (
             <form className="ideaadd" onSubmit={(e) => { e.preventDefault(); add() }}>
               <textarea
@@ -416,11 +418,11 @@ function Group({ group: g, open, naming, over, drag, children, onToggle, onRenam
           </form>
         ) : (
           <button className="wlgname" aria-expanded={open} onClick={onToggle} onDoubleClick={onStartRename} title="Collapse; double-click to rename">
-            <span aria-hidden>{open ? '▾' : '▸'}</span> {g.name} <span className="count">{g.rows.length}</span>
+            <span aria-hidden><Caret open={open} /></span> {g.name} <span className="count">{g.rows.length}</span>
           </button>
         )}
-        <button className="wlgbtn" aria-label={`New in ${g.name}`} title={`Ask, start a topic or review a PR in ${g.name}`} onClick={onNew}>＋</button>
-        <button className="wlgbtn" aria-label={`More for ${g.name}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>⋯</button>
+        <button className="wlgbtn" aria-label={`New in ${g.name}`} title={`Ask, start a topic or review a PR in ${g.name}`} onClick={onNew}><Icon name="plus" size={14} /></button>
+        <button className="wlgbtn" aria-label={`More for ${g.name}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="more" size={14} /></button>
         {menu && (
           <>
             <div className="menuscrim" onClick={() => setMenu(false)} />
@@ -466,14 +468,14 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
       onContextMenu={(e) => { e.preventDefault(); onMenu(true) }}
       {...drag}
     >
-      {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}>{fold.open ? '▾' : '▸'}</button>}
+      {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}><Caret open={fold.open} /></button>}
       <button className="wlmain" title={[state, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
         <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} title={state} aria-hidden />
         <span className="title">{c.title}</span>
-        {you ? <span className="wlbadge amber">you</span> : <span className="wltime">{time}</span>}
+        {you ? <Pill tone="amber">you</Pill> : <span className="wltime">{time}</span>}
         {status && <span className={`wlmove ${tone}`}>{c.move.text}</span>}
       </button>
-      <button className="wlmore" aria-label={`More for ${c.title}`} aria-haspopup="menu" aria-expanded={menu} title="New subtopic, rename, close, delete…" onClick={() => onMenu(!menu)}>⋯</button>
+      <button className="wlmore" aria-label={`More for ${c.title}`} aria-haspopup="menu" aria-expanded={menu} title="New subtopic, rename, close, delete…" onClick={() => onMenu(!menu)}><Icon name="more" size={14} /></button>
       {menu && <RowMenu card={c} onClose={() => onMenu(false)} onSelect={onSelect} onGone={onGone} />}
     </div>
   )
@@ -592,7 +594,7 @@ function CrashRow({ crash, onDismiss }: { crash: CrashReport; onDismiss: () => v
   const copy = () => navigator.clipboard.writeText(crashMarkdown(crash)).then(() => setCopied(true))
   return (
     <div className="wlcrash">
-      <div className="wltop"><span className="pill red">Crash</span><span className="title">mag crashed {new Date(crash.time).toLocaleString()}</span></div>
+      <div className="wltop"><Pill tone="red">Crash</Pill><span className="title">mag crashed {new Date(crash.time).toLocaleString()}</span></div>
       <div className="muted small">{crash.kind}{crash.screen ? ` on ${crash.screen}` : ''}: {crash.message.split('\n')[0]}</div>
       <div className="actions">
         <button className="small" onClick={() => mag.openLogs()}>Logs</button>

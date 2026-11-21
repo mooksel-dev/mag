@@ -22,10 +22,13 @@ import {
 import type { AppState } from '../../preload/api'
 import { ApprovalCard, CanvasOpener, Markdown } from './Chat'
 import { canvasHref, mdOutline, type OutlinePoint } from './markdown'
-import { canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
+import { TAG_TONES, canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
 import { prName } from './format'
 import { LocalChecks, StartButton } from './LocalMode'
 import { ApproveButton } from './Tasks'
+import { Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
+import { VERDICT_TONES } from './ui/tones'
 
 const mag = window.mag
 
@@ -94,10 +97,10 @@ export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; own
         <span className="qtitle">{questions.length ? `${questions.length} ${questions.length > 1 ? 'decisions' : 'decision'}` : 'Needs you'}</span>
         <span className="muted small qreason" title={work.needsInput ?? ''}>{work.needsInput}</span>
         <div className="grow" />
-        {questions.some((q) => q.recommendation) && <button className="link small" onClick={() => setAll(!all)}>{all ? 'Hide ★' : 'Show ★'}</button>}
-        {owner && questions.length > 0 && <button className="primary small" disabled={busy || sent} title={busy ? 'The owner is in a turn' : 'Send the owner: you accept its recommendations (★)'} onClick={accept}>{sent ? 'Sent' : 'Accept ★'}</button>}
+        {questions.some((q) => q.recommendation) && <button className="link small" onClick={() => setAll(!all)}><Icon name="star" size={12} /> {all ? 'Hide' : 'Show'}</button>}
+        {owner && questions.length > 0 && <button className="primary small" disabled={busy || sent} title={busy ? 'The owner is in a turn' : 'Send the owner: you accept its recommendations'} onClick={accept}>{sent ? 'Sent' : <><Icon name="star" size={12} /> Accept</>}</button>}
         {owner && <button className="small" title="Type your answer to the owner" onClick={onAnswer}>Answer…</button>}
-        {owner && <button className="iconbtn" title="Nothing to answer: take it off; the agent asks again if it still needs you" aria-label="Dismiss" onClick={() => void mag.updateTask(work.id, { needsInput: null, needsQuestions: null })}>✕</button>}
+        {owner && <button className="iconbtn" title="Nothing to answer: take it off; the agent asks again if it still needs you" aria-label="Dismiss" onClick={() => void mag.updateTask(work.id, { needsInput: null, needsQuestions: null })}><Icon name="x" /></button>}
       </div>
       {questions.length > 0 && (
         <ol className="qlist">
@@ -105,7 +108,7 @@ export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; own
             <li key={`${i}-${all}`}>
               <details open={all}>
                 <summary title={q.text}>{q.text}</summary>
-                {q.recommendation && <div className="qrec">★ {q.recommendation}</div>}
+                {q.recommendation && <div className="qrec"><Icon name="star" size={12} /> {q.recommendation}</div>}
               </details>
             </li>
           ))}
@@ -204,7 +207,7 @@ function ItemCard({ item, work, tasks, canvases }: { item: InboxItem; work: Task
         <div className="cardtitle">PR check failed</div>
         <div className="muted small">{pr ? `${prName(pr)} · ` : ''}{text}</div>
         <div className="actions">
-          {pr && <button onClick={() => mag.open(pr)}>Open PR ↗</button>}
+          {pr && <button onClick={() => mag.open(pr)}>Open PR <Icon name="external" size={14} /></button>}
           <button className="primary" onClick={() => mag.checkPrs()}>Check again</button>
         </div>
       </div>
@@ -260,7 +263,7 @@ export function MoveButton({ action, work, state, onAnswer }: { action: MoveActi
   const openReview = () => mag.openWindow({ kind: 'review', taskId: work.id })
   switch (action.kind) {
     case 'open_pr':
-      return <button className="primary small" onClick={() => mag.open(action.url)}>Open PR ↗</button>
+      return <button className="primary small" onClick={() => mag.open(action.url)}>Open PR <Icon name="external" size={14} /></button>
     case 'approve_start':
       return <ApproveButton task={work} tasks={tasks} sessions={sessions} project={project} small />
     case 'start':
@@ -303,8 +306,6 @@ export function IntegrationCard({ sessionId, item }: { sessionId: string; item: 
   return <StructuredCard card={integrationCard(item, canAskFor(item.role))} onEnable={enable} busy={busy} error={error} />
 }
 
-const VERDICT_CLASS = { good: 'ok', warn: 'look', bad: 'bad', neutral: '' } as const
-
 /**
  * A card of the conversation from its model (conversationCards): a title with a verdict chip, short facts, 2–5 tagged
  * rows, folded details and the buttons in a footer.
@@ -327,13 +328,13 @@ export function StructuredCard({ card, onEnable, onFact, busy, error }: {
     <div className={`scard ${card.tone}`}>
       <div className="scardhead">
         <b>{card.title}</b>
-        {card.verdict && <span className={`verdict ${VERDICT_CLASS[card.verdict.tone]}`}>{card.verdict.label}</span>}
+        {card.verdict && <Pill tone={VERDICT_TONES[card.verdict.tone]}>{card.verdict.label}</Pill>}
       </div>
       <div className="scardbody">
         {card.stats.length > 0 && <div className="scardstats">{card.stats.map((x) => <span key={x}>{x}</span>)}</div>}
         {card.rows.map((r, i) => (
           <div key={i} className="scardrow">
-            {r.tag && <span className={`tag t-${r.tag.replace(/ /g, '-')}`}>{r.tag}</span>}
+            {r.tag && <Pill tone={TAG_TONES[r.tag]}>{r.tag}</Pill>}
             <span>{r.lead && <b>{r.lead} </b>}{r.text}</span>
           </div>
         ))}

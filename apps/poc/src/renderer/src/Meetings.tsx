@@ -6,6 +6,8 @@ import { Markdown } from './Chat'
 import { linkKey, meetingWhen, snippetParts, transcriptLines } from './meetingText'
 import { Recorder, useMeetingStatus } from './Recorder'
 import type { Selection } from './WorkList'
+import { Caret, Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
 
 const mag = window.mag
 /** Meetings the section shows before "All". */
@@ -59,7 +61,7 @@ export function MeetingsSection({ selectedId, onOpen }: { selectedId: string | n
   return (
     <section className="meetings" aria-label="Meetings">
       <div className="mtghead">
-        <button className="wlfold" aria-expanded={open} onClick={toggle}>{open ? '▾' : '▸'} Meetings{meetings?.length ? ` · ${meetings.length}` : ''}</button>
+        <button className="wlfold" aria-expanded={open} onClick={toggle}><Caret open={open} /> Meetings{meetings?.length ? ` · ${meetings.length}` : ''}</button>
       </div>
       <Recorder />
       {open && !!meetings?.length && (
@@ -131,7 +133,7 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
     if (content && at) document.getElementById(`line-${at}`)?.scrollIntoView({ block: 'center' })
   }, [content !== null, at]) // eslint-disable-line react-hooks/exhaustive-deps
   const act = (f: () => Promise<unknown>) => void f().catch((e: Error) => setError(e.message))
-  if (error && !content) return <main className="pagewrap"><div className="pagehead"><span>Meeting</span><div className="grow" /><button className="small" onClick={onClose}>✕ Close</button></div><p className="err pad">{error}</p></main>
+  if (error && !content) return <main className="pagewrap"><div className="pagehead"><span>Meeting</span><div className="grow" /><button className="small" onClick={onClose}><Icon name="x" size={14} /> Close</button></div><p className="err pad">{error}</p></main>
   if (!content) return null
   const { meta } = content
   const recording = status?.recording?.meeting?.id === id
@@ -164,7 +166,7 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
         <button className="small" onClick={() => act(() => mag.revealMeeting(id))}>Show in Finder</button>
         <button className="small" disabled={recording || summarizing || !lines.length} onClick={() => act(() => mag.summarizeMeeting(id))}>{summarizing ? 'Summarizing…' : content.summary ? 'Summarize again' : 'Summarize'}</button>
         <button className="small danger" disabled={recording} onClick={() => { if (confirm(`Delete "${meta.title}"? Its folder with the transcript and summary goes.`)) act(async () => { await mag.removeMeeting(id); onClose() }) }}>Delete</button>
-        <button className="small" onClick={onClose}>✕ Close</button>
+        <button className="small" onClick={onClose}><Icon name="x" size={14} /> Close</button>
       </div>
       <section className="page">
         {error && <p className="err">{error}</p>}
@@ -172,14 +174,14 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
         {!!meta.participants?.length && <p className="muted small">With {meta.participants.join(', ')}</p>}
         <div className="mtglinks">
           {(meta.links ?? []).map((l) => (
-            <span key={linkKey(l)} className="pill">
+            <Pill key={linkKey(l)}>
               <button className="link" onClick={() => openLink(l)}>{linkLabel(state, l)}</button>
-              <button className="link" aria-label="Unlink" title="Unlink" onClick={() => act(() => mag.unlinkMeeting(id, l))}>✕</button>
-            </span>
+              <button className="link" aria-label="Unlink" title="Unlink" onClick={() => act(() => mag.unlinkMeeting(id, l))}><Icon name="x" size={12} /></button>
+            </Pill>
           ))}
           {targets.length > 0 && (
             <select value="" aria-label="Link to a topic or work" onChange={(e) => { const t = targets[Number(e.target.value)]; if (t) act(() => mag.linkMeeting(id, t.ref)) }}>
-              <option value="">＋ Link to a topic or work of {project.name}…</option>
+              <option value="">Link to a topic or work of {project.name}…</option>
               {targets.map((t, i) => <option key={linkKey(t.ref)} value={i}>{t.label}</option>)}
             </select>
           )}

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { agentAllowed, findModel, type AgentInfo, type AgentJob, type AgentKind, type ModelChoice } from '@mag/core'
 import { choiceLabel, effortsFor, fillPercent, formatTokens, gaugeLevel, keptEffort } from './modelChoice'
+import { Icon } from './ui/Icon'
+import { Seg } from './ui/Seg'
 
 let catalogue: Promise<AgentInfo[]> | null = null
 
@@ -49,7 +51,7 @@ export function ChoiceChip({ label, title, up, children }: { label: ReactNode; t
   return (
     <div ref={box} className="modelchip">
       <button type="button" className="chip" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog" title={title}>
-        {label} <span className="caret">▾</span>
+        {label} <Icon name="chev-d" size={12} className="caret" />
       </button>
       {open && <div className={`chippop${up ? ' up' : ''}`}>{children}</div>}
     </div>
@@ -89,14 +91,17 @@ export function ModelPopover({ agents, choice, fallback, job, onChange }: {
           <span className="muted">{choiceLabel(agents, fallback)}</span>
         </button>
       )}
-      <div className="mptabs" role="tablist" aria-label="Provider">
-        {agents.map((a) => (
-          <button key={a.id} type="button" role="tab" aria-selected={a.id === shown} className={a.id === shown ? 'on' : ''} onClick={() => setTab(a.id)}
-            title={!a.detected ? 'Not found on this machine' : job && !agentAllowed(job, a.id).ok ? agentAllowed(job, a.id).why : a.displayName}>
-            {a.displayName}{a.id === current.agent ? ' •' : ''}
-          </button>
-        ))}
-      </div>
+      <Seg
+        className="fill"
+        label="Provider"
+        value={shown}
+        onChange={setTab}
+        options={agents.map((a) => ({
+          value: a.id,
+          label: `${a.displayName}${a.id === current.agent ? ' •' : ''}`,
+          title: !a.detected ? 'Not found on this machine' : job && !agentAllowed(job, a.id).ok ? agentAllowed(job, a.id).why : a.displayName,
+        }))}
+      />
       {why && <p className="mpwhy muted small">{why}</p>}
       <div className="mprows" role="listbox" aria-label="Model">
         <button type="button" role="option" aria-selected={!!own && !own.model} disabled={!!why} className={`mprow${own && !own.model ? ' on' : ''}`} onClick={() => pick(null)}>
@@ -120,13 +125,7 @@ export function ModelPopover({ agents, choice, fallback, job, onChange }: {
       <div className="mpeffort">
         <span className="muted small">Effort</span>
         {efforts.length ? (
-          <div className="seg" role="radiogroup" aria-label="Effort">
-            {[null, ...efforts].map((e) => (
-              <button key={e ?? 'default'} type="button" role="radio" aria-checked={current.effort === e} className={current.effort === e ? 'on' : ''} onClick={() => onChange({ ...current, effort: e })}>
-                {e ?? 'Default'}
-              </button>
-            ))}
-          </div>
+          <Seg className="fill" label="Effort" value={current.effort} onChange={(e) => onChange({ ...current, effort: e })} options={[null, ...efforts].map((e) => ({ value: e, label: e ?? 'Default' }))} />
         ) : (
           <span className="muted small">this model takes none</span>
         )}

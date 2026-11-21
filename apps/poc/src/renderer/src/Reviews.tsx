@@ -36,11 +36,13 @@ import { essentialSet, paneShowsFact } from './reviewWindowModel'
 import { ImportedBanner } from './ReviewExport'
 import { ago } from './format'
 import { TicketLinks } from './Tasks'
+import { Icon } from './ui/Icon'
+import { Pill, type Tone } from './ui/Pill'
 
 const mag = window.mag
 
-const VERDICT_PILLS: Record<PrVerdict, string> = { approve: 'green', request_changes: 'red', comment: 'amber' }
-const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '', note: '' }
+const VERDICT_PILLS: Record<PrVerdict, Tone> = { approve: 'green', request_changes: 'red', comment: 'amber' }
+const LEVEL_PILLS: Record<NonNullable<ReviewFinding['level']>, Tone> = { blocker: 'red', should_fix: 'amber', question: 'acc', nit: 'grey', note: 'grey' }
 const CHECK_ICONS: Record<string, string> = { pass: '✓', fail: '✗', pending: '…', skipping: '–', cancel: '–' }
 
 /** Findings worth publishing unless the user says otherwise: blockers and should fix. */
@@ -82,7 +84,7 @@ function Checks({ work }: { work: Task }) {
 function NodeLink({ node }: { node: string }) {
   const id = node.match(/^canvas:([\w-]+)/)?.[1]
   if (!id) return <code>{node}</code>
-  return <button className="link small" title="Open the diagram" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: id })}>{node.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} ⧉</button>
+  return <button className="link small" title="Open the diagram" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: id })}>{node.replace(/^canvas:[\w-]+#?/, '') || 'diagram'} <Icon name="window" size={12} /></button>
 }
 
 /**
@@ -141,7 +143,7 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
               <span className="type">{DIAGRAM_NAMES[d.diagram.type]}</span>
               <span className="title">{d.title}</span>
               <span className="muted small">v{d.version}</span>
-              <span className="link">⧉</span>
+              <span className="link"><Icon name="window" size={14} /></span>
             </div>
           ))}
         </div>
@@ -164,7 +166,7 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
               {r.verdict && !ro && (
                 <input type="checkbox" title="Publish this finding" aria-label="Publish this finding" checked={picks.has(r.findings.indexOf(f))} onChange={() => toggle(r.findings.indexOf(f))} />
               )}
-              <span className={`pill ${LEVEL_PILLS[level]}`}>{FINDING_LEVEL_LABELS[level]}</span>
+              <Pill tone={LEVEL_PILLS[level]}>{FINDING_LEVEL_LABELS[level]}</Pill>
               <div className="grow">
                 <div>{f.text}</div>
                 <div className="small">
@@ -192,12 +194,12 @@ export function ReviewView({ work, project, state, now, status, onOpenKey, onDel
     <div className="reviewview">
       {/* One line: the PR, its author and base, its tickets and CI; the status in words; Open review; the rest in ⋯. */}
       <div className="taskrow reviewhead">
-        <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{repo}#{review.pr.number} ↗</button>
+        <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{repo}#{review.pr.number} <Icon name="external" size={12} /></button>
         <span className="muted small">· @{review.pr.author} → {review.pr.base} ·</span>
         <TicketLinks task={work} />
         <Checks work={work} />
         <div className="grow" />
-        {r.verdict && !r.report && <span className={`pill ${VERDICT_PILLS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span>}
+        {r.verdict && !r.report && <Pill tone={VERDICT_PILLS[r.verdict]}>{PR_VERDICT_LABELS[r.verdict]}</Pill>}
         {!firstRun && <span className="muted small reviewstatus" title={r.head ? `${r.format} reviewed at ${r.head.slice(0, 7)}${r.at ? `, ${ago(r.at, now)}` : ''}` : `${r.format}: not reviewed yet`}>{status.text}</span>}
         <button className="small primary" title="The whole review in its own window: diagrams inline, the code behind every claim, the full diff and the agent at the side" onClick={() => mag.openWindow({ kind: 'review', taskId: work.id })}>Open review</button>
         <ReviewMenu work={work} review={review} running={running} onError={setError} onDeleted={onDeleted} />
@@ -322,7 +324,7 @@ export function ReviewMenu({ work, review, running, onError, onDeleted }: {
   return (
     <span className="menu">
       {saved && <span className="muted small" title={saved}>saved to {saved.split('/').pop()}</span>}
-      <button className="iconbtn" aria-label="Review actions" aria-haspopup="menu" aria-expanded={open} title={`Showing ${review.shown}. Review again, formats, export, close, delete`} onClick={() => setOpen(!open)}>⋯</button>
+      <button className="iconbtn" aria-label="Review actions" aria-haspopup="menu" aria-expanded={open} title={`Showing ${review.shown}. Review again, formats, export, close, delete`} onClick={() => setOpen(!open)}><Icon name="more" /></button>
       {open && (
         <>
           <div className="menuscrim" onClick={() => setOpen(false)} />
@@ -388,7 +390,7 @@ function Publish({ work, result: r, repo, picks, running, now, onError }: {
         {busy ? 'Publishing…' : `Publish to GitHub${picks.size ? ` (${picks.size})` : ''}`}
       </button>
       {review.posted && (
-        <button className="link small" title="Open the published review" onClick={() => mag.open(review.posted!.url)}>published {ago(review.posted.at, now)} ↗</button>
+        <button className="link small" title="Open the published review" onClick={() => mag.open(review.posted!.url)}>published {ago(review.posted.at, now)} <Icon name="external" size={12} /></button>
       )}
     </div>
   )

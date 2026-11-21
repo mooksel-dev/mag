@@ -31,15 +31,17 @@ import {
   type StepFact,
   type Tone,
 } from '@mag/core'
+import { Caret } from './ui/Icon'
+import { Pill } from './ui/Pill'
+import { VERDICT_TONES, type Tone as PillTone } from './ui/tones'
 
-const TONE_PILLS: Record<Tone, string> = { good: 'green', warn: 'amber', bad: 'red', neutral: '' }
-const CHECKS_PILLS: Record<ChecksVerdict, string> = { request_changes: 'red', look: 'amber', approve_with_comments: 'green', approve: 'green' }
 const CHECKS_TONES: Record<ChecksVerdict, Tone> = { request_changes: 'bad', look: 'warn', approve_with_comments: 'good', approve: 'good' }
-const SEVERITY_PILLS: Record<IssueSeverity, string> = { blocker: 'red', should: 'amber', nit: '', note: '' }
-const EVIDENCE_PILLS: Record<EvidenceStatus, string> = { met: 'green', partly: 'amber', not: 'red', unverified: '' }
+const SEVERITY_PILLS: Record<IssueSeverity, PillTone> = { blocker: 'red', should: 'amber', nit: 'grey', note: 'grey' }
+const EVIDENCE_PILLS: Record<EvidenceStatus, PillTone> = { met: 'green', partly: 'amber', not: 'red', unverified: 'grey' }
 const OWNER_LABELS: Record<IssueOwner, string> = { author: 'the author', po: 'the PO', user: 'you' }
 const DELTA_LABELS: Record<DeltaStatus, string> = { fixed: 'fixed', open: 'still open', new: 'new' }
-const DELTA_PILLS: Record<DeltaStatus, string> = { fixed: 'green', open: 'amber', new: 'violet' }
+const DELTA_PILLS: Record<DeltaStatus, PillTone> = { fixed: 'green', open: 'amber', new: 'acc' }
+const SOURCE_PILLS: Record<Claim['source'], PillTone> = { checked: 'green', agent: 'grey', yours: 'acc', question: 'amber', rule: 'red' }
 const SOURCE_LABELS: Record<AcceptanceItem['source'], string> = { pr: 'the PR', ticket: 'the ticket', design: 'the design', none: 'nowhere (inferred)' }
 const SOURCE_TITLES: Record<Claim['source'], string> = {
   checked: 'mag verified it against the inventory',
@@ -53,7 +55,7 @@ const SOURCE_TITLES: Record<Claim['source'], string> = {
 export const viewCanvas = (view: string | undefined) => view?.match(/^canvas:([\w-]+)/)?.[1] ?? null
 
 function Badge({ source }: { source: Claim['source'] }) {
-  return <span className={`badge src-${source}`} title={SOURCE_TITLES[source]}>{source}</span>
+  return <Pill tone={SOURCE_PILLS[source]} className="src" title={SOURCE_TITLES[source]}>{source}</Pill>
 }
 
 /** What the review window expands in place: the code hunks a claim or a change row rests on (review-v2-part-2-v1-2.2). */
@@ -76,7 +78,7 @@ function useCode(target: HunkTarget, expand: Expand | undefined): { button: Reac
   // Static: the code is on the page, folded.
   if (still) return { button: null, code: <details className="inline"><summary className="link small">code</summary><div className="inlinehunks">{expand(target)}</div></details> }
   return {
-    button: <button className="link small" title="Show the code it rests on, here" onClick={() => setOpen(!open)}>code {open ? '▾' : '▸'}</button>,
+    button: <button className="link small" title="Show the code it rests on, here" onClick={() => setOpen(!open)}>code <Caret open={open} /></button>,
     code: open && <div className="inlinehunks">{expand(target)}</div>,
   }
 }
@@ -169,9 +171,9 @@ function DirectionView({ view }: { view: View }) {
     <details className="directionview">
       <summary className="link small">The reviewer's leaning</summary>
       <div className="claim">
-        <span className="badge src-agent" title={SOURCE_TITLES.agent}>agent</span>
+        <Badge source="agent" />
         <div className="grow">
-          <div><b>{view.leaning}</b> <span className="pill small">{view.confidence} confidence</span></div>
+          <div><b>{view.leaning}</b> <Pill>{view.confidence} confidence</Pill></div>
           <div className="small">{view.why}</div>
           <div className="small muted">An opinion only: it does not count in the checks.</div>
         </div>
@@ -201,7 +203,7 @@ function Decided({ decided, draft }: { decided: DirectionDecision; draft?: strin
   const still = useContext(StaticContext)
   return (
     <div className="decided">
-      <div><span className="badge src-yours">yours</span> <b>{choiceLine(decided)}</b>{decided.principle && <span className="muted"> · {decided.principle}</span>}</div>
+      <div><Pill tone="acc" className="src">yours</Pill> <b>{choiceLine(decided)}</b>{decided.principle && <span className="muted"> · {decided.principle}</span>}</div>
       {draft && (
         <div className="draft">
           <div className="cardhead">
@@ -266,14 +268,14 @@ function DirectionCard({ report, kind, onView, decisions, direction, expand, id 
     <section id={id} className="reportcard direction">
       <div className="cardhead">
         <h2>Direction</h2>
-        <span className="pill violet">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</span>
+        <Pill tone="acc">{kind === 'pr' ? (report.decided ? `Yours: ${choiceLine(report.decided)}` : 'Direction: your call') : 'The approved plan'}</Pill>
       </div>
       {d.decisions.map((c, i) => <ClaimLine key={i} claim={c} onView={onView} expand={expand} />)}
       {d.options.length > 0 && (
         <div className="options">
           {d.options.map((o) => (
             <div key={o.name} className={`option${o.pr ? ' pr' : ''}`}>
-              <div><b>{o.name}</b>{o.pr && <span className="pill small">{kind === 'pr' ? "the PR's" : 'chosen'}</span>}</div>
+              <div><b>{o.name}</b>{o.pr && <Pill>{kind === 'pr' ? "the PR's" : 'chosen'}</Pill>}</div>
               <div className="small muted">{o.tradeoffs}</div>
             </div>
           ))}
@@ -304,19 +306,19 @@ function IssueRow({ issue, mag, expand, pick }: { issue?: Issue; mag?: string; e
     return (
       <div className="finding">
         {box}
-        <span className="pill red">blocker</span>
-        <div className="grow"><span className="badge src-checked" title="mag's own floor">mag</span> {mag}</div>
+        <Pill tone="red">blocker</Pill>
+        <div className="grow"><Pill tone="green" className="src" title="mag's own floor">mag</Pill> {mag}</div>
       </div>
     )
   }
   return (
     <div className="finding">
       {box}
-      <span className={`pill ${SEVERITY_PILLS[issue.severity]}`}>{issue.severity}</span>
+      <Pill tone={SEVERITY_PILLS[issue.severity]}>{issue.severity}</Pill>
       <div className="grow">
         <div>
           <b>{issue.title}</b> <span className="muted small">{issue.kind} · decides {OWNER_LABELS[issue.owner]}</span>
-          {issue.raisedBy && <span className="pill small" title="Raised in the PR's threads before: not new"> raised by {issue.raisedBy}</span>}
+          {issue.raisedBy && <Pill title="Raised in the PR's threads before: not new">raised by {issue.raisedBy}</Pill>}
         </div>
         <div className="small">{issue.impact}</div>
         <div className="small muted">
@@ -366,8 +368,8 @@ function IssuesReportView({ report, kind, onView, decisions, direction, expand, 
     <div className="report">
       <section className="reportcard verdictcard">
         <div className="cardhead">
-          <span className={`verdict tone-${CHECKS_TONES[report.checks]}`} title="The reviewer's verdict, never below mag's floor">{CHECKS_LABELS[report.checks]}</span>
-          {kind === 'pr' && report.direction && <span className="pill violet">{report.decided ? `Direction: ${choiceLine(report.decided).replace(/^Direction /, '')}` : 'Direction: your call'}</span>}
+          <Pill tone={VERDICT_TONES[CHECKS_TONES[report.checks]]} className="lg" title="The reviewer's verdict, never below mag's floor">{CHECKS_LABELS[report.checks]}</Pill>
+          {kind === 'pr' && report.direction && <Pill tone="acc">{report.decided ? `Direction: ${choiceLine(report.decided).replace(/^Direction /, '')}` : 'Direction: your call'}</Pill>}
         </div>
         <p className="intent">{report.intent}</p>
         <ChecksWhy report={report} />
@@ -379,7 +381,7 @@ function IssuesReportView({ report, kind, onView, decisions, direction, expand, 
           <div className="cardhead"><h2>Since the last review</h2></div>
           {deltaView(report).map((g) => (
             <div key={g.status} className="finding">
-              <span className={`pill ${DELTA_PILLS[g.status]}`}>{DELTA_LABELS[g.status]}</span>
+              <Pill tone={DELTA_PILLS[g.status]}>{DELTA_LABELS[g.status]}</Pill>
               <ul className="grow small">{g.titles.map((t, i) => <li key={i}>{t}</li>)}</ul>
             </div>
           ))}
@@ -402,7 +404,7 @@ function IssuesReportView({ report, kind, onView, decisions, direction, expand, 
         </div>
         {report.acceptance.length ? report.acceptance.map((a, i) => (
           <div key={i} className="finding">
-            <span className={`pill ${EVIDENCE_PILLS[a.status]}`}>{a.status}</span>
+            <Pill tone={EVIDENCE_PILLS[a.status]}>{a.status}</Pill>
             <div className="grow">
               <div>{a.criterion} <span className="muted small">· {SOURCE_LABELS[a.source]}</span></div>
               <div className="small muted">{a.evidence}</div>
@@ -445,13 +447,13 @@ function LegacyReportView({ report, fact, kind, onView, decisions, direction, ex
     <div className="report">
       <ReportIntent report={report} />
       <div className="reportstrip">
-        <span className={`pill ${CHECKS_PILLS[report.checks]}`} title="The reviewer's verdict on problem, conventions and risks, never below mag's floor">Checks: {CHECKS_LABELS[report.checks]}</span>
+        <Pill tone={VERDICT_TONES[CHECKS_TONES[report.checks]]} title="The reviewer's verdict on problem, conventions and risks, never below mag's floor">Checks: {CHECKS_LABELS[report.checks]}</Pill>
         {reportStrip(report, fact, kind).map((c) => {
           const card = c.key === 'coverage' ? 'changes' : c.key
           const body = <><span className="muted small">{c.label}</span> {c.value}</>
           return staticPage
-            ? <a key={c.key} className={`stripchip tone-${c.tone}`} href={`#${cardId(card)}`}>{body}</a>
-            : <button key={c.key} className={`stripchip tone-${c.tone}`} title={`Go to ${c.label}`} onClick={() => toCard(card)}>{body}</button>
+            ? <Pill key={c.key} tone={VERDICT_TONES[c.tone]} href={`#${cardId(card)}`}>{body}</Pill>
+            : <Pill key={c.key} tone={VERDICT_TONES[c.tone]} title={`Go to ${c.label}`} onClick={() => toCard(card)}>{body}</Pill>
         })}
       </div>
       <ChecksWhy report={report} />
@@ -468,7 +470,7 @@ function LegacyReportView({ report, fact, kind, onView, decisions, direction, ex
               <ClaimLine key={i} claim={r.claim} onView={onView} expand={expand}>
                 {(r.about || r.status) && (
                   <div className="small">
-                    {r.status && <span className={`pill ${TONE_PILLS[r.tone]}`}>{r.status}</span>} {r.about}
+                    {r.status && <Pill tone={VERDICT_TONES[r.tone]}>{r.status}</Pill>} {r.about}
                   </div>
                 )}
               </ClaimLine>
@@ -492,7 +494,7 @@ function LegacyReportView({ report, fact, kind, onView, decisions, direction, ex
                 change={routine}
                 expand={expand}
                 open={routineOpen || staticPage}
-                title={staticPage ? <b>{routine.title}</b> : <button className="link" onClick={() => setRoutineOpen(!routineOpen)}>{routineOpen ? '▾' : '▸'} {routine.title}</button>}
+                title={staticPage ? <b>{routine.title}</b> : <button className="link" onClick={() => setRoutineOpen(!routineOpen)}><Caret open={routineOpen} /> {routine.title}</button>}
               />
             )}
           </tbody>

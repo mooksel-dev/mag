@@ -20,11 +20,13 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { useNow } from './Tasks'
+import { Caret } from './ui/Icon'
+import { Pill, type Tone } from './ui/Pill'
 
 const mag = window.mag
 
-const VERDICT_TAGS: Record<PrVerdict, string> = { approve: 'green', comment: 'amber', request_changes: 'red' }
-const LEVEL_TAGS: Record<FindingLevel, string> = { blocker: 'red', should_fix: 'amber', question: 'violet', nit: '', note: '' }
+const VERDICT_TAGS: Record<PrVerdict, Tone> = { approve: 'green', comment: 'amber', request_changes: 'red' }
+const LEVEL_TAGS: Record<FindingLevel, Tone> = { blocker: 'red', should_fix: 'amber', question: 'acc', nit: 'grey', note: 'grey' }
 
 /**
  * The reviews of a topic as one table at the end of its conversation (review-table): a row per PR with its verdict and
@@ -45,7 +47,7 @@ export function ReviewTable({ reviews, project, state, onOpen }: {
     <div className="reviewtable" aria-label="Reviews">
       <div className="rthead">
         <b>{reviews.length} review{reviews.length > 1 ? 's' : ''}</b>
-        {waiting > 0 && <span className="pill amber">{waiting} wait on you</span>}
+        {waiting > 0 && <Pill tone="amber">{waiting} wait on you</Pill>}
       </div>
       {reviews.filter((t) => t.prReview).map((t) => (
         <ReviewRow key={t.id} work={t} project={project} running={reviewRunning(t, state.sessions)} status={reviewStatus(t, state.sessions, now)} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onOpen={() => onOpen(t.id)} />
@@ -74,12 +76,12 @@ function ReviewRow({ work, project, running, status, open, onToggle, onOpen }: {
   return (
     <div className={`rtrow${open ? ' open' : ''}`}>
       <button className="rtline" aria-expanded={open} onClick={onToggle} title={open ? 'Fold' : 'Show its findings'}>
-        <span className="rtcaret" aria-hidden>{open ? '▾' : '▸'}</span>
+        <span className="rtcaret" aria-hidden><Caret open={open} /></span>
         <code>{name}</code>
         <span className="rttitle">{title}</span>
         <span className="muted small rtcounts">{status.state === 'ready' ? counts || 'no findings' : status.text}</span>
-        {r?.verdict ? <span className={`pill ${VERDICT_TAGS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span> : <span />}
-        {review.posted ? <span className="pill green" title="Published to the PR">posted</span> : <span />}
+        {r?.verdict ? <Pill tone={VERDICT_TAGS[r.verdict]}>{PR_VERDICT_LABELS[r.verdict]}</Pill> : <span />}
+        {review.posted ? <Pill tone="green" title="Published to the PR">posted</Pill> : <span />}
       </button>
       <button className="small rtopen" onClick={onOpen} title="The whole review: problem, direction, diagrams">Open</button>
       {open && r && <Findings work={work} findings={findings} verdict={r.verdict} at={r.at} running={running} name={name} status={status.text} />}
@@ -134,7 +136,7 @@ function Findings({ work, findings, verdict, at, running, name, status }: {
         return (
           <label key={i} className="rtfinding">
             <input type="checkbox" checked={picks.has(i)} onChange={() => toggle(i)} />
-            <span className={`pill ${LEVEL_TAGS[f.level ?? 'should_fix']}`}>{FINDING_LEVEL_LABELS[f.level ?? 'should_fix']}</span>
+            <Pill tone={LEVEL_TAGS[f.level ?? 'should_fix']}>{FINDING_LEVEL_LABELS[f.level ?? 'should_fix']}</Pill>
             <span className="rtbody">
               <span className="rtsum">{summary}{where && <span className="rtwhere small muted"> · {where}</span>}</span>
               {comment && <span className="rtcomment small muted" title={comment}><span className="rtsaid">Comment:</span> {comment}</span>}

@@ -3,6 +3,7 @@ import { shortTitle, type SessionHeader, type SessionLike, type SessionNode, typ
 import { Composer } from './Chat'
 import { startSubtopic } from './draftSubtopic'
 import { RowMenu, type Selection } from './WorkList'
+import { Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -41,7 +42,7 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone }: {
                 <span className={`sessdot ${n.dot}`} title={STATE_LABELS[n.state]} aria-hidden />
                 <span className="title">{title}</span>
               </button>
-              <button className="wlmore" aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menu === s.id} title="New subtopic, rename, close, delete…" onClick={() => setMenu(menu === s.id ? null : s.id)}>⋯</button>
+              <button className="wlmore" aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menu === s.id} title="New subtopic, rename, close, delete…" onClick={() => setMenu(menu === s.id ? null : s.id)}><Icon name="more" size={14} /></button>
               {menu === s.id && (
                 <RowMenu
                   card={{ kind: 'topic', title, session: s, closed: !!s.closedAt, sessions: n.children }}

@@ -1,16 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LINK_SERVICES, PR_STATE_COLORS, prNumber, prPillState, prRepo, prTooltip, ticketTooltip } from './linkServices.ts'
+import { LINK_SERVICES, PR_STATE_TONES, prNumber, prPillState, prRepo, prTooltip, ticketTooltip } from './linkServices.ts'
+import { TONES } from './ui/tones.ts'
 
 const url = 'https://github.com/o/app/pull/34'
 
-test('LINK_SERVICES: every service has a name, an icon and a color', () => {
+test('LINK_SERVICES: every service has a name and an icon; every PR state a tone', () => {
   for (const s of Object.values(LINK_SERVICES)) {
     assert.ok(s.name)
     assert.match(s.icon, /^M/)
-    assert.match(s.color, /^#[0-9a-f]{6}$/)
   }
-  assert.deepEqual(Object.keys(PR_STATE_COLORS).sort(), ['closed', 'draft', 'merged', 'open'])
+  assert.deepEqual(Object.keys(PR_STATE_TONES).sort(), ['closed', 'draft', 'merged', 'open'])
+  for (const t of Object.values(PR_STATE_TONES)) assert.ok(TONES.includes(t))
 })
 
 test('prPillState: an open draft is draft; a draft flag on a merged PR is ignored', () => {

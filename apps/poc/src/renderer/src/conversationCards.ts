@@ -6,6 +6,7 @@ import type { AgentReview, AgentRole, ChatItem, RepoWork, ReviewFinding, StepFac
 import type { CompareStatus } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 import { prName } from './format.ts'
+import type { Tone as PillTone } from './ui/tones.ts'
 
 export type CardTag = 'as planned' | 'otherwise' | 'not done' | 'new' | 'check by hand'
 export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
@@ -51,6 +52,9 @@ export function stepLabel(step: Pick<Task, 'key'>): string {
 
 /** The tag of a plan ↔ fact status. */
 export const FACT_TAG: Record<CompareStatus, CardTag> = { match: 'as planned', differs: 'otherwise', missing: 'not done', unplanned: 'new' }
+
+/** A tag's Pill tone. */
+export const TAG_TONES: Record<CardTag, PillTone> = { 'as planned': 'green', otherwise: 'amber', 'check by hand': 'amber', 'not done': 'red', new: 'blue' }
 
 const TAG_WEIGHT: Record<CardTag, number> = { 'not done': 5, otherwise: 4, 'check by hand': 4, new: 3, 'as planned': 1 }
 const LEVEL_WEIGHT: Record<string, number> = { blocker: 6, should_fix: 5, question: 4 }

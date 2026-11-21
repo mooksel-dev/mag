@@ -6,6 +6,7 @@ import type { CanvasRole } from './canvases.ts'
 import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
+import { PROJECT_COLORS } from './tokens.ts'
 import { isReview, reviewReadyText, reviewTopicIds, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
@@ -128,8 +129,7 @@ export function withTicket(tickets: TicketRef[] | undefined, t: TicketRef): Tick
   return [...(tickets ?? []).filter((x) => !same(x)), old?.commentedAt ? { ...t, commentedAt: old.commentedAt } : t]
 }
 
-/** Project colors, readable on light and dark backgrounds. */
-export const PROJECT_COLORS: string[] = ['#e5484d', '#f76b15', '#d6a000', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#7d7d86']
+export { PROJECT_COLORS }
 
 /** The project's color: its own, or a stable one from PROJECT_COLORS by a hash of its id. */
 export function projectColor(p: Pick<Project, 'id' | 'color'>): string {

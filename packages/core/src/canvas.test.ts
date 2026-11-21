@@ -38,8 +38,11 @@ test('a page with its own palette (CSS without mag\'s tokens) stays on light, as
 
 test('canvas.css uses only tokens that light and dark both define', () => {
   const light = defined(block(':root'))
+  // An alias (--text: var(--t1), or a color-mix of one) is computed on :root, so it follows dark when its target is defined there.
   const dark = defined(block("[data-theme='dark']"))
-  const missing = [...used(CANVAS_CSS)].filter((t) => !light.has(t) || (!dark.has(t) && !/^--(sp|r|fs|lh)/.test(t)))
+  const aliases = new Map([...block(':root').matchAll(/(--[\w-]+)\s*:[^;]*?var\((--[\w-]+)/g)].map((m) => [m[1], m[2]]))
+  const inDark = (t: string): boolean => dark.has(t) || (aliases.has(t) && inDark(aliases.get(t)!))
+  const missing = [...used(CANVAS_CSS)].filter((t) => !light.has(t) || (!inDark(t) && !/^--(sp|r|fs|lh)/.test(t)))
   assert.deepEqual(missing, [])
   assert.doesNotMatch(CANVAS_CSS, /#[0-9a-f]{3,6}\b|rgba?\(/i)
 })
