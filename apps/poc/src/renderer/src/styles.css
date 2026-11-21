@@ -1222,3 +1222,14 @@ button.ghost:hover:not(:disabled) { background: var(--hover); }
 .labeleditor .labelgroup { padding: 8px 0; border-top: 1px solid var(--line); }
 .labelrow { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 8px; }
 .labelrow input[type='color'] { width: 28px; height: 22px; padding: 0; border: none; background: none; }
+/* The rail's Inbox section (inbox-what-waits-on-me.2). */
+.inboxfilter { width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+.inboxrow { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 6px 10px; border-radius: var(--r); }
+.inboxrow:hover { background: var(--hover); }
+.inboxmain { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 0; border: none; background: none; font-weight: 400; text-align: left; }
+.inboxkind { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.inboxtext { overflow-wrap: anywhere; }
+.inboxabout { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inboxrow .labelchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.inboxacts { position: relative; display: flex; gap: 4px; }
+.inboxsnooze { left: 0; right: auto; flex-direction: column; align-items: stretch; }
