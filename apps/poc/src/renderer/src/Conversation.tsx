@@ -11,7 +11,7 @@ import {
   sessionRole,
   shortTitle,
   workCard,
-  type AgentSession,
+  type SessionHeader,
   type Attachment,
   type CanvasRef,
   type ChatRef,
@@ -34,7 +34,7 @@ const mag = window.mag
  * The conversation of a work: its owner (the topic that planned it, or its groomer; a review's topic). Legacy works
  * without one fall back to their latest groomer.
  */
-export function ownerSession(work: Task, sessions: AgentSession[]): AgentSession | null {
+export function ownerSession(work: Task, sessions: SessionHeader[]): SessionHeader | null {
   return (
     sessions.find((s) => s.id === work.ownerSessionId)
     ?? (isReview(work) ? reviewTopic(work, sessions) : undefined)
@@ -63,7 +63,7 @@ function useDrawer(initial: ArtifactTarget | null) {
  * `topic` null: a work whose owner is its groomer, or nobody yet; the screen is the work's, with the groomer's chat.
  */
 export function TopicConversation({ topic, work, initial = null, state, onOpenKey, onSelect, onDeleted }: {
-  topic: AgentSession | null
+  topic: SessionHeader | null
   /** The work opened from the list; with no topic, the work the screen is. */
   work: Task | null
   /** The artifact open in the drawer when the screen opens. */
@@ -122,7 +122,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
     if (topic) onSelect({ kind: 'topic', id: topic.id })
     else onDeleted()
   }
-  const refsFrom = topic && { tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
+  const refsFrom = topic && { projectId, tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
   const parent = topic?.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
   const subject = topic ? null : work!
   const menu: MenuCard = review ? workMenuCard(review) : topic ? { kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt } : workMenuCard(subject!)
@@ -155,7 +155,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         </header>
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
-            {chat && (chat.items.length || !topic) ? (
+            {chat && (chat.itemCount || !topic) ? (
               <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} onOpenSession={(id) => onSelect({ kind: 'topic', id })} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
             ) : topic ? (
               <div className="chatbox">
@@ -206,7 +206,7 @@ function AgentCounts({ agents, total }: { agents: ReturnType<typeof topicAgents>
 }
 
 /** The idea a topic was parked with (ideas-are-parked-topics.1): its text and where it came from. */
-function TopicBrief({ topic, onOpenKey }: { topic: AgentSession; onOpenKey: (key: string) => void }) {
+function TopicBrief({ topic, onOpenKey }: { topic: SessionHeader; onOpenKey: (key: string) => void }) {
   const source = topic.source
   return (
     <div className="topicbrief">
@@ -219,7 +219,7 @@ function TopicBrief({ topic, onOpenKey }: { topic: AgentSession; onOpenKey: (key
 }
 
 /** The topic's title as the sidebar shows it (shortTitle); a click renames it, Enter saves, Esc cancels. */
-function TopicTitle({ topic }: { topic: AgentSession }) {
+function TopicTitle({ topic }: { topic: SessionHeader }) {
   const title = shortTitle(topic)
   const [draft, setDraft] = useState<string | null>(null)
   const cancelled = useRef(false)

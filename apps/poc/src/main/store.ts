@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
+import { log } from './log.ts'
 
 interface Data {
   projects: Project[]
@@ -107,10 +108,57 @@ export function migrateArch(a: ArchDiagram | LegacyArch | null | undefined): Arc
   return { summary: a.summary, modules, updatedAt: a.updatedAt }
 }
 
+/** Daily backups of db.json kept. */
+export const BACKUPS_KEPT = 7
+
+/**
+ * Writes `text` to `file` through `file.tmp`, synced, then renamed over it: a crash or a failed write leaves the old file
+ * whole. A failed write removes the temp file and throws. `write` is for tests.
+ */
+export function writeAtomic(file: string, text: string, write: (fd: number, text: string) => void = (fd, t) => writeFileSync(fd, t)) {
+  const tmp = `${file}.tmp`
+  const fd = openSync(tmp, 'w')
+  try {
+    try {
+      write(fd, text)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmp, file)
+  } catch (e) {
+    rmSync(tmp, { force: true })
+    throw e
+  }
+}
+
+/** `db-YYYY-MM-DD.json`, by local day. */
+export function backupName(at: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `db-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.json`
+}
+
+/**
+ * The day's first write copies the file as it was to `backups/db-YYYY-MM-DD.json` next to it, keeping the newest
+ * BACKUPS_KEPT. Returns the backup's path, or null when today's exists or there is no file yet.
+ */
+export function backupDaily(file: string, now = new Date()): string | null {
+  if (!existsSync(file)) return null
+  const dir = join(dirname(file), 'backups')
+  const dest = join(dir, backupName(now))
+  if (existsSync(dest)) return null
+  mkdirSync(dir, { recursive: true })
+  copyFileSync(file, dest)
+  const all = readdirSync(dir).filter((f) => /^db-\d{4}-\d\d-\d\d\.json$/.test(f)).sort()
+  for (const f of all.slice(0, -BACKUPS_KEPT)) rmSync(join(dir, f), { force: true })
+  return dest
+}
+
 /** PoC persistence: one JSON file, rewritten on change. */
 export class Store {
   data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
+  private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private file: string) {
@@ -478,9 +526,28 @@ export class Store {
     this.listeners.push(fn)
   }
 
+  /** Every change of a session's items: a push, an item changed in place, a cut or a replacement (see setItems). */
+  onItem(fn: (e: SessionItemEvent) => void) {
+    this.itemListeners.push(fn)
+  }
+
+  private emitItem(e: SessionItemEvent) {
+    for (const fn of this.itemListeners) fn(e)
+  }
+
   changed() {
     for (const fn of this.listeners) fn()
     this.save()
+  }
+
+  /** Sessions as windows get them: without items (see SessionHeader). */
+  sessionHeaders(): SessionHeader[] {
+    return this.data.sessions.map(sessionHeader)
+  }
+
+  /** A session's items from index `from`. */
+  items(sid: string, from = 0): ChatItem[] {
+    return this.session(sid).items.slice(Math.max(0, from))
   }
 
   private save() {
@@ -494,7 +561,14 @@ export class Store {
     clearTimeout(this.saveTimer)
     this.saveTimer = null
     mkdirSync(dirname(this.file), { recursive: true })
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+    try {
+      const backup = backupDaily(this.file)
+      if (backup) log.info('store', `backup: ${backup}`)
+    } catch (e) {
+      // A backup that fails must not stop the save.
+      log.error('store', 'backup failed', e)
+    }
+    writeAtomic(this.file, JSON.stringify(this.data, null, 2))
   }
 
   /** Last bounds of a pop-out window of this kind. */
@@ -697,7 +771,27 @@ export class Store {
 
   /** Appends an item to a session's chat and saves. */
   pushItem(sid: string, item: ChatItem) {
-    this.session(sid).items.push(item)
+    const items = this.session(sid).items
+    items.push(item)
+    this.emitItem({ sid, n: items.length - 1, item })
+    this.changed()
+  }
+
+  /** `item`, one of the session's, was changed in place; saves. One no longer there (cut by a rewind) only saves. */
+  itemChanged(sid: string, item: ChatItem) {
+    const n = this.session(sid).items.indexOf(item)
+    if (n >= 0) this.emitItem({ sid, n, item })
+    this.changed()
+  }
+
+  /** Replaces a session's items (a rewind, its undo); windows get the cut and the items after what both share. */
+  setItems(sid: string, items: ChatItem[]) {
+    const s = this.session(sid)
+    let same = 0
+    while (same < items.length && same < s.items.length && items[same] === s.items[same]) same++
+    if (same < s.items.length) this.emitItem({ sid, truncate: same })
+    s.items = items
+    for (let n = same; n < items.length; n++) this.emitItem({ sid, n, item: items[n] })
     this.changed()
   }
 

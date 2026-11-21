@@ -2,16 +2,16 @@
 // chat" puts a ChatRef on the user's message; the agent gets the referenced chat's summary in its prompt and reads the
 // whole history with the mag tool read_chat.
 
-import type { AgentSession, ChatItem, Task } from './index.ts'
+import type { AgentSession, ChatItem, SessionLike, Task } from './index.ts'
 import { isArchived } from './summary.ts'
 import { shortTitle, type ChatRef } from './work-list.ts'
 
-const isTask = (item: AgentSession | Task): item is Task => !('items' in item)
+const isTask = (item: SessionLike | Task): item is Task => 'type' in item
 
 /** A referenced chat as the composer, the bubble and the prompt show it. */
-export interface RefTarget {
+export interface RefTarget<S extends SessionLike = AgentSession> {
   ref: ChatRef
-  item: AgentSession | Task
+  item: S | Task
   title: string
   /** A work's or review's key. */
   key: string | null
@@ -19,7 +19,7 @@ export interface RefTarget {
 }
 
 /** The chat a ref points at, or null when it is gone. */
-export function resolveRef(ref: ChatRef, tasks: Task[], sessions: AgentSession[]): RefTarget | null {
+export function resolveRef<S extends SessionLike>(ref: ChatRef, tasks: Task[], sessions: S[]): RefTarget<S> | null {
   const item = ref.kind === 'topic' ? sessions.find((s) => s.id === ref.id) : tasks.find((t) => t.id === ref.id)
   if (!item) return null
   return { ref, item, title: shortTitle(item), key: 'key' in item ? item.key : null, archived: isArchived(item) }

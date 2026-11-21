@@ -4,7 +4,7 @@
 // of its own (reviews-prybraty-spysok-pr-i.1); it records findings by level with a verdict.
 // Nothing goes to GitHub without the user's button.
 
-import { repoNames, type AgentSession, type Project, type ReviewFinding, type Task } from './index.ts'
+import { repoNames, sessionDigest, type AgentSession, type SessionLike, type Project, type ReviewFinding, type Task } from './index.ts'
 import { reportLine, type ChecksVerdict, type ReviewReport } from './review-report.ts'
 
 /** How much a finding matters: blocker = must not merge; should_fix = fix before merge unless argued; question; nit; note = no action. */
@@ -233,7 +233,7 @@ export function prVerdictOf(checks: ChecksVerdict): PrVerdict {
 }
 
 /** A topic of a review (its owner, or the run of either format) is in a turn. */
-export function reviewRunning(task: Pick<Task, 'ownerSessionId' | 'prReview'>, sessions: AgentSession[]): boolean {
+export function reviewRunning(task: Pick<Task, 'ownerSessionId' | 'prReview'>, sessions: SessionLike[]): boolean {
   const ids = reviewTopicIds(task)
   return sessions.some((s) => ids.includes(s.id) && s.status === 'running')
 }
@@ -249,7 +249,7 @@ export type ReviewState = 'reviewing' | 'question' | 'ready' | 'failed' | 'outda
  * A review's state, from its shown result (review-v2-part-2-v1-2.1); reviewing while a run of either format is in a
  * turn. A verdict on the current head outranks an errored topic: a borrowed topic that fails later keeps it ready.
  */
-export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: AgentSession[]): ReviewState {
+export function reviewState(task: Pick<Task, 'status' | 'ownerSessionId' | 'needsInput' | 'prReview'>, sessions: SessionLike[]): ReviewState {
   if (task.status !== 'in_progress') return 'closed'
   if (reviewRunning(task, sessions)) return 'reviewing'
   if (task.needsInput) return 'question'
@@ -268,12 +268,12 @@ const legacyJob = (url: string) => `Review the PR ${url} `
  * The topic mag created for a review (`reviewOf`). Legacy: its owner topic whose first item is the job as a user item.
  * A topic of the user that asked for the review (review_pr) is never it.
  */
-export function reviewTopic(task: Pick<Task, 'id' | 'ownerSessionId' | 'prReview'>, sessions: AgentSession[]): AgentSession | undefined {
+export function reviewTopic<S extends SessionLike>(task: Pick<Task, 'id' | 'ownerSessionId' | 'prReview'>, sessions: S[]): S | undefined {
   const own = sessions.find((s) => s.reviewOf === task.id)
   if (own) return own
   const owner = sessions.find((s) => s.id === task.ownerSessionId && s.role === 'chat' && !s.taskId)
-  const first = owner?.items[0]
-  return task.prReview && first?.kind === 'user' && first.text.startsWith(legacyJob(task.prReview.pr.url)) ? owner : undefined
+  const opening = owner && sessionDigest(owner).opening
+  return task.prReview && opening?.startsWith(legacyJob(task.prReview.pr.url)) ? owner : undefined
 }
 
 /** The open review a topic owns, if any. */

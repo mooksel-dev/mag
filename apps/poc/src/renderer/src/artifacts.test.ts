@@ -1,11 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { AgentReview, AgentSession, Task } from '@mag/core'
+import { sessionHeader, type AgentReview, type AgentSession, type SessionHeader, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { topicAgents, topicArtifacts, treeWorks, workTarget, type TopicArtifacts } from './artifacts.ts'
 
-const session = (id: string, extra: Partial<AgentSession> = {}) =>
-  ({ id, projectId: 'p', taskId: null, role: 'chat', parentId: null, status: 'idle', items: [], createdAt: 0, ...extra }) as unknown as AgentSession
+// Windows get sessions as headers.
+const session = (id: string, extra: Partial<AgentSession> = {}): SessionHeader =>
+  sessionHeader({ id, projectId: 'p', taskId: null, role: 'chat', parentId: null, status: 'idle', items: [], createdAt: 0, ...extra } as unknown as AgentSession)
 const task = (id: string, extra: Partial<Task> = {}) =>
   ({ id, projectId: 'p', key: id.toUpperCase(), parentId: null, title: `Work ${id}`, type: 'dev', status: 'planning', createdAt: 0, updatedAt: 0, ...extra }) as unknown as Task
 const canvas = (id: string, extra: Record<string, unknown> = {}) =>
@@ -167,7 +168,7 @@ test("topicAgents: the live agents of the tree (not its subtopics) and of its wo
     topic,
     child,
     session('dev', { parentId: 't', role: 'developer', title: 'Fix the login', status: 'running', createdAt: 3 }),
-    session('sub', { parentId: 'c', role: null, origin: 'subagent', title: 'Explore', status: 'idle', createdAt: 4, items: [{ kind: 'user', at: 40 }] } as Partial<AgentSession>),
+    session('sub', { parentId: 'c', role: null, origin: 'subagent', title: 'Explore', status: 'idle', createdAt: 4, items: [{ kind: 'user', text: '', at: 40 }] } as Partial<AgentSession>),
     session('sub2', { parentId: 'c', role: null, origin: 'subagent', title: 'Search', status: 'running', createdAt: 7 } as Partial<AgentSession>),
     session('g', { taskId: 'w1', role: 'groomer', status: 'idle', createdAt: 1 }),
     session('wd', { taskId: 'w1', stepId: 'w1.1', role: 'developer', status: 'idle', createdAt: 5, items: [approval] } as Partial<AgentSession>),

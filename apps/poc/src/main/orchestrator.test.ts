@@ -8,6 +8,7 @@ import { CODE_CHECKS, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_B
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
+import { mirrorItems } from './item-mirror.test-util.ts'
 import { createTools, type ToolActions } from './tools.ts'
 import type { MessagedRole } from './tool-defs.ts'
 
@@ -344,6 +345,7 @@ test('integration off: the prompt says so; Enable from the card sets the mode, c
   const { store, orch, project } = setup()
   store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }])
   const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const shown = mirrorItems(store, chat.id)
   await orch.send(chat.id, 'post it to Slack')
   const spec = specs.at(-1)!
   assert.match(spec.appendSystemPrompt ?? '', /claude\.ai Slack \(id claude_ai_Slack\) is turned off in mag for the chat role/)
@@ -356,6 +358,7 @@ test('integration off: the prompt says so; Enable from the card sets the mode, c
   await orch.enableIntegration(chat.id, 'i1', 'auto')
   assert.equal(store.project(project.id).integrations.chat?.claude_ai_Slack, 'auto')
   assert.equal(store.session(chat.id).items.find((i) => i.kind === 'integration')?.status, 'auto')
+  assert.deepEqual(shown(), store.items(chat.id), 'an open chat shows the card enabled')
   assert.equal(live.closed, true, 'the old process had the old rules')
   const next = opened.at(-1)!
   assert.notEqual(next, live)
@@ -2949,6 +2952,7 @@ test('a PR review topic never runs on Codex: its own Codex choice is refused and
 /** A live topic with two turns: 0 First (u1), 1 r1, 2 tool, 3 r2, 4 result | 5 Second (u2), 6 r3, 7 result. */
 async function rewindable(s: ReturnType<typeof setup>) {
   const id = s.orch.newChat(s.project.id)
+  const streamed = mirrorItems(s.store, id)
   await s.orch.send(id, 'First')
   const live = opened.at(-1)!
   live.emit({ type: 'session.started', nativeSessionId: 'n1' })
@@ -2964,15 +2968,16 @@ async function rewindable(s: ReturnType<typeof setup>) {
   live.emit({ type: 'message', text: 'Done two', nativeId: 'r3' })
   live.emit({ type: 'turn.done', ok: true })
   await tick()
-  return { topic: s.store.session(id), live }
+  return { topic: s.store.session(id), live, streamed }
 }
 
 const kinds = (s: AgentSession) => s.items.map((i) => (i.kind === 'user' || i.kind === 'assistant' ? i.text : i.kind))
 
 test('a live topic stores the uuids of its messages and replies; an echo is matched by its text (chat-message-actions-rewind-edit.1)', async () => {
   const s = setup()
-  const { topic, live } = await rewindable(s)
+  const { topic, live, streamed } = await rewindable(s)
   assert.deepEqual(topic.items.map((i) => ('nativeId' in i ? i.nativeId : null)), ['u1', 'r1', null, 'r2', null, 'u2', 'r3', null])
+  assert.deepEqual(streamed(), topic.items, 'an open chat got every item, the tool result and the echoed uuids (p0-fast-safe-store-no.1)')
   // An echo of something not sent (a message the CLI made up) changes nothing.
   live.emit({ type: 'user.echo', text: 'Nope', nativeId: 'x' })
   assert.ok(!topic.items.some((i) => 'nativeId' in i && i.nativeId === 'x'))
@@ -2981,15 +2986,18 @@ test('a live topic stores the uuids of its messages and replies; an echo is matc
 test('rewindSession rewind: the chat ends at the turn’s last reply, the next run forks there; Undo restores it until the next send (chat-message-actions-rewind-edit.1)', async () => {
   const s = setup()
   const { topic, live } = await rewindable(s)
+  const shown = mirrorItems(s.store, topic.id)
   const before = topic.items
   assert.deepEqual(await s.orch.rewindSession(topic.id, 1, 'rewind'), {})
   assert.ok(live.closed, 'the live process closes')
   assert.deepEqual(kinds(topic), ['First', 'Looking', 'tool', 'Done one'])
+  assert.deepEqual(shown(), topic.items, 'an open chat is cut too')
   assert.deepEqual([topic.nativeSessionId, topic.forkOf, topic.forkAt, topic.base], [null, 'n1', 'r2', null])
   assert.ok(topic.rewound)
 
   await s.orch.undoRewind(topic.id)
   assert.equal(topic.items, before)
+  assert.deepEqual(shown(), topic.items, 'and gets the items back on Undo')
   assert.deepEqual([topic.nativeSessionId, topic.forkOf, topic.forkAt, topic.rewound], ['n1', null, null, null])
   await assert.rejects(s.orch.undoRewind(topic.id), /Nothing to undo/)
 

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { readsOnly } from '@mag/core'
 import { Approvals } from './approvals.ts'
 import { Store } from './store.ts'
+import { mirrorItems } from './item-mirror.test-util.ts'
 
 const TOOL = 'mcp__claude_ai_Cloudflare__execute'
 
@@ -48,11 +49,13 @@ test('request answers pending on timeout and finds its item again on re-poll', a
 
 test('decide wakes the waiting poll: allow with the input, deny with a message, and logs it', async () => {
   const { store, session, approvals, approval } = setup()
+  const shown = mirrorItems(store, session.id)
   const pending = approvals.request({ sessionId: session.id }, args)
   await sleep(5)
   approvals.decide(session.id, 'tu1', true)
   assert.deepEqual(JSON.parse(await pending), { behavior: 'allow', updatedInput: args.input })
   assert.equal(approval()?.kind === 'approval' && approval()?.status, 'allowed')
+  assert.deepEqual(shown(), session.items, 'an open chat shows the card and its answer')
   assert.equal(store.data.events.at(-1)?.text, 'Cloudflare · execute allowed')
 
   const second = approvals.request({ sessionId: session.id }, { ...args, tool_use_id: 'tu2' })
@@ -70,7 +73,8 @@ test('a decision between polls is returned by the next poll', async () => {
 })
 
 test('a pending approval nobody polls expires; a hang-up stops the wait', async () => {
-  const { session, approvals, approval } = setup()
+  const { store, session, approvals, approval } = setup()
+  const shown = mirrorItems(store, session.id)
   const hangup = new AbortController()
   const pending = approvals.request({ sessionId: session.id, signal: hangup.signal }, args)
   await sleep(5)
@@ -78,6 +82,7 @@ test('a pending approval nobody polls expires; a hang-up stops the wait', async 
   assert.deepEqual(JSON.parse(await pending), { pending: true })
   await sleep(50)
   assert.equal(approval()?.kind === 'approval' && approval()?.status, 'expired')
+  assert.deepEqual(shown(), session.items, 'an open chat shows it expired')
   assert.equal(JSON.parse(await approvals.request({ sessionId: session.id }, args)).behavior, 'deny')
 })
 

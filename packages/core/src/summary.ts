@@ -1,7 +1,7 @@
 // The summary of an archived chat (archive-of-chats-summaries-search.1): closing a topic, a work or a review (the
 // redesign's Close, shown as Archive) writes one with the cheap model, so it can be found and referenced later.
 
-import type { AgentSession, ChatItem, Task } from './index.ts'
+import type { AgentSession, ChatItem, SessionLike, Task } from './index.ts'
 
 /** What a closed topic or work was about; `keywords` include files, PRs and links. */
 export interface ChatSummary {
@@ -16,7 +16,7 @@ export interface ChatSummary {
 /** Longest text a summary run reads; a longer one keeps its start and its end. */
 export const SUMMARY_SOURCE_MAX = 60_000
 
-const isTask = (item: AgentSession | Task): item is Task => !('items' in item)
+const isTask = (item: SessionLike | Task): item is Task => 'type' in item
 
 const ownerTopic = (task: Task, sessions: AgentSession[]) => sessions.find((s) => s.id === task.ownerSessionId)
 
@@ -30,7 +30,7 @@ export function summaryCovers(item: AgentSession | Task, sessions: AgentSession[
 }
 
 /** Archived: a closed topic; a closed or canceled work or review (never a step). */
-export function isArchived(item: AgentSession | Task): boolean {
+export function isArchived(item: SessionLike | Task): boolean {
   if (!isTask(item)) return !!item.closedAt
   return !item.parentId && (!!item.closedAt || item.status === 'canceled')
 }

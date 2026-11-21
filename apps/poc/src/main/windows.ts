@@ -185,7 +185,11 @@ export function createWindows(store: Store) {
 
   /** Every window shows the same state, so pop-outs and other projects update live. */
   function broadcast(state: AppState) {
-    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('state', state)
+    sendAll('state', state)
+  }
+
+  function sendAll(channel: string, ...args: unknown[]) {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, ...args)
   }
 
   /**
@@ -207,6 +211,7 @@ export function createWindows(store: Store) {
     openPopout,
     focusTask,
     broadcast,
+    sendAll,
     focusedProject,
     /** Projects that have a window, in opening order. */
     openProjects: () => [...projects.keys()],

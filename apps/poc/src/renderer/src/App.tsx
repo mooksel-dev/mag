@@ -14,7 +14,7 @@ import {
   taskByKey,
   agentAllowed,
   type AgentRole,
-  type AgentSession,
+  type SessionHeader,
   type Integration,
   type IntegrationMode,
   type PlaybookSection,
@@ -121,7 +121,7 @@ export function App({ projectId }: { projectId: string }) {
   // a work whose owner is its groomer (or nobody) on a screen of its own (topics-a-tree-of-agent.3). A topic a review
   // shows through opens with the review. A session under a topic opens on its own page, as a topic does.
   const sessions = state.sessions.filter((s) => s.projectId === project.id)
-  const isTopic = (s: AgentSession) => !s.taskId && (s.role === 'chat' || !!s.parentId)
+  const isTopic = (s: SessionHeader) => !s.taskId && (s.role === 'chat' || !!s.parentId)
   const pickedTopic = selected?.kind === 'topic' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const work = selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null
   const owner = work && ownerSession(work, sessions)
@@ -198,7 +198,7 @@ const THEMES: [ThemeMode, string, string][] = [['light', '☀︎', 'Light'], ['d
 function AgentCounter({ state }: { state: AppState }) {
   const running = runningAgents(state.sessions)
   if (!running.length) return null
-  const line = (s: AgentSession) => {
+  const line = (s: SessionHeader) => {
     const project = state.projects.find((p) => p.id === s.projectId)?.name ?? '?'
     const key = s.taskId ? state.tasks.find((t) => t.id === s.taskId)?.key ?? '?' : 'chat'
     return `${project} · ${key} · ${s.role}`

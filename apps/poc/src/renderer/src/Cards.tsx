@@ -11,7 +11,8 @@ import {
   stepRepoNames,
   subtasksOf,
   taskPrs,
-  type AgentSession,
+  type SessionHeader,
+  type SessionLike,
   type CanvasRef,
   type InboxItem,
   type MoveAction,
@@ -36,7 +37,7 @@ const mag = window.mag
  */
 export function WorkCards({ work, owner, state, onAnswer, label = false }: {
   work: Task
-  owner: AgentSession | null
+  owner: SessionHeader | null
   state: AppState
   /** Puts the cursor in the owner's composer: "Answer differently". */
   onAnswer: () => void
@@ -50,9 +51,9 @@ export function WorkCards({ work, owner, state, onAnswer, label = false }: {
   const ownerBusy = owner?.status === 'running'
   // The owner's own approvals are in its chat; those of the work's other agents only here.
   const others = state.sessions.filter((s) => s.taskId === work.id && s.id !== owner?.id)
-  const approvals = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'approval' && i.status === 'pending' ? [{ s, i }] : [])))
+  const approvals = others.flatMap((s) => s.pendingApprovals.map((i) => ({ s, i })))
   // An agent of the work asked for an integration that is off for its role (decision 8): its card waits here too.
-  const integrations = others.flatMap((s) => s.items.flatMap((i) => (i.kind === 'integration' && i.status === 'off' ? [{ s, i }] : [])))
+  const integrations = others.flatMap((s) => s.offIntegrations.map((i) => ({ s, i })))
   const checks = !!step && openLocalChecks(step).length > 0
   const questions = !!work.needsInput && !checks
   const plan = !ownerBusy && (work.status === 'planning' || work.status === 'ready') && !isReview(work) && subtasksOf(work.id, tasks).length > 0
@@ -78,7 +79,7 @@ const ITEM_CARDS: InboxItem['kind'][] = ['ready_to_merge', 'review_look', 'check
  * The agent's questions with its recommendations: one line each, its recommendation behind its ▸ (or all of them at
  * once); one click accepts them all; anything else is typed to the owner.
  */
-export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; owner: AgentSession | null; busy: boolean; onAnswer: () => void }) {
+export function QuestionsCard({ work, owner, busy, onAnswer }: { work: Task; owner: SessionHeader | null; busy: boolean; onAnswer: () => void }) {
   const [sent, setSent] = useState(false)
   const [all, setAll] = useState(false)
   const questions = work.needsQuestions ?? []
@@ -238,7 +239,7 @@ function ItemCard({ item, work, tasks, canvases }: { item: InboxItem; work: Task
 }
 
 /** Runs the failed agent of a work again: a review's agent, its reviewer, its developer, else its groomer. */
-function restartAgent(work: Task, last: AgentSession | undefined) {
+function restartAgent(work: Task, last: SessionLike | undefined) {
   if (isReview(work)) return mag.reviewAgain(work.id)
   if (last?.role === 'reviewer') return mag.review(work.id)
   // A work in progress is never groomed again: its developer goes on.

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { setOf, type AgentSession } from '@mag/core'
+import { setOf, type SessionHeader } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { TaskArtifact, taskArtifactHead } from './ArtifactPane'
 import type { ArtifactTarget } from './artifacts'
@@ -60,7 +60,7 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
  * The chat of a work's agent (topic-screen-one-new-compact.2), opened from the topic's Agents: a log, Stop while it
  * runs. The user writes to the work's owner, who passes things on.
  */
-function AgentDrawer({ session, state, onClose, onOpenKey }: { session: AgentSession; state: AppState; onClose: () => void; onOpenKey: (key: string) => void }) {
+function AgentDrawer({ session, state, onClose, onOpenKey }: { session: SessionHeader; state: AppState; onClose: () => void; onOpenKey: (key: string) => void }) {
   const on = state.tasks.find((t) => t.id === (session.stepId ?? session.taskId))
   const title = [session.role ?? 'agent', on?.title].filter(Boolean).join(' · ')
   const project = state.projects.find((p) => p.id === session.projectId)
