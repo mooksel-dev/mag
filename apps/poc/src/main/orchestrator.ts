@@ -2600,13 +2600,15 @@ export class Orchestrator {
       }
     const known = this.store.data.integrations.filter((i) => i.id !== MAG_MCP_ID)
     const rules = integrationRules(project, role, known)
-    const ask = canAsk ? rules.ask : []
-    const off = offIntegrationsBlock(project, role, known, canAsk)
+    // A drafter has nobody to ask, yet reads its sources: approve_tool runs its reads and denies the rest (Approvals.request).
+    const headless = role === 'drafter'
+    const ask = canAsk || headless ? rules.ask : []
+    const off = offIntegrationsBlock(project, role, known, canAsk, headless)
     return {
       ...spec,
       ...(off && { appendSystemPrompt: `${spec.appendSystemPrompt ?? ''}${blocks(off)}` }),
       allowedTools: [...(spec.allowedTools ?? []), ...rules.allowed],
-      disallowedTools: [...(spec.disallowedTools ?? []), ...rules.disallowed, ...(canAsk ? [] : rules.ask)],
+      disallowedTools: [...(spec.disallowedTools ?? []), ...rules.disallowed, ...(canAsk || headless ? [] : rules.ask)],
       ...(ask.length && { permissionPromptTool: APPROVE_TOOL, env: { ...spec.env, ...APPROVAL_ENV } }),
     }
   }
@@ -2643,7 +2645,7 @@ export class Orchestrator {
 
     const onEvent = this.onEvent(session)
 
-    // A drafter has nobody to ask: what would ask is off.
+    // A drafter has nobody to ask: its integration reads run, what would ask is denied.
     const spec = this.withIntegrations(this.store.sessionScope(session), runRole(session), session.agent, session.role !== 'drafter', this.spec(session))
     // A forking session's first run (a reviewer's, a branched topic's) forks; later runs resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'

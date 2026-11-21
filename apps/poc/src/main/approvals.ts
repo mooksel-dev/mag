@@ -48,6 +48,9 @@ const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
 
 const grantKey = (toolName: string, input: unknown) => `${toolName}\n${JSON.stringify(input ?? {})}`
 
+/** What a routine's drafter gets for a write or a call that would ask: nobody is in its chat to answer. */
+export const DRAFTER_DENIED = "A routine's drafter only reads: nobody answers a card in its run. Put what you would write in the draft (save_deliverable); the user reviews it and publishes it."
+
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 const allow = (input: unknown) => JSON.stringify({ behavior: 'allow', updatedInput: input ?? {} })
 
@@ -90,6 +93,8 @@ export class Approvals {
     const blocked = typeof command === 'string' ? blockedPush(command, projectBases(project, this.store.data.tasks)) : null
     if (blocked) return deny(blocked)
     const destination = classify(asked.tool, asked.server, args.input)
+    // A routine's drafter: nobody answers a card, and it never publishes (routines-scheduled-drafts-and-a.1).
+    if (runRole(session) === 'drafter') return !destination && asked.server && asked.reads ? allow(args.input) : deny(DRAFTER_DENIED)
     // A read (of an integration on reads, or anything not on ask) runs at once; so does a write the project publishes unasked.
     if (!destination) {
       if (!asked.server || asked.reads) return allow(args.input)

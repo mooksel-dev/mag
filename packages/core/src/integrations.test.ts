@@ -57,3 +57,14 @@ test('offIntegrationsBlock: without a chat to ask in, ask counts as off and ther
   assert.match(block, /Project → Integrations/)
   assert.equal(offIntegrationsBlock({ integrations: { chat: { claude_ai_Gmail: 'auto', claude_ai_Cloudflare: 'auto', local: 'auto' } } }, 'chat', known), '')
 })
+
+test('a drafter reads its sources: missing is reads; with readsRun only off and ask ones are listed off (routines-scheduled-drafts-and-a.1)', () => {
+  const known: Integration[] = [{ id: 'claude_ai_Slack', name: 'Slack' }, { id: 'claude_ai_Jira', name: 'Jira' }, { id: 'claude_ai_Gmail', name: 'Gmail' }]
+  const project = { integrations: { drafter: { claude_ai_Jira: 'ask' as const, claude_ai_Gmail: 'off' as const } } }
+  assert.equal(integrationMode({ integrations: {} }, 'drafter', 'claude_ai_Slack'), 'reads')
+  assert.deepEqual(integrationRules(project, 'drafter', known), { allowed: [], disallowed: ['mcp__claude_ai_Gmail'], ask: ['mcp__claude_ai_Slack', 'mcp__claude_ai_Jira'] })
+  const block = offIntegrationsBlock(project, 'drafter', known, false, true)
+  assert.match(block, /Jira/)
+  assert.match(block, /Gmail/)
+  assert.doesNotMatch(block, /Slack/)
+})

@@ -942,10 +942,16 @@ export const MAG_MCP_ID = 'mag'
  */
 export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
 
-/** An integration the role has no mode for is on reads for an asking role (its writes ask), else off. */
+/**
+ * Roles on reads for an integration they have no mode for: the asking roles, and a routine's drafter, whose sources are
+ * integrations (Slack, Jira…); its writes are denied, the user publishes the draft (routines-scheduled-drafts-and-a.1).
+ */
+export const READING_ROLES: readonly AgentRole[] = [...ASKING_ROLES, 'drafter']
+
+/** An integration the role has no mode for is on reads for a reading role (its writes ask, or for a drafter are denied), else off. */
 export function integrationMode(project: Pick<Project, 'integrations'>, role: AgentRole, id: string): IntegrationMode {
   const all = project.integrations ?? {}
-  return (all[role] ?? (role === 'reviewer' ? all.developer : undefined))?.[id] ?? (ASKING_ROLES.includes(role) ? 'reads' : 'off')
+  return (all[role] ?? (role === 'reviewer' ? all.developer : undefined))?.[id] ?? (READING_ROLES.includes(role) ? 'reads' : 'off')
 }
 
 /** CLI permission rules for the known integrations: server-level `mcp__<id>` per mode. */
@@ -965,14 +971,15 @@ export function integrationRules(
 
 /**
  * The prompt lines on the integrations a run of `role` does not get (decision 8 of redesign-start-screen-big-composer):
- * each one off for the role, and with `canAsk` false (no chat to ask in) each one on ask too. Without it the agent
- * only sees the tools missing and says "tools are not available". Empty when none is off.
+ * each one off for the role, and with `canAsk` false (no chat to ask in) each one on ask too, and on reads unless
+ * `readsRun` (a drafter's reads run without asking). Without it the agent only sees the tools missing and says "tools
+ * are not available". Empty when none is off.
  */
-export function offIntegrationsBlock(project: Pick<Project, 'integrations'>, role: AgentRole, known: Integration[], canAsk = true): string {
+export function offIntegrationsBlock(project: Pick<Project, 'integrations'>, role: AgentRole, known: Integration[], canAsk = true, readsRun = false): string {
   const off = known.filter((i) => {
     if (i.id === MAG_MCP_ID) return false
     const mode = integrationMode(project, role, i.id)
-    return mode === 'off' || (ASKING_MODES.includes(mode) && !canAsk)
+    return mode === 'off' || (ASKING_MODES.includes(mode) && !canAsk && !(readsRun && mode === 'reads'))
   })
   if (!off.length) return ''
   const how = canAsk
