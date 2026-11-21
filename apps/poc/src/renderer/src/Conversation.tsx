@@ -11,6 +11,7 @@ import {
   sessionRole,
   shortTitle,
   workCard,
+  workspaceAsProject,
   type SessionHeader,
   type Attachment,
   type CanvasRef,
@@ -18,6 +19,7 @@ import {
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
+import { LabelChips } from './labels/LabelChips'
 import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
 import { topicAgents, topicApprovals, topicArtifacts, type ArtifactTarget } from './artifacts'
 import { WorkCards } from './Cards'
@@ -77,8 +79,10 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
 }) {
   const now = useNow(15_000)
   const box = useRef<HTMLDivElement>(null)
-  const projectId = topic?.projectId ?? work!.projectId
-  const project = state.projects.find((p) => p.id === projectId)
+  const projectId = topic ? topic.projectId : work!.projectId
+  const workspace = topic && !topic.projectId ? state.workspaces.find((w) => w.id === topic.workspaceId) : undefined
+  // A topic without a project runs on its workspace's settings.
+  const project = state.projects.find((p) => p.id === projectId) ?? (workspace && workspaceAsProject(workspace))
   const tasks = state.tasks.filter((t) => t.projectId === projectId)
   const drawer = useDrawer(initial)
   const rightPane = usePaneWidth('right')
@@ -126,7 +130,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
     if (topic) onSelect({ kind: 'topic', id: topic.id })
     else onDeleted()
   }
-  const refsFrom = topic && { projectId, tasks, sessions: state.sessions.filter((s) => s.projectId === projectId), self: { kind: 'topic' as const, id: topic.id } }
+  const refsFrom = topic && { projectId: projectId ?? '', tasks, sessions: state.sessions.filter((s) => s.projectId === projectId && s.workspaceId === topic.workspaceId), self: { kind: 'topic' as const, id: topic.id } }
   const parent = topic?.parentId ? state.sessions.find((s) => s.id === topic.parentId) : undefined
   const subject = topic ? null : work!
   const menu: MenuCard = review ? workMenuCard(review) : topic ? { kind: 'topic', title: shortTitle(topic), session: topic, closed: !!topic.closedAt } : workMenuCard(subject!)
@@ -137,6 +141,8 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
           <div className="headline">
             {topic ? <TopicTitle topic={topic} /> : <h1 title={subject!.title}>{shortTitle(subject!)}</h1>}
             <span className="kind">{review ? `review · ${review.key}` : topic ? (!topic.parentId ? 'topic' : isSubtopic(topic) ? 'subtopic' : `agent · ${sessionRole(topic)}`) : subject!.key}</span>
+            {topic && !topic.parentId && !topic.taskId && <LabelChips itemRef={`topic:${topic.id}`} projectId={topic.projectId} workspaceId={topic.workspaceId} state={state} movable={!owned.length} />}
+            {subject && project && <LabelChips itemRef={`work:${subject.id}`} projectId={subject.projectId} workspaceId={project.workspaceId} state={state} movable={false} />}
             {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} <Icon name="external" size={12} /></button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />

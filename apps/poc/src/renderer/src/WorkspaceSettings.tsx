@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { Project, Workspace } from '@mag/core'
+import type { AppState } from '../../preload/api'
+import { LabelEditor } from './labels/LabelEditor'
 
 const mag = window.mag
 
@@ -12,7 +14,7 @@ function repoUsers(workspace: Pick<Workspace, 'id' | 'repos'>, projects: Pick<Pr
 const message = (e: unknown) => String((e as Error).message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
 /** A workspace's name, the user's profile in it, its notes and repos (workspaces-and-labels-project-as.1). */
-export function WorkspaceSettings({ workspace, projects }: { workspace: Workspace; projects: Project[] }) {
+export function WorkspaceSettings({ workspace, projects, state }: { workspace: Workspace; projects: Project[]; state: Pick<AppState, 'labelGroups' | 'labels' | 'projects'> }) {
   const [error, setError] = useState<string | null>(null)
   const update = (patch: Partial<Omit<Workspace, 'id' | 'createdAt'>>) => {
     setError(null)
@@ -53,6 +55,7 @@ export function WorkspaceSettings({ workspace, projects }: { workspace: Workspac
         </form>
         <span className="muted small">A project's repositories are always here too.</span>
       </div>
+      <LabelEditor workspaceId={workspace.id} state={state} />
       {error && <p className="err small" role="alert">{error}</p>}
     </section>
   )

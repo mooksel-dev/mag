@@ -496,7 +496,7 @@ function chatCard(s: SessionLike, children: WorkCard[], tree: SessionNode[], app
  * agents are its own sessions and its owner topic (a review's: its topics). The order means nothing to the sidebar (see
  * sidebarRows): it never moves a row.
  */
-export function workCards(projectId: string, tasks: Task[], sessions: SessionLike[], now: number): WorkCard[] {
+export function workCards(projectId: string | null, tasks: Task[], sessions: SessionLike[], now: number): WorkCard[] {
   const items = projectInbox(projectId, tasks, sessions)
   const mine = sessions.filter((s) => s.projectId === projectId)
   const works = tasks.filter((t) => !t.parentId && t.projectId === projectId)

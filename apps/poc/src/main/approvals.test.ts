@@ -121,7 +121,7 @@ test('a Bash call (a GitHub write that matched an ask rule) asks in chat and gro
 test("a push whose target is not named, or is a work's base, is denied without a card; a named branch runs at once (topics-a-tree-of-agent.1)", async () => {
   const { store, session, approvals } = setup()
   // Another work's repository has a base of its own.
-  const work = store.createTask({ projectId: session.projectId, title: 'w', type: 'dev', description: '', status: 'in_progress' })
+  const work = store.createTask({ projectId: session.projectId!, title: 'w', type: 'dev', description: '', status: 'in_progress' })
   store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 0, repos: [{ repo: '/r', worktree: '/w/r', branch: 'b', prUrl: null, prState: null, base: 'develop' }] } })
   const push = (command: string, id: string) => approvals.request({ sessionId: session.id }, { tool_name: 'Bash', input: { command }, tool_use_id: id })
   for (const [i, c] of ['git push', 'git push origin', 'git push origin HEAD', 'git -C /r push', 'git push origin develop'].entries()) {
@@ -225,7 +225,7 @@ test("Edit: a write denied with the user's note goes back to be revised, and the
   assert.equal(await answerWithin(call('mcp__claude_ai_Slack__slack_send_message', { channel: 'x', message: 'Intro\n\n*Ups*' }, 'n2')), 'waits')
   assert.deepEqual(session.items.map((i) => i.kind === 'approval' && [i.id, i.status]), [['n1', 'denied'], ['n2', 'pending']])
   // A deny without a destination keeps the plain message.
-  store.updateProject(session.projectId, { integrations: { chat: { claude_ai_Slack: 'ask' } } })
+  store.updateProject(session.projectId!, { integrations: { chat: { claude_ai_Slack: 'ask' } } })
   const read = call('mcp__claude_ai_Slack__slack_search_public', { query: 'q' }, 'r1')
   await sleep(5)
   approvals.decide(session.id, 'r1', false, 'not now')

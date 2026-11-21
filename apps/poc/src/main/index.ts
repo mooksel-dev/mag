@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task, type Workspace } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task, type Workspace, type ItemRef, type LabelGroupInput, type LabelInput } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -292,7 +292,7 @@ app.whenReady().then(async () => {
   const commandRuns = new Map<string, ShellRun>()
   handle('command:run', async (e, runId: string, sessionId: string, command: string) => {
     const session = store.data.sessions.find((s) => s.id === sessionId)
-    const cwd = (session && store.data.projects.find((p) => p.id === session.projectId)?.repos[0]) || homedir()
+    const cwd = (session && store.sessionScope(session).repos[0]) || homedir()
     log.info('ipc', 'user runs a command from a chat', { session: sessionId, cwd })
     let output = ''
     const run = runShell(command, cwd, (chunk) => {
@@ -314,7 +314,14 @@ app.whenReady().then(async () => {
   handle('session:setChoice', (_, sessionId: string, choice: ModelChoice | null) => orch.setSessionChoice(sessionId, choice))
   handle('repo:info', (_, path: string) => repoInfo(path))
   handle('session:send', (_, sid: string, text: string, attachments?: Attachment[], refs?: ChatRef[]) => orch.send(sid, text, attachments, undefined, refs))
-  handle('chat:new', (_, projectId: string) => orch.newChat(projectId))
+  handle('chat:new', (_, projectId: string | null, workspaceId?: string) => orch.newChat(projectId, workspaceId))
+  // Labels (workspaces-and-labels-project-as.2): the user's edits; a Project label set on a topic moves it.
+  handle('label:set', (_, ref: ItemRef, labelId: string) => store.labels.setLabel(ref, labelId, 'user'))
+  handle('label:remove', (_, ref: ItemRef, labelId: string) => store.labels.removeLabel(ref, labelId))
+  handle('label:upsertGroup', (_, group: LabelGroupInput) => store.labels.upsertGroup(group))
+  handle('label:deleteGroup', (_, groupId: string) => store.labels.deleteGroup(groupId))
+  handle('label:upsert', (_, label: LabelInput) => store.labels.upsertLabel(label))
+  handle('label:delete', (_, labelId: string) => store.labels.deleteLabel(labelId))
   handle('session:start-child', (_, parentId: string, brief: string, role: ChildRole | null, fork?: boolean) => orch.startChild(parentId, brief, role, !!fork, 'user'))
   handle('session:rewind', (_, sessionId: string, n: number, mode: RewindMode, scope?: RewindScope) => orch.rewindSession(sessionId, n, mode, scope))
   handle('session:undo-rewind', (_, sessionId: string) => orch.undoRewind(sessionId))

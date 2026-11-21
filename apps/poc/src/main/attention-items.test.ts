@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { inbox, type AgentSession, type Project, type Task, type WorkState } from '@mag/core'
+import { inbox, type AgentSession, type Project, type Task } from '@mag/core'
 import { attentionItems, newAttention } from './attention-items.ts'
 import { createInbox, type InboxState } from './core/services/inbox/index.ts'
 
 const project = (id: string): Project => ({ id, name: `Project ${id}`, workspaceId: 'w', repos: [], notes: '', enforceArchitecture: false, architecture: null, archRun: null, agents: {}, integrations: {}, createdAt: 0 })
-const task = (id: string, projectId: string, status: WorkState, patch: Partial<Task> = {}): Task => ({
+const task = (id: string, projectId: string, status: Task['status'], patch: Partial<Task> = {}): Task => ({
   id, projectId, key: `T-${id}`, parentId: null, title: id, type: 'dev', status, description: '', rank: 0, needsInput: null, work: null, nextSubNo: 1, createdAt: 0, updatedAt: 0, ...patch,
 })
 
@@ -38,7 +38,7 @@ test('attentionItems: one per waiting task, titled by project', () => {
 
 test('attentionItems: the same kinds as before; approvals, reviews and their PR activity do not notify', () => {
   const approval = { kind: 'approval', id: 'a', tool: 'Bash', input: {}, status: 'pending', at: 1 } as const
-  const chat: AgentSession = { id: 's', projectId: 'p', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [approval], createdAt: 0 }
+  const chat: AgentSession = { id: 's', workspaceId: 'w', projectId: 'p', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [approval], createdAt: 0 }
   const pr = { url: 'u', repo: 'r', number: 1, author: 'a', base: 'main', head: 'h' }
   const review = task('r', 'p', 'in_progress', { type: 'review', prReview: { pr, results: {}, shown: 'v2', posted: null, activity: { lastSeenAt: 0, authorReplies: 1, newCommits: false, state: 'open', head: 'h', at: 5 } } })
   const start = [task('s', 'p', 'in_progress'), task('s1', 'p', 'todo', { parentId: 's', startManually: true })]

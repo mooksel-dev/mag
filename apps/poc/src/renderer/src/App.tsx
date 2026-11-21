@@ -128,7 +128,8 @@ export function App({ projectId }: { projectId: string }) {
   // The selection, while it still exists; else Home. A work opens through its owner topic, with its card in the drawer;
   // a work whose owner is its groomer (or nobody) on a screen of its own (topics-a-tree-of-agent.3). A topic a review
   // shows through opens with the review. A session under a topic opens on its own page, as a topic does.
-  const sessions = state.sessions.filter((s) => s.projectId === project.id)
+  // The project's sessions, and its workspace's topics without a project (the list's No project).
+  const sessions = state.sessions.filter((s) => s.projectId === project.id || (s.projectId === null && s.workspaceId === project.workspaceId))
   const isTopic = (s: SessionHeader) => !s.taskId && (s.role === 'chat' || !!s.parentId)
   const pickedTopic = selected?.kind === 'topic' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const work = selected?.kind === 'work' ? tasks.find((t) => t.id === selected.id && !t.parentId) ?? null : null
@@ -177,7 +178,7 @@ export function App({ projectId }: { projectId: string }) {
               {page === 'architecture' ? (
                 <Architecture key={project.id} project={project} />
               ) : (
-                <Settings project={project} integrations={state.integrations} workspaces={state.workspaces} projects={state.projects} />
+                <Settings project={project} integrations={state.integrations} workspaces={state.workspaces} projects={state.projects} state={state} />
               )}
             </main>
           ) : draftParent ? (
@@ -390,7 +391,7 @@ function PlaybookSettings({ project, update }: { project: Project; update: (patc
   )
 }
 
-function Settings({ project, integrations, workspaces, projects }: { project: Project; integrations: Integration[]; workspaces: Workspace[]; projects: Project[] }) {
+function Settings({ project, integrations, workspaces, projects, state }: { project: Project; integrations: Integration[]; workspaces: Workspace[]; projects: Project[]; state: AppState }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
   const [showWorkspace, setShowWorkspace] = useState(false)
   const workspace = workspaces.find((w) => w.id === project.workspaceId)
@@ -398,7 +399,7 @@ function Settings({ project, integrations, workspaces, projects }: { project: Pr
     return (
       <>
         <div className="pad"><button className="small" onClick={() => setShowWorkspace(false)}>← Project settings</button></div>
-        <WorkspaceSettings key={workspace.id} workspace={workspace} projects={projects} />
+        <WorkspaceSettings key={workspace.id} workspace={workspace} projects={projects} state={state} />
       </>
     )
   }
