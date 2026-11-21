@@ -59,8 +59,8 @@ export interface VerdictInput {
 export interface Deliverables {
   /** Creates a deliverable with v1, or adds the next version to `input.ref`'s; a new version sets it back to draft. */
   save(input: SaveInput, origin: Origin): Saved
-  /** A new draft for a routine or a topic: v1 holds the brief and the refs to work from. */
-  draft(kind: DeliverableKind, brief: string, refs: string[], origin: Origin): Deliverable
+  /** A new draft for a routine or a topic: v1 holds the brief and the refs to work from; `labels` to find it by. */
+  draft(kind: DeliverableKind, brief: string, refs: string[], origin: Origin, labels?: string[]): Deliverable
   /** The latest final or published deliverable of `kind` with every one of `labels`: the previous issue. */
   lastFinal(kind: DeliverableKind, labels: string[], workspaceId?: string): Deliverable | null
   /** The user's Mark final of version `n`. */
@@ -204,13 +204,13 @@ export function createDeliverables(deps: { files: WorkspaceFiles; records: Deliv
       put(d)
       return { deliverable: d, n, ref: refOf(d), path }
     },
-    draft(kind, brief, refs, origin) {
+    draft(kind, brief, refs, origin, labels) {
       const text = brief.trim()
       if (!text) throw new Error('A draft needs a brief')
       const title = text.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80).trim() || kind
       const sources = refs.map((r) => r.trim()).filter(Boolean)
       const md = `# ${title}\n\n> Draft. Brief: ${text.replace(/\n+/g, ' ')}\n${sources.length ? `\n## Sources\n${sources.map((r) => `- ${r}`).join('\n')}\n` : ''}`
-      return self.save({ kind, title, md }, origin).deliverable
+      return self.save({ kind, title, md, labels }, origin).deliverable
     },
     lastFinal(kind, labels, workspaceId) {
       const done = self.list({ kind, workspaceId, state: ['final', 'published'], labels })

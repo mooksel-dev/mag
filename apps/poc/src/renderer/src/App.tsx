@@ -44,6 +44,7 @@ import { SearchPalette } from './SearchPalette'
 import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 import { MeetingView, MeetingsRootSetting } from './Meetings'
+import { RoutineView } from './Routines'
 import { WorkspaceSettings } from './WorkspaceSettings'
 import { LabelEditor } from './labels/LabelEditor'
 import { Icon } from './ui/Icon'
@@ -71,6 +72,8 @@ export function App({ view }: { view: WindowView }) {
   // A meeting is workspace-wide; it opens in this window in place of the conversation.
   const [meetingId, setMeetingId] = useState<string | null>(null)
   const [meetingAt, setMeetingAt] = useState<string | undefined>(undefined)
+  // A routine is workspace-wide too ('new': the form of a new one).
+  const [routineId, setRoutineId] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerMode | null>(null)
   const [searching, setSearching] = useState(false)
   // The open work or topic, per window.
@@ -81,7 +84,7 @@ export function App({ view }: { view: WindowView }) {
   const railKey = `mag.rail.${viewKey}`
   const [section, setSection] = useState<RailSection>(() => {
     const saved = localStorage.getItem(railKey)
-    return saved === 'meetings' || saved === 'people' || saved === 'inbox' || saved === 'library' ? saved : 'topics'
+    return saved === 'meetings' || saved === 'people' || saved === 'inbox' || saved === 'library' || saved === 'routines' ? saved : 'topics'
   })
   const pickSection = (s: RailSection) => {
     setSection(s)
@@ -104,6 +107,7 @@ export function App({ view }: { view: WindowView }) {
     setHomeIn(null)
     setPage(null)
     setMeetingId(null)
+    setRoutineId(null)
     // A New subtopic draft is this window's state only: reopened, its topic shows.
     const kept = s?.kind === 'draft' ? { kind: 'topic', id: s.id } : s
     try { localStorage.setItem(selKey, JSON.stringify(kept)) } catch { /* ignore */ }
@@ -185,18 +189,25 @@ export function App({ view }: { view: WindowView }) {
   const homeGroup = homeIn && homeProject?.id === homeIn.projectId ? homeIn.group : null
   const openPage = (p: Page | null) => {
     setMeetingId(null)
+    setRoutineId(null)
     setPage(p)
   }
   const openMeeting = (id: string, at?: string) => {
     setPage(null)
+    setRoutineId(null)
     setMeetingId(id)
     setMeetingAt(at)
+  }
+  const openRoutine = (id: string | null) => {
+    setPage(null)
+    setMeetingId(null)
+    setRoutineId(id)
   }
   const newIn = (pid: string, group: HomeGroup | null) => {
     select(null)
     setHomeIn({ projectId: pid, group })
   }
-  const screen = meetingId ? 'Meeting' : shownPage ? PAGE_NAMES[shownPage.kind] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
+  const screen = routineId ? 'Routine' : meetingId ? 'Meeting' : shownPage ? PAGE_NAMES[shownPage.kind] : draftParent ? 'New subtopic' : work ? `Work ${work.key}` : shownTopic ? 'Topic' : 'Home'
   const topicsWaiting = waitingCount(allCards(onlyProject(columnCards(workspace.id, state.projects, state.tasks, state.sessions, Date.now()), only?.id ?? null)))
 
   return (
@@ -227,8 +238,8 @@ export function App({ view }: { view: WindowView }) {
             viewKey={viewKey}
             state={state}
             section={section}
-            selected={shownPage || meetingId ? null : current}
-            home={!shownPage && !meetingId && !current}
+            selected={shownPage || meetingId || routineId ? null : current}
+            home={!shownPage && !meetingId && !routineId && !current}
             page={shownPage && !isWorkspacePage(shownPage) ? shownPage : null}
             picker={picker}
             onPicker={setPicker}
@@ -246,11 +257,15 @@ export function App({ view }: { view: WindowView }) {
               else if (o.kind === 'meeting') openMeeting(o.id)
               else void mag.revealDeliverable(o.deliverableId)
             }}
+            routineId={routineId}
+            onOpenRoutine={openRoutine}
           />
         </ErrorBoundary>
         <PaneHandle side="left" onResize={leftPane.set} />
         <ErrorBoundary key={`${viewKey}:${screen}`} screen={screen} appVersion={state.appVersion} onHome={() => select(null)}>
-          {meetingId && project ? (
+          {routineId ? (
+            <RoutineView key={routineId} id={routineId} workspace={workspace} state={state} onOpened={openRoutine} onClose={() => setRoutineId(null)} onSelect={select} />
+          ) : meetingId && project ? (
             <MeetingView key={meetingId} id={meetingId} at={meetingAt} state={state} project={project} onClose={() => setMeetingId(null)} onSelect={select} />
           ) : shownPage ? (
             <main className="pagewrap">

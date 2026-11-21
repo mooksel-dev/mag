@@ -804,8 +804,8 @@ export interface Task {
   updatedAt: number
 }
 
-/** chat = project-level conversation, not tied to a task. */
-export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect'
+/** chat = project-level conversation, not tied to a task. drafter = a routine's headless run (routines-scheduled-drafts-and-a.1). */
+export type AgentRole = 'groomer' | 'developer' | 'reviewer' | 'chat' | 'architect' | 'drafter'
 export type AgentKind = 'claude-code' | 'codex'
 
 /** How hard the model thinks: Claude Code's `--effort`, Codex's `model_reasoning_effort` (which has no max). */
@@ -1103,6 +1103,8 @@ export interface AgentSession {
   role: AgentRole | null
   /** Developer sessions: the step they implement; null for groomers, chats and legacy developers. */
   stepId?: string | null
+  /** A drafter's routine (routines-scheduled-drafts-and-a.1): a headless run, listed under the routine's runs, not as a topic. */
+  routineId?: string | null
   agent: AgentKind
   /** The agent's own session id, used to resume. */
   nativeSessionId: string | null

@@ -81,6 +81,8 @@ test('draft opens v1 with the brief and its refs', () => {
   assert.equal(d.state, 'draft')
   assert.match(dlv.read(d.id), /^# DBO sync agenda\n\n> Draft\. Brief: DBO sync agenda for Monday\n\n## Sources\n- personal:dlv:weekly\n- PR #12\n$/)
   assert.throws(() => dlv.draft('agenda', ' ', [], origin), /needs a brief/)
+  assert.deepEqual(d.labels, [])
+  assert.deepEqual(dlv.draft('report', 'Ups & Downs', [], origin, [' Data Removal ', 'Money Problems']).labels, ['Data Removal', 'Money Problems'])
 })
 
 test('lastFinal: the latest final or published one of the kind with every label', () => {

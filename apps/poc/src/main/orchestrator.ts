@@ -14,6 +14,8 @@ import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListin
 import { cliWriteRules } from './core/lib/destinations/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepBacking, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
+import type { DrafterRun, RoutineRunner } from './routine-run.ts'
+import type { Routine, RoutineRun } from './core/services/routines/index.ts'
 import { baseOf, projectBases } from './git-push.ts'
 
 interface Paths {
@@ -502,6 +504,10 @@ export class Orchestrator {
 
   /** The packs of a topic's deliverable kinds for its next turn (deliverables-library-claims-review-and.3); set once started. */
   packs?: { blockFor(session: AgentSession): string }
+  /** Runs routines (routines-scheduled-drafts-and-a.1); set once started. */
+  routineRunner?: RoutineRunner
+  /** Drafter sessions whose run's end a routine run waits for. */
+  private drafters = new Map<string, (end: { error: string | null }) => void>()
 
   constructor(
     private store: Store,
@@ -693,6 +699,36 @@ export class Orchestrator {
     const session = this.startChild(topic.id, brief(!fork), 'reviewer', fork, 'agent', false)
     log.info('agent', 'verifier started', { session: session.id, topic: topic.id, fork })
     return { session, fresh: !fork }
+  }
+
+  /**
+   * Runs a routine (routines-scheduled-drafts-and-a.1): its due slot, or Run now. Resolves with the run once started;
+   * the draft (or the failure) lands in the Inbox when the drafter ends. Throws while it runs.
+   */
+  async runRoutine(id: string, trigger: 'slot' | 'now' = 'now'): Promise<RoutineRun> {
+    if (!this.routineRunner) throw new Error('Routines are not ready yet')
+    const { run, done } = this.routineRunner.run(id, trigger)
+    void done.then((r) => log.info('agent', `routine run ${r.status}`, { routine: id, run: r.id, error: r.error ?? undefined }))
+    return run
+  }
+
+  /**
+   * A routine run's headless drafter: a session of its workspace with no project, topic or work, listed under the
+   * routine's runs only; it starts on `prompt` and can't ask the user (nobody is in its chat).
+   */
+  startDrafter(routine: Routine, run: RoutineRun, prompt: string): DrafterRun {
+    const scope = this.store.workspace(routine.workspaceId)
+    const session = this.store.createSession({ projectId: null, workspaceId: routine.workspaceId, taskId: null, role: 'drafter', agent: this.roleChoice(scope, 'drafter').agent, status: 'idle', title: `${routine.title} · run ${run.id}`, titleGenerated: true, routineId: routine.id })
+    const done = new Promise<{ error: string | null }>((resolve) => this.drafters.set(session.id, resolve))
+    log.info('agent', 'drafter started', { session: session.id, routine: routine.id, run: run.id })
+    this.send(session.id, prompt, [], `Routine: ${routine.title}`).catch((e) => this.endDrafter(session.id, (e as Error).message))
+    return { sessionId: session.id, done }
+  }
+
+  private endDrafter(sessionId: string, error: string | null) {
+    const end = this.drafters.get(sessionId)
+    this.drafters.delete(sessionId)
+    end?.({ error })
   }
 
   /** A topic and all its descendants, each parent before its children. */
@@ -2360,6 +2396,20 @@ export class Orchestrator {
     const project = this.store.sessionScope(session)
     const [first = homedir(), ...rest] = project.repos
     const arch = project.enforceArchitecture ? `\n\n${ARCH_RULES}` : ''
+    if (session.role === 'drafter') {
+      return {
+        cwd: first,
+        addDirs: [...rest, this.paths.attachmentsDir],
+        appendSystemPrompt:
+          `You are a routine's drafter in "mag": a headless run that reads its sources and saves one draft with save_deliverable. Nobody reads this chat while you run. You read (files, the web, CLIs and integrations) and never write outside mag: no posts, comments, tickets or file edits; the user publishes the draft.` +
+          blocks(this.orientationOf(session, project)) +
+          blocks(contextBlocks({ notes: project.notes })),
+        // Bash for read-only CLIs (gh, acli, gws), by the prompt; their writes are denied, not asked: nobody would answer.
+        allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NO_PR_WRITES, ...cliWriteRules(), ...noPushTo(this.projectBases(project))],
+        readOnly: true,
+      }
+    }
     if (session.role === 'chat' || !session.taskId) {
       // A topic that reviews a teammate's PR works in its scratch worktrees, never in the user's checkout.
       const scratch = this.scratches.get(session.id)
@@ -2593,7 +2643,8 @@ export class Orchestrator {
 
     const onEvent = this.onEvent(session)
 
-    const spec = this.withIntegrations(this.store.sessionScope(session), runRole(session), session.agent, true, this.spec(session))
+    // A drafter has nobody to ask: what would ask is off.
+    const spec = this.withIntegrations(this.store.sessionScope(session), runRole(session), session.agent, session.role !== 'drafter', this.spec(session))
     // A forking session's first run (a reviewer's, a branched topic's) forks; later runs resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
@@ -3045,6 +3096,7 @@ export class Orchestrator {
 
   /** Make sure a finished run (or turn of a live session) never leaves a task silently stuck. */
   private async afterRun(session: AgentSession) {
+    if (session.role === 'drafter') return this.endDrafter(session.id, session.status === 'error' ? (lastError(session.items) ?? 'the drafter failed') : null)
     // An owner's turn is over: a question queued for it goes first; one sent then may still be answered in that turn.
     if ((runRole(session) === 'chat' || session.role === 'groomer') && !session.background?.length && !this.deliverQueued(session)) this.unanswered(session)
     if (!session.taskId) return
@@ -3088,4 +3140,13 @@ export class Orchestrator {
       if (step) this.ownerEvent(step.id, `${step.key}: ${outcome.reason}; the user is asked`)
     }
   }
+}
+
+/** The text of a session's last error item. */
+function lastError(items: ChatItem[]): string | undefined {
+  for (let n = items.length - 1; n >= 0; n--) {
+    const i = items[n]
+    if (i.kind === 'error') return i.text
+  }
+  return undefined
 }

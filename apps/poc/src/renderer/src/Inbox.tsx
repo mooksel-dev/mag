@@ -7,6 +7,7 @@ import { errorText, LabelChip } from './labels/LabelChips'
 import { INBOX_GROUPS, entryLabelIds, entryRef, inboxGroup, inboxMatches, openContext, openTarget, snoozePresets, workspaceInbox, type InboxFilter } from './inboxView'
 import type { Selection } from './WorkList'
 import { Caret } from './ui/Icon'
+import { routineOfRef } from '../../main/core/services/routines/refs.ts'
 
 const mag = window.mag
 
@@ -130,6 +131,8 @@ function InboxRow({ entry: e, chips, state, onOpen, run }: {
   const task = e.taskId ? state.tasks.find((t) => t.id === e.taskId) : undefined
   const topic = !task && e.sessionId ? state.sessions.find((s) => s.id === e.sessionId) : undefined
   const about = task ? `${task.key} · ${task.title}` : topic?.title
+  // A routine's failure (routines-scheduled-drafts-and-a.1).
+  const retry = e.added ? routineOfRef(e.ref) : null
   return (
     <div className="inboxrow">
       <button className="inboxmain" title="Open" onClick={onOpen}>
@@ -145,6 +148,7 @@ function InboxRow({ entry: e, chips, state, onOpen, run }: {
       )}
       <div className="inboxacts" ref={box}>
         <button className="small" onClick={onOpen}>Open</button>
+        {retry && <button className="small" title="Run the routine again now" onClick={() => run(mag.runRoutine(retry).then(() => mag.doneInbox(e.key)))}>Retry</button>}
         <button className="small" aria-haspopup="menu" aria-expanded={snoozing} onClick={() => setSnoozing((s) => !s)}>Snooze</button>
         <button className="small" title="Hide until it has new activity" onClick={() => run(mag.doneInbox(e.key))}>Done</button>
         {snoozing && (

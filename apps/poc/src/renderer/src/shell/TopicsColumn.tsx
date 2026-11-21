@@ -19,6 +19,7 @@ import { Inbox } from '../Inbox'
 import { MeetingsSection } from '../Meetings'
 import { PeopleSection } from '../People'
 import { LibrarySection } from '../Library'
+import { RoutinesSection } from '../Routines'
 import { useNow } from '../Tasks'
 import { CardRow, CrashRow, ProjectSection, StarsContext, useFilter, useFolded, useStoredFlag, type HomeGroup, type ListPage, type RowEnv, type Selection, type Stars } from '../WorkList'
 import { allCards, columnCards, onlyProject, starredCards, toggleStar, waitingCount } from '../topicsColumn'
@@ -28,7 +29,7 @@ import { Caret, Icon } from '../ui/Icon'
 const mag = window.mag
 
 /** The rail's sections that show in the column. */
-export type RailSection = 'inbox' | 'topics' | 'meetings' | 'people' | 'library'
+export type RailSection = 'inbox' | 'topics' | 'meetings' | 'people' | 'library' | 'routines'
 
 /** A project's page open in place of the conversation. */
 export interface OpenPage { kind: ListPage; projectId: string }
@@ -41,7 +42,7 @@ export interface OpenPage { kind: ListPage; projectId: string }
  * recorder. People: the workspace's persons (who-is-who-people-from.1). Library: what is final in the workspace
  * (deliverables-library-claims-review-and.4).
  */
-export function TopicsColumn({ workspace, only, viewKey, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onOpenWorkspacePage, onSearch, meetingId, onOpenMeeting, onOpenLibrary }: {
+export function TopicsColumn({ workspace, only, viewKey, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onOpenWorkspacePage, onSearch, meetingId, onOpenMeeting, onOpenLibrary, routineId, onOpenRoutine }: {
   workspace: Workspace
   /** The project the window is filtered to. */
   only: Project | null
@@ -69,6 +70,9 @@ export function TopicsColumn({ workspace, only, viewKey, state, section, selecte
   onOpenMeeting: (id: string, at?: string) => void
   /** A Library row's click. */
   onOpenLibrary: (o: LibraryRow['open']) => void
+  /** The routine open in the window ('new': the form of a new one). */
+  routineId: string | null
+  onOpenRoutine: (id: string) => void
 }) {
   const now = useNow(15_000)
   const [filter, setFilter] = useFilter(viewKey)
@@ -106,6 +110,7 @@ export function TopicsColumn({ workspace, only, viewKey, state, section, selecte
   const looseWaiting = waitingCount(looseOpen)
 
   if (section === 'inbox') return <Inbox workspace={workspace} state={state} onSelect={onSelect} />
+  if (section === 'routines') return <RoutinesSection workspace={workspace} state={state} selectedId={routineId} onOpen={onOpenRoutine} />
   if (section === 'people') {
     return (
       <nav className="worklist" aria-label="People">
