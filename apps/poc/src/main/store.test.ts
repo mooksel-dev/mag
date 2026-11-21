@@ -1039,3 +1039,26 @@ test('a project moved to another workspace takes its sessions and its rules; its
   assert.deepEqual(store.data.sessions.map((s) => s.workspaceId), [personal.id, personal.id])
   assert.deepEqual(store.labels.labelsOf('topic:topic').map((l) => [l.name, l.rules]), [['Aura Data Removal', [{ kind: 'repo', value: 'duff-brewery' }]]])
 })
+
+test('a rule label the user took off a work stays off through PR polls and new tickets; rules run only when a signal changes', () => {
+  const { store, aura } = withTopics()
+  const area = store.labels.upsertGroup({ workspaceId: aura.id, name: 'Area', exclusive: false })
+  const privacy = store.labels.upsertLabel({ groupId: area.id, name: 'Privacy', rules: [{ kind: 'jiraKey', value: 'PRVP' }] })
+  const work = store.createTask({ projectId: 'dr', title: 'w', type: 'dev', description: '', tickets: [{ url: 'https://x.atlassian.net/browse/PRVP-7', key: 'PRVP-7' }] })
+  const ref = `work:${work.id}` as const
+  assert.deepEqual(store.labels.labelsOf(ref).map((l) => l.name), ['Aura Data Removal', 'Privacy'])
+  store.labels.removeLabel(ref, privacy.id)
+  const repos = [{ repo: '/aura/lisa', branch: 'b', worktree: '/w/lisa', prUrl: null, prState: null }]
+  store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 0, repos } })
+  store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 1, repos: [{ ...repos[0], prState: 'open' as const }] } })
+  store.updateTask(work.id, { tickets: [...store.task(work.id).tickets!, { url: 'https://x.atlassian.net/browse/PRVP-8', key: 'PRVP-8' }] })
+  assert.deepEqual(store.labels.labelsOf(ref).map((l) => l.name), ['Aura Data Removal'])
+
+  let runs = 0
+  const autoLabel = store.labels.autoLabel
+  store.labels.autoLabel = (...a) => (runs++, autoLabel(...a))
+  store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 2, repos: [{ ...repos[0], prState: 'open' as const, prUrl: 'https://github.com/o/r/pull/1' }] } })
+  assert.equal(runs, 0, 'a PR poll is no new signal')
+  store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 2, repos: [...repos, { ...repos[0], repo: '/aura/ftm' }] } })
+  assert.equal(runs, 1, 'a new repository is')
+})

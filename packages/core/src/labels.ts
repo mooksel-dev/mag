@@ -32,5 +32,5 @@ export function workspaceLabels(workspaceId: string, data: { labelGroups: LabelG
 
 /** The ids of an item's labels: its project's (when it has one), then its item labels'. */
 export function itemLabelIds(ref: ItemRef, projectId: string | null, itemLabels: ItemLabel[]): string[] {
-  return [...(projectId ? [projectId] : []), ...itemLabels.filter((r) => r.itemRef === ref).map((r) => r.labelId)]
+  return [...(projectId ? [projectId] : []), ...itemLabels.filter((r) => r.itemRef === ref && !r.removed).map((r) => r.labelId)]
 }

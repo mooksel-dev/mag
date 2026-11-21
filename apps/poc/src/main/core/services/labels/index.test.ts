@@ -171,3 +171,18 @@ test('autoLabel leaves an ambiguous exclusive group empty unless the opened-from
   assert.deepEqual(labels.autoLabel('topic:y', { repos: ['/r/shared'], openedFrom: 'money' }).map((l) => l.name), ['Money Problems', 'A', 'B'])
   assert.equal(items['topic:y'].projectId, 'money')
 })
+
+test('a label the user took off stays off: rules leave that group alone; the user can put it back', () => {
+  const { labels, rows } = setup({ items: { 'topic:t': { workspaceId: 'aura', projectId: 'dr' } } })
+  const area = labels.upsertGroup({ workspaceId: 'aura', name: 'Area', exclusive: false })
+  const privacy = labels.upsertLabel({ groupId: area.id, name: 'Privacy', rules: [{ kind: 'jiraKey', value: 'PRVP' }] })
+  labels.upsertLabel({ groupId: area.id, name: 'Legal', rules: [{ kind: 'jiraKey', value: 'PRVP' }] })
+  assert.equal(labels.autoLabel('topic:t', { ticketKeys: ['PRVP-1'] }).length, 2)
+  labels.removeLabel('topic:t', privacy.id)
+  assert.deepEqual(labels.labelsOf('topic:t').map((l) => l.name), ['Data Removal', 'Legal'])
+  assert.deepEqual(labels.autoLabel('topic:t', { ticketKeys: ['PRVP-1'] }), [])
+  assert.deepEqual(labels.labelsOf('topic:t').map((l) => l.name), ['Data Removal', 'Legal'])
+  assert.deepEqual(rows.itemLabels.find((r) => r.labelId === privacy.id), { id: `topic:t|${privacy.id}`, itemRef: 'topic:t', labelId: privacy.id, by: 'user', removed: true })
+  labels.setLabel('topic:t', privacy.id, 'user')
+  assert.deepEqual(labels.labelsOf('topic:t').map((l) => l.name), ['Data Removal', 'Privacy', 'Legal'])
+})

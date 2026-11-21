@@ -127,6 +127,8 @@ export interface ItemLabel {
   labelId: string
   /** rule: set by autoLabel, which never replaces a user's label. */
   by: 'rule' | 'user'
+  /** The user took it off: the row stays so that rules leave its group alone; the item does not have the label. */
+  removed?: true
 }
 
 export interface Project {
@@ -1832,7 +1834,7 @@ export const DEFAULT_TEMPLATES: Record<TaskType, string> = {
 One or two sentences, plus the evidence that it is real.
 
 # Decisions
-What the user decided for this work, one per line; they override the project's playbook. A "## <step key>" subsection holds decisions of that step only.
+What the user decided for this work, one per line; they override the project's playbook. A "## <step key>" subsection holds decisions of that step only. A line "- \`<setting>\`: <value>" sets one of mag's settings for this work, e.g. "- \`playbook.reviewRounds\`: 3".
 
 # Open questions
 Only if any. Each: the question, your recommendation and why.

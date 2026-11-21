@@ -1234,7 +1234,9 @@ export class Store {
     if ('needsInput' in patch && !('needsQuestions' in patch)) patch = { ...patch, needsQuestions: null }
     Object.assign(t, patch, { id: tid, updatedAt: Date.now() })
     for (const e of taskChangeEvents(prev, t)) this.logEvent(e)
-    if (patch.tickets || patch.work) this.autoLabelWork(t.parentId ?? t.id)
+    // Rules run again only when a signal changed: a ticket, or the set of repositories; not on every PR poll.
+    const signal = (x: Pick<Task, 'tickets' | 'work'>) => JSON.stringify([(x.tickets ?? []).map((k) => k.key ?? ''), [...new Set((x.work?.repos ?? []).map((r) => r.repo))].sort()])
+    if ((patch.tickets || patch.work) && signal(prev) !== signal(t)) this.autoLabelWork(t.parentId ?? t.id)
     this.changed()
   }
 

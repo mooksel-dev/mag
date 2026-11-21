@@ -71,7 +71,7 @@ export interface Labels {
   labelsOf(ref: ItemRef): Label[]
   /** Puts a label on an item; in an exclusive group it replaces the item's other label. A rule never replaces a user's. */
   setLabel(ref: ItemRef, labelId: string, by: ItemLabel['by']): void
-  /** Takes a label off an item; the Project label: the item goes to no project. */
+  /** Takes a label off an item, for good: rules leave that group of the item alone. The Project label: no project. */
   removeLabel(ref: ItemRef, labelId: string): void
   /** Drops the labels of an item that is gone. */
   forget(ref: ItemRef): void
@@ -197,6 +197,7 @@ export function createLabels(rows: LabelRows, sources: LabelSources, changed: ()
     rows.itemLabels = rows.itemLabels.filter(keep)
     return before !== rows.itemLabels.length
   }
+  /** The item's rows in the group, the ones the user took off included. */
   const inGroup = (ref: ItemRef, g: LabelGroup) => rows.itemLabels.filter((r) => r.itemRef === ref && rows.labels.some((l) => l.id === r.labelId && l.groupId === g.id))
 
   const self: Labels = {
@@ -234,7 +235,7 @@ export function createLabels(rows: LabelRows, sources: LabelSources, changed: ()
       if (g.system) throw new Error(`${g.name} is a system group`)
       if (g.workspaceId !== input.workspaceId) throw new Error('A label group stays in its workspace')
       if (input.exclusive && !g.exclusive) {
-        const refs = rows.itemLabels.filter((r) => rows.labels.some((l) => l.id === r.labelId && l.groupId === g.id)).map((r) => r.itemRef)
+        const refs = rows.itemLabels.filter((r) => !r.removed && rows.labels.some((l) => l.id === r.labelId && l.groupId === g.id)).map((r) => r.itemRef)
         const doubled = refs.find((r, i) => refs.indexOf(r) !== i)
         if (doubled) throw new Error(`${doubled} has several labels of ${g.name}: leave one before making it exclusive`)
       }
@@ -297,7 +298,7 @@ export function createLabels(rows: LabelRows, sources: LabelSources, changed: ()
     labelsOf(ref) {
       const p = place(ref)
       const project = p.projectId ? sources.projects().find((x) => x.id === p.projectId) : undefined
-      const own = rows.itemLabels.filter((r) => r.itemRef === ref).flatMap((r) => rows.labels.filter((l) => l.id === r.labelId))
+      const own = rows.itemLabels.filter((r) => r.itemRef === ref && !r.removed).flatMap((r) => rows.labels.filter((l) => l.id === r.labelId))
       return [...(project ? [projectLabel(project)] : []), ...own]
     },
 
@@ -312,9 +313,11 @@ export function createLabels(rows: LabelRows, sources: LabelSources, changed: ()
       const here = inGroup(ref, g)
       const had = here.find((r) => r.labelId === labelId)
       if (by === 'rule' && here.some((r) => r.by === 'user')) return
-      if (had && had.by === by) return
-      if (had) had.by = by
-      else rows.itemLabels.push({ id: rowId(ref, labelId), itemRef: ref, labelId, by })
+      if (had && had.by === by && !had.removed) return
+      if (had) {
+        had.by = by
+        delete had.removed
+      } else rows.itemLabels.push({ id: rowId(ref, labelId), itemRef: ref, labelId, by })
       if (g.exclusive) dropRows((r) => !(r.itemRef === ref && r.labelId !== labelId && here.includes(r)))
       changed()
     },
@@ -322,7 +325,10 @@ export function createLabels(rows: LabelRows, sources: LabelSources, changed: ()
     removeLabel(ref, labelId) {
       const p = place(ref)
       if (p.projectId === labelId) return sources.setProject(ref, null)
-      if (dropRows((r) => !(r.itemRef === ref && r.labelId === labelId))) changed()
+      const row = rows.itemLabels.find((r) => r.itemRef === ref && r.labelId === labelId)
+      if (!row || (row.removed && row.by === 'user')) return
+      Object.assign(row, { by: 'user', removed: true })
+      changed()
     },
 
     forget(ref) {
