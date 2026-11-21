@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { agentAllowed, findModel, type AgentInfo, type AgentJob, type AgentKind, type ModelChoice } from '@mag/core'
 import { choiceLabel, effortsFor, fillPercent, formatTokens, gaugeLevel, keptEffort } from './modelChoice'
 import { Icon } from './ui/Icon'
@@ -39,21 +39,38 @@ export function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, se
   }, [open, ref, setOpen])
 }
 
+/** The window's margin a popover keeps clear of. */
+const POP_MARGIN = 8
+
 /**
- * A chip that opens a popover (`children`) below it, or above it with `up` (in a composer). Without children it is a
- * plain label, e.g. a subagent's model, which nobody sets.
+ * A chip that opens a popover (`children`) below it, or above it with `up` (in a composer). The popover stays inside
+ * the window: it opens the other way when that side has more room, and scrolls when neither fits it. Without children
+ * it is a plain label, e.g. a subagent's model, which nobody sets.
  */
 export function ChoiceChip({ label, title, up, children }: { label: ReactNode; title: string; up?: boolean; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const [fit, setFit] = useState<{ up: boolean; max: number } | null>(null)
   const box = useRef<HTMLDivElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
   useDismiss(open, box, setOpen)
+  useLayoutEffect(() => {
+    if (!open) return setFit(null)
+    const chip = box.current?.getBoundingClientRect()
+    const height = pop.current?.scrollHeight ?? 0
+    if (!chip) return
+    const above = chip.top - 6 - POP_MARGIN
+    const below = window.innerHeight - chip.bottom - 6 - POP_MARGIN
+    const goUp = up ? height <= above || above >= below : height > below && above > below
+    setFit({ up: goUp, max: Math.max(120, goUp ? above : below) })
+  }, [open, up])
   if (!children) return <span className="modelchip"><span className="chip static" title={title}>{label}</span></span>
+  const shownUp = fit ? fit.up : !!up
   return (
     <div ref={box} className="modelchip">
       <button type="button" className="chip" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog" title={title}>
         {label} <Icon name="chev-d" size={12} className="caret" />
       </button>
-      {open && <div className={`chippop${up ? ' up' : ''}`}>{children}</div>}
+      {open && <div ref={pop} className={`chippop${shownUp ? ' up' : ''}`} style={fit ? { maxHeight: fit.max, overflowY: 'auto' } : { visibility: 'hidden' }}>{children}</div>}
     </div>
   )
 }
