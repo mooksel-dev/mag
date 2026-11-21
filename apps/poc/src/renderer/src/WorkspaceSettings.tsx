@@ -21,6 +21,7 @@ export function WorkspaceSettings({ workspace, projects, state }: { workspace: W
     mag.updateWorkspace(workspace.id, patch).catch((e) => setError(message(e)))
   }
   const users = repoUsers(workspace, projects)
+  const dirs = workspace.directories ?? {}
   const addRepo = (d: string) => { if (d && !workspace.repos.includes(d)) update({ repos: [...workspace.repos, d] }) }
   return (
     <section className="page">
@@ -54,6 +55,25 @@ export function WorkspaceSettings({ workspace, projects, state }: { workspace: W
           <input name="workspaceRepo" placeholder="…or paste an absolute path and press Enter" aria-label="Repository path" style={{ width: '100%' }} />
         </form>
         <span className="muted small">A project's repositories are always here too.</span>
+      </div>
+      <div className="field">
+        People directories
+        <label className="check">
+          <input type="checkbox" checked={!!dirs.slack} onChange={(e) => update({ directories: { ...dirs, slack: e.target.checked } })} />
+          Slack members, through your Slack in Claude Code (primary)
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={!!dirs.atlassian} onChange={(e) => update({ directories: { ...dirs, atlassian: e.target.checked } })} />
+          Jira users, through acli (people on work items of the labels' Jira keys)
+        </label>
+        <label className="field">GitHub orgs
+          <input key={(dirs.githubOrgs ?? []).join(',')} defaultValue={(dirs.githubOrgs ?? []).join(', ')} placeholder="from the repos' remotes" onBlur={(e) => {
+            const orgs = e.target.value.split(',').map((o) => o.trim()).filter(Boolean)
+            const { githubOrgs: _, ...rest } = dirs
+            update({ directories: orgs.length ? { ...rest, githubOrgs: orgs } : rest })
+          }} />
+        </label>
+        <span className="muted small">Synced daily and on Sync now in People; read-only, nothing is written back.</span>
       </div>
       <LabelEditor workspaceId={workspace.id} state={state} />
       {error && <p className="err small" role="alert">{error}</p>}

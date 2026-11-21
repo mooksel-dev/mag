@@ -14,7 +14,8 @@ import { createPublish, createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
-import { startScheduler } from './scheduler'
+import { startPeopleSync, startScheduler } from './scheduler'
+import { createStorePeople, startPeopleIpc } from './people'
 import { prChecks, prDetails, repoInfo } from './git'
 import { factView, reviewDiff, stepBacking, reviewFactView, reviewHunk, stepHunk } from './fact'
 import { exportReview, importReview } from './core/services/review-export/index.ts'
@@ -460,6 +461,10 @@ app.whenReady().then(async () => {
   const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
+  const people = createStorePeople(store, join(userData, 'runs'))
+  actions.people = people
+  const peopleIpc = startPeopleIpc(people)
+  startPeopleSync(store, people, peopleIpc.changed)
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

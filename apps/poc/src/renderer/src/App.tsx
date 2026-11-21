@@ -74,7 +74,10 @@ export function App({ projectId }: { projectId: string }) {
     try { return JSON.parse(localStorage.getItem(selKey) ?? 'null') as Selection | null } catch { return null }
   })
   const railKey = `mag.rail.${projectId}`
-  const [section, setSection] = useState<RailSection>(() => (localStorage.getItem(railKey) === 'meetings' ? 'meetings' : 'topics'))
+  const [section, setSection] = useState<RailSection>(() => {
+    const saved = localStorage.getItem(railKey)
+    return saved === 'meetings' || saved === 'people' ? saved : 'topics'
+  })
   const pickSection = (s: RailSection) => {
     setSection(s)
     try { localStorage.setItem(railKey, s) } catch { /* ignore */ }

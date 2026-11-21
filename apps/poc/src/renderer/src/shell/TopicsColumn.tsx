@@ -16,6 +16,7 @@ import {
 import type { AppState, CrashReport, PickerMode } from '../../../preload/api'
 import { ProjectPicker } from '../Picker'
 import { MeetingsSection } from '../Meetings'
+import { PeopleSection } from '../People'
 import { useNow } from '../Tasks'
 import { CardRow, CrashRow, ProjectSection, StarsContext, useFilter, useFolded, useStoredFlag, type HomeGroup, type ListPage, type RowEnv, type Selection, type Stars } from '../WorkList'
 import { allCards, columnCards, starredCards, toggleStar, waitingCount } from '../topicsColumn'
@@ -24,7 +25,7 @@ import { Caret, Icon } from '../ui/Icon'
 const mag = window.mag
 
 /** The rail's sections that show in the column. */
-export type RailSection = 'topics' | 'meetings'
+export type RailSection = 'topics' | 'meetings' | 'people'
 
 /** A project's page open in place of the conversation. */
 export interface OpenPage { kind: ListPage; projectId: string }
@@ -32,7 +33,8 @@ export interface OpenPage { kind: ListPage; projectId: string }
 /**
  * The column right of the rail (slack-like-shell-rail-resizable.1). Topics: the workspace's switcher, New topic, search
  * (⌘K) and filters, then Starred, a section per Project label (ProjectSection: its rows and the user's groups) and No
- * project; closed rows of all of them under Archive. Meetings: today's meetings list and recorder.
+ * project; closed rows of all of them under Archive. Meetings: today's meetings list and recorder. People: the
+ * workspace's persons (who-is-who-people-from.1).
  */
 export function TopicsColumn({ workspace, project, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onSearch, meetingId, onOpenMeeting }: {
   workspace: Workspace
@@ -90,6 +92,14 @@ export function TopicsColumn({ workspace, project, state, section, selected, hom
   const newLoose = () => void mag.newChat(null, workspace.id).then((id) => onSelect({ kind: 'topic', id }))
   const looseWaiting = waitingCount(looseOpen)
 
+  if (section === 'people') {
+    return (
+      <nav className="worklist" aria-label="People">
+        <div className="wlhead2"><span className="colhead2">People</span></div>
+        <div className="wlscroll"><PeopleSection workspaceId={workspace.id} /></div>
+      </nav>
+    )
+  }
   if (section === 'meetings') {
     return (
       <nav className="worklist" aria-label="Meetings">

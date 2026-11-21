@@ -171,6 +171,16 @@ const api: MagApi = {
     ipcRenderer.on('meetings:changed', fn)
     return () => ipcRenderer.removeListener('meetings:changed', fn)
   },
+  listPeople: (ws) => ipcRenderer.invoke('people:list', ws),
+  syncPeople: (ws) => ipcRenderer.invoke('people:sync', ws),
+  overridePerson: (o) => ipcRenderer.invoke('people:override', o),
+  rejectPerson: (ws, system, handle, personId) => ipcRenderer.invoke('people:reject', ws, system, handle, personId),
+  notPerson: (ws, personId) => ipcRenderer.invoke('people:notPerson', ws, personId),
+  onPeopleChanged: (cb) => {
+    const fn = () => cb()
+    ipcRenderer.on('people:changed', fn)
+    return () => ipcRenderer.removeListener('people:changed', fn)
+  },
 }
 
 contextBridge.exposeInMainWorld('mag', api)

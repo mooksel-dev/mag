@@ -16,6 +16,6 @@ export function coalesce(fn: () => void, schedule: (run: () => void) => void = s
 
 /** The state every window gets: sessions as headers, canvases without HTML, no window layout, the inbox as items. */
 export function appState(store: Store, extra: Pick<AppState, 'claudeBin' | 'appVersion' | 'openProjects' | 'inbox'>): AppState {
-  const { canvases: _, ui: __, sessions: ___, inboxStates: ____, inboxItems: _____, ...data } = store.data
+  const { canvases: _, ui: __, sessions: ___, inboxStates: ____, inboxItems: _____, persons: _p, identities: _i, identityOverrides: _o, ...data } = store.data
   return { ...data, sessions: store.sessionHeaders(), canvases: store.canvasList(), ...extra }
 }

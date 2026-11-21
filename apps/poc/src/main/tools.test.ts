@@ -849,6 +849,31 @@ test('search_meetings and read_meeting: every role, any project; hits with id an
   }
 })
 
+test('who and people: every role, the caller\'s workspace; read-only answers (who-is-who-people-from.1)', async () => {
+  const { actions, call, project } = setup()
+  await assert.rejects(call('who', { handle: 'x' }), /not ready/)
+  const ievgen = { id: 'ievgen-bezpaly', workspaceId: project.workspaceId, name: 'Ievgen Bezpaly', email: null, title: 'Engineer', avatar: null, external: false, syncedAt: 1, handles: [{ system: 'slack' as const, handle: 'U1', source: 'directory' as const }, { system: 'github' as const, handle: 'bezpaluy89', source: 'override' as const }] }
+  const asked: unknown[] = []
+  actions.people = {
+    who: (ws, h, system) => (asked.push([ws, h, system]), h === 'bezpaluy89' ? { kind: 'person', person: ievgen, source: 'override' } : h === 'bot' ? { kind: 'notPerson' } : h === 'ievgen b' ? { kind: 'unknown', suggestion: ievgen } : { kind: 'unknown' }),
+    find: (ws, q) => (asked.push([ws, q]), q === 'Ievgen' ? [ievgen] : []),
+  }
+  assert.equal(await call('who', { handle: 'bezpaluy89' }), 'bezpaluy89 is Ievgen Bezpaly (id ievgen-bezpaly) · Engineer · handles: slack:U1, github:bezpaluy89 (matched by override)')
+  assert.match(await call('who', { handle: 'bot', system: 'github' }), /not a person/)
+  assert.match(await call('who', { handle: 'ievgen b' }), /Maybe Ievgen Bezpaly .*unconfirmed/)
+  assert.match(await call('who', { handle: 'nobody' }), /not matched to anyone/)
+  await assert.rejects(call('who', { handle: 'x', system: 'jira' }), /system is one of/)
+  await assert.rejects(call('who', {}), /Pass handle/)
+  assert.match(await call('people', { q: 'Ievgen' }), /^- Ievgen Bezpaly/)
+  assert.match(await call('people', { q: 'zz' }), /Nobody/)
+  assert.deepEqual(asked[0], [project.workspaceId, 'bezpaluy89', undefined])
+  assert.deepEqual(asked[1], [project.workspaceId, 'bot', 'github'])
+  for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) {
+    const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
+    assert.ok(names.includes('who') && names.includes('people'), role)
+  }
+})
+
 test("set_pr_review: a look at new commits is a delta against the result at the older head; at the same head it keeps it (review-v3-concise-design-first.3)", async () => {
   const { store, project, actions } = setup()
   const recorded: IssuesReport[] = []

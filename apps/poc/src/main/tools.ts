@@ -12,6 +12,8 @@ import { planCheck } from './plan-check.ts'
 import { changes as factChanges, draftListing, factDiagrams, factReport, factRoot, flowchartRefusal, generated, hunkListing, scenariosOf, type Changes, type ChangeTarget, type Fact } from './core/services/fact/index.ts'
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepBacking, stepFact, stepSet } from './fact.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
+import type { People } from './core/services/people/index.ts'
+import { peopleTool } from './people-tools.ts'
 import { meetingTool } from './meeting-tools.ts'
 import type { Approvals, ParkResult } from './approvals.ts'
 import { blockedPush, projectBases } from './git-push.ts'
@@ -103,6 +105,8 @@ export interface ToolActions {
   meetings?: Pick<Meetings, 'search' | 'read'>
   /** save_deliverable, list_deliverables, read; set once started. */
   deliverables?: Deliverables
+  /** The people of each workspace (who, people); set once started. */
+  people?: Pick<People, 'who' | 'find'>
 }
 
 /**
@@ -1061,6 +1065,10 @@ function sharedTool(
     case 'verify_deliverable':
     case 'set_verdict':
       return claimsTool(actions.deliverables, deliverableOrigin(store, project, ctx), ctx.sessionId, actions.startVerifier, name, args)
+
+    case 'who':
+    case 'people':
+      return peopleTool(actions.people, project.workspaceId, name, args)
 
     case 'read_chat': {
       const item = findItem(store, project, String(args.id ?? ''))

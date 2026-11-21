@@ -955,6 +955,28 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'who',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "Who a handle is in this workspace's people (Slack, Jira and GitHub directories joined, with the user's corrections): a Slack member id, Atlassian accountId, GitHub login, email, person id or a name said on a call. Answers the person with their name, email, title and every handle, not a person (a bot), or unknown with a suggestion the user has not confirmed. Read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'e.g. bezpaluy89, U02ABC123, 712020:…, a name.' },
+        system: { type: 'string', enum: ['slack', 'atlassian', 'github', 'meeting'], description: 'Only this system; any by default.' },
+      },
+      required: ['handle'],
+    },
+  },
+  {
+    name: 'people',
+    scope: 'any',
+    reviewer: 'also',
+    description: "Persons of this workspace whose name, email, title or a handle matches q (or whose name is close to it), best first, with their handles. Read-only.",
+    inputSchema: { type: 'object', properties: { q: { type: 'string', description: 'A part of a name, email, title or handle, e.g. Ihor.' } }, required: ['q'] },
+  },
+  {
     name: 'read_chat',
     scope: 'any',
     reviewer: 'also',

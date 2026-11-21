@@ -79,7 +79,19 @@ export interface Workspace {
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   /** The topics and works the user starred, in the order starred; missing = none (slack-like-shell-rail-resizable.1). */
   starred?: ItemRef[]
+  /** Where its people come from (who-is-who-people-from.1); missing = none synced. */
+  directories?: WorkspaceDirectories
   createdAt: number
+}
+
+/** A workspace's directories: Slack is primary; Atlassian and GitHub join to its people. */
+export interface WorkspaceDirectories {
+  /** The members of the Slack the user's Slack MCP reaches. */
+  slack?: boolean
+  /** Users of the Jira site acli is signed in to, seen on work items of the workspace's Jira keys. */
+  atlassian?: boolean
+  /** Members of these GitHub orgs; missing = the owners of the workspace repos' origin remotes. */
+  githubOrgs?: string[]
 }
 
 /** An item labels apply to (workspaces-and-labels-project-as.2): a topic (a root session) or a work or step, by id. */

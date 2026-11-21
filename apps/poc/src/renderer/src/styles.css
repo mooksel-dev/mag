@@ -785,6 +785,12 @@ body.resizing iframe { pointer-events: none; }
 .mtglist { display: flex; flex-direction: column; max-height: 30vh; overflow: auto; }
 .mtgrow { display: flex; align-items: baseline; gap: var(--sp-2); width: 100%; padding: 4px 10px; border: none; border-radius: var(--r); background: none; font-weight: 400; text-align: left; }
 .mtgrow:hover { background: var(--hover); }
+.mtghead .link { margin-left: auto; }
+.pplmore { display: flex; flex-direction: column; gap: 2px; padding: 2px 10px 6px 18px; }
+.pplhandles { display: flex; flex-wrap: wrap; gap: 4px; font-size: var(--fs-xs); }
+.pplsug { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px; padding: 2px 10px; }
+.pplsug button + button { margin-left: 4px; }
+.pplunmatched summary { padding: 2px 10px; cursor: pointer; }
 .mtgtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mtgrename input { font: inherit; }
 .mtglinks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0; }
