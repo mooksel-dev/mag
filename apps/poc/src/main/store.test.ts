@@ -1,9 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Store } from './store.ts'
+import type { ChatItem, SessionItemEvent } from '@mag/core'
+import { appState } from './state.ts'
+import { mirrorItems } from './item-mirror.test-util.ts'
+import { Store, backupDaily, backupName, writeAtomic } from './store.ts'
 
 test('window bounds persist per kind without notifying listeners', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
@@ -587,4 +590,88 @@ test('effort migration: stored choices of projects and sessions get effort null,
   assert.deepEqual(store.session('own').choice, { agent: 'claude-code', model: 'sonnet', effort: null })
   assert.equal(store.session('none').choice, undefined, 'no choice of its own: still its role default')
   assert.equal(store.data.schemaVersion, 12)
+})
+
+test('item events: a push appends, an in-place change re-sends its index, a replacement cuts and sends the rest (p0-fast-safe-store-no.1)', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const events: SessionItemEvent[] = []
+  store.onItem((e) => events.push(structuredClone(e)))
+  const shown = mirrorItems(store, s.id)
+  const tool: ChatItem = { kind: 'tool', id: 't1', name: 'Bash', summary: 'ls', at: 2 }
+  store.pushItem(s.id, { kind: 'user', text: 'hi', at: 1 })
+  store.pushItem(s.id, tool)
+  assert.deepEqual(events, [{ sid: s.id, n: 0, item: { kind: 'user', text: 'hi', at: 1 } }, { sid: s.id, n: 1, item: tool }])
+
+  if (tool.kind === 'tool') tool.ok = true
+  store.itemChanged(s.id, tool)
+  assert.deepEqual(events.at(-1), { sid: s.id, n: 1, item: { ...tool, ok: true } })
+  store.itemChanged(s.id, { kind: 'notice', text: 'gone', at: 0 })
+  assert.equal(events.length, 3, 'an item no longer there sends nothing')
+
+  const kept = store.items(s.id)
+  store.setItems(s.id, [kept[0], { kind: 'notice', text: 'restored', at: 3 }])
+  assert.deepEqual(events.slice(3), [{ sid: s.id, truncate: 1 }, { sid: s.id, n: 1, item: { kind: 'notice', text: 'restored', at: 3 } }])
+  store.setItems(s.id, [])
+  assert.deepEqual(events.at(-1), { sid: s.id, truncate: 0 })
+  store.setItems(s.id, kept)
+  assert.deepEqual(shown(), store.items(s.id))
+  assert.deepEqual(store.items(s.id, 1), [tool])
+})
+
+test('the state windows get has sessions without items; it does not grow with a chat’s history (p0-fast-safe-store-no.1)', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
+  const p = store.createProject('p')
+  const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const extra = { claudeBin: null, appVersion: '0', openProjects: [] }
+  const size = () => JSON.stringify(appState(store, extra)).length
+  const reply = (at: number): ChatItem => ({ kind: 'assistant', text: 'x'.repeat(1000), at })
+  store.pushItem(s.id, reply(1000))
+  const one = size()
+  for (let at = 1001; at < 1100; at++) store.pushItem(s.id, reply(at))
+  store.pushItem(s.id, { kind: 'approval', id: 'a1', tool: 'Bash', input: {}, status: 'pending', at: 1100 })
+  store.pushItem(s.id, { kind: 'result', ok: true, costUsd: 0.5, at: 1101 })
+  const state = appState(store, extra)
+  const header = state.sessions[0]
+  assert.equal('items' in header, false)
+  assert.deepEqual([header.itemCount, header.costUsd, header.pendingApprovals.map((a) => a.id), header.lastReply?.at], [102, 0.5, ['a1'], 1099])
+  store.data.sessions[0].items.splice(-2)
+  assert.ok(size() - one < 10, `100 more replies of 1 KB add ${size() - one} bytes`)
+})
+
+test('flush writes through a temp file; a failed write leaves db.json whole and no temp file (p0-fast-safe-store-no.1)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-store-'))
+  const file = join(dir, 'db.json')
+  const store = new Store(file)
+  store.createProject('p')
+  store.flush()
+  const saved = readFileSync(file, 'utf8')
+  assert.equal(JSON.parse(saved).projects[0].name, 'p')
+  assert.equal(existsSync(`${file}.tmp`), false)
+
+  assert.throws(() => writeAtomic(file, '{"projects": [', () => { throw new Error('disk full') }), /disk full/)
+  assert.equal(readFileSync(file, 'utf8'), saved)
+  assert.equal(existsSync(`${file}.tmp`), false)
+})
+
+test('a day’s first write backs up db.json as it was, one per day, the newest 7 kept (p0-fast-safe-store-no.1)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-store-'))
+  const file = join(dir, 'db.json')
+  assert.equal(backupDaily(file, new Date(2026, 10, 1)), null, 'nothing to back up yet')
+  for (let day = 1; day <= 9; day++) {
+    writeFileSync(file, `{"day": ${day}}`)
+    const at = new Date(2026, 10, day, 9)
+    assert.equal(backupDaily(file, at), join(dir, 'backups', backupName(at)))
+    writeFileSync(file, `{"day": ${day}, "later": true}`)
+    assert.equal(backupDaily(file, new Date(2026, 10, day, 18)), null, 'one per day')
+  }
+  const kept = readdirSync(join(dir, 'backups')).sort()
+  assert.deepEqual(kept, [3, 4, 5, 6, 7, 8, 9].map((d) => `db-2026-11-0${d}.json`))
+  assert.equal(readFileSync(join(dir, 'backups', 'db-2026-11-09.json'), 'utf8'), '{"day": 9}', 'the file as it was before the day’s first write')
+
+  const store = new Store(file)
+  store.createProject('p')
+  store.flush()
+  assert.ok(existsSync(join(dir, 'backups', backupName(new Date()))), 'flush backs up')
 })

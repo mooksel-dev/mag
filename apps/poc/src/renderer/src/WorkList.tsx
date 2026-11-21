@@ -20,7 +20,8 @@ import {
   topicKids,
   workCards,
   type CardFilter,
-  type AgentSession,
+  type SessionHeader,
+  type SessionLike,
   type SessionNode,
   type ChatRef,
   type Project,
@@ -151,7 +152,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   // What the selection was is gone (deleted): Home.
   const gone = (c: WorkCard) => { if (selected?.id === c.id) onNew() }
   // A subtopic deleted from its menu: what was open in it (itself, a subtopic or draft under it) goes to its parent.
-  const goneSub = (s: AgentSession) => {
+  const goneSub = (s: SessionLike) => {
     const under = (id: string): boolean => id === s.id || (() => { const p = state.sessions.find((x) => x.id === id)?.parentId; return !!p && under(p) })()
     if (selected && selected.kind !== 'work' && under(selected.id)) onSelect({ kind: 'topic', id: s.parentId! })
   }
@@ -249,8 +250,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         </button>
         {searching && (
           <SearchPalette
-            tasks={tasks}
-            sessions={state.sessions.filter((s) => s.projectId === project.id)}
+            projectId={project.id}
             onPick={(ref) => onSelect({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })}
             onClose={() => setSearching(false)}
           />
@@ -314,7 +314,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
  * a click opens the topic, + Idea parks a new one with the typed text (its first line is the title).
  */
 function Ideas({ topics, projectId, selectedId, now, onSelect }: {
-  topics: AgentSession[]
+  topics: SessionHeader[]
   projectId: string
   selectedId: string | null
   now: number

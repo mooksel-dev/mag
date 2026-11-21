@@ -1,31 +1,37 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
-import { searchAll, type AgentSession, type ChatRef, type SearchHit, type Task } from '@mag/core'
+import { useEffect, useRef, useState } from 'react'
+import type { ChatRef, SearchHit } from '@mag/core'
 import { threadTime } from './format'
 
 /**
  * The search palette (archive-of-chats-summaries-search.2): an overlay over all topics, works and reviews of the project,
  * archive included, by title, summary and message text (core searchAll). Each row: title, key, an Archived mark and the
- * time, then the snippet of a matched message or the summary's line. ↑↓ move, Enter or a click picks, Escape closes.
+ * time, then the snippet of a matched message or the summary's line. It runs in main, where the messages are. ↑↓ move, Enter or a click picks, Escape closes.
  */
-export function SearchPalette({ tasks, sessions, onPick, onClose, placeholder = 'Search chats and works, archive included' }: {
-  /** The project's. */
-  tasks: Task[]
-  /** The project's. */
-  sessions: AgentSession[]
+export function SearchPalette({ projectId, onPick, onClose, placeholder = 'Search chats and works, archive included' }: {
+  projectId: string
   onPick: (ref: ChatRef) => void
   onClose: () => void
   placeholder?: string
 }) {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
-  // Message text of every chat is read: typing stays responsive while the hits catch up.
-  const deferred = useDeferredValue(query)
-  const hits = searchAll(deferred, tasks, sessions)
+  // The hits of the last query answered: typing stays responsive while they catch up.
+  const [shown, setShown] = useState<{ query: string; hits: SearchHit[] }>({ query: '', hits: [] })
+  useEffect(() => {
+    let current = true
+    const done = (hits: SearchHit[]) => current && setShown({ query, hits })
+    if (!query.trim()) done([])
+    else window.mag.search(projectId, query).then(done, () => done([]))
+    return () => {
+      current = false
+    }
+  }, [projectId, query])
+  const { hits } = shown
   const list = useRef<HTMLDivElement>(null)
   const at = Math.min(active, Math.max(hits.length - 1, 0))
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
-  }, [at, deferred])
+  }, [at, shown])
   const pick = (h: SearchHit | undefined) => {
     if (!h) return
     onClose()
@@ -51,7 +57,7 @@ export function SearchPalette({ tasks, sessions, onPick, onClose, placeholder = 
             else if (e.key === 'Escape') { e.preventDefault(); onClose() }
           }}
         />
-        {deferred.trim() && (
+        {shown.query.trim() && (
           <div className="sphits" id="sphits" role="listbox" aria-label="Results" ref={list}>
             {hits.map((h, i) => (
               <button key={`${h.ref.kind}:${h.ref.id}`} role="option" aria-selected={i === at} className={`sphit${i === at ? ' on' : ''}`} onClick={() => pick(h)} onMouseMove={() => i !== at && setActive(i)}>

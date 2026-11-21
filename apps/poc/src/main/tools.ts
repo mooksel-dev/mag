@@ -890,8 +890,8 @@ async function setArchitecture(store: Store, project: Project, args: Record<stri
 /** Puts a card of the canvas into the run's chat. */
 function showInChat(store: Store, ctx: ToolContext, canvas: Canvas) {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-  session?.items.push({ kind: 'canvas', canvas: { id: canvas.id, title: canvas.title, version: canvas.version }, at: Date.now() })
-  store.changed()
+  if (session) store.pushItem(session.id, { kind: 'canvas', canvas: { id: canvas.id, title: canvas.title, version: canvas.version }, at: Date.now() })
+  else store.changed()
 }
 
 /** Tools that work in task runs and project chats alike. Returns undefined when `name` is not one of them. */

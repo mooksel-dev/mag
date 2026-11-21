@@ -77,7 +77,7 @@ export class Approvals {
     clearTimeout(this.expiry.get(item.id))
     if (item.status === 'pending') await this.wait(item.id, ctx.signal)
     if (item.status === 'pending') {
-      this.expireLater(item)
+      this.expireLater(session.id, item)
       return JSON.stringify({ pending: true })
     }
     if (item.status === 'allowed') return JSON.stringify({ behavior: 'allow', updatedInput: item.input })
@@ -106,7 +106,7 @@ export class Approvals {
     item.status = allow ? 'allowed' : 'denied'
     clearTimeout(this.expiry.get(item.id))
     this.expiry.delete(item.id)
-    this.store.changed()
+    this.store.itemChanged(sessionId, item)
     const task = session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId) : undefined
     this.store.logEvent({
       projectId: session.projectId,
@@ -124,8 +124,7 @@ export class Approvals {
 
   private add(session: AgentSession, a: Pick<ApprovalItem, 'id' | 'tool' | 'server' | 'input'>): ApprovalItem {
     const item: ApprovalItem = { kind: 'approval', ...a, status: 'pending', at: Date.now() }
-    session.items.push(item)
-    this.store.changed()
+    this.store.pushItem(session.id, item)
     return item
   }
 
@@ -148,7 +147,7 @@ export class Approvals {
     })
   }
 
-  private expireLater(item: ApprovalItem) {
+  private expireLater(sessionId: string, item: ApprovalItem) {
     clearTimeout(this.expiry.get(item.id))
     this.expiry.set(
       item.id,
@@ -156,7 +155,7 @@ export class Approvals {
         this.expiry.delete(item.id)
         if (item.status !== 'pending' || this.waiting.has(item.id)) return
         item.status = 'expired'
-        this.store.changed()
+        this.store.itemChanged(sessionId, item)
       }, this.timings.graceMs),
     )
   }

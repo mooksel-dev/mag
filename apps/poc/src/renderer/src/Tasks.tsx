@@ -9,7 +9,7 @@ import {
   stepRepoNames,
   subtaskProgress,
   taskPrs,
-  type AgentSession,
+  type SessionHeader,
   type AgentState,
   type Project,
   type SubtaskStatus,
@@ -118,7 +118,7 @@ export function TicketLinks({ task }: { task: Task }) {
  * Approves the plan of a work in planning and starts it (ux-odna-rozmova-na-robotu.1), through the Start popup;
  * disabled, with the reason, while it has no step to do or an agent of it runs.
  */
-export function ApproveButton({ task, tasks, sessions, project, small }: { task: Task; tasks: Task[]; sessions: AgentSession[]; project?: Project; small?: boolean }) {
+export function ApproveButton({ task, tasks, sessions, project, small }: { task: Task; tasks: Task[]; sessions: SessionHeader[]; project?: Project; small?: boolean }) {
   const can = canApprove(task, tasks)
   const busy = sessions.some((s) => s.taskId === task.id && s.status === 'running')
   const why = !can.ok ? can.reason : busy ? 'An agent is running on this work' : 'Approve the plan and start its first step'

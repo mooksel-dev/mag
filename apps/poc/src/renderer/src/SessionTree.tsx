@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { shortTitle, type AgentSession, type SessionNode, type SessionState } from '@mag/core'
+import { shortTitle, type SessionHeader, type SessionLike, type SessionNode, type SessionState } from '@mag/core'
 import { Composer } from './Chat'
 import { startSubtopic } from './draftSubtopic'
 import { RowMenu, type Selection } from './WorkList'
@@ -20,7 +20,7 @@ export function SubtopicRows({ nodes, selectedId, draftOf, onSelect, onGone }: {
   draftOf: string | null
   onSelect: (s: Selection) => void
   /** A subtopic was deleted from its menu. */
-  onGone: (s: AgentSession) => void
+  onGone: (s: SessionLike) => void
 }) {
   const [menu, setMenu] = useState<string | null>(null)
   return (
@@ -79,7 +79,7 @@ export function DraftRow() {
  * is only this screen until the first message, which starts the subtopic and opens it; left without one, nothing is
  * kept.
  */
-export function DraftSubtopic({ parent, onSelect }: { parent: AgentSession; onSelect: (s: Selection) => void }) {
+export function DraftSubtopic({ parent, onSelect }: { parent: SessionHeader; onSelect: (s: Selection) => void }) {
   const [busy, setBusy] = useState(false)
   const send = async (text: string, attachments: Parameters<typeof startSubtopic>[3], refs: Parameters<typeof startSubtopic>[4]) => {
     setBusy(true)

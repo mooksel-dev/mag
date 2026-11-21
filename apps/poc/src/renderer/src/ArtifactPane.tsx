@@ -15,7 +15,7 @@ import {
   workCard,
   reviewStatus,
   workStage,
-  type AgentSession,
+  type SessionHeader,
   type CardMove,
   type ReviewStage,
   type StepLine,
@@ -314,17 +314,15 @@ function StepReview({ step, state }: { step: Task; state: AppState }) {
   )
 }
 
-const sessionCost = (s: AgentSession) => s.items.reduce((sum, i) => sum + (i.kind === 'result' ? (i.costUsd ?? 0) : 0), 0)
-
 /** A group of a work's sessions: grooming, one step's developer and reviewer, or a legacy work's agents. */
 interface SessionGroup {
   label: string
   step?: Task
-  sessions: AgentSession[]
+  sessions: SessionHeader[]
 }
 
 /** Sessions by what they worked on: grooming first, then each step in order; legacy sessions last. */
-function sessionGroups(steps: Task[], sessions: AgentSession[]): SessionGroup[] {
+function sessionGroups(steps: Task[], sessions: SessionHeader[]): SessionGroup[] {
   const groups: SessionGroup[] = [
     { label: 'Grooming', sessions: sessions.filter((s) => s.role === 'groomer') },
     ...steps.map((step) => ({ label: step.key, step, sessions: sessions.filter((s) => s.stepId === step.id) })),
@@ -372,7 +370,7 @@ function WorkAgents({ work, state, onOpenKey }: { work: Task; state: AppState; o
 }
 
 /** An agent's chat as a log: Stop while it runs, Restart when it is the work's latest of its role and can go on. */
-function AgentLog({ session, work, state, onBack, onOpenKey }: { session: AgentSession; work: Task; state: AppState; onBack: () => void; onOpenKey: (key: string) => void }) {
+function AgentLog({ session, work, state, onBack, onOpenKey }: { session: SessionHeader; work: Task; state: AppState; onBack: () => void; onOpenKey: (key: string) => void }) {
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
   const mine = state.sessions.filter((s) => s.taskId === work.id)
@@ -422,7 +420,7 @@ function RepoList({ work }: { work: TaskWork }) {
   )
 }
 
-function SessionList({ sessions, all, ownerId, onShow }: { sessions: AgentSession[]; all: AgentSession[]; ownerId?: string | null; onShow: (sessionId: string) => void }) {
+function SessionList({ sessions, all, ownerId, onShow }: { sessions: SessionHeader[]; all: SessionHeader[]; ownerId?: string | null; onShow: (sessionId: string) => void }) {
   const agents = useAgents()
   return (
     <div className="sessionlist">
@@ -432,7 +430,7 @@ function SessionList({ sessions, all, ownerId, onShow }: { sessions: AgentSessio
           <span>{s.role}{s.id === ownerId ? ' · owner' : ''}</span>
           <span className="muted grow">{agentName(agents, s.agent)} · {s.activeModel ?? 'default'}</span>
           <span className={`status ${s.status === 'running' ? 's-in_progress' : ''}`}>{s.status}</span>
-          <span className="muted small">${sessionCost(s).toFixed(2)}</span>
+          <span className="muted small">${s.costUsd.toFixed(2)}</span>
         </button>
       ))}
     </div>

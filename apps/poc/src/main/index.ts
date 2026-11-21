@@ -4,11 +4,12 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
+import { appState, coalesce } from './state'
 import { createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
@@ -199,15 +200,17 @@ app.whenReady().then(async () => {
   const scheduler = startScheduler(store, orch)
   const claudeBin = await claudeCode.detect()
 
-  const snapshot = (): AppState => {
-    const { canvases: _, ui: __, ...data } = store.data
-    return { ...data, canvases: store.canvasList(), claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects() }
-  }
-  store.onChange(() => windows.broadcast(snapshot()))
-  windows.onChange(() => windows.broadcast(snapshot()))
+  const snapshot = (): AppState => appState(store, { claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects() })
+  // Streamed items go as events; the state (no items) at most once per macrotask.
+  const broadcast = coalesce(() => windows.broadcast(snapshot()))
+  store.onChange(broadcast)
+  windows.onChange(broadcast)
+  store.onItem((e) => windows.sendAll('session:item', e))
   app.on('browser-window-focus', () => void scheduler.pollNow())
 
   handle('state:get', () => snapshot())
+  handle('session:items', (_, sid: string, from?: number) => store.items(sid, from))
+  handle('search:all', (_, projectId: string, query: string) => searchAll(query, projectTasks(projectId), store.data.sessions.filter((s) => s.projectId === projectId)))
   handle('dialog:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]

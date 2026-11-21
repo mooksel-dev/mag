@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, filesRestorePoint, rewindPoint, type RewindMode, type RewindScope, type AgentSession, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
+import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, filesRestorePoint, rewindPoint, type RewindMode, type RewindScope, type SessionHeader, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
@@ -14,6 +14,7 @@ import { foldEvents, type EventItem } from './conversationCards'
 import { IntegrationCard } from './Cards'
 import { SearchPalette } from './SearchPalette'
 import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
+import { useSessionItems } from './useSessionItems'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -361,8 +362,8 @@ const AGENT_NAMES: Record<string, string> = { chat: 'agent', groomer: 'owner', d
  * `onOpenSession`: opens a subtopic made by Branch from here.
  */
 export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chip, readOnly, cards, name, tasks, onOpenRef, self, onOpenSession }: {
-  session: AgentSession
-  sessions: AgentSession[]
+  session: SessionHeader
+  sessions: SessionHeader[]
   canvases: Pick<Canvas, 'id' | 'title' | 'version' | 'projectId'>[]
   onOpenTask?: (key: string) => void
   placeholder?: string
@@ -376,6 +377,8 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   onOpenSession?: (id: string) => void
 }) {
   const busy = session.status === 'running'
+  const items = useSessionItems(session.id)
+  const full = { ...session, items }
   /** Edit's text for the composer: a new object each edit. */
   const [prefill, setPrefill] = useState<{ text: string } | null>(null)
   const actions = !readOnly && canRewindSession(session)
@@ -387,17 +390,17 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   }
   const choice = (n: number) => {
     if (choosing?.n !== n) return null
-    const point = filesRestorePoint(session.items, n, choosing.mode)
+    const point = filesRestorePoint(items, n, choosing.mode)
     const codeOff = !point ? 'Nothing came after this reply' : !point.nativeId ? 'No code checkpoint for this message (an older message)' : null
     return <RewindChoice mode={choosing.mode} codeOff={codeOff} busy={busy} onPick={(scope) => rewind(n, choosing.mode, scope)} onCancel={() => setChoosing(null)} />
   }
   const acts = (n: number, text: string): MessageAction[] => {
-    const can = (mode: RewindMode) => actions && !!rewindPoint(session, n, mode)
-    const user = session.items[n]?.kind === 'user'
+    const can = (mode: RewindMode) => actions && !!rewindPoint(full, n, mode)
+    const user = items[n]?.kind === 'user'
     const branch = (title: string): MessageAction => ({ label: 'Branch from here', icon: 'branch', title, always: true, run: () => void mag.branchFrom(session.id, n).then((c) => onOpenSession?.(c.id)).catch((e: Error) => alert(e.message)) })
     const copy: MessageAction = { label: 'Copy', icon: 'copy', title: 'Copy as markdown', always: true, run: () => void navigator.clipboard.writeText(text) }
     // Branch on a user message forks at the reply before it: there is none before the first one.
-    const branchable = user ? !!rewindPoint(session, n, 'edit')?.forkAt : can('rewind')
+    const branchable = user ? !!rewindPoint(full, n, 'edit')?.forkAt : can('rewind')
     return [
       copy,
       ...(user
@@ -414,29 +417,29 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
     ]
   }
   const end = useRef<HTMLDivElement>(null)
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [session.items.length, busy])
+  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [items.length, busy])
   // Only the last mention of a canvas renders it; earlier ones point forward.
   const lastCanvasAt = new Map<string, number>()
-  session.items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
+  items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
   // What its messages' canvas links may show: the project's canvases, as in the doc.
   const shown = useMemo(() => canvases.filter((c) => c.projectId === session.projectId), [canvases, session.projectId])
 
   // A turn's model, cost and duration go under its last reply, shown on hover.
   const metaAt = new Map<number, string>()
   let lastReply = -1
-  session.items.forEach((i, n) => {
+  items.forEach((i, n) => {
     if (i.kind === 'assistant') lastReply = n
     else if (i.kind === 'result') {
-      if (lastReply >= 0) metaAt.set(lastReply, turnMeta(session.items, n, session.activeModel))
+      if (lastReply >= 0) metaAt.set(lastReply, turnMeta(items, n, session.activeModel))
       lastReply = -1
     }
   })
 
   // Replies followed by another one in the same turn are interim: muted and clamped, so the turn reads as one answer.
-  const interim = interimReplies(session.items)
+  const interim = interimReplies(items)
 
   // Runs of events render as one collapsible line; n = index of the (first) item, used as key.
-  const lines = foldEvents(session.items)
+  const lines = foldEvents(items)
   const who = name ?? (session.role ? AGENT_NAMES[session.role] ?? session.role : 'agent')
   // ▶ Run in a conversation the user writes in; its output goes to this chat's agent.
   const runner = useMemo(() => (readOnly ? null : { sessionId: session.id, send: (text: string) => mag.send(session.id, text, [], []) }), [session.id, readOnly])
@@ -516,7 +519,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
         onSend={(text, att, refs) => mag.send(session.id, text, att, refs)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
-        refsFrom={tasks && { tasks, sessions: sessions.filter((s) => s.projectId === session.projectId), self: self ?? { kind: 'topic', id: session.id } }}
+        refsFrom={tasks && { projectId: session.projectId, tasks, sessions: sessions.filter((s) => s.projectId === session.projectId), self: self ?? { kind: 'topic', id: session.id } }}
       />}
     </div>
     </CommandRunner.Provider>
@@ -741,7 +744,7 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
  * Referenced chats as chips: the title, an Archived mark; a click opens the chat (`onOpen`), × removes it (`onRemove`).
  * A ref to a deleted chat shows as one.
  */
-function RefChips({ refs, tasks, sessions, onOpen, onRemove }: { refs: ChatRef[]; tasks: Task[]; sessions: AgentSession[]; onOpen?: (ref: ChatRef) => void; onRemove?: (ref: ChatRef) => void }) {
+function RefChips({ refs, tasks, sessions, onOpen, onRemove }: { refs: ChatRef[]; tasks: Task[]; sessions: SessionHeader[]; onOpen?: (ref: ChatRef) => void; onRemove?: (ref: ChatRef) => void }) {
   return (
     <div className="refchips">
       {refs.map((r) => {
@@ -810,7 +813,7 @@ export function Composer({
   onFiles?: (files: File[]) => boolean
   autoFocus?: boolean
   /** The project's chats to reference: "@" or the @ button pick one (SearchPalette) as a chip; `self` is this chat. */
-  refsFrom?: { tasks: Task[]; sessions: AgentSession[]; self?: ChatRef }
+  refsFrom?: { projectId: string; tasks: Task[]; sessions: SessionHeader[]; self?: ChatRef }
 }) {
   /** The message as markdown, what is sent; `plain` its text, what a /command is read from. */
   const [text, setText] = useState('')
@@ -985,7 +988,7 @@ export function Composer({
       </div>
       {/* Out of the form: the palette's rows are buttons. */}
       {picking && refsFrom && createPortal(
-        <SearchPalette tasks={refsFrom.tasks} sessions={refsFrom.sessions} placeholder="Reference a chat or a work, archive included" onPick={pickRef} onClose={() => { setPicking(null); ta.current?.focus() }} />,
+        <SearchPalette projectId={refsFrom.projectId} placeholder="Reference a chat or a work, archive included" onPick={pickRef} onClose={() => { setPicking(null); ta.current?.focus() }} />,
         document.body,
       )}
     </form>
@@ -998,7 +1001,7 @@ export function Composer({
  * choice, from its next turn. A subagent's is a plain label: it runs on its parent's process. Without `session` (a
  * new chat, Home) it shows and sets the project's default for chats. `up`: the popover opens above (in a composer).
  */
-export function SessionModelChip(props: { project: Project; up?: boolean } & ({ session: AgentSession; tasks: Task[] } | { session?: undefined })) {
+export function SessionModelChip(props: { project: Project; up?: boolean } & ({ session: SessionHeader; tasks: Task[] } | { session?: undefined })) {
   const { project, up } = props
   const agents = useAgents()
   if (!props.session) {

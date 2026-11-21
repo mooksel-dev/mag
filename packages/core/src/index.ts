@@ -12,6 +12,7 @@ import type { ImportedReview } from './review-bundle.ts'
 import type { SidebarNode } from './sidebar.ts'
 import type { ChatSummary } from './summary.ts'
 import type { ChatRef } from './work-list.ts'
+import { sessionDigest, type SessionLike } from './session-header.ts'
 
 export * from './arch.ts'
 export * from './canvas.ts'
@@ -21,6 +22,7 @@ export * from './diagram.ts'
 export * from './diagram-rules.ts'
 export * from './inventory.ts'
 export * from './sets.ts'
+export * from './session-header.ts'
 export * from './sidebar.ts'
 export * from './summary.ts'
 export * from './playbook.ts'
@@ -437,7 +439,7 @@ export function canReopen(task: Task): boolean {
  * The project's ideas (ideas-are-parked-topics.1): its parked topics, things worth doing that nobody works on yet,
  * newest parked first; `sessions` in the order they were created, which breaks ties.
  */
-export function parkedTopics(projectId: string, sessions: AgentSession[]): AgentSession[] {
+export function parkedTopics<S extends SessionLike>(projectId: string, sessions: S[]): S[] {
   return sessions
     .filter((s) => s.projectId === projectId && !!s.parkedAt && s.role === 'chat' && !s.taskId && !s.parentId)
     .reverse()
@@ -1090,12 +1092,12 @@ export const CHILD_ROLES = ['developer', 'reviewer'] as const
 export type ChildRole = (typeof CHILD_ROLES)[number]
 
 /** The sessions `parentId` started, in the order they were created. */
-export function childSessions(parentId: string, sessions: AgentSession[]): AgentSession[] {
+export function childSessions<S extends SessionLike>(parentId: string, sessions: S[]): S[] {
   return sessions.filter((s) => s.parentId === parentId)
 }
 
 /** The root of a session's tree (its topic): itself without a parent, or when its parent is gone. */
-export function rootSession(sessionId: string, sessions: AgentSession[]): AgentSession | undefined {
+export function rootSession<S extends SessionLike>(sessionId: string, sessions: S[]): S | undefined {
   const byId = new Map(sessions.map((s) => [s.id, s]))
   let s = byId.get(sessionId)
   // A cycle can't be written by mag; the seen set only keeps a broken file from hanging the app.
@@ -1108,12 +1110,12 @@ export function rootSession(sessionId: string, sessions: AgentSession[]): AgentS
 }
 
 /** A topic and all its descendants, each parent before its children (depth first, children in creation order). */
-export function sessionTree(rootId: string, sessions: AgentSession[]): AgentSession[] {
+export function sessionTree<S extends SessionLike>(rootId: string, sessions: S[]): S[] {
   const root = sessions.find((s) => s.id === rootId)
   if (!root) return []
-  const out: AgentSession[] = []
+  const out: S[] = []
   const seen = new Set<string>()
-  const walk = (s: AgentSession) => {
+  const walk = (s: S) => {
     if (seen.has(s.id)) return
     seen.add(s.id)
     out.push(s)
@@ -1173,7 +1175,7 @@ export type AgentEvent =
  * Slash commands offered in a chat's composer. A session that has not run yet borrows the list from the latest
  * session of the same project and agent; with none, only /compact. Codex gets none: its text goes as is.
  */
-export function chatCommands(session: Pick<AgentSession, 'projectId' | 'agent' | 'commands'>, sessions: AgentSession[]): string[] {
+export function chatCommands(session: Pick<AgentSession, 'projectId' | 'agent' | 'commands'>, sessions: SessionLike[]): string[] {
   if (session.agent === 'codex') return []
   if (session.commands?.length) return session.commands
   const prev = sessions
@@ -1531,10 +1533,10 @@ function stepWait(task: Task, tasks: Task[]): { kind: 'start' | 'merge'; step: T
  * task in progress with no agent running waits for the user to merge its open PRs (the current step's, or a legacy
  * task's own) or to Start a step that starts manually.
  */
-export function agentState(task: Task, sessions: AgentSession[], tasks: Task[]): AgentState {
+export function agentState(task: Task, sessions: SessionLike[], tasks: Task[]): AgentState {
   const mine = sessions.filter((s) => s.taskId === task.id)
-  const approval = mine.flatMap((s) => s.items).find((i) => i.kind === 'approval' && i.status === 'pending')
-  if (approval?.kind === 'approval') return { kind: 'waiting', reason: `Approval: ${approvalName(approval)}` }
+  const approval = mine.flatMap((s) => sessionDigest(s).pendingApprovals)[0]
+  if (approval) return { kind: 'waiting', reason: `Approval: ${approvalName(approval)}` }
   if (task.needsInput) return { kind: 'waiting', reason: task.needsInput }
   const running = mine.filter((s) => s.status === 'running').at(-1)
   if (running) return { kind: 'working', role: runRole(running), since: running.runStartedAt ?? running.createdAt }
@@ -1562,7 +1564,7 @@ export interface InboxItem {
   kind: InboxKind
   text: string
   /** Session the item comes from: the approval's session, or the task's groomer/developer/reviewer that ran last. */
-  session?: AgentSession
+  session?: SessionLike
   /** review_look and ready_to_merge: the agent review of the current step, when it covers its PRs as they are. */
   review?: AgentReview
   /** Approval chat item id in `session`. */
@@ -1575,13 +1577,13 @@ const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'reviewer']
 const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', reviewer: 'Review failed' }
 
 /** The task's agent session that ran last (a step's reviewer runs again after its developer). */
-export function lastTaskSession(taskId: string, sessions: AgentSession[]): AgentSession | undefined {
-  const at = (s: AgentSession) => s.runStartedAt ?? s.createdAt
-  return sessions.filter((s) => s.taskId === taskId && !!s.role && TASK_AGENTS.includes(s.role)).reduce<AgentSession | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
+export function lastTaskSession<S extends SessionLike>(taskId: string, sessions: S[]): S | undefined {
+  const at = (s: S) => s.runStartedAt ?? s.createdAt
+  return sessions.filter((s) => s.taskId === taskId && !!s.role && TASK_AGENTS.includes(s.role)).reduce<S | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
 }
 
 /** One item for a top-level task; its steps' PRs and Start count for it. A finished work waits on nobody. */
-function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxItem | null {
+function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): InboxItem | null {
   if (task.parentId || task.status === 'done' || task.status === 'canceled') return null
   if (isReview(task)) return reviewItem(task, sessions)
   const last = lastTaskSession(task.id, sessions)
@@ -1606,7 +1608,7 @@ function inboxItem(task: Task, tasks: Task[], sessions: AgentSession[]): InboxIt
 }
 
 /** A review of a teammate's PR in progress, by its state: its question, its verdict once ready, or its topic failed. */
-function reviewItem(task: Task, sessions: AgentSession[]): InboxItem | null {
+function reviewItem(task: Task, sessions: SessionLike[]): InboxItem | null {
   const state = reviewState(task, sessions)
   if (state === 'question') return { task, kind: 'question', text: task.needsInput! }
   if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!) }
@@ -1615,15 +1617,11 @@ function reviewItem(task: Task, sessions: AgentSession[]): InboxItem | null {
 }
 
 /** One item per pending approval in the project's sessions, task sessions and chats alike. */
-function approvalItems(projectId: string, tasks: Task[], sessions: AgentSession[]): InboxItem[] {
+function approvalItems(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
   return sessions
     .filter((s) => s.projectId === projectId)
     .flatMap((s) =>
-      s.items.flatMap((i): InboxItem[] =>
-        i.kind === 'approval' && i.status === 'pending'
-          ? [{ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${approvalName(i)}`, session: s, approvalId: i.id }]
-          : [],
-      ),
+      sessionDigest(s).pendingApprovals.map((i): InboxItem => ({ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${approvalName(i)}`, session: s, approvalId: i.id })),
     )
 }
 
@@ -1631,7 +1629,7 @@ function approvalItems(projectId: string, tasks: Task[], sessions: AgentSession[
  * What waits on the user in a project, most urgent kind first: every pending approval, plus at most one item per
  * task. `tasks` are the project's; sessions may span projects and are in creation order.
  */
-export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]): InboxItem[] {
+export function inbox(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
   return [
     ...approvalItems(projectId, tasks, sessions),
     ...tasks.map((t) => inboxItem(t, tasks, sessions)).filter((i): i is InboxItem => !!i),
@@ -1641,7 +1639,7 @@ export function inbox(projectId: string, tasks: Task[], sessions: AgentSession[]
 export type ProjectState = 'waiting' | 'in_review' | 'idle'
 
 /** Waiting if something in the project's inbox waits on the user, else in review if a task has an open PR, else idle. */
-export function projectState(projectId: string, tasks: Task[], sessions: AgentSession[]): ProjectState {
+export function projectState(projectId: string, tasks: Task[], sessions: SessionLike[]): ProjectState {
   const mine = tasks.filter((t) => t.projectId === projectId)
   if (inbox(projectId, mine, sessions).length) return 'waiting'
   if (mine.some((t) => !t.parentId && t.status === 'in_progress' && openPrs(t, mine).length)) return 'in_review'
@@ -1649,12 +1647,12 @@ export function projectState(projectId: string, tasks: Task[], sessions: AgentSe
 }
 
 /** Inbox items across all projects: the dock badge. */
-export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], sessions: AgentSession[]): number {
+export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], sessions: SessionLike[]): number {
   return projects.reduce((n, p) => n + inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).length, 0)
 }
 
 /** Agent sessions running now, any role, any project: no limit on how many. */
-export function runningAgents(sessions: AgentSession[]): AgentSession[] {
+export function runningAgents<S extends SessionLike>(sessions: S[]): S[] {
   return sessions.filter((s) => s.status === 'running')
 }
 

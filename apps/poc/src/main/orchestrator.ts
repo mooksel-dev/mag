@@ -1116,8 +1116,8 @@ export class Orchestrator {
     }
     const talk = ready.discuss.length ? [intro, discussText(ready.discuss, repoBase)].join('\n\n') : undefined
     // mag's job is a card; a message of the user's (Restart with a message) stays theirs.
-    if (talk) session.items.push({ kind: 'job', title: `Implement ${step.key}`, text: talk, at: Date.now() })
-    if (message) session.items.push({ kind: 'user', text: message, at: Date.now() })
+    if (talk) this.store.pushItem(session.id, { kind: 'job', title: `Implement ${step.key}`, text: talk, at: Date.now() })
+    if (message) this.store.pushItem(session.id, { kind: 'user', text: message, at: Date.now() })
     // A first session is told its step before a message; a restarted one knows it.
     return this.run(session, [talk ?? (last ? undefined : intro), message].filter(Boolean).join('\n\n') || intro)
   }
@@ -1420,7 +1420,7 @@ export class Orchestrator {
         await prepareWorktree(r.repo, baseOf(project, r), r.branch, r.worktree)
       } catch (e) {
         log.error('agent', `worktree for ${task.key} in ${r.repo} failed`, e)
-        session.items.push({ kind: 'error', text: `Worktree for ${r.repo} failed: ${(e as Error).message}`, at: Date.now() })
+        this.store.pushItem(session.id, { kind: 'error', text: `Worktree for ${r.repo} failed: ${(e as Error).message}`, at: Date.now() })
         session.status = 'error'
         this.store.updateTask(task.id, { needsInput: 'Could not create the worktree' })
         return false
@@ -1505,7 +1505,7 @@ export class Orchestrator {
     const session = owner.parentId ? this.lastStepSession(owner.id) : this.lastSession(taskId, 'developer')
     // During a turn the comments wait for the next poll; a live process between turns gets them as a message.
     if (!session || this.isRunning(session.id)) return false
-    session.items.push({ kind: 'job', title: job, text, at: Date.now() })
+    this.store.pushItem(session.id, { kind: 'job', title: job, text, at: Date.now() })
     this.store.updateTask(taskId, { status: 'in_progress' })
     void this.run(session, text)
     return true
@@ -1572,8 +1572,8 @@ export class Orchestrator {
     const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), position, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
     // A Codex developer's PRs are reviewed on Claude Code (resolveChoice): say so where the review runs.
     const refused = agentAllowed('reviewer', this.roleChoice(task.projectId, 'developer').agent)
-    if (!refused.ok) session.items.push({ kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
-    session.items.push({ kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
+    if (!refused.ok) this.store.pushItem(session.id, { kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
+    this.store.pushItem(session.id, { kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
     return this.run(session, text)
   }
 
@@ -1649,7 +1649,7 @@ export class Orchestrator {
     if (!pending || !review || review.at < pending.startedAt) {
       if (session.status !== 'error') {
         session.status = 'error'
-        session.items.push({ kind: 'error', text: 'Review ended without a verdict (set_review); check the chat', at: Date.now() })
+        this.store.pushItem(session.id, { kind: 'error', text: 'Review ended without a verdict (set_review); check the chat', at: Date.now() })
         this.logSessionEvent(session, 'agent_failed', 'reviewer failed')
         this.ownerEvent(stepId, `${step.key}: the agent review failed without a verdict`)
         this.store.changed()
@@ -2009,7 +2009,7 @@ export class Orchestrator {
     // A rewind is undone only until the conversation goes on.
     session.rewound = null
     const item: ChatItem = job ? { kind: 'job', title: job, text, at: Date.now() } : { kind: 'user', text, attachments: attachments.length ? attachments : undefined, ...(refs.length && { refs }), at: Date.now() }
-    session.items.push(item)
+    this.store.pushItem(session.id, item)
     // A topic the user renamed keeps its title.
     if (session.role === 'chat' && !session.titleGenerated && !session.items.some((i, n) => (i.kind === 'user' || i.kind === 'job') && n < session.items.length - 1))
       session.title = decodeEntities(job || text || attachments[0]?.name || 'Chat').replace(/\s+/g, ' ').slice(0, 60)
@@ -2059,7 +2059,11 @@ export class Orchestrator {
     const integrations = project.integrations ?? {}
     this.store.updateProject(project.id, { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } })
     // Every card of this integration and role in the session is answered by it.
-    for (const i of session.items) if (i.kind === 'integration' && i.integrationId === item.integrationId && i.role === item.role) i.status = mode
+    for (const i of session.items) {
+      if (i.kind !== 'integration' || i.integrationId !== item.integrationId || i.role !== item.role) continue
+      i.status = mode
+      this.store.itemChanged(sessionId, i)
+    }
     this.store.changed()
     log.info('agent', `${item.server} on (${mode}) for ${item.role}`, { session: sessionId })
     const run = this.runs.get(sessionId)
@@ -2130,14 +2134,12 @@ export class Orchestrator {
     const from = point.from === undefined ? undefined : session.items[point.from]
     const undo: RewindUndo = { items: session.items, nativeSessionId: session.nativeSessionId, forkOf: session.forkOf ?? null, forkAt: session.forkAt ?? null }
     session.base = rewindBase(session)
-    session.items = session.items.slice(0, point.keep)
     session.nativeSessionId = null
     session.forkOf = point.forkOf
     session.forkAt = point.forkAt
     session.context = null
     session.rewound = undo
-    if (notice) session.items.push(notice)
-    this.store.changed()
+    this.store.setItems(sessionId, [...undo.items.slice(0, point.keep), ...(notice ? [notice] : [])])
     log.info('agent', `rewound (${mode}, ${scope})`, { session: sessionId, keep: point.keep, fork: !!point.forkOf })
     if (mode === 'retry' && (from?.kind === 'user' || from?.kind === 'job')) {
       try {
@@ -2161,13 +2163,12 @@ export class Orchestrator {
     this.assertIdle(session)
     const undo = session.rewound
     if (!undo) throw new Error('Nothing to undo')
-    session.items = undo.items
     session.nativeSessionId = undo.nativeSessionId
     session.forkOf = undo.forkOf
     session.forkAt = undo.forkAt
     session.context = null
     session.rewound = null
-    this.store.changed()
+    this.store.setItems(sessionId, undo.items)
     log.info('agent', 'rewind undone', { session: sessionId })
   }
 
@@ -2509,10 +2510,7 @@ export class Orchestrator {
 
   /** Session state and chat items from agent events, for both kinds of runs. */
   private onEvent(session: AgentSession) {
-    const push = (item: ChatItem) => {
-      session.items.push(item)
-      this.store.changed()
-    }
+    const push = (item: ChatItem) => this.store.pushItem(session.id, item)
     const tree = this.hasSubagents(session)
     /** The model of this process's last request: the one whose context the session holds. */
     let model: string | undefined
@@ -2534,7 +2532,10 @@ export class Orchestrator {
           return push({ kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
         case 'tool.result': {
           const item = session.items.find((i) => i.kind === 'tool' && i.id === e.id)
-          if (item && item.kind === 'tool') item.ok = e.ok
+          if (item && item.kind === 'tool') {
+            item.ok = e.ok
+            this.store.itemChanged(session.id, item)
+          }
           if (tree) this.agentCallReturned(session, e.id, e.ok)
           return this.store.changed()
         }
@@ -2603,7 +2604,7 @@ export class Orchestrator {
       origin: 'subagent',
       toolUseId,
     })
-    if (text(call.prompt)) child.items.push({ kind: 'job', title: `Brief from ${parent.title ?? 'its parent'}${text(call.subagent_type) ? ` · ${text(call.subagent_type)}` : ''}`, text: text(call.prompt), at: Date.now() })
+    if (text(call.prompt)) this.store.pushItem(child.id, { kind: 'job', title: `Brief from ${parent.title ?? 'its parent'}${text(call.subagent_type) ? ` · ${text(call.subagent_type)}` : ''}`, text: text(call.prompt), at: Date.now() })
     log.info('agent', 'subagent started', { session: child.id, parent: parent.id, toolUseId })
     return child
   }
@@ -2618,13 +2619,16 @@ export class Orchestrator {
   /** A subagent's own message or tool call, in its child's transcript; an Agent call of its own starts a grandchild. */
   private subagentEvent(child: AgentSession, e: Extract<AgentEvent, { type: 'message' | 'tool.call' | 'tool.result' }>) {
     const at = Date.now()
-    if (e.type === 'message') child.items.push({ kind: 'assistant', text: e.text, at })
+    if (e.type === 'message') this.store.pushItem(child.id, { kind: 'assistant', text: e.text, at })
     else if (e.type === 'tool.call') {
       if (SUBAGENT_TOOLS.includes(e.name)) this.subagentChild(child, e.id, e.input)
-      child.items.push({ kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
+      this.store.pushItem(child.id, { kind: 'tool', id: e.id, name: e.name.replace(/^mcp__mag__/, 'mag.'), summary: summarize(e.input), at })
     } else {
       const item = child.items.find((i) => i.kind === 'tool' && i.id === e.id)
-      if (item && item.kind === 'tool') item.ok = e.ok
+      if (item && item.kind === 'tool') {
+        item.ok = e.ok
+        this.store.itemChanged(child.id, item)
+      }
       this.agentCallReturned(child, e.id, e.ok)
     }
     this.store.changed()
@@ -2644,8 +2648,8 @@ export class Orchestrator {
     const child = this.subagentOf(session, toolUseId)
     if (!child || child.status !== 'running') return
     const last = [...child.items].reverse().find((i) => i.kind === 'assistant')
-    if (summary?.trim() && (last?.kind !== 'assistant' || last.text.trim() !== summary.trim())) child.items.push({ kind: 'assistant', text: summary, at: Date.now() })
-    if (!ok) child.items.push({ kind: 'notice', text: 'The subagent failed or was stopped', at: Date.now() })
+    if (summary?.trim() && (last?.kind !== 'assistant' || last.text.trim() !== summary.trim())) this.store.pushItem(child.id, { kind: 'assistant', text: summary, at: Date.now() })
+    if (!ok) this.store.pushItem(child.id, { kind: 'notice', text: 'The subagent failed or was stopped', at: Date.now() })
     child.status = ok ? 'idle' : 'error'
     log.info('agent', `subagent ended: ${child.status}`, { session: child.id, toolUseId })
     this.endSubagents(child, false)
@@ -2663,7 +2667,7 @@ export class Orchestrator {
       if (turnOnly && child.status === 'running' && this.backgroundSubagents.has(child.toolUseId ?? '')) continue
       if (child.status === 'running') {
         this.backgroundSubagents.delete(child.toolUseId ?? '')
-        child.items.push({ kind: 'notice', text: 'Ended with the session above it', at: Date.now() })
+        this.store.pushItem(child.id, { kind: 'notice', text: 'Ended with the session above it', at: Date.now() })
         child.status = 'idle'
         ended = true
         log.info('agent', 'subagent ended with its parent', { session: child.id, parent: session.id })
@@ -2722,7 +2726,7 @@ export class Orchestrator {
     const onEvent = this.onEvent(session)
     const handle = adapter.open({ ...spec, model: c.model ?? undefined, effort: c.effort ?? undefined, resumeId, forkSession: fork, ...(fork && session.forkAt && { resumeAt: session.forkAt }), mcpConfigPath }, (e) => {
       if (e.type === 'stopped' && session.status !== 'running') return // an idle close says nothing in the chat
-      if (e.type === 'user.echo') return this.echoed(live, e.text, e.nativeId)
+      if (e.type === 'user.echo') return this.echoed(session.id, live, e.text, e.nativeId)
       onEvent(e)
       if (e.type === 'turn.started') this.turnStarted(session)
       else if (e.type === 'background') {
@@ -2743,7 +2747,7 @@ export class Orchestrator {
       session.live = false
       this.endSubagents(session, false)
       const waited = !!session.background?.length
-      if (waited) session.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
+      if (waited) this.store.pushItem(session.id, { kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
       session.background = undefined
       // Exited mid-turn (a crash, or our close): the turn is over too. A run that waited for background tasks is over
       // with the process. Whoever closed it (cancel, a done step, quit) has dealt with the task already.
@@ -2759,14 +2763,14 @@ export class Orchestrator {
    * The CLI echoed a message it took: the user's item that sent it gets its uuid. Matched by text: a message it did not
    * echo (a slash command) waits no more once a later one is echoed.
    */
-  private echoed(live: { echoes: { prompt: string; item: ChatItem }[] }, text: string, nativeId: string) {
+  private echoed(sessionId: string, live: { echoes: { prompt: string; item: ChatItem }[] }, text: string, nativeId: string) {
     const k = live.echoes.findIndex((x) => x.prompt === text)
     if (k < 0) return
     const { item } = live.echoes[k]
     live.echoes.splice(0, k + 1)
     if (item.kind !== 'user') return
     item.nativeId = nativeId
-    this.store.changed()
+    this.store.itemChanged(sessionId, item)
   }
 
   /** A turn of a live session began: our message (`ours`), or a background task woke the agent. */

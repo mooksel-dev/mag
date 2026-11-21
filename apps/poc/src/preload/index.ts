@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { SessionItemEvent } from '@mag/core'
 import type { AppState, MagApi, MeetingStatus, PickerMode } from './api'
 
 // Listen from the start: a window opened for a task or the picker gets the event before the page subscribes.
@@ -26,6 +27,13 @@ const api: MagApi = {
     ipcRenderer.on('state', fn)
     return () => ipcRenderer.removeListener('state', fn)
   },
+  sessionItems: (sessionId, from) => ipcRenderer.invoke('session:items', sessionId, from),
+  onSessionItem: (cb) => {
+    const fn = (_: unknown, e: SessionItemEvent) => cb(e)
+    ipcRenderer.on('session:item', fn)
+    return () => ipcRenderer.removeListener('session:item', fn)
+  },
+  search: (projectId, query) => ipcRenderer.invoke('search:all', projectId, query),
   pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
   createProject: (name) => ipcRenderer.invoke('project:create', name),
   updateProject: (id, patch) => ipcRenderer.invoke('project:update', id, patch),

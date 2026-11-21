@@ -1,12 +1,13 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, ModelChoice, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
   projects: Project[]
   tasks: Task[]
-  sessions: AgentSession[]
+  /** Without items: a window loads the items of a session it shows (sessionItems) and follows onSessionItem. */
+  sessions: SessionHeader[]
   /** Agent-written markdown document per task id. */
   docs: Record<string, string>
   /** Canvas metadata and diagram data; fetch the HTML with getCanvas. */
@@ -143,6 +144,12 @@ export interface MeetingStatus {
 export interface MagApi {
   getState(): Promise<AppState>
   onState(cb: (s: AppState) => void): () => void
+  /** A session's items from index `from`. */
+  sessionItems(sessionId: string, from?: number): Promise<ChatItem[]>
+  /** Every change of any session's items. */
+  onSessionItem(cb: (e: SessionItemEvent) => void): () => void
+  /** searchAll over the project's chats and works, run where the messages are. */
+  search(projectId: string, query: string): Promise<SearchHit[]>
   pickDir(): Promise<string | null>
   createProject(name: string): Promise<Project>
   updateProject(id: string, patch: Partial<Project>): Promise<void>

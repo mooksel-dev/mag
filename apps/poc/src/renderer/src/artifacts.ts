@@ -11,7 +11,7 @@ import {
   subtasksOf,
   taskDiagrams,
   workCanvases,
-  type AgentSession,
+  type SessionHeader,
   type SessionState,
   type Task,
 } from '@mag/core'
@@ -73,7 +73,7 @@ const finished = (t: Task) => t.status === 'done' || t.status === 'canceled' || 
  * The works a topic's tree owns, open ones first, then the newest: those a session of the tree owns, and the reviews
  * a session of it was made for (`reviewOf`).
  */
-export function treeWorks(tree: AgentSession[], tasks: Task[]): Task[] {
+export function treeWorks(tree: SessionHeader[], tasks: Task[]): Task[] {
   const ids = new Set(tree.map((s) => s.id))
   const done = (t: Task) => Number(finished(t))
   return tasks
@@ -112,7 +112,7 @@ const byOrder = (a: { kind: ChipKind; chip: ArtifactChip }, b: { kind: ChipKind;
  * a step of a listed work, else with its work; a canvas listed by two works shows once. Any canvas line can be deleted
  * except the fact of an open step or work: its review works from it.
  */
-export function topicArtifacts(topic: AgentSession | null, state: ArtifactState, work: Task | null = null): TopicArtifacts {
+export function topicArtifacts(topic: SessionHeader | null, state: ArtifactState, work: Task | null = null): TopicArtifacts {
   const empty: TopicArtifacts = { works: [], loose: [], count: 0 }
   const projectId = topic?.projectId ?? work?.projectId
   if (!projectId) return empty
@@ -184,7 +184,7 @@ export type AgentLineState = 'working' | 'waiting' | 'failed' | 'done'
 
 /** One agent on a topic's Agents list. */
 export interface AgentLine {
-  session: AgentSession
+  session: SessionHeader
   /** developer, reviewer, subagent, groomer… */
   role: string
   /** What it works on: its step's title, else its work's, else its own title (its brief). */
@@ -216,14 +216,14 @@ const AGENT_ORDER: AgentLineState[] = ['waiting', 'working', 'failed']
  * the left), and the agents of the works the tree owns (groomer, developers, reviewers); `work`, a work shown without
  * a topic, adds its own. Live is working, waiting on you or failed; one that failed on a finished work is done.
  */
-export function topicAgents(topic: AgentSession | null, state: Pick<AppState, 'tasks' | 'sessions'>, work: Task | null = null): TopicAgents {
+export function topicAgents(topic: SessionHeader | null, state: Pick<AppState, 'tasks' | 'sessions'>, work: Task | null = null): TopicAgents {
   const projectId = topic?.projectId ?? work?.projectId
   const tasks = state.tasks.filter((t) => t.projectId === projectId)
   const tree = topic ? sessionTree(topic.id, state.sessions) : []
   const works = treeWorks(tree, tasks)
   if (work && !works.some((w) => w.id === work.id)) works.push(work)
   const byId = new Map(tasks.map((t) => [t.id, t]))
-  const line = (s: AgentSession, w: Task | null): AgentLine[] => {
+  const line = (s: SessionHeader, w: Task | null): AgentLine[] => {
     const live = AGENT_STATES[sessionState(s)]
     const state = live === 'failed' && w && finished(w) ? 'done' : live
     const step = s.stepId ? byId.get(s.stepId) : undefined
