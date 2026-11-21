@@ -647,6 +647,9 @@ button.icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-heigh
 .approval .actions { display: flex; gap: 6px; align-items: center; }
 .approval pre.command { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--subtle); white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .integrations { display: grid; gap: 6px 8px; align-items: center; }
+.publishauto { display: grid; gap: 6px; }
+.publishrow { display: flex; gap: 8px; align-items: center; }
+.publishrow input { flex: 1; min-width: 0; }
 
 /* Error boundary card in place of a crashed screen */
 .crashcard { max-width: 640px; border-color: var(--danger-line); }

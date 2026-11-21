@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  DESTINATION_LABELS,
   PLAYBOOK_SECTIONS,
   PROJECT_COLORS,
   SETTABLE_ROLES,
@@ -14,6 +15,8 @@ import {
   taskByKey,
   agentAllowed,
   type AgentRole,
+  type DestinationKind,
+  type DestinationPattern,
   type SessionHeader,
   type Integration,
   type IntegrationMode,
@@ -298,7 +301,48 @@ function IntegrationSettings({ project, integrations }: { project: Project; inte
       ) : (
         <span className="muted small">Run any Claude Code agent to detect integrations.</span>
       )}
-      <span className="muted small">Off hides the integration from the agent; Ask each waits for your Allow on every call; Reads auto runs reads and waits for your Allow on posts and changes; Auto lets it run. Reviewer uses the Developer setting; the architect cannot ask.</span>
+      <span className="muted small">Off hides the integration from the agent; Ask each waits for your Allow on every call; Reads auto runs reads and waits for your Allow on posts and changes; Auto lets it run. Not set: Reads auto for Project chat and Groomer, Off for the others. Reviewer uses the Developer setting; the architect cannot ask.</span>
+    </div>
+  )
+}
+
+const DESTINATION_KINDS = Object.keys(DESTINATION_LABELS) as DestinationKind[]
+
+/**
+ * The destinations whose writes publish without the card (publish-gate-for-every-outbound.1): a kind, and optionally
+ * one target (a channel, an issue or project key, a repo). Every other write of a chat, owner or groomer asks.
+ */
+function PublishSettings({ project }: { project: Project }) {
+  const auto = project.publish?.auto ?? []
+  const save = (next: DestinationPattern[]) => mag.updateProject(project.id, { publish: { ...project.publish, auto: next } })
+  const change = (n: number, p: DestinationPattern) => save(auto.map((a, i) => (i === n ? p : a)))
+  return (
+    <div className="field">
+      Publish without asking
+      {auto.length > 0 && (
+        <div className="publishauto">
+          {auto.map((p, n) => (
+            <div key={n} className="publishrow">
+              <select value={p.kind} aria-label="Destination" onChange={(e) => change(n, { ...p, kind: e.target.value as DestinationKind })}>
+                {DESTINATION_KINDS.map((k) => <option key={k} value={k}>{DESTINATION_LABELS[k]}</option>)}
+              </select>
+              <input
+                key={`${n}:${p.target ?? ''}`}
+                defaultValue={p.target ?? ''}
+                placeholder="every target"
+                aria-label="Target"
+                onBlur={(e) => {
+                  const target = e.target.value.trim()
+                  if (target !== (p.target ?? '')) change(n, target ? { kind: p.kind, target } : { kind: p.kind })
+                }}
+              />
+              <button className="small" aria-label="Remove" onClick={() => save(auto.filter((_, i) => i !== n))}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div><button className="small" onClick={() => save([...auto, { kind: 'slack' }])}>Add destination</button></div>
+      <span className="muted small">Writes of chats, owners and groomers (Slack, Jira, Confluence, GitHub, Google Docs, through integrations or CLIs like acli and gh) wait for your Allow, except to these. A target is a channel (#name or id), an issue or project key, or a repo (owner/name); empty means every target.</span>
     </div>
   )
 }
@@ -382,6 +426,7 @@ function Settings({ project, integrations }: { project: Project; integrations: I
       <AgentSettings project={project} />
       <MeetingsRootSetting />
       <IntegrationSettings project={project} integrations={integrations} />
+      <PublishSettings project={project} />
       <label className="field">Notes for agents<textarea defaultValue={project.notes} rows={4} onChange={(e) => update({ notes: e.target.value })} /></label>
       <details className="advanced">
         <summary>Advanced: the playbook agents follow</summary>

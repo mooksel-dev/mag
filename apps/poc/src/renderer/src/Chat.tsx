@@ -645,14 +645,16 @@ type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }
 
 /**
- * A tool call that waits for the user (an ask-mode integration's, or a GitHub write as a Bash command): Allow / Deny
- * while pending, then its outcome. `who`: the agent, when not this chat's.
+ * A tool call that waits for the user (an ask-mode integration's, or a write to a destination: an integration's or a
+ * CLI's as a Bash command): where it publishes, Allow / Deny while pending, then its outcome. `who`: the agent, when
+ * not this chat's.
  */
 export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item: ApprovalItem; who?: string }) {
   // A Bash call (a GitHub write, chat-publishes-to-github-prs.2) shows its whole command: that is what runs on Allow.
   const command = approvalCommand(item)
   return (
     <div className="approval">
+      {item.destination && <div className="small"><b>Publishes to {item.destination.label}</b></div>}
       {command !== null ? (
         <>
           <div>{who ? `The ${who}` : 'Agent'} wants to run</div>

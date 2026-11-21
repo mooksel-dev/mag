@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
+import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator } from './orchestrator.ts'
@@ -344,6 +344,8 @@ test("mag's topic of a teammate's PR review is a topic like any other: full Clau
 test('integration off: the prompt says so; Enable from the card sets the mode, closes the live process and repeats the turn (redesign-start-screen-big-composer.4)', async () => {
   const { store, orch, project } = setup()
   store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }])
+  // The user turned it off: a chat's default is reads (publish-gate-for-every-outbound.1).
+  store.updateProject(project.id, { integrations: { chat: { claude_ai_Slack: 'off' } } })
   const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   const shown = mirrorItems(store, chat.id)
   await orch.send(chat.id, 'post it to Slack')
@@ -1543,6 +1545,30 @@ test('a topic asks before it writes to a PR: review, comment, close, edit, gh ap
     assert.ok(anyMatches(spec.disallowedTools, c), c)
   for (const c of ['gh pr view 4 --comments', 'gh api repos/acme/api/pulls/4', 'git -C /r log --oneline', 'git status'])
     assert.ok(!anyMatches(spec.askTools, c) && !anyMatches(spec.disallowedTools, c), c)
+})
+
+test('a chat and a groomer ask for every write of the catalog: acli and gh writes are ask rules next to GitHub\'s, integrations with no mode are on reads (publish-gate-for-every-outbound.1)', async () => {
+  const { store, orch, project, task } = setup()
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }, { id: 'claude_ai_Atlassian', name: 'claude.ai Atlassian' }])
+  const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await orch.send(chat.id, 'hi')
+  const chatSpec = specs.at(-1)!
+  orch.groom(task.id)
+  await tick()
+  const groomer = specs.at(-1)!
+  for (const [name, spec] of [['chat', chatSpec], ['groomer', groomer]] as const) {
+    for (const c of ['acli jira workitem create --project ABC', 'acli confluence page update --id 7', 'gh issue comment 3 -b x', 'gh -R o/r issue create -t t', 'gh release create v1', 'gh pr comment 4 -b x', 'gh api -X POST repos/o/r/issues'])
+      assert.ok(anyMatches(spec.askTools, c), `${name}: ${c}`)
+    for (const c of ['gh issue list', 'git status', 'ls']) assert.ok(!anyMatches(spec.askTools, c), `${name}: ${c}`)
+    for (const id of ['claude_ai_Slack', 'claude_ai_Atlassian']) {
+      assert.ok(!spec.allowedTools?.includes(`mcp__${id}`) && !spec.disallowedTools?.includes(`mcp__${id}`), `${name}: ${id} goes to approve_tool`)
+      assert.equal(integrationMode(store.project(project.id), name, id), 'reads')
+    }
+    assert.equal(spec.permissionPromptTool, 'mcp__mag__approve_tool')
+    assert.doesNotMatch(spec.appendSystemPrompt ?? '', /turned off in mag/, name)
+    assert.match(spec.appendSystemPrompt ?? '', /The same card holds every\s+other write for the user \(Slack, Jira/, name)
+  }
+  assert.equal(integrationMode(store.project(project.id), 'developer', 'claude_ai_Slack'), 'off', 'a developer keeps off by default')
 })
 
 test('chat, owner and groomer never push to a base of the project\'s works; developer, reviewer and architect still deny every GitHub write and ask about none (chat-publishes-to-github-prs.2)', async () => {

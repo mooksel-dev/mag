@@ -11,6 +11,7 @@ import { formatFiles } from '@mag/diff'
 import { AGENT_MARK, magDir, changedRepos, diffStat, checkoutLocal, currentBranch, defaultBranch, dirtyFiles, fetchPr, hasOwnCommits, postReview, prInfo, prState, prepareWorktree, removeWorktree, repoInfo, scratchWorktree, slug, stash, type PrFeedback } from './git.ts'
 import { APPROVE_TOOL, MESSAGED_ROLES, type MessagedRole } from './tool-defs.ts'
 import { ROUND_HUNKS_CHARS, changes, check, draftListing, factReport, hunkListing } from './core/services/fact/index.ts'
+import { cliWriteRules } from './core/lib/destinations/index.ts'
 import { factRecord, localGit, reviewFacts, reviewSource, reviewTarget, stepBacking, stepSet, stepTargets } from './fact.ts'
 import { log } from './log.ts'
 import { baseOf, projectBases } from './git-push.ts'
@@ -36,7 +37,8 @@ const stanceLine = (playbook: Playbook) => `How you lead and argue, by the proje
 const GITHUB_WRITES_LINE = `What you post on GitHub for the user (gh pr comment, review or edit, gh api with a write method) you run
 only when the user asked for it in this conversation: mag shows the user the exact command on a card and runs it after
 their Allow. Say in one line what you are about to post, then run it; start what you post with "${AGENT_MARK}". A push of
-your own branch and gh pr create run at once. Merges and pushes to a base branch stay blocked.`
+your own branch and gh pr create run at once. Merges and pushes to a base branch stay blocked. The same card holds every
+other write for the user (Slack, Jira, Confluence, Google Docs, through an integration or a CLI such as acli); reads run.`
 
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
 const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
@@ -2279,7 +2281,7 @@ export class Orchestrator {
         allowedTools: reads ? ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'] : CHAT_TOOLS,
         disallowedTools: [...(reads ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] : []), ...(preset ? NO_PR_WRITES : NEVER_MERGE), ...noPushTo(this.projectBases(project))],
         // A topic may own a review of a teammate's PR: what it writes to GitHub (a push too) waits for the user's Approve.
-        ...(preset ? {} : this.askingGithubWrites()),
+        ...(preset ? {} : this.askingWrites()),
         readOnly: reads,
         // For a rewind's code restore (rewindSession).
         fileCheckpoints: true,
@@ -2341,7 +2343,7 @@ export class Orchestrator {
       // base; its GitHub writes wait for the user's Approve.
       allowedTools: ['Read', 'Grep', 'Glob', 'LS', 'Bash', 'WebSearch', 'WebFetch', 'Skill', 'mcp__mag'],
       disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', ...NEVER_MERGE, ...noPushTo(this.projectBases(project))],
-      ...this.askingGithubWrites(),
+      ...this.askingWrites(),
       readOnly: true,
     }
   }
@@ -2351,9 +2353,12 @@ export class Orchestrator {
     return projectBases(project, this.store.data.tasks)
   }
 
-  /** A chat's, owner's or groomer's GitHub writes ask through approve_tool, which may wait for the user for days. */
-  private askingGithubWrites(): Pick<RunSpec, 'askTools' | 'permissionPromptTool' | 'env'> {
-    return { askTools: GITHUB_WRITES, permissionPromptTool: APPROVE_TOOL, env: APPROVAL_ENV }
+  /**
+   * A chat's, owner's or groomer's writes for the user ask through approve_tool, which may wait for the user for days:
+   * GitHub's, and the other known CLIs' (acli Jira and Confluence, gh issues and releases); approve_tool runs their reads.
+   */
+  private askingWrites(): Pick<RunSpec, 'askTools' | 'permissionPromptTool' | 'env'> {
+    return { askTools: [...GITHUB_WRITES, ...cliWriteRules()], permissionPromptTool: APPROVE_TOOL, env: APPROVAL_ENV }
   }
 
   /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */
@@ -2435,7 +2440,8 @@ export class Orchestrator {
 
   /**
    * Claude Code runs: integrations the role has on auto are allowed, off ones disallowed, ask ones go through the
-   * approve_tool prompt. Without a chat to ask in (`canAsk` false) ask counts as off. The prompt names the ones off, so
+   * approve_tool prompt; one the role has no mode for is on reads for an asking role, which has every write ask
+   * (integrationMode). Without a chat to ask in (`canAsk` false) ask counts as off. The prompt names the ones off, so
    * the agent says so and asks for them (offIntegrationsBlock). Codex has no integrations.
    */
   private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(projectId: string, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { sessionHeader, type AgentReview, type AgentSession, type SessionHeader, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
-import { topicAgents, topicArtifacts, treeWorks, workTarget, type TopicArtifacts } from './artifacts.ts'
+import { topicAgents, topicApprovals, topicArtifacts, treeWorks, workTarget, type TopicArtifacts } from './artifacts.ts'
 
 // Windows get sessions as headers.
 const session = (id: string, extra: Partial<AgentSession> = {}): SessionHeader =>
@@ -214,4 +214,19 @@ test('treeWorks: a review made for a session of the tree is its own; open works 
   const t = session('t2', { reviewOf: 'r1' } as Partial<AgentSession>)
   const tasks = [task('r1', { type: 'review', status: 'in_progress', createdAt: 5 }), task('d', { ownerSessionId: 't2', status: 'done', createdAt: 9 }), task('n', { ownerSessionId: 't2', createdAt: 1 })]
   assert.deepEqual(treeWorks([t], tasks).map((w) => w.id), ['r1', 'n', 'd'])
+})
+
+test('topicApprovals: pending approvals of the agents under a topic show on it, not those under a subtopic or of a work (publish-gate-for-every-outbound.1)', () => {
+  const pending = (id: string) => ({ kind: 'approval', id, tool: 'Bash', input: { command: 'gh pr comment 4 -b x' }, status: 'pending', at: 1 })
+  const sessions = [
+    topic,
+    child,
+    session('dev', { parentId: 't', role: 'developer', items: [pending('a1'), { ...pending('done'), status: 'allowed' }] } as Partial<AgentSession>),
+    session('sub', { parentId: 'dev', role: null, origin: 'subagent', items: [pending('a2')] } as Partial<AgentSession>),
+    session('gen', { parentId: 'c', role: null, agentJob: 'x', items: [pending('a3')] } as unknown as Partial<AgentSession>),
+    session('wd', { parentId: 't', taskId: 'w1', role: 'developer', items: [pending('a4')] } as Partial<AgentSession>),
+  ]
+  const ids = (t: SessionHeader) => topicApprovals(t, sessions).map((a) => `${a.session.id}:${a.item.id}`)
+  assert.deepEqual(ids(topic), ['dev:a1', 'sub:a2'], "an agent's subagent asks on the topic too; the subtopic's agent and the work's agent do not")
+  assert.deepEqual(ids(child), ['gen:a3'])
 })

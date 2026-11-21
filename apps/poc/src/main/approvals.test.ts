@@ -44,7 +44,7 @@ test('request answers pending on timeout and finds its item again on re-poll', a
   assert.deepEqual(JSON.parse(await approvals.request({ sessionId: session.id }, args)), { pending: true })
   assert.deepEqual(JSON.parse(await approvals.request({ sessionId: session.id }, args)), { pending: true })
   assert.equal(session.items.length, 1)
-  assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tu1', tool: 'execute', server: 'Cloudflare', input: args.input, status: 'pending', at: 0 })
+  assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tu1', tool: 'execute', server: 'Cloudflare', input: args.input, status: 'pending', at: 0, destination: { kind: 'other', target: 'Cloudflare', label: 'Cloudflare · execute' } })
 })
 
 test('decide wakes the waiting poll: allow with the input, deny with a message, and logs it', async () => {
@@ -94,7 +94,7 @@ test('a Bash call (a GitHub write that matched an ask rule) asks in chat and gro
     session.role = role
     const pending = approvals.request({ sessionId: session.id }, bash)
     await sleep(5)
-    assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tb1', tool: 'Bash', input: bash.input, status: 'pending', at: 0 }, String(role))
+    assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'tb1', tool: 'Bash', input: bash.input, status: 'pending', at: 0, destination: { kind: 'github', target: '#4', label: 'GitHub #4' } }, String(role))
     approvals.decide(session.id, 'tb1', true)
     assert.deepEqual(JSON.parse(await pending), { behavior: 'allow', updatedInput: bash.input })
     assert.equal(store.data.events.at(-1)?.text, 'Bash: gh pr comment 4 -b "[mag] ok" allowed')
@@ -140,7 +140,7 @@ test('reads: a read of the integration runs at once, a write waits on its card; 
   assert.deepEqual(JSON.parse(await call('search_docs', 'r1')), { behavior: 'allow', updatedInput: { q: 1 } })
   assert.equal(session.items.length, 0, 'no card for a read')
   assert.deepEqual(JSON.parse(await call('execute', 'w1')), { pending: true })
-  assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'w1', tool: 'execute', server: 'Cloudflare', input: { q: 1 }, status: 'pending', at: 0 })
+  assert.deepEqual({ ...approval(), at: 0 }, { kind: 'approval', id: 'w1', tool: 'execute', server: 'Cloudflare', input: { q: 1 }, status: 'pending', at: 0, destination: { kind: 'other', target: 'Cloudflare', label: 'Cloudflare · execute' } })
   void store
 })
 
@@ -149,4 +149,77 @@ test('readsOnly: a read word and no write word', () => {
     assert.equal(readsOnly(t), true, t)
   for (const t of ['slack_send_message', 'slack_schedule_message', 'insert-many', 'update-many', 'drop-collection', 'use_figma', 'createConfluencePage', 'add_comment_to_issue', 'mystery'])
     assert.equal(readsOnly(t), false, t)
+})
+
+/** The request's answer, or 'waits' when it does not come within `ms` (a park would wait pollMs). */
+const answerWithin = (p: Promise<string>, ms = 200) => Promise.race([p.then((t) => JSON.parse(t)), sleep(ms).then(() => 'waits' as const)])
+
+function slackSetup(integrations?: Record<string, 'off' | 'ask' | 'reads' | 'auto'>) {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-approvals-')), 'db.json'))
+  const project = store.createProject('p')
+  if (integrations) store.updateProject(project.id, { integrations: { chat: integrations } })
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'Slack' }])
+  const session = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  const approvals = new Approvals(store, { pollMs: 1000, graceMs: 30 })
+  const call = (tool_name: string, input: unknown, tool_use_id = tool_name) => approvals.request({ sessionId: session.id }, { tool_name, input, tool_use_id })
+  return { store, project, session, approvals, call }
+}
+
+test('no silent hang: what needs no card is answered at once, without a card (publish-gate-for-every-outbound.1)', async () => {
+  const { session, call } = slackSetup()
+  const runs = [
+    ['Bash', { command: 'rm /Users/u/.claude/projects/-x/memory/note.md' }],
+    ['Edit', { file_path: '/Users/u/.claude/projects/-x/memory/MEMORY.md' }],
+    ['Write', { file_path: '/elsewhere/a.md' }],
+    ['Bash', { command: 'git push -u origin my-branch' }],
+    ['Bash', { command: 'acli jira workitem view ABC-1' }],
+    ['Bash', { command: 'gh api -X GET repos/o/r/pulls' }],
+    ['mcp__claude_ai_Slack__slack_search_public', { query: 'q' }],
+  ] as const
+  for (const [tool, input] of runs) assert.deepEqual(await answerWithin(call(tool, input)), { behavior: 'allow', updatedInput: input }, `${tool} ${JSON.stringify(input)}`)
+  // A developer's call it was not given is denied at once: an answer, not a wait.
+  session.role = 'developer'
+  session.parentId = 'topic'
+  assert.equal((await answerWithin(call('Edit', { file_path: '/elsewhere/b.md' }, 'd1'))).behavior, 'deny')
+  assert.equal(session.items.length, 0, 'no card for any of them')
+})
+
+test('every write of a chat asks with its destination by default: an integration with no mode is on reads, acli and gh writes park (publish-gate-for-every-outbound.1)', async () => {
+  const { session, call } = slackSetup()
+  const post = { channel_id: 'C0DATAREM', message: 'hi' }
+  assert.equal(await answerWithin(call('mcp__claude_ai_Slack__slack_send_message', post, 's1')), 'waits')
+  assert.equal(await answerWithin(call('Bash', { command: 'acli jira workitem comment create --key ABC-12 --body x' }, 'j1')), 'waits')
+  assert.equal(await answerWithin(call('Bash', { command: 'gh issue comment 3 -R o/r -b x' }, 'g1')), 'waits')
+  const cards = session.items.flatMap((i) => (i.kind === 'approval' ? [{ id: i.id, status: i.status, destination: i.destination }] : []))
+  assert.deepEqual(cards, [
+    { id: 's1', status: 'pending', destination: { kind: 'slack', target: 'C0DATAREM', label: 'Slack C0DATAREM' } },
+    { id: 'j1', status: 'pending', destination: { kind: 'jira', target: 'ABC-12', label: 'Jira ABC-12' } },
+    { id: 'g1', status: 'pending', destination: { kind: 'github', target: 'o/r#3', label: 'GitHub o/r#3' } },
+  ])
+})
+
+test("a write to a destination on the project's auto list runs without a card; others still park; ask mode still asks for reads", async () => {
+  const { store, project, session, call } = slackSetup({ claude_ai_Slack: 'reads' })
+  store.updateProject(project.id, { publish: { auto: [{ kind: 'slack', target: '#data-removal' }, { kind: 'jira' }] } })
+  const send = (channel: string, id: string) => call('mcp__claude_ai_Slack__slack_send_message', { channel, message: 'm' }, id)
+  assert.deepEqual(await answerWithin(send('data-removal', 'a1')), { behavior: 'allow', updatedInput: { channel: 'data-removal', message: 'm' } })
+  assert.equal((await answerWithin(call('Bash', { command: 'acli jira workitem create --project ABC --summary s' }, 'a2'))).behavior, 'allow')
+  assert.equal(session.items.length, 0, 'no card for an auto destination')
+  assert.equal(await answerWithin(send('general', 'p1')), 'waits')
+  assert.equal(await answerWithin(call('Bash', { command: 'gh pr comment 4 -b x' }, 'p2')), 'waits', 'github is not on the list')
+  assert.deepEqual(session.items.map((i) => i.kind === 'approval' && i.id), ['p1', 'p2'])
+  store.updateProject(project.id, { integrations: { chat: { claude_ai_Slack: 'ask' } } })
+  assert.equal(await answerWithin(call('mcp__claude_ai_Slack__slack_search_public', { query: 'q' }, 'r1')), 'waits', 'ask: each call waits')
+  const read = session.items.find((i) => i.kind === 'approval' && i.id === 'r1')
+  assert.equal(read?.kind === 'approval' && read.destination, undefined, 'a read has no destination')
+})
+
+test("deny with the user's note: the agent gets it, the item keeps it", async () => {
+  const { session, approvals, call } = slackSetup()
+  const pending = call('mcp__claude_ai_Slack__slack_send_message', { channel: 'x' }, 'n1')
+  await sleep(5)
+  approvals.decide(session.id, 'n1', false, '  revise: a blank line before the header ')
+  assert.deepEqual(JSON.parse(await pending), { behavior: 'deny', message: 'User denied: revise: a blank line before the header' })
+  const item = session.items[0]
+  assert.equal(item.kind === 'approval' && item.note, 'revise: a blank line before the header')
 })

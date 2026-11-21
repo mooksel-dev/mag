@@ -420,7 +420,7 @@ app.whenReady().then(async () => {
   })
   handle('session:stop', (_, sid: string) => orch.stop(sid))
   handle('session:stopBackground', (_, sid: string, taskId: string) => orch.stopBackground(sid, taskId))
-  handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean) => approvals.decide(sid, approvalId, allow))
+  handle('approval:decide', (_, sid: string, approvalId: string, allow: boolean, note?: string) => approvals.decide(sid, approvalId, allow, typeof note === 'string' ? note : undefined))
   handle('integration:enable', (_, sid: string, itemId: string, mode: 'ask' | 'reads' | 'auto') => orch.enableIntegration(sid, itemId, mode))
   handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
   handle('window:openProject', (e, projectId: string) => windows.openProjectFrom(e.sender, projectId))

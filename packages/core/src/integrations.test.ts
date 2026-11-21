@@ -9,22 +9,25 @@ const known: Integration[] = [
   { id: 'mag', name: 'mag' },
 ]
 
-test('integrationMode: missing is off, reviewer follows developer', () => {
-  const project = { integrations: { developer: { claude_ai_Gmail: 'ask' as const }, chat: { claude_ai_Gmail: 'auto' as const } } }
+test('integrationMode: missing is reads for an asking role (chat, groomer), else off; reviewer follows developer (publish-gate-for-every-outbound.1)', () => {
+  const project = { integrations: { developer: { claude_ai_Gmail: 'ask' as const }, chat: { claude_ai_Gmail: 'auto' as const, claude_ai_Cloudflare: 'off' as const } } }
   assert.equal(integrationMode(project, 'chat', 'claude_ai_Gmail'), 'auto')
   assert.equal(integrationMode(project, 'reviewer', 'claude_ai_Gmail'), 'ask')
-  assert.equal(integrationMode(project, 'groomer', 'claude_ai_Gmail'), 'off')
-  assert.equal(integrationMode(project, 'chat', 'claude_ai_Cloudflare'), 'off')
-  assert.equal(integrationMode({ integrations: {} }, 'chat', 'x'), 'off')
+  assert.equal(integrationMode(project, 'chat', 'claude_ai_Cloudflare'), 'off', "the user's off stays off")
+  assert.equal(integrationMode(project, 'groomer', 'claude_ai_Gmail'), 'reads')
+  assert.equal(integrationMode(project, 'chat', 'local'), 'reads')
+  assert.equal(integrationMode({ integrations: {} }, 'chat', 'x'), 'reads')
+  for (const role of ['developer', 'reviewer', 'architect'] as const) assert.equal(integrationMode({ integrations: {} }, role, 'x'), 'off', role)
 })
 
 test('integrationRules: server-level rules per mode, never mag', () => {
   const project = { integrations: { chat: { claude_ai_Cloudflare: 'ask' as const, claude_ai_Gmail: 'auto' as const } } }
   assert.deepEqual(integrationRules(project, 'chat', known), {
     allowed: ['mcp__claude_ai_Gmail'],
-    disallowed: ['mcp__local'],
-    ask: ['mcp__claude_ai_Cloudflare'],
+    disallowed: [],
+    ask: ['mcp__claude_ai_Cloudflare', 'mcp__local'],
   })
+  assert.deepEqual(integrationRules(project, 'developer', known), { allowed: [], disallowed: ['mcp__claude_ai_Cloudflare', 'mcp__claude_ai_Gmail', 'mcp__local'], ask: [] })
 })
 
 test('integrationOf: finds the server by prefix, longest id first', () => {
@@ -42,7 +45,8 @@ test('offIntegrationsBlock: names each integration off for the role and how to a
   assert.match(block, /never "tools are not available"/)
   assert.match(block, /request_integration/)
   assert.equal(offIntegrationsBlock(project, 'reviewer', known).replace(/reviewer/g, 'developer'), block)
-  assert.match(offIntegrationsBlock(project, 'chat', known), /claude.ai Gmail \(id claude_ai_Gmail\) is turned off in mag for the chat role/)
+  assert.equal(offIntegrationsBlock(project, 'chat', known), '', 'a chat has every integration on reads by default')
+  assert.match(offIntegrationsBlock({ integrations: { chat: { claude_ai_Gmail: 'off' } } }, 'chat', known), /claude.ai Gmail \(id claude_ai_Gmail\) is turned off in mag for the chat role/)
 })
 
 test('offIntegrationsBlock: without a chat to ask in, ask counts as off and there is no request_integration', () => {
