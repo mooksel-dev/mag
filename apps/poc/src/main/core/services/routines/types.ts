@@ -1,4 +1,5 @@
-// Routines and their runs as stored and as windows get them (routines-scheduled-drafts-and-a.1, .2: a trigger and a prompt).
+// Routines, their runs and follow-ups as stored and as windows get them (routines-scheduled-drafts-and-a.1, .2: a
+// trigger and a prompt; .3: follow-ups).
 import type { ModelChoice } from '@mag/core'
 
 /** What starts a routine. Only a schedule now; event triggers (a new PR, a Slack message) join this union later. */
@@ -56,6 +57,28 @@ export interface RoutineInput {
 
 export type RunResult = { status: 'done'; summary: string | null; deliverableRef: string | null } | { status: 'failed'; error: string; deliverableRef?: string | null }
 
+/** open: waits for its date; surfaced: due, in the Inbox; done: closed (the Inbox item's Done). */
+export type FollowUpStatus = 'open' | 'surfaced' | 'done'
+
+/** Something to follow up on with someone by a date (routines-scheduled-drafts-and-a.3). */
+export interface FollowUp {
+  id: string
+  workspaceId: string
+  projectId: string | null
+  /** Who it is with, as the user calls them ("me" when it is the user's own). */
+  who: string
+  what: string
+  /** When it comes back to the Inbox (ms). */
+  dueAt: number
+  /** What it came from: an Inbox item's ref, a meeting (mtg:<id>), a URL; null: nothing. */
+  sourceRef: string | null
+  status: FollowUpStatus
+  createdAt: number
+  closedAt: number | null
+}
+
+export type FollowUpInput = Pick<FollowUp, 'workspaceId' | 'who' | 'what' | 'dueAt'> & Partial<Pick<FollowUp, 'projectId' | 'sourceRef'>>
+
 /** Where the routines keep their rows; writes persist. */
 export interface RoutineRecords {
   routines(): Routine[]
@@ -64,4 +87,6 @@ export interface RoutineRecords {
   runs(): RoutineRun[]
   putRun(r: RoutineRun): void
   removeRuns(ids: string[]): void
+  followUps(): FollowUp[]
+  putFollowUp(f: FollowUp): void
 }

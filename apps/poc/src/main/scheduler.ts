@@ -6,7 +6,9 @@ import type { Orchestrator } from './orchestrator'
 import { changedRepos, prChecks, prFeedback, prMergeable, prState, removeWorktree, type PrFeedback } from './git.ts'
 import { log } from './log.ts'
 import type { People } from './core/services/people/index.ts'
-import type { Routines } from './core/services/routines/index.ts'
+import type { Inbox } from './core/services/inbox/index.ts'
+import type { FollowUp, Routines } from './core/services/routines/index.ts'
+import { followUpKey } from './core/services/routines/refs.ts'
 
 const PR_POLL_EVERY_MS = 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
@@ -276,9 +278,37 @@ export function routineTick(routines: Pick<Routines, 'due'>, run: (id: string) =
   }
 }
 
-/** Runs due routines now (a slot missed while mag was closed, once) and on every tick after. */
-export function startRoutineSchedule(routines: Pick<Routines, 'due'>, run: (id: string) => Promise<unknown>) {
-  const tick = () => routineTick(routines, run, Date.now())
+/** A due follow-up's Inbox item: who and what, its source as the ref. */
+export const followUpItem = (f: FollowUp) => ({
+  key: followUpKey(f.id),
+  kind: 'follow_up' as const,
+  text: `${f.who}: ${f.what}`,
+  workspaceId: f.workspaceId,
+  projectId: f.projectId,
+  ref: f.sourceRef,
+  labels: f.projectId ? [f.projectId] : [],
+  dueAt: f.dueAt,
+})
+
+/** Puts each follow-up due at `now` in the Inbox, once (routines-scheduled-drafts-and-a.3); one that fails is logged, the rest still go. */
+export function followUpTick(routines: Pick<Routines, 'dueFollowUps' | 'surfaceFollowUp'>, inbox: Pick<Inbox, 'add'>, now: number) {
+  for (const f of routines.dueFollowUps(now)) {
+    try {
+      inbox.add(followUpItem(f))
+      routines.surfaceFollowUp(f.id)
+    } catch (e) {
+      log.warn('scheduler', `follow-up ${f.id}: ${(e as Error).message}`)
+    }
+  }
+}
+
+/** Runs due routines and surfaces due follow-ups now (a slot missed while mag was closed, once) and on every tick after. */
+export function startRoutineSchedule(routines: Pick<Routines, 'due' | 'dueFollowUps' | 'surfaceFollowUp'>, inbox: Pick<Inbox, 'add'>, run: (id: string) => Promise<unknown>) {
+  const tick = () => {
+    const t = Date.now()
+    followUpTick(routines, inbox, t)
+    routineTick(routines, run, t)
+  }
   tick()
   setInterval(tick, ROUTINE_TICK_MS).unref()
   return { tickNow: tick }

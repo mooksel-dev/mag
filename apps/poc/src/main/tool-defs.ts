@@ -1046,6 +1046,22 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'add_follow_up',
+    scope: 'project',
+    description:
+      "Follow up on something with someone by a date: it comes back to the user's Inbox then (who: what), until they mark it Done. For a reply or a result someone owes, or the user's own promise (who: \"me\"), e.g. a meeting's action item. The same ref and who again adds nothing, so a routine's re-scan is safe.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        who: { type: 'string', description: 'Who it is with, as the user calls them; "me" for the user\'s own.' },
+        what: { type: 'string', description: 'One line: what to follow up on.' },
+        due: { type: 'string', description: 'When it comes back: YYYY-MM-DD (9:00 local), or YYYY-MM-DD HH:MM local.' },
+        ref: { type: 'string', description: 'What it came from: a URL, a PR (owner/repo#N), a ticket, mtg:<meeting id>, a dlv: ref.' },
+      },
+      required: ['who', 'what', 'due'],
+    },
+  },
+  {
     name: 'who',
     scope: 'any',
     reviewer: 'also',

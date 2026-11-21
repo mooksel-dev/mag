@@ -1260,6 +1260,11 @@ button.ghost:hover:not(:disabled) { background: var(--hover); }
 .inboxrow .labelchips { display: flex; flex-wrap: wrap; gap: 4px; }
 .inboxacts { position: relative; display: flex; gap: 4px; }
 .inboxsnooze { left: 0; right: auto; flex-direction: column; align-items: stretch; }
+.followupform { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.followupform label { display: flex; align-items: center; gap: 6px; }
+.followupacts { display: flex; gap: 4px; }
+.mtgactions { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mtgactions li { display: flex; align-items: baseline; gap: 8px; }
 
 /* Routines (routines-scheduled-drafts-and-a.1): the page with the drawer of a run's log or draft at its right. */
 .routinepage { display: flex; min-width: 0; min-height: 0; }

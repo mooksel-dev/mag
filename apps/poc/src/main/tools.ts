@@ -115,7 +115,7 @@ export interface ToolActions {
   people?: Pick<People, 'who' | 'find' | 'activity' | 'prStats'>
   /** get_pack, propose_rule and the verifier's rubric; set once started. */
   packs?: PackPrompts
-  /** save_routine, list_routines, add_inbox_item; set once started. */
+  /** save_routine, list_routines, add_inbox_item, add_follow_up; set once started. */
   routines?: RoutineToolDeps
   /** A routine run's session saved a deliverable: the run's draft. */
   routineSaved?: (sessionId: string, deliverableRef: string) => void
@@ -1085,7 +1085,8 @@ function sharedTool(
 
     case 'save_routine':
     case 'list_routines':
-    case 'add_inbox_item': {
+    case 'add_inbox_item':
+    case 'add_follow_up': {
       const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
       return routineTool(actions.routines, store.data.projects, { workspaceId: project.workspaceId, projectId: project.id || null, sessionId: caller?.id ?? null, drafter: caller?.role === 'drafter' }, name, args)
     }

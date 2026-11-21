@@ -11,7 +11,7 @@ import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData
 import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
 import type { Deliverable, DeliverableRecords } from './core/services/deliverables/types.ts'
 import type { Identity, IdentityOverride, Person } from './core/services/people/types.ts'
-import type { Routine, RoutineRecords, RoutineRun } from './core/services/routines/index.ts'
+import type { FollowUp, Routine, RoutineRecords, RoutineRun } from './core/services/routines/index.ts'
 
 interface Data {
   workspaces: Workspace[]
@@ -42,6 +42,8 @@ interface Data {
   /** Scheduled drafts and their runs (routines-scheduled-drafts-and-a.1); kept by services/routines. */
   routines: Routine[]
   routineRuns: RoutineRun[]
+  /** Follow-ups with due dates (routines-scheduled-drafts-and-a.3); kept by services/routines. */
+  followUps: FollowUp[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
   /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
@@ -194,7 +196,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label', deliverables: 'deliverable', persons: 'person', identities: 'identity', identityOverrides: 'identity_override', routines: 'routine', routineRuns: 'routine_run' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label', deliverables: 'deliverable', persons: 'person', identities: 'identity', identityOverrides: 'identity_override', routines: 'routine', routineRuns: 'routine_run', followUps: 'follow_up' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -261,7 +263,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], routines: [], routineRuns: [], ui: { windows: {}, workspaceWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], routines: [], routineRuns: [], followUps: [], ui: { windows: {}, workspaceWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -297,6 +299,7 @@ export class Store {
     this.data.deliverables ??= []
     this.data.routines ??= []
     this.data.routineRuns ??= []
+    this.data.followUps ??= []
     this.data.ui ??= { windows: {}, workspaceWindows: [], recent: [] }
     this.data.ui.windows ??= {}
     this.data.ui.recent ??= []
@@ -403,7 +406,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], routines: [], routineRuns: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], persons: [], identities: [], identityOverrides: [], routines: [], routineRuns: [], followUps: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)
@@ -1101,6 +1104,11 @@ export class Store {
       removeRuns: (ids) => {
         const gone = new Set(ids)
         this.data.routineRuns = this.data.routineRuns.filter((r) => !gone.has(r.id))
+        this.changed()
+      },
+      followUps: () => this.data.followUps,
+      putFollowUp: (f) => {
+        upsert(this.data.followUps, f)
         this.changed()
       },
     }

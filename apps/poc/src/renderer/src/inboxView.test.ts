@@ -39,6 +39,13 @@ test('openTarget: a step opens its work, a task session its work, a topic itself
   assert.deepEqual(openTarget(entry({ taskId: 'gone', sessionId: 'gone' }), tasks, sessions), { kind: 'new' })
 })
 
+test('openTarget: an added item about a work or topic (a follow-up made from one) opens it (routines-scheduled-drafts-and-a.3)', () => {
+  assert.deepEqual(openTarget(entry({ added: true, ref: 'work:step' }), tasks, sessions), { kind: 'work', id: 'work' })
+  assert.deepEqual(openTarget(entry({ added: true, ref: 'topic:sub' }), tasks, sessions), { kind: 'topic', id: 'sub' })
+  assert.deepEqual(openTarget(entry({ added: true, ref: 'work:gone' }), tasks, sessions), { kind: 'new' })
+  assert.deepEqual(openTarget(entry({ added: true, ref: 'https://slack.com/x' }), tasks, sessions), { kind: 'new' })
+})
+
 test('entryRef: a subtopic carries its topic\'s labels', () => {
   assert.equal(entryRef(entry({ sessionId: 'sub' }), tasks, sessions), 'topic:topic')
   assert.equal(entryRef(entry({ taskId: 'step' }), tasks, sessions), 'work:work')

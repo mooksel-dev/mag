@@ -2,14 +2,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Project } from '@mag/core'
 import type { NewInboxItem } from './core/services/inbox/index.ts'
-import { createRoutines, type Routine, type RoutineRun } from './core/services/routines/index.ts'
-import { choiceArg, nextRuns, routineTool, type RoutineCaller } from './routine-tools.ts'
+import { createRoutines, type FollowUp, type Routine, type RoutineRun } from './core/services/routines/index.ts'
+import { choiceArg, nextRuns, routineTool, type RoutineCaller, type RoutineToolName } from './routine-tools.ts'
 import { TOOL_DEFS, toolsFor } from './tool-defs.ts'
 
 const NOW = new Date(2026, 10, 17, 12).getTime()
 
 function setup() {
-  const rows = { routines: [] as Routine[], runs: [] as RoutineRun[] }
+  const rows = { routines: [] as Routine[], runs: [] as RoutineRun[], followUps: [] as FollowUp[] }
   const routines = createRoutines({
     now: () => NOW,
     records: {
@@ -19,14 +19,16 @@ function setup() {
       runs: () => rows.runs,
       putRun: () => {},
       removeRuns: () => {},
+      followUps: () => rows.followUps,
+      putFollowUp: (f) => void (rows.followUps = [...rows.followUps.filter((x) => x.id !== f.id), f]),
     },
   })
   const added: NewInboxItem[] = []
   const deps = { routines, inbox: { add: (i: NewInboxItem) => void added.push(i) } }
   const projects = [{ id: 'p1', name: 'Data Removal', workspaceId: 'w1' }, { id: 'p2', name: 'Elsewhere', workspaceId: 'w2' }] as Project[]
   const topic: RoutineCaller = { workspaceId: 'w1', projectId: 'p1', sessionId: 's1', drafter: false }
-  const call = (name: 'save_routine' | 'list_routines' | 'add_inbox_item', args: Record<string, unknown>, caller = topic) => routineTool(deps, projects, caller, name, args)
-  return { routines, added, call }
+  const call = (name: RoutineToolName, args: Record<string, unknown>, caller = topic) => routineTool(deps, projects, caller, name, args)
+  return { routines, added, call, rows }
 }
 
 test('save_routine: a name, a cron and a prompt in the topic\'s workspace; a project by name; answers the next 3 runs', () => {
@@ -86,7 +88,7 @@ test('add_inbox_item: one item per ref (or title), in the caller\'s workspace an
 })
 
 test('the tools: for topics and routine runs (project scope), not for a work\'s agents', () => {
-  for (const name of ['save_routine', 'list_routines', 'add_inbox_item']) {
+  for (const name of ['save_routine', 'list_routines', 'add_inbox_item', 'add_follow_up']) {
     assert.equal(TOOL_DEFS.find((d) => d.name === name)?.scope, 'project', name)
     assert.ok(toolsFor('project', 'chat').some((t) => t.name === name), name)
     assert.ok(toolsFor('project', 'drafter').some((t) => t.name === name), name)
@@ -98,4 +100,19 @@ test('nextRuns: nextAt and the slots after it; none when off', () => {
   const r = { trigger: { kind: 'schedule' as const, cron: '0 9 * * 1-5' }, nextAt: new Date(2026, 10, 20, 9).getTime() }
   assert.deepEqual(nextRuns(r, 3), [r.nextAt, new Date(2026, 10, 23, 9).getTime(), new Date(2026, 10, 24, 9).getTime()])
   assert.deepEqual(nextRuns({ ...r, nextAt: null }, 3), [])
+})
+
+test('add_follow_up: who, what and a due day in the caller\'s workspace and project; the same ref and who again adds nothing (routines-scheduled-drafts-and-a.3)', () => {
+  const { call, rows } = setup()
+  assert.throws(() => call('add_follow_up', { who: 'Ana', what: 'Numbers' }), /due is required/)
+  assert.throws(() => call('add_follow_up', { who: 'Ana', what: 'Numbers', due: 'friday' }), /Not a date/)
+  assert.throws(() => call('add_follow_up', { who: '', what: 'Numbers', due: '2026-11-24' }), /who it is with/)
+  const drafter: RoutineCaller = { workspaceId: 'w1', projectId: null, sessionId: 'd1', drafter: true }
+  assert.match(call('add_follow_up', { who: 'Ana', what: 'Send the numbers', due: '2026-11-24', ref: 'https://slack.com/x' }, drafter), /set: Ana: Send the numbers, back in the Inbox 2026-11-24 09:00/)
+  assert.match(call('add_follow_up', { who: 'ana', what: 'Numbers again', due: '2026-11-25 14:00', ref: 'https://slack.com/x' }, drafter), /Already followed up: .* nothing added/)
+  call('add_follow_up', { who: 'me', what: 'Write the plan', due: '2026-11-25 14:00' })
+  assert.deepEqual(rows.followUps.map((f) => [f.workspaceId, f.projectId, f.who, f.dueAt, f.sourceRef]), [
+    ['w1', null, 'Ana', new Date(2026, 10, 24, 9).getTime(), 'https://slack.com/x'],
+    ['w1', 'p1', 'me', new Date(2026, 10, 25, 14).getTime(), null],
+  ])
 })

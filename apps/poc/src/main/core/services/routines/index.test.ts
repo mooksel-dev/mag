@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRoutines, RUNS_KEPT, TRIGGER_RULES, type Routine, type RoutineRecords, type RoutineRun, type RoutineTrigger } from './index.ts'
+import { createRoutines, RUNS_KEPT, TRIGGER_RULES, type FollowUp, type Routine, type RoutineRecords, type RoutineRun, type RoutineTrigger } from './index.ts'
 
 /** Rows that outlive one service instance: a restart is a new createRoutines over the same rows. */
-function memoryRecords(): RoutineRecords & { rows: { routines: Routine[]; runs: RoutineRun[] } } {
-  const rows = { routines: [] as Routine[], runs: [] as RoutineRun[] }
+function memoryRecords(): RoutineRecords & { rows: { routines: Routine[]; runs: RoutineRun[]; followUps: FollowUp[] } } {
+  const rows = { routines: [] as Routine[], runs: [] as RoutineRun[], followUps: [] as FollowUp[] }
   const put = <T extends { id: string }>(list: T[], x: T) => {
     const i = list.findIndex((y) => y.id === x.id)
     if (i >= 0) list[i] = structuredClone(x)
@@ -18,6 +18,8 @@ function memoryRecords(): RoutineRecords & { rows: { routines: Routine[]; runs: 
     runs: () => rows.runs,
     putRun: (r) => put(rows.runs, r),
     removeRuns: (ids) => void (rows.runs = rows.runs.filter((r) => !ids.includes(r.id))),
+    followUps: () => rows.followUps,
+    putFollowUp: (f) => put(rows.followUps, f),
   }
 }
 
@@ -192,4 +194,43 @@ test('choice: an optional agent, model and effort, checked; null is the defaults
   assert.equal(routines.save(weekly).choice, null)
   assert.throws(() => routines.save({ ...weekly, choice: { agent: 'gemini', model: null, effort: null } as never }), /choice.agent must be one of claude-code, codex/)
   assert.throws(() => routines.save({ ...weekly, choice: { agent: 'codex', model: null, effort: 'huge' } as never }), /effort must be one of/)
+})
+
+const ask = { workspaceId: 'w1', who: ' Ana ', what: 'Send  the numbers', dueAt: THU_9, sourceRef: 'https://slack.com/x' }
+
+test('addFollowUp: who, what and due checked; open until due; the same source and who again adds nothing (routines-scheduled-drafts-and-a.3)', () => {
+  const { routines } = setup()
+  assert.throws(() => routines.addFollowUp({ ...ask, who: ' ' }), /who it is with/)
+  assert.throws(() => routines.addFollowUp({ ...ask, what: '' }), /what to follow up on/)
+  assert.throws(() => routines.addFollowUp({ ...ask, dueAt: NaN }), /due date/)
+  assert.throws(() => routines.addFollowUp({ ...ask, workspaceId: '' }), /workspace/)
+  const { followUp: f, added } = routines.addFollowUp(ask)
+  assert.deepEqual([added, f.who, f.what, f.status, f.projectId, f.sourceRef], [true, 'Ana', 'Send the numbers', 'open', null, 'https://slack.com/x'])
+  assert.deepEqual(routines.addFollowUp({ ...ask, who: 'ana', what: 'Other words' }), { followUp: f, added: false })
+  assert.equal(routines.addFollowUp({ ...ask, who: 'Bo' }).added, true)
+  assert.equal(routines.addFollowUp({ ...ask, workspaceId: 'w2' }).added, true)
+  // Without a source nothing is the same.
+  assert.equal(routines.addFollowUp({ ...ask, sourceRef: null }).added, true)
+  assert.equal(routines.addFollowUp({ ...ask, sourceRef: null }).added, true)
+  assert.equal(routines.followUps('w1').length, 4)
+})
+
+test('dueFollowUps: open ones due at now, soonest first; surfaced once; closed is done and frees its source (routines-scheduled-drafts-and-a.3)', () => {
+  const { routines, restart, clock } = setup()
+  const late = routines.addFollowUp({ ...ask, dueAt: NEXT_THU_9 }).followUp
+  const soon = routines.addFollowUp({ ...ask, who: 'Bo', dueAt: THU_9 }).followUp
+  assert.deepEqual(routines.dueFollowUps(THU_9 - 1), [])
+  assert.deepEqual(routines.dueFollowUps(NEXT_THU_9).map((f) => f.id), [soon.id, late.id])
+  assert.equal(routines.surfaceFollowUp(soon.id).status, 'surfaced')
+  assert.deepEqual(restart().dueFollowUps(NEXT_THU_9).map((f) => f.id), [late.id])
+  assert.throws(() => routines.surfaceFollowUp('nope'), /No follow-up nope/)
+  clock.t = THU_9 + 60_000
+  const closed = routines.closeFollowUp(soon.id)!
+  assert.deepEqual([closed.status, closed.closedAt], ['done', THU_9 + 60_000])
+  clock.t += 60_000
+  assert.equal(routines.closeFollowUp(soon.id)!.closedAt, THU_9 + 60_000)
+  assert.equal(routines.closeFollowUp('nope'), null)
+  assert.equal(routines.surfaceFollowUp(soon.id).status, 'done')
+  assert.deepEqual(routines.followUps('w1').map((f) => f.id), [late.id])
+  assert.equal(routines.addFollowUp({ ...ask, who: 'Bo' }).added, true)
 })

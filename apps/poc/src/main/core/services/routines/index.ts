@@ -1,10 +1,11 @@
 // Routines (routines-scheduled-drafts-and-a.1, .2): a trigger and a prompt, run headless. The service owns routines and
 // their runs: when one is due, and that a slot runs once (a run per slot is its lock), across restarts too. What a
-// trigger kind means is its TriggerRule; what a run does is composed in the app layer.
+// trigger kind means is its TriggerRule; what a run does is composed in the app layer. It also keeps follow-ups (.3):
+// who, what and when, due once.
 import { randomUUID } from 'node:crypto'
 import { EFFORTS, type ModelChoice } from '@mag/core'
 import { cronError, nextSlot } from '../../lib/cron/index.ts'
-import type { Routine, RoutineInput, RoutineRecords, RoutineRun, RoutineTrigger, RunResult } from './types.ts'
+import type { FollowUp, FollowUpInput, Routine, RoutineInput, RoutineRecords, RoutineRun, RoutineTrigger, RunResult } from './types.ts'
 
 export type * from './types.ts'
 
@@ -35,6 +36,19 @@ export interface Routines {
   runs(routineId: string): RoutineRun[]
   /** At start: runs left running by a mag that closed end as failed; returns them. */
   recover(): RoutineRun[]
+  /**
+   * Adds a follow-up; throws with what is wrong. One not done of the same workspace, source and who is returned as it
+   * is (`added: false`), so a routine that finds the same ask again adds nothing.
+   */
+  addFollowUp(input: FollowUpInput): { followUp: FollowUp; added: boolean }
+  /** A workspace's follow-ups not done yet, soonest first. */
+  followUps(workspaceId: string): FollowUp[]
+  /** Open follow-ups due at `now`, soonest first: the ones to put in the Inbox. */
+  dueFollowUps(now: number): FollowUp[]
+  /** It is in the Inbox now: not due again. */
+  surfaceFollowUp(id: string): FollowUp
+  /** Closes it (Done); null when there is no such follow-up. Closing a closed one keeps it as it was. */
+  closeFollowUp(id: string): FollowUp | null
 }
 
 /** What a trigger kind means: what is wrong with one (null: fine) and when it fires next after `t`. */
@@ -209,6 +223,38 @@ export function createRoutines(deps: { records: RoutineRecords; triggers?: Recor
     recover() {
       const left = allRuns().filter((r) => r.status === 'running')
       return left.map((r) => self.finishRun(r.id, { status: 'failed', error: 'mag was closed during the run' }))
+    },
+    addFollowUp(input) {
+      const who = oneLine(input.who ?? '')
+      if (!who) throw new Error('A follow-up needs who it is with')
+      const what = oneLine(input.what ?? '')
+      if (!what) throw new Error('A follow-up needs what to follow up on')
+      if (typeof input.dueAt !== 'number' || !Number.isFinite(input.dueAt)) throw new Error('A follow-up needs its due date')
+      if (!input.workspaceId) throw new Error('A follow-up needs its workspace')
+      const sourceRef = input.sourceRef?.trim() || null
+      const same = sourceRef && records.followUps().find((f) => f.status !== 'done' && f.workspaceId === input.workspaceId && f.sourceRef === sourceRef && f.who.toLowerCase() === who.toLowerCase())
+      if (same) return { followUp: same, added: false }
+      const f: FollowUp = { id: id(), workspaceId: input.workspaceId, projectId: input.projectId || null, who, what, dueAt: input.dueAt, sourceRef, status: 'open', createdAt: now(), closedAt: null }
+      records.putFollowUp(f)
+      return { followUp: f, added: true }
+    },
+    followUps: (workspaceId) => records.followUps().filter((f) => f.workspaceId === workspaceId && f.status !== 'done').sort((a, b) => a.dueAt - b.dueAt),
+    dueFollowUps: (t) => records.followUps().filter((f) => f.status === 'open' && f.dueAt <= t).sort((a, b) => a.dueAt - b.dueAt),
+    surfaceFollowUp(fid) {
+      const f = records.followUps().find((x) => x.id === fid)
+      if (!f) throw new Error(`No follow-up ${fid}`)
+      if (f.status !== 'open') return f
+      const next: FollowUp = { ...f, status: 'surfaced' }
+      records.putFollowUp(next)
+      return next
+    },
+    closeFollowUp(fid) {
+      const f = records.followUps().find((x) => x.id === fid)
+      if (!f) return null
+      if (f.status === 'done') return f
+      const next: FollowUp = { ...f, status: 'done', closedAt: now() }
+      records.putFollowUp(next)
+      return next
     },
   }
   return self

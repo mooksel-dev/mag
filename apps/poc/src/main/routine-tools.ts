@@ -1,13 +1,15 @@
 // save_routine, list_routines and add_inbox_item (routines-scheduled-drafts-and-a.2): a topic sets up a routine from the
-// conversation, and a routine's run (or a topic) puts what needs the user in the Inbox.
+// conversation, and a routine's run (or a topic) puts what needs the user in the Inbox; add_follow_up (.3) puts it
+// there on a date.
 import { createHash } from 'node:crypto'
 import { DEFAULT_CHOICE, type ModelChoice, type Project } from '@mag/core'
 import type { Inbox } from './core/services/inbox/index.ts'
 import type { Routine, Routines } from './core/services/routines/index.ts'
 import { nextSlot } from './core/lib/cron/index.ts'
+import { dueAtOf } from './core/services/routines/refs.ts'
 
 export interface RoutineToolDeps {
-  routines: Pick<Routines, 'list' | 'get' | 'save'>
+  routines: Pick<Routines, 'list' | 'get' | 'save' | 'addFollowUp' | 'closeFollowUp'>
   inbox: Pick<Inbox, 'add'>
 }
 
@@ -38,6 +40,8 @@ export function nextRuns(r: Pick<Routine, 'trigger' | 'nextAt'>, n: number): num
   }
   return out
 }
+
+export type RoutineToolName = 'save_routine' | 'list_routines' | 'add_inbox_item' | 'add_follow_up'
 
 const routineLine = (r: Routine, projects: Project[]) => {
   const project = r.projectId ? projects.find((p) => p.id === r.projectId)?.name : null
@@ -71,7 +75,7 @@ function projectOf(value: unknown, workspaceId: string, projects: Project[]): st
   return p.id
 }
 
-export function routineTool(deps: RoutineToolDeps | undefined, projects: Project[], caller: RoutineCaller, name: 'save_routine' | 'list_routines' | 'add_inbox_item', args: Record<string, unknown>): string {
+export function routineTool(deps: RoutineToolDeps | undefined, projects: Project[], caller: RoutineCaller, name: RoutineToolName, args: Record<string, unknown>): string {
   if (!deps) throw new Error('Routines are not ready yet')
   const { routines, inbox } = deps
   if (name === 'list_routines') {
@@ -96,6 +100,12 @@ export function routineTool(deps: RoutineToolDeps | undefined, projects: Project
     const next = nextRuns(r, 3)
     const runsOn = r.choice ? ` on ${r.choice.agent} · ${r.choice.model ?? 'default model'} · effort ${r.choice.effort ?? 'default'}` : ''
     return `Saved routine ${r.id} "${r.name}"${runsOn}${r.enabled ? `; next runs: ${next.map(when).join(', ') || 'none (the cron never fires)'}` : ' (off)'}. The user sees it under Routines; each run lands in the Inbox.`
+  }
+  if (name === 'add_follow_up') {
+    const due = text(args.due)
+    if (!due) throw new Error('due is required: YYYY-MM-DD, or YYYY-MM-DD HH:MM')
+    const { followUp: f, added } = routines.addFollowUp({ workspaceId: caller.workspaceId, projectId: caller.projectId, who: text(args.who), what: text(args.what), dueAt: dueAtOf(due), sourceRef: text(args.ref) || null })
+    return added ? `Follow-up ${f.id} set: ${f.who}: ${f.what}, back in the Inbox ${when(f.dueAt)}.` : `Already followed up: ${f.id} (${f.who}: ${f.what}), due ${when(f.dueAt)}; nothing added.`
   }
   const title = text(args.title)
   if (!title) throw new Error('title is required: one line of what needs the user')
