@@ -1105,6 +1105,18 @@ test('get_pack and propose_rule: the pack where the topic is; a card whose Accep
   // The changed pack goes into the topic's next turn, with both scopes' rules.
   assert.match(prompts.blockFor(store.session(topic.id)), /### Learned rules[\s\S]*Use links[\s\S]*The project's:[\s\S]*Name the sprint/)
 
+  // A step developer's proposal shows on its work's owner topic; the developer hears the answer too.
+  const work = store.createTask({ projectId: project.id, title: 'Report work', type: 'dev', description: '', status: 'in_progress', ownerSessionId: topic.id })
+  const step = store.createTask({ projectId: project.id, title: 's', type: 'dev', description: '', parentId: work.id, status: 'in_progress' })
+  const dev = store.createSession({ projectId: project.id, taskId: work.id, stepId: step.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  assert.match(await tools({ taskId: work.id, sessionId: dev.id }, 'propose_rule', { kind: 'report', rule: 'Lead with the outcome' }), /on a card in the topic that owns your work/)
+  assert.equal(store.session(dev.id).items.filter((i) => i.kind === 'rule').length, 0)
+  const devCard = store.session(topic.id).items.filter((i) => i.kind === 'rule').at(-1)!
+  assert.deepEqual([devCard.rule, devCard.by], ['Lead with the outcome', dev.id])
+  prompts.answerRule(topic.id, devCard.id, true)
+  assert.match(rulesOf(), /^- Lead with the outcome · /m)
+  assert.ok(store.session(dev.id).items.some((i) => i.kind === 'notice' && i.forAgent && /accepted the rule .*Lead with the outcome/.test(i.agentText ?? '')))
+
   // A topic without a project proposes for its workspace only.
   const loose = store.createSession({ projectId: null, workspaceId: project.workspaceId, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   await assert.rejects(tools({ sessionId: loose.id }, 'propose_rule', { kind: 'reply', rule: 'x', scope: 'project' }), /has no project/)

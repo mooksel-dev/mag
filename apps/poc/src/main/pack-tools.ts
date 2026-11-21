@@ -66,7 +66,10 @@ export function createPackPrompts(deps: { store: Store; packs: Packs; deliverabl
       } else item.status = 'rejected'
       store.itemChanged(sessionId, item)
       const said = accept ? `The user accepted the rule for the ${item.pack} pack; it is in ${item.path}: ${item.rule}` : `The user rejected the rule for the ${item.pack} pack; nothing was written: ${item.rule}`
-      store.pushItem(sessionId, { kind: 'notice', text: accept ? `Rule added to the ${item.pack} pack` : `Rule rejected`, at: Date.now(), forAgent: true, agentText: said })
+      const notice = (): ChatItem => ({ kind: 'notice', text: accept ? `Rule added to the ${item.pack} pack` : `Rule rejected`, at: Date.now(), forAgent: true, agentText: said })
+      store.pushItem(sessionId, notice())
+      // A card shown on the topic for one of its work's agents: that agent hears the answer too.
+      if (item.by && item.by !== sessionId && store.data.sessions.some((s) => s.id === item.by)) store.pushItem(item.by, notice())
     },
   }
   return self
@@ -82,7 +85,9 @@ export function packTool(pp: PackPrompts | undefined, store: Store, origin: Orig
     if (sessionId) pp.shown(sessionId, pack)
     return t || `No ${kind} pack yet. The user can write one; propose_rule starts its rules.md.`
   }
-  const session = sessionId ? store.data.sessions.find((s) => s.id === sessionId) : undefined
+  const caller = sessionId ? store.data.sessions.find((s) => s.id === sessionId) : undefined
+  // The card goes where the user looks: the caller's topic (a work's agent: its owner topic).
+  const session = (origin.topicId && store.data.sessions.find((s) => s.id === origin.topicId)) || caller
   if (!session) throw new Error('propose_rule needs a chat to show its card in')
   const rule = text(args.rule)
   if (!rule) throw new Error('Pass rule: one line, as the user would want it followed')
@@ -92,8 +97,8 @@ export function packTool(pp: PackPrompts | undefined, store: Store, origin: Orig
   // One card per rule while it waits for the user.
   const waiting = session.items.find((i): i is RuleItem => i.kind === 'rule' && i.status === 'proposed' && i.pack === kind && i.rule === rule && i.scope === scope)
   if (!waiting)
-    store.pushItem(session.id, { kind: 'rule', id: randomUUID(), pack: kind, rule, why, scope, workspaceId: origin.workspaceId, projectId: scope === 'project' ? origin.projectId : null, status: 'proposed', at: Date.now() })
-  return `The user sees the rule on a card; Accept adds it to the ${kind} pack's rules.md (${scope === 'project' ? "the project's" : "the workspace's"}), Reject drops it. Go on; mag tells you their answer with your next message.`
+    store.pushItem(session.id, { kind: 'rule', id: randomUUID(), pack: kind, rule, why, scope, workspaceId: origin.workspaceId, projectId: scope === 'project' ? origin.projectId : null, status: 'proposed', ...(caller && caller.id !== session.id && { by: caller.id }), at: Date.now() })
+  return `The user sees the rule on a card${session === caller ? '' : ' in the topic that owns your work'}; Accept adds it to the ${kind} pack's rules.md (${scope === 'project' ? "the project's" : "the workspace's"}), Reject drops it. Go on; mag tells you their answer with your next message.`
 }
 
 /** What a verifier of `d` judges by: the rubric and rules of its kind's pack where it was made. */
