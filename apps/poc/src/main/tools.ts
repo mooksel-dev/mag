@@ -15,6 +15,8 @@ import type { Meetings } from './core/services/meetings/index.ts'
 import type { People } from './core/services/people/index.ts'
 import { peopleTool } from './people-tools.ts'
 import { meetingTool } from './meeting-tools.ts'
+import type { Search } from './core/services/search/index.ts'
+import { readRef, searchWorkspace } from './search-tools.ts'
 import type { Approvals, ParkResult } from './approvals.ts'
 import { blockedPush, projectBases } from './git-push.ts'
 import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
@@ -102,7 +104,9 @@ export interface ToolActions {
   /** The failed CI checks of a PR, by name (with link), for mag's review floor; without it, CI sets no floor. */
   failedChecks?(url: string): Promise<string[]>
   /** The user's meetings, workspace-wide (search_meetings, read_meeting); set once they are started. */
-  meetings?: Pick<Meetings, 'search' | 'read'>
+  meetings?: Pick<Meetings, 'list' | 'read'>
+  /** The workspace's search index (search_workspace, read, search_meetings). */
+  search?: Pick<Search, 'query'>
   /** save_deliverable, list_deliverables, read; set once started. */
   deliverables?: Deliverables
   /** The people of each workspace (who, people); set once started. */
@@ -1054,11 +1058,17 @@ function sharedTool(
 
     case 'search_meetings':
     case 'read_meeting':
-      return meetingTool(actions.meetings, name, args)
+      return meetingTool(actions, name, args)
+
+    case 'search_workspace':
+      return searchWorkspace({ store, search: actions.search, meetings: actions.meetings }, project, args)
+
+    case 'read':
+      if (!/(^|:)dlv:/.test(String(args.ref ?? ''))) return readRef({ store, search: actions.search, meetings: actions.meetings }, args)
+      return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
 
     case 'save_deliverable':
     case 'list_deliverables':
-    case 'read':
       return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
 
     case 'set_claims':

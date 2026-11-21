@@ -2,10 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Capture, OnChunk } from '../../clients/audio-capture/index.ts'
 import type { MeetingFiles, MeetingMeta, TranscriptLine } from '../../clients/meeting-files/index.ts'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createMeetingIndex } from '../../clients/meeting-index/index.ts'
 import { Chunker, TranscriptMerger, bound, createMeetings, filterMeetings, participantsOf, quietestCut, type Recording } from './index.ts'
 
 const RATE = 16_000
@@ -46,8 +42,6 @@ function fakes(opts: { setupFails?: string; captureFails?: string; summary?: str
   }
   const prompts: string[] = []
   let changes = 0
-  const indexPath = join(mkdtempSync(join(tmpdir(), 'mag-mtg-index-')), '.index.sqlite')
-  const index = createMeetingIndex(() => indexPath)
   const meetings = createMeetings({
     capture: async (cb) => {
       if (opts.captureFails) throw new Error(opts.captureFails)
@@ -63,7 +57,6 @@ function fakes(opts: { setupFails?: string; captureFails?: string; summary?: str
       transcribe: async (pcm) => (transcribed.push(pcm.length / RATE), [{ start: 1, end: 2, text: `${Math.round(pcm.length / RATE)}s` }]),
     },
     files,
-    index,
     llm: { complete: async (prompt, input) => (prompts.push(input), opts.summary ?? '## Decisions\n- ship it') },
     now: () => new Date('2026-11-20T14:30:00Z'),
     onMeetingsChanged: () => void changes++,
@@ -235,38 +228,23 @@ test('participantsOf: the Participants section only', () => {
   assert.deepEqual(participantsOf('no sections'), [])
 })
 
-test('search: a saved meeting is found; renamed, summarized and deleted meetings follow; filters by date and people', async () => {
-  const f = fakes({ summary: '## Decisions\n- move the release\n## Participants\n- Olena Petrenko' })
-  const m = await f.meetings.start('Sync')
-  f.push(tone(30), 'me', 0)
-  await f.meetings.stop()
-  assert.deepEqual(f.meetings.search('30s').map((h) => [h.meetingId, h.part, h.at, h.title]), [[m.id, 'transcript', '00:00:01', 'Sync']])
-  await tick()
-  assert.deepEqual(f.meetings.search('releas').map((h) => h.part), ['summary'])
-  f.meetings.rename(m.id, 'Planning')
-  assert.equal(f.meetings.search('planning')[0].title, 'Planning')
-  assert.equal(f.meetings.search('release', { people: ['olena'] }).length, 1)
-  assert.equal(f.meetings.search('release', { people: ['ivan'] }).length, 0)
-  assert.equal(f.meetings.search('release', { from: '2026-11-21' }).length, 0)
-  assert.equal(f.meetings.search('release', { to: '2026-11-20' }).length, 1)
-  // Gone from the folders, gone from search, even before the index hears of it.
-  f.disk.delete(m.id)
-  assert.deepEqual(f.meetings.search('release'), [])
-  f.disk.set(m.id, { meta: { ...m, title: 'Planning' }, summary: '' })
-  assert.deepEqual(await f.meetings.reindex(), { updated: 1, removed: 0 })
-  assert.deepEqual(await f.meetings.reindex(), { updated: 0, removed: 0 })
-  assert.deepEqual(f.meetings.search('releas'), [])
-  f.meetings.remove(m.id)
-  assert.deepEqual(f.meetings.search('30s'), [])
-})
-
-test('reindex drops meetings deleted outside mag', async () => {
+test('the search index hears of every change: saved, summarized, renamed, deleted; the recording is not indexed yet', async () => {
   const f = fakes()
-  const m = await f.meetings.start()
+  const m = await f.meetings.start('Sync')
+  assert.equal(f.meetings.recordingId(), m.id)
   f.push(tone(30), 'me', 0)
+  const before = f.changes()
   await f.meetings.stop()
-  f.disk.delete(m.id)
-  assert.deepEqual(await f.meetings.reindex(), { updated: 0, removed: 1 })
+  assert.equal(f.meetings.recordingId(), null)
+  assert.ok(f.changes() > before)
+  await tick()
+  const summarized = f.changes()
+  const version = f.meetings.changedAt(m.id)
+  f.meetings.rename(m.id, 'Planning')
+  assert.equal(f.changes(), summarized + 1)
+  assert.notEqual(f.meetings.changedAt(m.id), version)
+  f.meetings.remove(m.id)
+  assert.equal(f.changes(), summarized + 2)
 })
 
 test('bound and filterMeetings: a date alone is the whole local day; a bad date is an error', () => {

@@ -8,6 +8,9 @@ import { emptyResult, normalizeReport, type Diagram, type IssuesReport, type Tas
 import { Store } from './store.ts'
 import { createTools, parseRef, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
+import { createSearchIndex } from './core/clients/search-index/index.ts'
+import { createSearch } from './core/services/search/index.ts'
+import { createSearchFeed, meetingDocs, MEETING_SOURCES } from './search-feed.ts'
 
 /** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
 const NO_CONTROL: Pick<ToolActions, 'startChild' | 'startVerifier' | 'sessionInTree' | 'stop' | 'approve' | 'approveAndStart' | 'develop' | 'startStep' | 'restartReview' | 'agentOf' | 'messageStepAgent' | 'send' | 'stopAgents' | 'closeChat' | 'closeWork' | 'deleteChat' | 'deleteWork' | 'restore'> = {
@@ -827,25 +830,34 @@ test('read_chat: a topic by id, a work by key with its doc and owner topic, page
   for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) assert.ok(toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).some((t) => t.name === 'read_chat'), role)
 })
 
+function searchOf(store: Store) {
+  const search = createSearch({ index: createSearchIndex(((path) => () => path)(join(mkdtempSync(join(tmpdir(), 'mag-search-')), '.index.sqlite'))) })
+  return { search, feed: createSearchFeed({ search, store, meetings: () => undefined, log: () => {} }) }
+}
+
 test('search_meetings and read_meeting: every role, any project; hits with id and time, the meeting paged', async () => {
-  const { actions, call } = setup()
+  const { store, actions, call } = setup()
   await assert.rejects(call('search_meetings', { query: 'x' }), /not ready/)
-  const asked: unknown[] = []
   const meta = { id: '2026-11-20-1430-sync', title: 'Sync', startedAt: '2026-11-20T14:30:00.000Z', participants: ['Olena'] }
-  actions.meetings = {
-    search: (q, f) => (asked.push([q, f]), [{ meetingId: meta.id, part: 'transcript', at: '00:00:09', snippet: 'move the \u0002release\u0003', title: 'Sync', startedAt: meta.startedAt }]),
-    read: () => ({ meta, summary: '## Decisions\n- ship', transcript: `# Sync\n\n${'[00:00:01] me: hi\n'.repeat(4000)}`, dir: '/m' }),
-  }
-  assert.match(await call('search_meetings', { query: 'release', from: '2026-11-01', people: 'Olena' }), /^- 2026-11-20-1430-sync · Sync · 2026-11-20 14:30 UTC · transcript \[00:00:09\]: move the \*\*release\*\*\n\nRead one with read_meeting\(id\)\.$/)
-  assert.deepEqual(asked, [['release', { from: '2026-11-01', to: undefined, people: ['Olena'], limit: 30 }]])
+  const content = { meta, summary: '## Decisions\n- ship', transcript: `# Sync\n\n[00:00:09] others: move the release\n${'[00:00:10] me: hi\n'.repeat(4000)}`, dir: '/m' }
+  const meetings = { list: () => [meta], read: () => content, changedAt: () => 1, recordingId: () => null }
+  const { search } = searchOf(store)
+  await search.rebuild(meetingDocs(meetings, store), MEETING_SOURCES)
+  actions.meetings = meetings
+  actions.search = search
+  assert.match(await call('search_meetings', { query: 'release', from: '2026-11-01', people: 'Olena' }), /^- 2026-11-20-1430-sync · Sync · 2026-11-20 14:30 UTC · transcript \[00:00:09\]: others: move the \*\*release\*\*\n\nRead one with read_meeting\(id\)\.$/)
+  assert.match(await call('search_meetings', { query: 'release', people: 'Ivan' }), /^No meeting line matches/)
+  assert.match(await call('search_meetings', { query: 'release', from: '2026-11-21' }), /^No meeting line matches/)
   await assert.rejects(call('search_meetings', {}), /Pass query/)
   assert.match(await call('read_meeting', { id: meta.id, part: 'summary' }), /^Meeting 2026-11-20-1430-sync: Sync\nStarted .*\nParticipants: Olena\n\n## Summary\n## Decisions\n- ship\n\n\(end of the meeting\)$/)
   const first = await call('read_meeting', { id: meta.id })
   assert.match(first, /## Transcript\n# Sync[\s\S]*\(more: call read_meeting with offset 40000\)$/)
   assert.match(await call('read_meeting', { id: meta.id, offset: 40000 }), /\(end of the meeting\)$/)
+  // read(ref) opens the meeting at the hit's line.
+  assert.match(await call('read', { ref: `mtg:${meta.id}@00:00:09` }), /^\[00:00:09\] others: move the release\n/)
   for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) {
     const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
-    assert.ok(names.includes('search_meetings') && names.includes('read_meeting'), role)
+    assert.ok(['search_meetings', 'read_meeting', 'search_workspace', 'read'].every((n) => names.includes(n)), role)
   }
 })
 
@@ -872,6 +884,54 @@ test('who and people: every role, the caller\'s workspace; read-only answers (wh
     const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
     assert.ok(names.includes('who') && names.includes('people'), role)
   }
+})
+
+test('search_workspace and read: this workspace by default, scope all, kinds, labels, dates; Personal left out of all; a hit opens at its message, section or decision', async () => {
+  const { store, project, actions, call } = setup()
+  await assert.rejects(call('search_workspace', { query: 'x' }), /not ready/)
+  // setup's project is in the fallback workspace, Personal: the caller works in Aura here.
+  store.workspace(project.workspaceId).name = 'Aura'
+  const personal = store.createWorkspace('Personal')
+  const home = store.createProject('Home', personal.id)
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'DBR queue' })
+  store.pushItem(topic.id, { kind: 'user', text: 'What about the DBR queue?', at: Date.parse('2026-11-10T10:00:00Z') })
+  store.pushItem(topic.id, { kind: 'assistant', text: 'Looking', at: Date.parse('2026-11-10T10:00:01Z') })
+  store.pushItem(topic.id, { kind: 'tool', id: 't', name: 'Bash', summary: 'queue ls', at: Date.parse('2026-11-10T10:00:02Z') })
+  store.pushItem(topic.id, { kind: 'assistant', text: 'The queue drains hourly', at: Date.parse('2026-11-10T10:00:03Z') })
+  const work = store.createTask({ projectId: project.id, title: 'Queue work', type: 'dev', description: 'Rework the queue', status: 'planning' })
+  store.data.docs[work.id] = '# Problem\nThe queue stalls.\n\n## Decisions\n- Drain the queue every hour\n- None of the retries\n'
+  const mine = store.createSession({ projectId: home.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Home queue' })
+  store.pushItem(mine.id, { kind: 'user', text: 'My own queue at the bank', at: Date.parse('2026-11-11T10:00:00Z') })
+  const { search, feed } = searchOf(store)
+  actions.search = search
+  await feed.sync('store')
+  const ws = project.workspaceId
+
+  const hits = await call('search_workspace', { query: 'queue' })
+  assert.match(hits, new RegExp(`^- ${ws}:topic:${topic.id}#\\d+ · topic · DBR queue · 2026-11-10 10:00 UTC · ${project.name}: `, 'm'))
+  assert.match(hits, new RegExp(`- ${ws}:dec:${work.id}#0 · decision · ${work.key}: Queue work`))
+  assert.ok(!hits.includes(mine.id), 'another workspace is out of the default scope')
+  assert.ok(!(await call('search_workspace', { query: 'queue', scope: 'all' })).includes(mine.id), 'Personal is out of scope all')
+  assert.ok((await call('search_workspace', { query: 'queue', scope: 'all', people: true })).includes(mine.id))
+  assert.ok((await call('search_workspace', { query: 'bank', scope: 'Personal' })).includes(mine.id), 'Personal in its own scope')
+  assert.doesNotMatch(await call('search_workspace', { query: 'queue', kinds: ['decision'] }), /· topic ·|· doc ·/)
+  assert.match(await call('search_workspace', { query: 'queue', labels: [project.name] }), /topic/)
+  await assert.rejects(call('search_workspace', { query: 'queue', labels: ['Nope'] }), /No label "Nope"/)
+  await assert.rejects(call('search_workspace', { query: 'queue', scope: 'Mars' }), /No workspace "Mars"/)
+  await assert.rejects(call('search_workspace', { query: 'queue', kinds: ['chat'] }), /Unknown kind: chat/)
+  assert.match(await call('search_workspace', { query: 'queue', kinds: ['topic'], from: '2026-11-12' }), /^Nothing matches/)
+  assert.match(await call('search_workspace', { query: 'drains' }), new RegExp(`topic:${topic.id}#3 .*The queue \\*\\*drains\\*\\* hourly`))
+  assert.doesNotMatch(await call('search_workspace', { query: 'looking' }), /topic:/, 'only the final reply of a turn')
+
+  assert.match(await call('read', { ref: `${ws}:topic:${topic.id}#3` }), /^\[2026-11-10 10:00\] Assistant: The queue drains hourly\n\n\(end\)$/)
+  assert.match(await call('read', { ref: `${ws}:doc:${work.id}#problem` }), /^Work .*: Queue work \(section Problem; .*\)\n\n# Problem\nThe queue stalls\.\n\n\(end\)$/)
+  assert.match(await call('read', { ref: `${ws}:dec:${work.id}#0` }), /## Decisions\n- Drain the queue every hour/)
+  assert.match(await call('read', { ref: `${ws}:work:${work.id}` }), /^Work .*: Queue work \(planning\)/)
+  await assert.rejects(call('read', { ref: 'nonsense' }), /Pass ref/)
+  await assert.rejects(call('read', { ref: `${ws}:person:x` }), /not in the index yet/)
+
+  // read_chat reads a topic of another workspace.
+  assert.match(await call('read_chat', { id: mine.id }), /My own queue at the bank/)
 })
 
 test("set_pr_review: a look at new commits is a delta against the result at the older head; at the same head it keeps it (review-v3-concise-design-first.3)", async () => {
@@ -964,7 +1024,8 @@ test('save_deliverable, list_deliverables and read: versions in the workspace fo
   assert.deepEqual([d.topicId, d.taskId, d.workspaceId, d.labels, d.destination?.label], [topic.id, null, ws.id, ['dbo'], 'Slack #dbo'])
   assert.match(await inTopic('read', { ref: `${folder}:dlv:weekly-report` }), /^\S+:dlv:weekly-report v2 · report · Weekly report · draft\n\n# W1, fixed\n$/)
   assert.match(await inTopic('read', { ref: 'dlv:weekly-report', version: 1 }), /\n\n# W1\n$/)
-  await assert.rejects(inTopic('read', { ref: 'T-12' }), /takes deliverable refs/)
+  // read opens every kind of ref (unified-search-across-the-workspace.1): one that is none says what a ref is.
+  await assert.rejects(inTopic('read', { ref: 'T-12' }), /Pass ref: a ref from search_workspace/)
 
   const work = store.createTask({ projectId: project.id, title: 'Report work', type: 'dev', description: '', status: 'in_progress', ownerSessionId: topic.id })
   const dev = store.createSession({ projectId: project.id, taskId: work.id, role: 'developer', agent: 'claude-code', status: 'running' })

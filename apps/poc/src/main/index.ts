@@ -27,6 +27,10 @@ import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 import { startMeetings } from './meetings'
 import { startDeliverables } from './deliverables'
+import { createSearchIndex } from './core/clients/search-index/index.ts'
+import { createSearch } from './core/services/search/index.ts'
+import type { Meetings } from './core/services/meetings/index.ts'
+import { createSearchFeed } from './search-feed.ts'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
 
@@ -457,7 +461,18 @@ app.whenReady().then(async () => {
   handle('logs:open', () => openLogs())
   startAppMenu(store, windows, openLogs)
   startAttention(store, windows, inbox)
-  actions.meetings = startMeetings()
+  // The search index is derived (unified-search-across-the-workspace.1): safe to delete, backfilled here.
+  const indexPath = join(app.getPath('documents'), 'mag', '.index.sqlite')
+  const searchIndex = createSearchIndex(() => indexPath)
+  app.on('will-quit', () => searchIndex.close())
+  const search = createSearch({ index: searchIndex, onError: (message, e) => log.warn('search', message, e) })
+  actions.search = search
+  let meetings: Meetings | undefined
+  const feed = createSearchFeed({ search, store, meetings: () => meetings, log: (message, e) => (e ? log.warn('search', message, e) : log.info('search', message)) })
+  actions.meetings = meetings = startMeetings({ search, indexPath, onMeetingsChanged: () => feed.onChanged('meetings') })
+  store.onChange(() => feed.onChanged('store'))
+  store.onItem(() => feed.onChanged('store'))
+  void feed.indexAll()
   const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)

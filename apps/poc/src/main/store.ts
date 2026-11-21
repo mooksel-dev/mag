@@ -826,6 +826,20 @@ export class Store {
     return this.session(sid).items.slice(Math.max(0, from))
   }
 
+  /** A session's items without loading them into memory for good: the search index reads every session once. */
+  peekItems(sid: string): ChatItem[] {
+    if (!this.unloaded.has(sid) || !this.db) return this.session(sid).items
+    return this.db.items(sid).map((json) => JSON.parse(json) as ChatItem)
+  }
+
+  /** How many items a session has and the last one's `at`, without loading them. */
+  itemStats(sid: string): { count: number; lastAt: number | null } {
+    const digest = this.digests.get(sid)
+    if (this.unloaded.has(sid) && digest) return { count: digest.itemCount, lastAt: digest.lastItemAt }
+    const items = this.session(sid).items
+    return { count: items.length, lastAt: items.at(-1)?.at ?? null }
+  }
+
   private save() {
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => this.flush(), 200)

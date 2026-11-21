@@ -2,7 +2,6 @@
 import type { MeetingMeta } from '../../clients/meeting-files/types.ts'
 
 export type { MeetingContent, MeetingLink } from '../../clients/meeting-files/types.ts'
-import type { IndexHit } from '../../clients/meeting-index/types.ts'
 import type { SetupProgress } from '../../clients/stt/types.ts'
 
 export type Meeting = MeetingMeta
@@ -21,8 +20,13 @@ export interface Recording {
   error?: string
 }
 
-/** A line search found, with its meeting's title and start. */
-export interface MeetingHit extends IndexHit {
+/** A line search found, with its meeting's title and start. `at`: hh:mm:ss of a transcript line, null for the summary. */
+export interface MeetingHit {
+  meetingId: string
+  part: 'summary' | 'transcript'
+  at: string | null
+  /** Matched words between \u0002 and \u0003. */
+  snippet: string
   title: string
   startedAt: string
 }
