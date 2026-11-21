@@ -1875,6 +1875,18 @@ test('deleteReview: the review, its doc, diagrams and own topic go; a topic that
 
   const step = store.createTask({ projectId: project.id, title: 'w', type: 'dev', description: '', status: 'planning' })
   await assert.rejects(orch.deleteReview(step.id), /not a review/)
+
+  // A topic that asked for a review closes with it closed, and deletes with it deleted; an open work still holds it.
+  const asker = orch.newChat(project.id)
+  const mine = newReview(asker)
+  await orch.closeChat(asker)
+  assert.ok(store.task(mine.id).closedAt && store.session(asker).closedAt)
+  store.updateTask(step.id, { ownerSessionId: asker })
+  await assert.rejects(orch.deleteChat(asker), /This topic owns/)
+  store.updateTask(step.id, { ownerSessionId: undefined })
+  await orch.deleteChat(asker)
+  assert.equal(store.data.tasks.some((t) => t.id === mine.id), false)
+  assert.equal(store.data.docs[mine.id], undefined)
 })
 
 /**

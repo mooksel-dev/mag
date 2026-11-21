@@ -779,7 +779,13 @@ export class Orchestrator {
    */
   private openWorkOf(tree: AgentSession[], except?: string) {
     const ids = new Set(tree.map((s) => s.id))
-    return this.store.data.tasks.find((t) => !t.parentId && t.id !== except && !!t.ownerSessionId && ids.has(t.ownerSessionId) && canCancel(t))
+    return this.store.data.tasks.find((t) => !t.parentId && !isReview(t) && t.id !== except && !!t.ownerSessionId && ids.has(t.ownerSessionId) && canCancel(t))
+  }
+
+  /** The reviews these sessions own (review_pr): they go with the topic, as its findings do; nothing on GitHub changes. */
+  private reviewsOf(tree: AgentSession[], except?: string) {
+    const ids = new Set(tree.map((s) => s.id))
+    return this.store.data.tasks.filter((t) => isReview(t) && t.id !== except && !!t.ownerSessionId && ids.has(t.ownerSessionId))
   }
 
   /** "This topic owns ABC-1" or "A session under this topic owns ABC-1": why a Close or a Delete is refused. */
@@ -799,8 +805,8 @@ export class Orchestrator {
 
   /**
    * Deletes a topic (or a child) for good, with the sessions under it: their turns and live processes end first (with
-   * their background tasks and approvals). Refused while one of them owns an open work, as a Close is; `except`: the
-   * work being deleted with it (deleteWork, deleteReview).
+   * their background tasks and approvals), and the reviews they own. Refused while one of them owns an open work, as a
+   * Close is; `except`: the work being deleted with it (deleteWork, deleteReview).
    */
   async deleteChat(sessionId: string, except?: string) {
     this.projectChat(sessionId)
@@ -810,9 +816,16 @@ export class Orchestrator {
     if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close or delete the work first`)
     // The end of a run must not start a title run for a topic that is gone.
     for (const s of tree) s.titleGenerated = true
+    const reviews = this.reviewsOf(tree, except)
     await this.endRuns(tree)
     this.store.deleteSession(sessionId)
-    log.info('agent', 'topic deleted', { session: sessionId, under: tree.length - 1 })
+    for (const r of reviews) {
+      // A topic mag made for the review elsewhere goes with it.
+      for (const s of this.store.data.sessions.filter((x) => x.reviewOf === r.id)) await this.deleteChat(s.id, r.id)
+      if (r.imported) rmSync(r.imported.diffPath, { force: true })
+      this.store.deleteTask(r.id)
+    }
+    log.info('agent', 'topic deleted', { session: sessionId, under: tree.length - 1, reviews: reviews.length })
   }
 
   /**
@@ -826,6 +839,7 @@ export class Orchestrator {
     const owned = this.openWorkOf(tree)
     if (owned) throw new Error(`${this.ownsLine(sessionId, owned)}: close the work instead`)
     await this.endRuns(tree)
+    for (const r of this.reviewsOf(tree)) if (!r.closedAt) this.closeReview(r.id)
     for (const s of tree) if (!s.closedAt) this.store.closeSession(s.id)
     log.info('agent', 'topic closed', { session: sessionId, under: tree.length - 1 })
     void this.summarize('topic', session.id)
