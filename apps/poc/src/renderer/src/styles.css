@@ -811,6 +811,10 @@ body.resizing iframe { pointer-events: none; }
 .mtgtop { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
 .mtgsnip { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
 .mtgsnip mark { background: none; color: var(--text); font-weight: 600; }
+.libfilters { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.libfilters select { max-width: 140px; font-size: var(--fs-xs); }
+.libfilters label { display: inline-flex; align-items: center; gap: 4px; }
+.libchips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .transcript { display: flex; flex-direction: column; gap: 2px; }
 .tline { display: grid; grid-template-columns: 70px 52px 1fr; gap: var(--sp-2); margin: 0; padding: 2px 4px; border-radius: var(--r); }
 .tline.hit { background: var(--hover); outline: 1px solid var(--accent); }

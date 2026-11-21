@@ -13,11 +13,12 @@ import {
   type WorkCard,
   type Workspace,
 } from '@mag/core'
-import type { AppState, CrashReport, PickerMode } from '../../../preload/api'
+import type { AppState, CrashReport, LibraryRow, PickerMode } from '../../../preload/api'
 import { ProjectPicker } from '../Picker'
 import { Inbox } from '../Inbox'
 import { MeetingsSection } from '../Meetings'
 import { PeopleSection } from '../People'
+import { LibrarySection } from '../Library'
 import { useNow } from '../Tasks'
 import { CardRow, CrashRow, ProjectSection, StarsContext, useFilter, useFolded, useStoredFlag, type HomeGroup, type ListPage, type RowEnv, type Selection, type Stars } from '../WorkList'
 import { allCards, columnCards, onlyProject, starredCards, toggleStar, waitingCount } from '../topicsColumn'
@@ -27,7 +28,7 @@ import { Caret, Icon } from '../ui/Icon'
 const mag = window.mag
 
 /** The rail's sections that show in the column. */
-export type RailSection = 'inbox' | 'topics' | 'meetings' | 'people'
+export type RailSection = 'inbox' | 'topics' | 'meetings' | 'people' | 'library'
 
 /** A project's page open in place of the conversation. */
 export interface OpenPage { kind: ListPage; projectId: string }
@@ -37,9 +38,10 @@ export interface OpenPage { kind: ListPage; projectId: string }
  * Topics: the workspace's menu "<Workspace> ▾" (WorkspaceMenu), New topic, search (⌘K) and filters, then Starred, a
  * section per Project label (ProjectSection: its rows and the user's groups) and No project; closed rows of all of them
  * under Archive. A window filtered to a project lists that project's section only. Meetings: today's meetings list and
- * recorder. People: the workspace's persons (who-is-who-people-from.1).
+ * recorder. People: the workspace's persons (who-is-who-people-from.1). Library: what is final in the workspace
+ * (deliverables-library-claims-review-and.4).
  */
-export function TopicsColumn({ workspace, only, viewKey, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onOpenWorkspacePage, onSearch, meetingId, onOpenMeeting }: {
+export function TopicsColumn({ workspace, only, viewKey, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onOpenWorkspacePage, onSearch, meetingId, onOpenMeeting, onOpenLibrary }: {
   workspace: Workspace
   /** The project the window is filtered to. */
   only: Project | null
@@ -65,6 +67,8 @@ export function TopicsColumn({ workspace, only, viewKey, state, section, selecte
   meetingId: string | null
   /** `at`: hh:mm:ss of a transcript line a search hit points at. */
   onOpenMeeting: (id: string, at?: string) => void
+  /** A Library row's click. */
+  onOpenLibrary: (o: LibraryRow['open']) => void
 }) {
   const now = useNow(15_000)
   const [filter, setFilter] = useFilter(viewKey)
@@ -110,6 +114,7 @@ export function TopicsColumn({ workspace, only, viewKey, state, section, selecte
       </nav>
     )
   }
+  if (section === 'library') return <LibrarySection workspace={workspace} state={state} onOpen={onOpenLibrary} />
   if (section === 'meetings') {
     return (
       <nav className="worklist" aria-label="Meetings">

@@ -28,7 +28,7 @@ import type { AppState, PickerMode, WindowView } from '../../preload/api'
 import { ChoiceChip, ModelPopover, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
 import { Architecture } from './Architecture'
-import { workTarget } from './artifacts'
+import { workTarget, type ArtifactTarget } from './artifacts'
 import { ownerSession, TopicConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
@@ -81,7 +81,7 @@ export function App({ view }: { view: WindowView }) {
   const railKey = `mag.rail.${viewKey}`
   const [section, setSection] = useState<RailSection>(() => {
     const saved = localStorage.getItem(railKey)
-    return saved === 'meetings' || saved === 'people' || saved === 'inbox' ? saved : 'topics'
+    return saved === 'meetings' || saved === 'people' || saved === 'inbox' || saved === 'library' ? saved : 'topics'
   })
   const pickSection = (s: RailSection) => {
     setSection(s)
@@ -90,10 +90,17 @@ export function App({ view }: { view: WindowView }) {
   const [theme, setTheme] = useTheme()
   const leftPane = usePaneWidth('left', viewKey)
   const [homeIn, setHomeIn] = useState<HomeIn | null>(null)
+  // What a Library row opens in the topic's drawer; any other selection drops it.
+  const [opened, setOpened] = useState<ArtifactTarget | null>(null)
+  // Each open remounts the topic's screen, so the drawer shows it even when the topic was open with it closed.
+  const [openedN, setOpenedN] = useState(0)
   // This window renders a review's static page for its archive when main asks (review-v2-part-2-v1-2.3).
   useRenderReviewExport(state)
-  const select = (s: Selection | null) => {
+  const select = (s: Selection | null) => selectOpening(s, null)
+  const selectOpening = (s: Selection | null, open: ArtifactTarget | null) => {
     setSelected(s)
+    setOpened(open)
+    if (open) setOpenedN((n) => n + 1)
     setHomeIn(null)
     setPage(null)
     setMeetingId(null)
@@ -167,7 +174,7 @@ export function App({ view }: { view: WindowView }) {
   const owner = work && ownerSession(work, sessions)
   const shownTopic = pickedTopic ?? (owner && isTopic(owner) ? owner : null)
   const shownReview = pickedTopic && reviewOfTopic(tasks, pickedTopic.id)
-  const initial = work ? workTarget(work) : shownReview ? workTarget(shownReview) : null
+  const initial = opened ?? (work ? workTarget(work) : shownReview ? workTarget(shownReview) : null)
   // A New subtopic draft under a topic or subtopic that still exists (topic-screen-one-new-compact.2).
   const draftParent = selected?.kind === 'draft' ? sessions.find((s) => s.id === selected.id && isTopic(s)) ?? null : null
   const current: Selection | null = draftParent ? { kind: 'draft', id: draftParent.id } : work ? { kind: 'work', id: work.id } : shownTopic ? { kind: 'topic', id: shownTopic.id } : null
@@ -233,6 +240,12 @@ export function App({ view }: { view: WindowView }) {
             onSearch={() => setSearching(true)}
             meetingId={meetingId}
             onOpenMeeting={openMeeting}
+            onOpenLibrary={(o) => {
+              if (o.kind === 'topic') selectOpening({ kind: 'topic', id: o.id }, o.deliverableId ? { kind: 'deliverable', id: o.deliverableId } : null)
+              else if (o.kind === 'work') select({ kind: 'work', id: o.id })
+              else if (o.kind === 'meeting') openMeeting(o.id)
+              else void mag.revealDeliverable(o.deliverableId)
+            }}
           />
         </ErrorBoundary>
         <PaneHandle side="left" onResize={leftPane.set} />
@@ -259,7 +272,7 @@ export function App({ view }: { view: WindowView }) {
           ) : draftParent ? (
             <DraftSubtopic key={`draft:${draftParent.id}`} parent={draftParent} onSelect={select} />
           ) : shownTopic || work ? (
-            <TopicConversation key={`${shownTopic?.id ?? ''}:${work?.id ?? ''}`} topic={shownTopic} work={work} initial={initial} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
+            <TopicConversation key={`${shownTopic?.id ?? ''}:${work?.id ?? ''}:${opened ? openedN : ''}`} topic={shownTopic} work={work} initial={initial} state={state} onOpenKey={openKey} onSelect={select} onDeleted={() => select(null)} />
           ) : !homeProject ? (
             <main className="main empty">
               <p>No projects in {workspace.name} yet.</p>

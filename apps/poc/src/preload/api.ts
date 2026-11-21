@@ -1,6 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ItemLabel, ItemRef, Label, LabelGroup, LabelGroupInput, LabelInput, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
-import type { Deliverable } from '../main/core/services/deliverables/types.ts'
+import type { Deliverable, DeliverableKind } from '../main/core/services/deliverables/types.ts'
 import type { MeetingPerson, OverrideInput, PeopleList, PeopleSystem, SyncReport } from '../main/core/services/people/types.ts'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
@@ -33,6 +33,47 @@ export interface AppState {
   openProjects: string[]
   /** Workspaces that have a window of their own (not filtered to a project). */
   openWorkspaces: string[]
+}
+
+/** What a Library row is: a deliverable's kind, a decision (a work's or a meeting's) or a merged change (a done work). */
+export type LibraryKind = DeliverableKind | 'change'
+
+/** One row of the Library (deliverables-library-claims-review-and.4): a view over final work, never a store of its own. */
+export interface LibraryRow {
+  /** Unique in the list: `dlv:<id>`, `dec:<taskId>#<n>`, `mtg:<id>#<n>`, `work:<id>`. */
+  key: string
+  kind: LibraryKind
+  /** Where it comes from. */
+  source: 'deliverable' | 'doc' | 'meeting' | 'work'
+  title: string
+  /** A decision's line; a deliverable's version and state; a change's key. */
+  text: string
+  /** ms. */
+  at: number
+  /** The projects it belongs to (Project filter); a meeting has those of its links. */
+  projectIds: string[]
+  /** Workspace label ids, Project labels included. */
+  labelIds: string[]
+  /** A deliverable's own labels that no workspace label is named after. */
+  tags: string[]
+  /** About a person (an assessment): listed only when the filter asks for it. */
+  people: boolean
+  /** What a click opens; `reveal`: a deliverable without a topic or work, shown in Finder. */
+  open: { kind: 'topic'; id: string; deliverableId?: string } | { kind: 'work'; id: string } | { kind: 'meeting'; id: string } | { kind: 'reveal'; deliverableId: string }
+}
+
+/** Library filters; missing: any. `projectId` null: rows without a project. `people`: include people-sensitive rows. */
+export interface LibraryFilter {
+  kind?: LibraryKind
+  projectId?: string | null
+  labelId?: string
+  people?: boolean
+}
+
+export interface LibraryList {
+  rows: LibraryRow[]
+  /** People-sensitive rows the filter left out because it did not ask for them. */
+  hiddenPeople: number
 }
 
 /**
@@ -397,6 +438,8 @@ export interface MagApi {
   revealDeliverable(id: string): Promise<void>
   /** Asks its topic to post the final version; the Publish card's Allow marks it published. */
   publishDeliverable(id: string): Promise<void>
+  /** The Library of a workspace (deliverables-library-claims-review-and.4): final deliverables, decisions and merged works, newest first. */
+  listLibrary(workspaceId: string, filter: LibraryFilter): Promise<LibraryList>
   /** People of a workspace (who-is-who-people-from.1): persons with handles, open suggestions, unmatched handles. */
   listPeople(workspaceId: string): Promise<PeopleList>
   /** Pulls the workspace's directories now. */

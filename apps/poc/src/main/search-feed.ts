@@ -3,7 +3,7 @@
 // reads each source and hands the search service its IndexDocs.
 import type { AgentSession, Task } from '@mag/core'
 import { rowsOfDecisions, rowsOfDoc, rowsOfMeeting, rowsOfSession, textHash } from './core/lib/search-rows/index.ts'
-import type { Meetings } from './core/services/meetings/index.ts'
+import type { Meeting as MeetingMeta, Meetings } from './core/services/meetings/index.ts'
 import type { IndexDoc, Search, Sensitivity } from './core/services/search/index.ts'
 import type { Store } from './store.ts'
 
@@ -28,14 +28,14 @@ export interface SearchFeed {
 export const isPersonal = (name: string) => name.trim().toLowerCase() === 'personal'
 
 /** Label ids of each item: its own (not taken off) and its project's. */
-function labelIndex(store: Store) {
+export function labelIndex(store: Pick<Store, 'data'>) {
   const own = new Map<string, string[]>()
   for (const r of store.data.itemLabels) if (!r.removed) own.set(r.itemRef, [...(own.get(r.itemRef) ?? []), r.labelId])
   return (ref: string, projectId: string | null | undefined) => [...new Set([...(projectId ? [projectId] : []), ...(own.get(ref) ?? [])])].sort()
 }
 
 /** The topic or work a session's labels come from: its root topic, or its work (a step's root work). */
-function itemOf(s: AgentSession, sessions: Map<string, AgentSession>, tasks: Map<string, Task>): string {
+export function itemOf(s: AgentSession, sessions: Map<string, AgentSession>, tasks: Map<string, Task>): string {
   if (s.taskId) return `work:${tasks.get(s.taskId)?.parentId ?? s.taskId}`
   let root = s
   for (let up = s.parentId && sessions.get(s.parentId); up; up = up.parentId ? sessions.get(up.parentId) : undefined) root = up
@@ -88,13 +88,18 @@ export function storeDocs(store: Store, docHashes = new Map<string, { text: stri
   return docs
 }
 
+/** A meeting's label ids: those of the topics and works it is linked to, their projects included. */
+export function meetingLabels(m: Pick<MeetingMeta, 'links'>, labelsOf: ReturnType<typeof labelIndex>, tasks: Task[]): string[] {
+  return [...new Set((m.links ?? []).flatMap((l) => labelsOf(l.topicId ? `topic:${l.topicId}` : `work:${tasks.find((t) => t.projectId === l.projectId && t.key === l.workKey)?.id}`, l.projectId)))].sort()
+}
+
 /** IndexDocs of the meetings, workspace-wide; the one being recorded waits for its end. */
 export function meetingDocs(meetings: MeetingSource, store: Store): IndexDoc[] {
   const labelsOf = labelIndex(store)
   const recording = meetings.recordingId()
   return meetings.list().flatMap((m) => {
     if (m.id === recording) return []
-    const labels = [...new Set((m.links ?? []).flatMap((l) => labelsOf(l.topicId ? `topic:${l.topicId}` : `work:${store.data.tasks.find((t) => t.projectId === l.projectId && t.key === l.workKey)?.id}`, l.projectId)))].sort()
+    const labels = meetingLabels(m, labelsOf, store.data.tasks)
     return [
       {
         source: `mtg:${m.id}`,
