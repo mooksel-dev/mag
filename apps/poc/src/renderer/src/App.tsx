@@ -32,6 +32,7 @@ import { workTarget } from './artifacts'
 import { ownerSession, TopicConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
+import { inboxCount } from './Inbox'
 import { Logo } from './Logo'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { useTheme } from './useTheme'
@@ -56,7 +57,7 @@ interface HomeIn { projectId: string; group: HomeGroup | null }
 
 /**
  * One project's window (ux-odna-rozmova-na-robotu.2), laid out as rail | topics column | the open screen
- * (slack-like-shell-rail-resizable.1): the rail picks what the column shows (Topics, Meetings); the column lists the
+ * (slack-like-shell-rail-resizable.1): the rail picks what the column shows (Inbox, Topics, Meetings); the column lists the
  * project's whole workspace, a section per project, and is resized by its edge; the open topic's screen (or Home) is in
  * the rest, what a topic made in its artifacts pane or drawer (topics-a-tree-of-agent.3).
  */
@@ -76,7 +77,7 @@ export function App({ projectId }: { projectId: string }) {
   const railKey = `mag.rail.${projectId}`
   const [section, setSection] = useState<RailSection>(() => {
     const saved = localStorage.getItem(railKey)
-    return saved === 'meetings' || saved === 'people' ? saved : 'topics'
+    return saved === 'meetings' || saved === 'people' || saved === 'inbox' ? saved : 'topics'
   })
   const pickSection = (s: RailSection) => {
     setSection(s)
@@ -197,7 +198,7 @@ export function App({ projectId }: { projectId: string }) {
         <Rail
           section={section}
           onSection={pickSection}
-          badges={{ topics: topicsWaiting }}
+          badges={{ inbox: inboxCount(state, workspace.id), topics: topicsWaiting }}
           onSearch={() => setSearching(true)}
           onNew={() => select(null)}
           theme={theme}

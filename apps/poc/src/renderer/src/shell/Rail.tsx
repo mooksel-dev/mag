@@ -10,9 +10,9 @@ const THEME_NEXT: Record<ThemeMode, { next: ThemeMode; icon: IconName; label: st
 }
 
 /**
- * The rail at the window's left (slack-like-shell-rail-resizable.1): the sections the column shows (Topics, Meetings, People)
- * with what waits on the user as a badge, Search; at the bottom + (New topic), the theme and the workspace's profile.
- * Sections not built yet (Inbox, Routines, Library) are not shown.
+ * The rail at the window's left (slack-like-shell-rail-resizable.1): the sections the column shows (Inbox, Topics, Meetings,
+ * People) with what waits on the user as a badge, Search; at the bottom + (New topic), the theme and the workspace's
+ * profile. Sections not built yet (Routines, Library) are not shown.
  */
 export function Rail({ section, onSection, badges, onSearch, onNew, theme, onTheme, workspace, profileOn, onProfile }: {
   section: RailSection
@@ -41,6 +41,7 @@ export function Rail({ section, onSection, badges, onSearch, onNew, theme, onThe
   const t = THEME_NEXT[theme]
   return (
     <nav className="rail" aria-label="Sections">
+      {item('inbox', 'inbox', 'Inbox')}
       {item('topics', 'chat', 'Topics')}
       {item('meetings', 'mic', 'Meetings')}
       {item('people', 'users', 'People')}
