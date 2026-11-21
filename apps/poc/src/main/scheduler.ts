@@ -6,6 +6,7 @@ import type { Orchestrator } from './orchestrator'
 import { changedRepos, prChecks, prFeedback, prMergeable, prState, removeWorktree, type PrFeedback } from './git.ts'
 import { log } from './log.ts'
 import type { People } from './core/services/people/index.ts'
+import type { Routines } from './core/services/routines/index.ts'
 
 const PR_POLL_EVERY_MS = 60_000
 /** Steps start this long after the change that made them next, so one burst of changes starts each once. */
@@ -262,4 +263,23 @@ export function startPeopleSync(store: Pick<Store, 'workspaces'>, people: Pick<P
   void check()
   setInterval(check, PEOPLE_CHECK_EVERY_MS).unref()
   return { checkNow: check }
+}
+
+/** How often due routines are looked for: a slot is a whole minute. */
+export const ROUTINE_TICK_MS = 60_000
+
+/** Starts each routine due at `now` (routines-scheduled-drafts-and-a.1); one that fails to start is logged, the rest still run. */
+export function routineTick(routines: Pick<Routines, 'due'>, run: (id: string) => Promise<unknown>, now: number) {
+  for (const r of routines.due(now)) {
+    log.info('scheduler', `routine ${r.title} is due`)
+    run(r.id).catch((e) => log.warn('scheduler', `routine ${r.title}: the run did not start: ${(e as Error).message}`))
+  }
+}
+
+/** Runs due routines now (a slot missed while mag was closed, once) and on every tick after. */
+export function startRoutineSchedule(routines: Pick<Routines, 'due'>, run: (id: string) => Promise<unknown>) {
+  const tick = () => routineTick(routines, run, Date.now())
+  tick()
+  setInterval(tick, ROUTINE_TICK_MS).unref()
+  return { tickNow: tick }
 }

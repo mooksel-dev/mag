@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store } from './store.ts'
-import { startScheduler } from './scheduler.ts'
+import { routineTick, startScheduler } from './scheduler.ts'
+import { createRoutines, type Routine, type RoutineRun } from './core/services/routines/index.ts'
 import type { Orchestrator } from './orchestrator.ts'
 import { projectInbox } from '@mag/core'
 
@@ -120,4 +121,40 @@ test('peopleSyncDue: workspaces with a directory, a day after their last sync (w
   const last: Record<string, number> = { slack: 0, fresh: 10, orgs: 0 }
   const now = PEOPLE_SYNC_EVERY_MS + 5
   assert.deepEqual(peopleSyncDue([w('none'), w('off', { slack: false, githubOrgs: [] }), w('slack', { slack: true }), w('fresh', { atlassian: true }), w('orgs', { githubOrgs: ['aura'] })], (id) => last[id] ?? 0, now), ['slack', 'orgs'])
+})
+
+test('routineTick: a due slot starts once across ticks and a restart; a start that fails is logged, the others run (routines-scheduled-drafts-and-a.1)', async () => {
+  const rows = { routines: [] as Routine[], runs: [] as RoutineRun[] }
+  const put = <T extends { id: string }>(list: T[], x: T) => {
+    const i = list.findIndex((y) => y.id === x.id)
+    if (i >= 0) list[i] = x
+    else list.push(x)
+  }
+  const records = {
+    routines: () => rows.routines,
+    putRoutine: (r: Routine) => put(rows.routines, r),
+    removeRoutine: () => {},
+    runs: () => rows.runs,
+    putRun: (r: RoutineRun) => put(rows.runs, r),
+    removeRuns: () => {},
+  }
+  const clock = { t: new Date(2026, 10, 17, 12).getTime() }
+  const open = () => createRoutines({ records, kinds: ['report'], now: () => clock.t })
+  let routines = open()
+  const a = routines.save({ workspaceId: 'w', title: 'A', schedule: '0 9 * * thu', kind: 'report' })
+  const b = routines.save({ workspaceId: 'w', title: 'B', schedule: '0 9 * * thu', kind: 'report' })
+  const started: string[] = []
+  const run = async (id: string) => {
+    if (id === a.id) throw new Error('boom')
+    started.push(routines.startRun(id, 'slot').routineId)
+  }
+  routineTick(routines, run, clock.t)
+  assert.deepEqual(started, [])
+  clock.t = new Date(2026, 10, 19, 9, 0, 30).getTime()
+  routineTick(routines, run, clock.t)
+  routineTick(routines, run, clock.t)
+  routines = open()
+  routineTick(routines, run, clock.t)
+  await new Promise((r) => setImmediate(r))
+  assert.deepEqual(started, [b.id])
 })

@@ -248,3 +248,20 @@ test('onWriteAllowed: an allowed write to a destination and an auto one are repo
   assert.equal(JSON.parse(await call('mcp__claude_ai_Slack__slack_send_message', { channel_id: 'C0AUTOPUB', message: 'm' }, 'a1')).behavior, 'allow')
   assert.deepEqual(seen, ['topic Slack C0DATAREM', 'topic Slack C0AUTOPUB'])
 })
+
+test("a routine's drafter: an integration's read runs at once; a write or an ask-mode call is denied with no card (routines-scheduled-drafts-and-a.1)", async () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-approvals-')), 'db.json'))
+  const ws = store.createWorkspace('acme')
+  store.updateWorkspace(ws.id, { integrations: { drafter: { claude_ai_Jira: 'ask' } } })
+  store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'Slack' }, { id: 'claude_ai_Jira', name: 'Jira' }])
+  const session = store.createSession({ projectId: null, workspaceId: ws.id, taskId: null, role: 'drafter', agent: 'claude-code', status: 'running' })
+  const approvals = new Approvals(store, { pollMs: 30, graceMs: 30 })
+  const ask = async (tool_name: string, input: object) => JSON.parse(await approvals.request({ sessionId: session.id }, { tool_name, input, tool_use_id: tool_name }))
+  assert.deepEqual(await ask('mcp__claude_ai_Slack__slack_search_public', { query: 'in:#dbo' }), { behavior: 'allow', updatedInput: { query: 'in:#dbo' } })
+  for (const [tool, input] of [['mcp__claude_ai_Slack__slack_send_message', { channel: '#dbo', text: 'hi' }], ['mcp__claude_ai_Jira__searchJiraIssuesUsingJql', { jql: 'project = PRVP' }], ['Bash', { command: 'gh pr comment 1 -b x' }]] as const) {
+    const answer = await ask(tool, input)
+    assert.equal(answer.behavior, 'deny', tool)
+    if (tool !== 'Bash') assert.match(answer.message, /only reads/)
+  }
+  assert.equal(session.items.length, 0, 'no card')
+})

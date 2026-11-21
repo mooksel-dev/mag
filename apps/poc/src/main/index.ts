@@ -34,6 +34,7 @@ import { createSearch } from './core/services/search/index.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
 import { createSearchFeed } from './search-feed.ts'
 import { startPacks } from './packs'
+import { startRoutines } from './routines'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
 
@@ -492,6 +493,7 @@ app.whenReady().then(async () => {
   actions.packs = packs
   orch.packs = packs
   onMeetingPeople = startMeetingPeople(store, people, meetings, peopleIpc.changed)
+  startRoutines({ store, orch, deliverables, packs, inbox })
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

@@ -11,8 +11,8 @@ const THEME_NEXT: Record<ThemeMode, { next: ThemeMode; icon: IconName; label: st
 
 /**
  * The rail at the window's left (slack-like-shell-rail-resizable.1): the sections the column shows (Inbox, Topics, Meetings,
- * People, Library) with what waits on the user as a badge, Search; at the bottom + (New topic), the theme and the
- * workspace's profile. Sections not built yet (Routines) are not shown.
+ * People, Library, Routines) with what waits on the user as a badge, Search; at the bottom + (New topic), the theme and
+ * the workspace's profile.
  */
 export function Rail({ section, onSection, badges, onSearch, onNew, theme, onTheme, workspace, profileOn, onProfile }: {
   section: RailSection
@@ -46,6 +46,7 @@ export function Rail({ section, onSection, badges, onSearch, onNew, theme, onThe
       {item('meetings', 'mic', 'Meetings')}
       {item('people', 'users', 'People')}
       {item('library', 'library', 'Library')}
+      {item('routines', 'repeat', 'Routines')}
       <button className="railbtn" aria-haspopup="dialog" aria-label="Search" title="Search topics (⌘K)" onClick={onSearch}>
         <Icon name="search" size={18} />
         <span className="raillabel">Search</span>
