@@ -1,30 +1,31 @@
 import { useState, type CSSProperties, type PointerEvent } from 'react'
-import { PANES, dragWidth, parseWidth, type PaneSide } from './paneWidth'
+import { dragWidth, paneKey, storedWidth, type PaneSide } from './paneWidth'
 
-const load = (side: PaneSide): number | null => {
+const load = (side: PaneSide, scope?: string): number | null => {
   try {
-    return parseWidth(localStorage.getItem(PANES[side].key), side)
+    return storedWidth((k) => localStorage.getItem(k), side, scope)
   } catch {
     return null
   }
 }
 
-const save = (side: PaneSide, w: number | null) => {
+const save = (side: PaneSide, w: number | null, scope?: string) => {
   try {
-    if (w === null) localStorage.removeItem(PANES[side].key)
-    else localStorage.setItem(PANES[side].key, String(w))
+    // A window's reset is stored as empty, so it does not fall back to the width kept before widths were per window.
+    if (w === null && !scope) localStorage.removeItem(paneKey(side))
+    else localStorage.setItem(paneKey(side, scope), w === null ? '' : String(w))
   } catch { /* ignore */ }
 }
 
 /**
  * A sidebar's width, restored from localStorage (null: the stylesheet's default), as the CSS variable the pane reads
- * (--left-w, --right-w); `set` keeps it, null resets it.
+ * (--left-w, --right-w); `set` keeps it, null resets it. `scope` keeps one width per window.
  */
-export function usePaneWidth(side: PaneSide): { width: number | null; style: CSSProperties; set: (w: number | null) => void } {
-  const [width, setWidth] = useState(() => load(side))
+export function usePaneWidth(side: PaneSide, scope?: string): { width: number | null; style: CSSProperties; set: (w: number | null) => void } {
+  const [width, setWidth] = useState(() => load(side, scope))
   const set = (w: number | null) => {
     setWidth(w)
-    save(side, w)
+    save(side, w, scope)
   }
   return { width, style: (width === null ? {} : { [`--${side}-w`]: `${width}px` }) as CSSProperties, set }
 }
@@ -70,7 +71,7 @@ export function PaneHandle({ side, onResize }: { side: PaneSide; onResize: (w: n
       className={`panehandle${dragging ? ' on' : ''}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label={side === 'left' ? 'Resize the sidebar' : 'Resize the artifacts pane'}
+      aria-label={side === 'left' ? 'Resize the topics column' : 'Resize the artifacts pane'}
       title="Drag to resize; double-click for the default width"
       onPointerDown={down}
       onDoubleClick={() => onResize(null)}

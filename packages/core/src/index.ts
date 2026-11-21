@@ -77,6 +77,8 @@ export interface Workspace {
   agents: Partial<Record<AgentRole, ModelChoice>>
   /** As Project.integrations, for its projects. */
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
+  /** The topics and works the user starred, in the order starred; missing = none (slack-like-shell-rail-resizable.1). */
+  starred?: ItemRef[]
   createdAt: number
 }
 

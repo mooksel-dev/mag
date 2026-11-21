@@ -746,7 +746,25 @@ button.danger { background: var(--danger-bg); border-color: var(--danger-line); 
 .popset { padding: 12px; overflow: auto; }
 
 /* The work list and one screen (redesign-start-screen-big-composer.3): no right column; a diagram opens in a drawer. */
-.layout { --left-w: 280px; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--left-w) 0 minmax(0, 1fr); border-top: 1px solid var(--line); }
+.layout { --left-w: 280px; --rail-w: 60px; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--rail-w) var(--left-w) 0 minmax(0, 1fr); border-top: 1px solid var(--line); }
+/* The rail (slack-like-shell-rail-resizable.1): sections with badges, then +, theme and the profile at the bottom. */
+.rail { min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: var(--sp-2) 0; background: var(--side); border-right: 1px solid var(--line); }
+.railbtn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 48px; padding: 6px 0; border: none; border-radius: var(--r); background: none; color: var(--muted); font-weight: 400; }
+.railbtn:hover { background: var(--hover); color: var(--text); }
+.railbtn.on { background: var(--surface); color: var(--text); box-shadow: var(--hi); }
+.raillabel { font-size: 10px; line-height: 1; }
+.railbadge { position: absolute; top: 2px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--r-pill); background: var(--amber-fg); color: var(--surface); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+.railavatar { display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--r); background: var(--accent); color: var(--surface); font-weight: 600; font-size: var(--fs-sm); }
+/* The topics column's sections: Starred, one per Project label, No project. */
+.colsection { margin-top: 6px; }
+.colhead .wlgname { color: var(--text); font-size: var(--fs-sm); }
+.colhead .wlgname .psq { flex: none; }
+.colname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wlgname.unread .colname { font-weight: 700; }
+.colcount { margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--amber-bg); color: var(--amber-fg); font-size: var(--fs-xs); font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+.colbody { margin-left: 6px; }
+.colhead2 { font-weight: 600; padding: 4px 6px; }
+.wlrow.you .wlmain .title { font-weight: 700; }
 /* A sidebar's drag handle (topic-screen-one-new-compact.1): a zero-width item whose grip straddles the pane's edge. */
 .panehandle { position: relative; z-index: 5; flex: none; width: 0; }
 .panehandle::before { content: ''; position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; }

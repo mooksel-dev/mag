@@ -919,6 +919,18 @@ test('updateWorkspace: name, profile, notes and repos persist; a repo of its pro
   assert.equal(w.createdAt, personal.createdAt)
 })
 
+test('updateWorkspace: starred topics and works persist in their order; a workspace from before has none', () => {
+  const file = beforeWorkspaces()
+  const store = new Store(file)
+  const [aura, personal] = store.workspaces()
+  assert.equal(aura.starred, undefined)
+  store.updateWorkspace(aura.id, { starred: ['work:w1', 'topic:t1'] })
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.workspace(aura.id).starred, ['work:w1', 'topic:t1'])
+  assert.equal(again.workspace(personal.id).starred, undefined)
+})
+
 test('a project moved to another workspace, or given a repo, adds its repos there; a new project goes to the last opened project’s workspace', () => {
   const store = new Store(beforeWorkspaces())
   const [aura, personal] = store.workspaces()
