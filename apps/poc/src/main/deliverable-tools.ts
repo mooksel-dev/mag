@@ -35,11 +35,13 @@ function mdArg(args: Record<string, unknown>): string {
 const line = (dlv: Deliverables, d: Deliverable) =>
   `- ${dlv.refOf(d)} · ${d.kind} · ${d.title} · ${d.state}${d.finalVersion ? ` · final v${d.finalVersion}` : ''} · v${d.versions.map((v) => v.n).join(', v')}${d.labels.length ? ` · labels ${d.labels.join(', ')}` : ''}`
 
-export function deliverableTool(dlv: Deliverables | undefined, origin: Origin, name: 'save_deliverable' | 'list_deliverables' | 'read', args: Record<string, unknown>): string {
+/** `onSaved`: told the ref of what save_deliverable saved. */
+export function deliverableTool(dlv: Deliverables | undefined, origin: Origin, name: 'save_deliverable' | 'list_deliverables' | 'read', args: Record<string, unknown>, onSaved?: (ref: string) => void): string {
   if (!dlv) throw new Error('Deliverables are not ready yet')
   if (name === 'save_deliverable') {
     const ref = text(args.ref)
     const saved = dlv.save({ ref, kind: text(args.kind), title: text(args.title), md: mdArg(args), labels: strings(args.labels), destination: destinationArg(args.destination) }, origin)
+    onSaved?.(saved.ref)
     return `Saved ${saved.ref} v${saved.n} (${saved.deliverable.state}): ${saved.path}. The user sees it in the topic's panel; save the next version with ref "${saved.ref}".`
   }
   if (name === 'list_deliverables') {

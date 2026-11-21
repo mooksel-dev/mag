@@ -20,6 +20,7 @@ import { readRef, searchWorkspace } from './search-tools.ts'
 import type { Approvals, ParkResult } from './approvals.ts'
 import { blockedPush, projectBases } from './git-push.ts'
 import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
+import { routineTool, type RoutineToolDeps } from './routine-tools.ts'
 import type { ShellRun } from './core/clients/shell/index.ts'
 import { workspaceFolder, type Deliverables, type Origin } from './core/services/deliverables/index.ts'
 import { claimsTool, deliverableTool } from './deliverable-tools.ts'
@@ -114,6 +115,10 @@ export interface ToolActions {
   people?: Pick<People, 'who' | 'find' | 'activity' | 'prStats'>
   /** get_pack, propose_rule and the verifier's rubric; set once started. */
   packs?: PackPrompts
+  /** save_routine, list_routines, add_inbox_item; set once started. */
+  routines?: RoutineToolDeps
+  /** A routine run's session saved a deliverable: the run's draft. */
+  routineSaved?: (sessionId: string, deliverableRef: string) => void
 }
 
 /**
@@ -1071,8 +1076,19 @@ function sharedTool(
       return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
 
     case 'save_deliverable':
-    case 'list_deliverables':
-      return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
+    case 'list_deliverables': {
+      const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      // A routine's run: its draft goes in the run's Inbox item.
+      const saved = caller?.role === 'drafter' ? (ref: string) => actions.routineSaved?.(caller.id, ref) : undefined
+      return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args, saved)
+    }
+
+    case 'save_routine':
+    case 'list_routines':
+    case 'add_inbox_item': {
+      const caller = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+      return routineTool(actions.routines, store.data.projects, { workspaceId: project.workspaceId, projectId: project.id || null, sessionId: caller?.id ?? null, drafter: caller?.role === 'drafter' }, name, args)
+    }
 
     case 'set_claims':
     case 'verify_deliverable':

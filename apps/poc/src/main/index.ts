@@ -499,7 +499,8 @@ app.whenReady().then(async () => {
   actions.packs = packs
   orch.packs = packs
   onMeetingPeople = startMeetingPeople(store, people, meetings, peopleIpc.changed)
-  startRoutines({ store, orch, deliverables, packs, inbox })
+  actions.routines = { routines: startRoutines({ store, orch, inbox }), inbox }
+  actions.routineSaved = (sessionId, ref) => orch.routineRunner?.saved(sessionId, ref)
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

@@ -7,7 +7,9 @@ import { errorText, LabelChip } from './labels/LabelChips'
 import { INBOX_GROUPS, entryLabelIds, entryRef, inboxGroup, inboxMatches, openContext, openTarget, snoozePresets, workspaceInbox, type InboxFilter } from './inboxView'
 import type { Selection } from './WorkList'
 import { Caret } from './ui/Icon'
-import { routineOfRef } from '../../main/core/services/routines/refs.ts'
+import { failedKey, routineOfRef, runOfKey } from '../../main/core/services/routines/refs.ts'
+import { ArtifactDrawer } from './Drawer'
+import type { ArtifactTarget } from './artifacts'
 
 const mag = window.mag
 
@@ -48,6 +50,7 @@ export function Inbox({ workspace, state, onSelect }: { workspace: Workspace; st
   const [stored, setFilter] = useInboxFilter(workspace.id)
   const [error, setError] = useState<string | null>(null)
   const [folded, setFolded] = useState<Set<string>>(new Set())
+  const [shownArtifact, setShownArtifact] = useState<ArtifactTarget | null>(null)
   const view = workspaceLabels(workspace.id, state)
   const labels = new Map(view.flatMap((v) => v.labels).map((l) => [l.id, l]))
   // A label deleted since it was picked filters nothing.
@@ -106,7 +109,7 @@ export function Inbox({ workspace, state, onSelect }: { workspace: Workspace; st
               {!closed && (
                 <div className="colbody">
                   {items.map(({ e, labelIds }) => (
-                    <InboxRow key={e.key} entry={e} chips={labelIds.flatMap((id) => labels.get(id) ?? [])} state={state} onOpen={() => open(e)} run={run} />
+                    <InboxRow key={e.key} entry={e} chips={labelIds.flatMap((id) => labels.get(id) ?? [])} state={state} onOpen={() => open(e)} onArtifact={setShownArtifact} run={run} />
                   ))}
                 </div>
               )}
@@ -114,15 +117,17 @@ export function Inbox({ workspace, state, onSelect }: { workspace: Workspace; st
           )
         })}
       </div>
+      {shownArtifact && <ArtifactDrawer open={shownArtifact} state={state} onClose={() => setShownArtifact(null)} onGone={() => setShownArtifact(null)} onOpenKey={() => {}} onSelect={onSelect} />}
     </nav>
   )
 }
 
-function InboxRow({ entry: e, chips, state, onOpen, run }: {
+function InboxRow({ entry: e, chips, state, onOpen, onArtifact, run }: {
   entry: InboxEntry
   chips: { id: string; name: string; color: string }[]
   state: AppState
   onOpen: () => void
+  onArtifact: (a: ArtifactTarget) => void
   run: (p: Promise<unknown>) => void
 }) {
   const [snoozing, setSnoozing] = useState(false)
@@ -131,8 +136,13 @@ function InboxRow({ entry: e, chips, state, onOpen, run }: {
   const task = e.taskId ? state.tasks.find((t) => t.id === e.taskId) : undefined
   const topic = !task && e.sessionId ? state.sessions.find((s) => s.id === e.sessionId) : undefined
   const about = task ? `${task.key} · ${task.title}` : topic?.title
-  // A routine's failure (routines-scheduled-drafts-and-a.1).
-  const retry = e.added ? routineOfRef(e.ref) : null
+  // A routine's failure (routines-scheduled-drafts-and-a.1), and a run's log and draft (.2).
+  const failed = e.added ? routineOfRef(e.ref) : null
+  const retry = failed && e.key === failedKey(failed) ? failed : null
+  const ran = e.added ? runOfKey(e.key) : null
+  const routineRun = ran ? (state.routineRuns ?? []).find((r) => r.id === ran.runId) : undefined
+  const log = routineRun?.sessionId && state.sessions.some((s) => s.id === routineRun.sessionId) ? routineRun.sessionId : null
+  const draft = routineRun?.deliverableRef ? (state.deliverables ?? []).find((d) => `${d.folder}:dlv:${d.slug}` === routineRun.deliverableRef) : undefined
   return (
     <div className="inboxrow">
       <button className="inboxmain" title="Open" onClick={onOpen}>
@@ -149,6 +159,8 @@ function InboxRow({ entry: e, chips, state, onOpen, run }: {
       <div className="inboxacts" ref={box}>
         <button className="small" onClick={onOpen}>Open</button>
         {retry && <button className="small" title="Run the routine again now" onClick={() => run(mag.runRoutine(retry).then(() => mag.doneInbox(e.key)))}>Retry</button>}
+        {log && <button className="small" title="The run's session" onClick={() => onArtifact({ kind: 'agent', sessionId: log })}>Log</button>}
+        {draft && <button className="small" title="The draft it made" onClick={() => onArtifact({ kind: 'deliverable', id: draft.id })}>Draft</button>}
         <button className="small" aria-haspopup="menu" aria-expanded={snoozing} onClick={() => setSnoozing((s) => !s)}>Snooze</button>
         <button className="small" title="Hide until it has new activity" onClick={() => run(mag.doneInbox(e.key))}>Done</button>
         {snoozing && (

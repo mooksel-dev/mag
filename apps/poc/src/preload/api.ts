@@ -29,7 +29,7 @@ export interface AppState {
   inbox: InboxEntry[]
   /** Deliverables with their versions; read a version's text with readDeliverable. */
   deliverables: Deliverable[]
-  /** Scheduled drafts and their runs (routines-scheduled-drafts-and-a.1). */
+  /** Routines (a trigger and a prompt) and their runs (routines-scheduled-drafts-and-a.1, .2). */
   routines: Routine[]
   routineRuns: RoutineRun[]
   claudeBin: string | null
@@ -417,13 +417,11 @@ export interface MagApi {
   snoozeInbox(key: string, until: number | 'activity'): Promise<void>
   /** Hides an inbox item until its source has new activity. */
   doneInbox(key: string): Promise<void>
-  /** Creates or edits a routine; throws with what is wrong (a bad schedule, kind). */
+  /** Creates or edits a routine; throws with what is wrong (a bad schedule, no prompt). */
   saveRoutine(input: RoutineInput): Promise<Routine>
   removeRoutine(id: string): Promise<void>
   /** Runs it now, outside its schedule; resolves once the run started. Throws while one runs. */
   runRoutine(id: string): Promise<RoutineRun>
-  /** Shows the routine's pack (prompt, template, rubric, rules) in Finder. */
-  revealRoutinePack(id: string): Promise<void>
   meetingStatus(): Promise<MeetingStatus>
   onMeetingStatus(cb: (s: MeetingStatus) => void): () => void
   /** Starts recording the call; the first time macOS asks for the microphone and system audio. */
