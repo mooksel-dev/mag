@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AgentSession, Project, Task } from '@mag/core'
-import { allCards, columnCards, starredCards, toggleStar, waitingCount } from './topicsColumn.ts'
+import { allCards, columnCards, onlyProject, starredCards, toggleStar, waitingCount } from './topicsColumn.ts'
 
 const NOW = 100 * 24 * 60 * 60 * 1000
 const project = (id: string, workspaceId = 'w'): Project => ({
@@ -44,4 +44,12 @@ test('toggleStar: adds at the end, takes out when starred', () => {
   assert.deepEqual(toggleStar(undefined, 'topic:t'), ['topic:t'])
   assert.deepEqual(toggleStar(['work:w'], 'topic:t'), ['work:w', 'topic:t'])
   assert.deepEqual(toggleStar(['work:w', 'topic:t'], 'work:w'), ['topic:t'])
+})
+
+test('onlyProject: a window filtered to a project lists its section only, no loose topics; null leaves the column whole', () => {
+  const only = onlyProject(column, 'b')
+  assert.deepEqual(only.projects.map((p) => p.project.id), ['b'])
+  assert.deepEqual(only.loose, [])
+  assert.deepEqual(starredCards(only, ['topic:loose', 'work:wb', 'topic:ta']).map((c) => c.id), ['wb'], 'Starred keeps the project\'s rows')
+  assert.equal(onlyProject(column, null), column)
 })

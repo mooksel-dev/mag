@@ -210,7 +210,7 @@ app.whenReady().then(async () => {
   const scheduler = startScheduler(store, orch)
   const claudeBin = await claudeCode.detect()
 
-  const snapshot = (): AppState => appState(store, { claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects(), inbox: inbox.items() })
+  const snapshot = (): AppState => appState(store, { claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects(), openWorkspaces: windows.openWorkspaces(), inbox: inbox.items() })
   // Streamed items go as events; the state (no items) at most once per macrotask.
   const broadcast = coalesce(() => windows.broadcast(snapshot()))
   store.onChange(broadcast)
@@ -450,6 +450,8 @@ app.whenReady().then(async () => {
   handle('integration:enable', (_, sid: string, itemId: string, mode: 'ask' | 'reads' | 'auto') => orch.enableIntegration(sid, itemId, mode))
   handle('window:open', (_, target: WindowTarget) => windows.openPopout(target))
   handle('window:openProject', (e, projectId: string) => windows.openProjectFrom(e.sender, projectId))
+  handle('window:openWorkspace', (e, workspaceId?: string) => windows.openWorkspaceFrom(e.sender, typeof workspaceId === 'string' ? workspaceId : undefined))
+  handle('window:switchWorkspace', (e, workspaceId: string) => windows.switchWorkspace(e.sender, workspaceId))
   handle('window:openTask', (_, taskId: string) => windows.focusTask(taskId))
   handle('log:crash', (_, c: RendererCrash) => {
     log.error('crash', `renderer error on ${c.screen ?? 'unknown screen'}: ${c.message}`)

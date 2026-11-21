@@ -20,7 +20,8 @@ import { MeetingsSection } from '../Meetings'
 import { PeopleSection } from '../People'
 import { useNow } from '../Tasks'
 import { CardRow, CrashRow, ProjectSection, StarsContext, useFilter, useFolded, useStoredFlag, type HomeGroup, type ListPage, type RowEnv, type Selection, type Stars } from '../WorkList'
-import { allCards, columnCards, starredCards, toggleStar, waitingCount } from '../topicsColumn'
+import { allCards, columnCards, onlyProject, starredCards, toggleStar, waitingCount } from '../topicsColumn'
+import { WorkspaceMenu } from './WorkspaceMenu'
 import { Caret, Icon } from '../ui/Icon'
 
 const mag = window.mag
@@ -33,14 +34,17 @@ export interface OpenPage { kind: ListPage; projectId: string }
 
 /**
  * The column right of the rail (slack-like-shell-rail-resizable.1). Inbox: what waits on the user in the workspace.
- * Topics: the workspace's switcher, New topic, search (⌘K) and filters, then Starred, a section per Project label
- * (ProjectSection: its rows and the user's groups) and No project; closed rows of all of them under Archive. Meetings:
- * today's meetings list and recorder. People: the workspace's persons (who-is-who-people-from.1).
+ * Topics: the workspace's menu "<Workspace> ▾" (WorkspaceMenu), New topic, search (⌘K) and filters, then Starred, a
+ * section per Project label (ProjectSection: its rows and the user's groups) and No project; closed rows of all of them
+ * under Archive. A window filtered to a project lists that project's section only. Meetings: today's meetings list and
+ * recorder. People: the workspace's persons (who-is-who-people-from.1).
  */
-export function TopicsColumn({ workspace, project, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onSearch, meetingId, onOpenMeeting }: {
+export function TopicsColumn({ workspace, only, viewKey, state, section, selected, home, page, picker, onPicker, onSelect, onNew, onNewIn, onOpenPage, onOpenWorkspacePage, onSearch, meetingId, onOpenMeeting }: {
   workspace: Workspace
-  /** The window's project. */
-  project: Project
+  /** The project the window is filtered to. */
+  only: Project | null
+  /** Keys this window's stored filter. */
+  viewKey: string
   state: AppState
   section: RailSection
   selected: Selection | null
@@ -55,18 +59,21 @@ export function TopicsColumn({ workspace, project, state, section, selected, hom
   /** Home in a project, creating into one of its groups or at its top. */
   onNewIn: (projectId: string, g: HomeGroup | null) => void
   onOpenPage: (p: OpenPage) => void
+  /** The workspace's settings or its labels. */
+  onOpenWorkspacePage: (kind: 'workspace' | 'labels') => void
   onSearch: () => void
   meetingId: string | null
   /** `at`: hh:mm:ss of a transcript line a search hit points at. */
   onOpenMeeting: (id: string, at?: string) => void
 }) {
   const now = useNow(15_000)
-  const [filter, setFilter] = useFilter(project.id)
+  const [filter, setFilter] = useFilter(viewKey)
+  const [menu, setMenu] = useState(false)
   const [crash, setCrash] = useState<CrashReport | null>(null)
   useEffect(() => {
     mag.lastCrash().then(setCrash, () => {})
   }, [])
-  const column = columnCards(workspace.id, state.projects, state.tasks, state.sessions, now)
+  const column = onlyProject(columnCards(workspace.id, state.projects, state.tasks, state.sessions, now), only?.id ?? null)
   const all = allCards(column)
   const starredList = workspace.starred ?? []
   const starred = new Set<string>(starredList)
@@ -80,6 +87,7 @@ export function TopicsColumn({ workspace, project, state, section, selected, hom
   const sections = column.projects.map(({ project: p, cards }) => ({ project: p, cards, sidebar: sidebarRows(p.sidebar ?? [], cards, shown) }))
   const starRows = starredCards(column, starredList).filter((c) => rowMatches(c, filter))
   const looseOpen = column.loose.filter((c) => !c.closed && shown(c))
+  const showLoose = !only && (!hiding || looseOpen.length > 0)
   const closedRows = [...sections.flatMap((s) => s.sidebar.closed), ...column.loose.filter((c) => c.closed)]
   // Counts count each row that matches on its own, a chat's works included: "Waiting on you 2" is two things to act on.
   const counted = countedCards(all)
@@ -115,11 +123,23 @@ export function TopicsColumn({ workspace, project, state, section, selected, hom
       <nav className="worklist" aria-label="Topics">
         <div className="wlhead2">
           <div className="projmenu">
-            <button className="projbtn" aria-haspopup="dialog" aria-expanded={!!picker} title="Switch project (⌘O)" onClick={() => onPicker(picker ? null : 'open')}>
-              <span className="pname">{workspace.name}</span>
+            <button className="projbtn" aria-haspopup="menu" aria-expanded={menu || !!picker} title="Switch workspace, open a new window, settings" onClick={() => { onPicker(null); setMenu(!menu) }}>
+              <span className="pname">{workspace.name}{only && <span className="wsonly"> · {only.name}</span>}</span>
               <Icon name="chev-d" size={12} className="caret" />
             </button>
-            {picker && <ProjectPicker key={picker} state={state} currentId={project.id} mode={picker} onClose={() => onPicker(null)} />}
+            {menu && (
+              <WorkspaceMenu
+                current={workspace}
+                workspaces={state.workspaces}
+                only={only}
+                openWorkspaces={state.openWorkspaces}
+                onClose={() => setMenu(false)}
+                onSettings={() => onOpenWorkspacePage('workspace')}
+                onLabels={() => onOpenWorkspacePage('labels')}
+                onPicker={onPicker}
+              />
+            )}
+            {picker && <ProjectPicker key={picker} state={state} currentId={only?.id ?? null} mode={picker} onClose={() => onPicker(null)} />}
           </div>
           <button className={`newbtn${home ? ' on' : ''}`} aria-current={home ? 'page' : undefined} title="Ask, describe a task, review a PR or start from a ticket" onClick={onNew}>
             <Icon name="compose" /> New topic <kbd>⌘N</kbd>
@@ -168,7 +188,7 @@ export function TopicsColumn({ workspace, project, state, section, selected, hom
               onOpenPage={(kind) => onOpenPage({ kind, projectId: s.project.id })}
             />
           ))}
-          {(!hiding || looseOpen.length > 0) && (
+          {showLoose && (
             <section className="colsection wlnoproject" aria-label="No project">
               <div className="wlgrp colhead">
                 <button className={`wlgname${looseWaiting ? ' unread' : ''}`} aria-expanded={!looseClosed} onClick={() => setLooseClosed(!looseClosed)} title="Topics of this workspace without a project; put one into a project with its Project label">
