@@ -297,7 +297,7 @@ app.whenReady().then(async () => {
     commandRuns.set(runId, run)
     try {
       const done = await run.done
-      orch.commandRan(sessionId, command, cwd, done.code, output)
+      void orch.commandRan(sessionId, command, cwd, done.code, output)
       return { ...done, cwd }
     } finally {
       commandRuns.delete(runId)

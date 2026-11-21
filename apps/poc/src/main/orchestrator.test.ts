@@ -505,14 +505,22 @@ test('renameChat: project topics only, a non-empty title, kept over the first me
   assert.equal(store.session(id).title, 'Pricing ideas')
 })
 
-test('commandRan: a line in the chat; the agent gets the command, exit code and output with the next message', async () => {
+test('commandRan: an idle agent gets the command, exit code and output at once; one in a turn with its next message', async () => {
   const { store, orch, project } = setup()
   const id = orch.newChat(project.id)
-  orch.commandRan(id, 'git status', '/repo', 1, 'fatal: not a git repository\n')
-  assert.ok(store.session(id).items.some((i) => i.kind === 'notice' && i.text === 'You ran `git status`: exit 1'))
-  await orch.send(id, 'why?')
-  const prompt = opened.at(-1)!.sent.at(-1) ?? ''
-  assert.match(prompt, /^Since your last turn in mag:\n- The user ran a command from this chat, in \/repo:\n```bash\ngit status\n```\nexit 1, output:\n```\nfatal: not a git repository\n```[\s\S]*why\?$/)
+  await orch.commandRan(id, 'git status', '/repo', 1, 'fatal: not a git repository\n')
+  const job = store.session(id).items.find((i) => i.kind === 'job')
+  assert.ok(job?.kind === 'job' && job.title === 'You ran `git status`: exit 1')
+  const live = opened.at(-1)!
+  assert.match(live.sent.at(-1) ?? '', /^The user ran a command from this chat, in \/repo:\n```bash\ngit status\n```\nexit 1, output:\n```\nfatal: not a git repository\n```$/)
+
+  // In a turn: a line now, the output with the next message.
+  await orch.commandRan(id, 'ls', '/repo', 0, 'a b\n')
+  assert.ok(store.session(id).items.some((i) => i.kind === 'notice' && i.text === 'You ran `ls`: done'))
+  live.emit({ type: 'turn.done', ok: true })
+  await tick()
+  await orch.send(id, 'and?')
+  assert.match(live.sent.at(-1) ?? '', /^Since your last turn in mag:\n- The user ran a command from this chat, in \/repo:\n```bash\nls\n```\ndone, output:\n```\na b\n```\n\nand\?$/)
 })
 
 test('nameChat: the title lands after the turn; a failed naming runs again after the next one; a rename meanwhile wins', async () => {
