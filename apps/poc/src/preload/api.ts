@@ -1,9 +1,10 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
+  workspaces: Workspace[]
   projects: Project[]
   tasks: Task[]
   /** Without items: a window loads the items of a session it shows (sessionItems) and follows onSessionItem. */
@@ -153,6 +154,8 @@ export interface MagApi {
   pickDir(): Promise<string | null>
   createProject(name: string): Promise<Project>
   updateProject(id: string, patch: Partial<Project>): Promise<void>
+  /** Name, profile, notes, repos...; a repo of one of its projects can't be removed (rejects). */
+  updateWorkspace(id: string, patch: Partial<Omit<Workspace, 'id' | 'createdAt'>>): Promise<void>
   createTask(t: NewTask): Promise<Task>
   updateTask(id: string, patch: Partial<Task>): Promise<void>
   groom(taskId: string): Promise<void>

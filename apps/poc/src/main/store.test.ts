@@ -9,7 +9,7 @@ import { mirrorItems } from './item-mirror.test-util.ts'
 import { DatabaseSync } from 'node:sqlite'
 import { backupName as dbBackupName } from './core/clients/workspace-db/index.ts'
 import { logTail } from './log.ts'
-import { Store, backupDaily, backupName, writeAtomic } from './store.ts'
+import { Store, WORKSPACE_MAP, backupDaily, backupName, writeAtomic } from './store.ts'
 
 test('window bounds persist per kind without notifying listeners', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
@@ -412,7 +412,7 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
   assert.deepEqual(store.data.sessions.filter((s) => s.id !== 'empty' && s.id !== 'talked').map((s) => [s.role, s.taskId, s.agent, s.titleGenerated, s.items.length]), [['chat', null, 'codex', true, 0], ['chat', null, 'codex', true, 0]])
   assert.equal(store.session('talked').items.length, 2, 'its history stays')
   assert.equal('ideas' in store.data, false)
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
   store.flush()
   const again = new Store(file, 'json')
   assert.equal('ideas' in JSON.parse(readFileSync(file, 'utf8')), false)
@@ -438,7 +438,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 12, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 13, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -447,7 +447,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file, 'json')
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 12)
+      assert.equal(again.data.schemaVersion, 13)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -480,7 +480,7 @@ test('session-tree migration: branchOf becomes parentId; a branch of a deleted t
   const shape = () => store.data.sessions.map((x) => [x.id, x.parentId ?? null, 'branchOf' in x])
   assert.deepEqual(shape(), [['root', null, false], ['branch', 'root', false], ['orphan', null, false], ['plain', null, false]])
   assert.equal(store.session('branch').forkOf, 'root-native')
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
   store.flush()
   assert.deepEqual(new Store(file).data.sessions.map((x) => [x.id, x.parentId ?? null]), [['root', null], ['branch', 'root'], ['orphan', null], ['plain', null]])
 })
@@ -531,7 +531,7 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })
@@ -564,7 +564,7 @@ test("topic-owners migration: a work without a chat topic is owned by its groome
   assert.deepEqual(topic('groomer'), ['chat', null, 'Groomed', null, 1, 'n'])
   assert.deepEqual(topic('done-g'), ['chat', null, 'Old', 6, 1, 'n'])
   assert.deepEqual([store.session('old-g').role, store.session('dev').role], ['groomer', 'developer'], 'an earlier groomer and the developers stay agents of the work')
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
   store.flush()
 })
 
@@ -576,7 +576,7 @@ test('reads-auto migration: an integration on auto goes to reads, the architect 
   }))
   const store = new Store(file)
   assert.deepEqual(store.data.projects[0].integrations, { chat: { slack: 'reads', web: 'off' }, developer: { slack: 'ask', db: 'reads' }, architect: { slack: 'auto' } })
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
   store.flush()
 })
 
@@ -592,7 +592,7 @@ test('effort migration: stored choices of projects and sessions get effort null,
   assert.deepEqual(store.data.projects[0].agents, { chat: { agent: 'claude-code', model: 'opus', effort: null }, developer: { agent: 'codex', model: null, effort: null } })
   assert.deepEqual(store.session('own').choice, { agent: 'claude-code', model: 'sonnet', effort: null })
   assert.equal(store.session('none').choice, undefined, 'no choice of its own: still its role default')
-  assert.equal(store.data.schemaVersion, 12)
+  assert.equal(store.data.schemaVersion, 13)
 })
 
 test('item events: a push appends, an in-place change re-sends its index, a replacement cuts and sends the rest (p0-fast-safe-store-no.1)', () => {
@@ -722,7 +722,7 @@ test('first start imports db.json into mag.sqlite in one go; counts match, the d
   assert.equal(readFileSync(join(dir, 'db.pre-sqlite.json'), 'utf8'), text)
   const db = peek(dir)
   const kinds = Object.fromEntries((db.prepare('SELECT kind, count(*) AS c FROM entities GROUP BY kind').all() as { kind: string; c: number }[]).map((r) => [r.kind, r.c]))
-  assert.deepEqual(kinds, { project: 2, task: 3, session: 3, doc: 1, canvas: 2, event: 2, integration: 1, ui: 1, meta: 1 })
+  assert.deepEqual(kinds, { workspace: 1, project: 2, task: 3, session: 3, doc: 1, canvas: 2, event: 2, integration: 1, ui: 1, meta: 1 })
   const items = Object.fromEntries((db.prepare('SELECT session_id AS s, count(*) AS c FROM items GROUP BY session_id').all() as { s: string; c: number }[]).map((r) => [r.s, r.c]))
   assert.deepEqual(items, { topic: 3, dev: 2 })
 
@@ -736,7 +736,7 @@ test('first start imports db.json into mag.sqlite in one go; counts match, the d
   const again = new Store(file)
   assert.deepEqual(again.data, json.data)
   assert.deepEqual(again.sessionHeaders(), json.sessionHeaders())
-  assert.equal(again.data.schemaVersion, 12)
+  assert.equal(again.data.schemaVersion, 13)
 })
 
 test('an import whose counts differ rolls back: no mag.sqlite, the store runs on db.json and logs why', () => {
@@ -835,7 +835,7 @@ test('a restart on SQLite runs no migration again and keeps the step, its sessio
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>' })
   store.flush()
   const again = new Store(file)
-  assert.equal(again.data.schemaVersion, 12)
+  assert.equal(again.data.schemaVersion, 13)
   assert.deepEqual([again.session(s.id).status, again.sessionHeaders()[0].pendingApprovals], ['idle', []])
   again.flush()
   const third = new Store(file)
@@ -852,4 +852,89 @@ test('a day’s first flush backs up mag.sqlite with VACUUM INTO; db.json gets n
   assert.deepEqual(backups, [dbBackupName(new Date())])
   const copy = new DatabaseSync(join(dir, 'backups', backups[0]))
   assert.equal((copy.prepare("SELECT count(*) AS c FROM entities WHERE kind = 'task'").get() as { c: number }).c, 3)
+})
+
+// workspaces-and-labels-project-as.1: workspaces above projects.
+
+/** A db.json at schemaVersion 12 with the user's four projects, as before workspaces. */
+function beforeWorkspaces() {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-ws-')), 'db.json')
+  const project = (id: string, name: string, repos: string[]) => ({ id, name, repos, notes: '', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: 1 })
+  const projects = [
+    project('dr', 'Aura Data Removal', ['/aura/duff-brewery', '/aura/lisa']),
+    project('mp', 'Money Problems', ['/aura/ftm', '/aura/lisa']),
+    project('mag', 'mag', ['/mag']),
+    project('syn', 'synapse', []),
+  ]
+  writeFileSync(file, JSON.stringify({ projects, tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], schemaVersion: 12 }))
+  return file
+}
+
+test('workspaces migration: Aura and Personal get their projects and the union of their repos; re-running it changes nothing', () => {
+  const file = beforeWorkspaces()
+  const store = new Store(file)
+  assert.equal(store.data.schemaVersion, 13)
+  const ws = store.workspaces()
+  assert.deepEqual(ws.map((w) => [w.name, w.repos]), [['Aura', ['/aura/duff-brewery', '/aura/lisa', '/aura/ftm']], ['Personal', ['/mag']]])
+  const nameOf = (pid: string) => ws.find((w) => w.id === store.project(pid).workspaceId)?.name
+  assert.deepEqual(['dr', 'mp', 'mag', 'syn'].map(nameOf), ['Aura', 'Aura', 'Personal', 'Personal'])
+
+  const before = JSON.stringify(store.data)
+  let calls = 0
+  store.onChange(() => calls++)
+  store.migrateToWorkspaces(WORKSPACE_MAP)
+  assert.equal(JSON.stringify(store.data), before)
+  assert.equal(calls, 0)
+
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.workspaces(), ws, 'a restart keeps the workspaces and runs no migration again')
+  assert.deepEqual(again.data.projects.map((p) => p.workspaceId), store.data.projects.map((p) => p.workspaceId))
+})
+
+test('workspaces migration: a project the map does not name, or whose workspace is gone, goes to the fallback; with no project the fallback is made', () => {
+  const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-ws-')), 'db.json'))
+  assert.deepEqual(store.workspaces().map((w) => w.name), ['Personal'])
+  const p = store.createProject('Side project')
+  store.updateProject(p.id, { repos: ['/side'] })
+  store.data.projects[0].workspaceId = 'gone'
+  store.migrateToWorkspaces({ workspaces: { Work: ['Other'] }, fallback: 'Personal' })
+  assert.deepEqual(store.workspaces().map((w) => [w.name, w.repos]), [['Personal', ['/side']]])
+  assert.equal(store.project(p.id).workspaceId, store.workspaces()[0].id)
+})
+
+test('updateWorkspace: name, profile, notes and repos persist; a repo of its project stays; names are unique', () => {
+  const file = beforeWorkspaces()
+  const store = new Store(file)
+  const [aura, personal] = store.workspaces()
+  store.updateWorkspace(personal.id, { name: ' Home ', profile: 'I lead 3 teams', notes: 'knowledge', repos: ['/mag', '/notes'] })
+  assert.throws(() => store.updateWorkspace(aura.id, { repos: ['/aura/ftm'] }), /\/aura\/duff-brewery \(Aura Data Removal\), \/aura\/lisa \(Aura Data Removal\), \/aura\/lisa \(Money Problems\)/)
+  assert.throws(() => store.updateWorkspace(aura.id, { name: 'home' }), /exists/)
+  assert.throws(() => store.updateWorkspace(aura.id, { name: '  ' }), /needs a name/)
+  assert.throws(() => store.createWorkspace('Aura'), /exists/)
+  assert.throws(() => store.updateWorkspace('nope', { notes: 'x' }), /No workspace/)
+  store.flush()
+  const w = new Store(file).workspace(personal.id)
+  assert.deepEqual([w.name, w.profile, w.notes, w.repos], ['Home', 'I lead 3 teams', 'knowledge', ['/mag', '/notes']])
+  assert.equal(w.createdAt, personal.createdAt)
+})
+
+test('a project moved to another workspace, or given a repo, adds its repos there; a new project goes to the last opened project’s workspace', () => {
+  const store = new Store(beforeWorkspaces())
+  const [aura, personal] = store.workspaces()
+  store.updateProject('syn', { repos: ['/synapse'] })
+  assert.deepEqual(store.workspace(personal.id).repos, ['/mag', '/synapse'])
+  store.updateProject('mag', { workspaceId: aura.id })
+  assert.deepEqual(store.workspace(aura.id).repos, ['/aura/duff-brewery', '/aura/lisa', '/aura/ftm', '/mag'])
+  assert.deepEqual(store.workspace(personal.id).repos, ['/mag', '/synapse'], 'the old workspace keeps the repo')
+  assert.throws(() => store.updateProject('mag', { workspaceId: 'nope' }), /No workspace/)
+
+  store.touchRecent('syn')
+  assert.equal(store.createProject('next').workspaceId, personal.id)
+  assert.equal(store.createProject('there', aura.id).workspaceId, aura.id)
+})
+
+test('the state windows get has the workspaces', () => {
+  const store = new Store(beforeWorkspaces())
+  assert.deepEqual(appState(store, { claudeBin: null, appVersion: '0', openProjects: [] }).workspaces, store.workspaces())
 })
