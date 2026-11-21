@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="uk" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mag: від інструмента розробника до робочого простору</title>
+<script>try{var t=localStorage.getItem('mag.vision.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<style>
+/* ───────── Tokens: mag v2 ───────── */
+:root{
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s8:32px;--s12:48px;
+  --r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:12px;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+}
+[data-theme=dark]{
+  color-scheme:dark;
+  --page:#0D0E11;--chrome:#0B0C0E;--canvas:#121316;--surface:#17181C;--surface-2:#1D1E23;--raised:#212228;
+  --line:rgba(255,255,255,.07);--line-2:rgba(255,255,255,.11);--line-3:rgba(255,255,255,.18);
+  --hover:rgba(255,255,255,.04);--select:rgba(255,255,255,.075);
+  --t1:#EDEEF1;--t2:#A6A9B2;--t3:#71747D;--t4:#4B4E56;
+  --acc:#7C75FF;--acc-fg:#A7A2FF;--acc-t:rgba(124,117,255,.15);--acc-line:rgba(124,117,255,.5);--on-acc:#fff;
+  --amber:#F0B45A;--amber-t:rgba(240,180,90,.13);
+  --green:#4CC98A;--green-t:rgba(76,201,138,.13);
+  --red:#F0716B;--red-t:rgba(240,113,107,.14);
+  --blue:#6AACF6;--blue-t:rgba(106,172,246,.13);
+  --sh-1:0 0 0 1px var(--line),0 1px 2px rgba(0,0,0,.35);
+  --sh-2:0 0 0 1px var(--line-2),0 12px 32px rgba(0,0,0,.5);
+  --sh-win:0 0 0 1px rgba(255,255,255,.08),0 30px 80px rgba(0,0,0,.6);
+  --hi:inset 0 1px 0 rgba(255,255,255,.035);
+}
+[data-theme=light]{
+  color-scheme:light;
+  --page:#F3F3F5;--chrome:#ECECEF;--canvas:#FFFFFF;--surface:#FFFFFF;--surface-2:#F6F6F8;--raised:#FFFFFF;
+  --line:rgba(16,18,30,.08);--line-2:rgba(16,18,30,.13);--line-3:rgba(16,18,30,.22);
+  --hover:rgba(16,18,30,.04);--select:rgba(16,18,30,.07);
+  --t1:#16171B;--t2:#55585F;--t3:#868992;--t4:#B5B7BE;
+  --acc:#5A51E6;--acc-fg:#4B42D4;--acc-t:rgba(90,81,230,.1);--acc-line:rgba(90,81,230,.42);--on-acc:#fff;
+  --amber:#9E5B00;--amber-t:rgba(214,140,20,.14);
+  --green:#147A46;--green-t:rgba(30,150,90,.12);
+  --red:#BF372D;--red-t:rgba(210,60,50,.1);
+  --blue:#2260C4;--blue-t:rgba(37,99,201,.1);
+  --sh-1:0 0 0 1px var(--line),0 1px 2px rgba(16,18,30,.05);
+  --sh-2:0 0 0 1px var(--line-2),0 12px 32px rgba(16,18,30,.14);
+  --sh-win:0 0 0 1px rgba(16,18,30,.1),0 24px 64px rgba(16,18,30,.16);
+  --hi:none;
+}
+
+/* ───────── Base ───────── */
+*{box-sizing:border-box}
+html{scroll-snap-type:y mandatory;scroll-behavior:smooth}
+body{margin:0;background:var(--page);color:var(--t1);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;transition:background .2s}
+b,strong{font-weight:600}
+code,.mono{font-family:var(--mono);font-size:.86em}
+kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:var(--r-xs);font:500 11px/1 var(--mono);color:var(--t3);box-shadow:inset 0 0 0 1px var(--line-2);background:var(--surface-2)}
+.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
+.i.s20{width:20px;height:20px}.i.s14{width:14px;height:14px}.i.s12{width:12px;height:12px}
+.f{fill:currentColor;stroke:none}
+
+/* ───────── Deck ───────── */
+.slide{min-height:100vh;scroll-snap-align:start;padding:64px 6vw 56px;display:flex;flex-direction:column;justify-content:center}
+.wrap{width:100%;max-width:1240px;margin:0 auto}
+.kicker{display:flex;align-items:center;gap:8px;color:var(--t3);font-size:12.5px;font-weight:500;margin-bottom:14px}
+.kicker .no{font-family:var(--mono);font-size:11.5px;color:var(--t4)}
+.kicker .i{color:var(--acc-fg)}
+h1{font-size:48px;line-height:1.08;letter-spacing:-.025em;font-weight:650;margin:0 0 20px}
+h2{font-size:34px;line-height:1.15;letter-spacing:-.02em;font-weight:620;margin:0 0 12px}
+h3{font-size:15px;line-height:1.35;font-weight:600;margin:0}
+.lead{font-size:17px;line-height:1.6;color:var(--t2);max-width:800px;margin:0 0 32px}
+.lead b{color:var(--t1)}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1060px){.g2,.g3,.g4,.split{grid-template-columns:1fr!important}h1{font-size:36px}h2{font-size:28px}}
+.card{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-1),var(--hi);padding:18px 20px}
+.card p{margin:6px 0 0;color:var(--t2);font-size:14px}
+.ibox{width:32px;height:32px;border-radius:var(--r-md);display:grid;place-items:center;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line);color:var(--t2);margin-bottom:14px}
+.ibox.acc{background:var(--acc-t);color:var(--acc-fg);box-shadow:none}
+.ibox.amber{background:var(--amber-t);color:var(--amber);box-shadow:none}
+.ibox.red{background:var(--red-t);color:var(--red);box-shadow:none}
+.ibox.green{background:var(--green-t);color:var(--green);box-shadow:none}
+.ibox.blue{background:var(--blue-t);color:var(--blue);box-shadow:none}
+.note{color:var(--t3);font-size:13px;margin-top:14px;display:flex;gap:8px;align-items:flex-start}
+.note .i{margin-top:2px}
+
+/* chrome */
+.progress{position:fixed;left:0;top:0;height:2px;background:var(--acc);z-index:20;transition:width .25s}
+nav.dots{position:fixed;right:18px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;z-index:10}
+nav.dots a{width:6px;height:6px;border-radius:50%;background:var(--t4);display:block;transition:all .2s}
+nav.dots a.on{background:var(--t1);height:16px;border-radius:3px}
+.hud{position:fixed;left:18px;bottom:14px;right:18px;display:flex;align-items:center;gap:10px;color:var(--t3);font-size:12px;z-index:10;pointer-events:none}
+.hud>*{pointer-events:auto}
+.hud .count{margin-left:auto;font-family:var(--mono);font-size:11.5px}
+.themebtn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:none;border-radius:var(--r-sm);background:var(--surface);color:var(--t2);box-shadow:var(--sh-1);font:500 12px var(--sans);cursor:pointer}
+.themebtn:hover{color:var(--t1)}
+[data-theme=dark] .themebtn .sun{display:none}[data-theme=light] .themebtn .moon{display:none}
+
+/* ───────── Components ───────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-sm);font-size:12.5px;font-weight:500;line-height:1;white-space:nowrap;background:var(--surface-2);color:var(--t1);box-shadow:inset 0 0 0 1px var(--line-2)}
+.btn .i{width:14px;height:14px;color:var(--t2)}
+.btn.pri{background:var(--acc);color:var(--on-acc);box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 1px 2px rgba(0,0,0,.25)}
+.btn.pri .i{color:inherit}
+.btn.pri kbd{background:rgba(255,255,255,.16);box-shadow:none;color:rgba(255,255,255,.85)}
+.btn.ghost{background:none;box-shadow:none;color:var(--t2)}
+.btn.sq{width:26px;padding:0}
+.btn.sm{height:22px;padding:0 8px;font-size:12px}.btn.sm.sq{width:22px;padding:0}
+.btn kbd{height:16px;min-width:16px;font-size:10.5px}
+.pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;font-weight:500;line-height:1;white-space:nowrap;background:var(--select);color:var(--t2)}
+.pill .i{width:12px;height:12px}
+.pill .d{width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.acc{background:var(--acc-t);color:var(--acc-fg)}.pill.amber{background:var(--amber-t);color:var(--amber)}
+.pill.green{background:var(--green-t);color:var(--green)}.pill.red{background:var(--red-t);color:var(--red)}
+.pill.blue{background:var(--blue-t);color:var(--blue)}
+.pill.line{background:none;box-shadow:inset 0 0 0 1px var(--line-2)}
+.av{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-size:10.5px;font-weight:600;flex:none}
+.av.lg{width:32px;height:32px;font-size:13px}
+.av.blue{background:var(--blue-t);color:var(--blue)}.av.green{background:var(--green-t);color:var(--green)}.av.acc{background:var(--acc-t);color:var(--acc-fg)}.av.amber{background:var(--amber-t);color:var(--amber)}
+.sep{color:var(--t4);padding:0 2px}
+
+/* ───────── App mock ───────── */
+.win{display:grid;grid-template-columns:224px minmax(0,1fr);background:var(--chrome);border-radius:12px;box-shadow:var(--sh-win);overflow:hidden;height:480px;font-size:13px;line-height:1.45;color:var(--t1)}
+.win.tall{height:520px}
+.side{display:flex;flex-direction:column;padding:10px 8px;min-width:0}
+.lights{display:flex;gap:7px;padding:2px 6px 12px}
+.lights i{width:11px;height:11px;border-radius:50%;background:var(--t4);opacity:.6}
+.wsbtn{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:var(--r-sm);font-weight:600}
+.wsbtn .mark{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:var(--acc);color:#fff}
+.wsbtn .mark svg{width:14px;height:14px}
+.wsbtn .i.ch{margin-left:auto;color:var(--t3)}
+.sbar{display:flex;align-items:center;gap:8px;height:28px;margin:8px 0 4px;padding:0 8px;border-radius:var(--r-sm);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);color:var(--t3);font-size:12.5px}
+.sbar kbd{margin-left:auto}
+.sec{display:flex;align-items:center;justify-content:space-between;padding:14px 8px 4px;font-size:11.5px;font-weight:500;color:var(--t3)}
+.sec .i{width:14px;height:14px}
+.nav{display:flex;align-items:center;gap:9px;height:28px;padding:0 8px;border-radius:var(--r-sm);color:var(--t2);white-space:nowrap;overflow:hidden}
+.nav>.i{color:var(--t3)}
+.nav .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.nav.on{background:var(--select);color:var(--t1)}
+.nav.on>.i{color:var(--t1)}
+.nav .n{font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+.nav .n.you{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:5px;background:var(--amber-t);color:var(--amber);font-weight:600}
+.nav .psq{width:10px;height:10px;border-radius:3px;margin:0 3px;flex:none}
+.nav .sub{font-size:11px;color:var(--t3)}
+.nav.kid{padding-left:30px}
+.side .foot{margin-top:auto;display:flex;align-items:center;gap:6px;padding:8px 4px 0;color:var(--t3)}
+.pane{margin:6px 6px 6px 0;background:var(--canvas);border-radius:9px;box-shadow:var(--sh-1);display:flex;min-width:0;overflow:hidden}
+.pmain{flex:1;min-width:0;display:flex;flex-direction:column}
+.pside{width:268px;flex:none;border-left:1px solid var(--line);padding:14px 16px;font-size:12.5px;overflow:hidden;display:flex;flex-direction:column;gap:14px}
+.phead{display:flex;align-items:center;gap:10px;height:46px;padding:0 16px;border-bottom:1px solid var(--line);flex:none}
+.phead .t{font-size:14px;font-weight:600;white-space:nowrap}
+.phead .sp{flex:1}
+.pbody{flex:1;min-height:0;overflow:hidden;padding:16px}
+.pbody.flush{padding:0}
+.lab{font-size:11.5px;font-weight:500;color:var(--t3);display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.lab .c{margin-left:auto;font-variant-numeric:tabular-nums}
+
+/* list rows */
+.grp{display:flex;align-items:center;gap:8px;padding:14px 16px 6px;font-size:11.5px;font-weight:500;color:var(--t3)}
+.grp .c{color:var(--t4)}
+.grp .i{width:14px;height:14px}
+.lrow{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:12px;padding:9px 16px;border-top:1px solid var(--line)}
+.lrow:first-of-type{border-top:0}
+.lrow.on{background:var(--hover)}
+.lrow .src{width:28px;height:28px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line);color:var(--t2)}
+.lrow .tt{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lrow .mt{font-size:12px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}
+.lrow .mt .you{color:var(--amber)}
+.lrow .acts{display:flex;gap:6px;align-items:center}
+.lrow .when{font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums;margin-right:4px}
+
+/* mock card */
+.mcard{background:var(--surface);border-radius:var(--r-md);box-shadow:var(--sh-1),var(--hi);padding:12px 14px}
+.mcard h4{margin:0 0 4px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.mcard p{margin:0;color:var(--t2);font-size:12.5px}
+.mcard .ibox{width:28px;height:28px;margin-bottom:10px}
+
+/* doc */
+.doc{max-width:600px;font-size:13.5px;line-height:1.65;color:var(--t1)}
+.doc h5{margin:0 0 4px;font-size:11.5px;font-weight:500;color:var(--t3)}
+.doc p{margin:0 0 14px}
+.claim{text-decoration:underline;text-decoration-color:var(--green);text-decoration-thickness:1.5px;text-underline-offset:4px;text-decoration-style:dotted;cursor:help;position:relative;border-radius:3px}
+.claim:hover,.claim.open{background:var(--green-t)}
+.claim.bad{text-decoration-color:var(--red);text-decoration-style:wavy;text-decoration-thickness:1px}
+.claim.bad:hover,.claim.bad.open{background:var(--red-t)}
+.claim sup{font:600 9.5px var(--mono);color:var(--t3);margin-left:2px}
+.claim[data-src]:hover::after,.claim.open::after{content:attr(data-src);position:absolute;left:0;top:calc(100% + 8px);z-index:4;width:300px;padding:8px 10px;border-radius:var(--r-md);background:var(--raised);box-shadow:var(--sh-2);color:var(--t2);font:11.5px/1.5 var(--mono);white-space:normal;text-decoration:none}
+.judg{color:var(--t2)}
+.judg i{color:var(--t1)}
+
+/* timeline */
+.tl{display:flex;flex-direction:column;gap:0}
+.tl .e{display:grid;grid-template-columns:20px 1fr;gap:10px;position:relative;padding-bottom:12px}
+.tl .e:not(:last-child)::before{content:"";position:absolute;left:9.5px;top:22px;bottom:0;width:1px;background:var(--line-2)}
+.tl .e .ic{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--t3)}
+.tl .e .ic .i{width:12px;height:12px}
+.tl .e .ic.red{background:var(--red-t);color:var(--red);box-shadow:none}
+.tl .e .ic.green{background:var(--green-t);color:var(--green);box-shadow:none}
+.tl .e .x{color:var(--t2);line-height:1.45}
+.tl .e .x small{display:block;color:var(--t3);font-size:11.5px;font-family:var(--mono)}
+
+/* segmented */
+.seg{display:inline-flex;padding:2px;gap:2px;border-radius:7px;background:var(--select)}
+.seg span{height:22px;padding:0 9px;display:inline-flex;align-items:center;border-radius:5px;font-size:12px;color:var(--t3);font-weight:500}
+.seg span.on{background:var(--raised);color:var(--t1);box-shadow:0 1px 2px rgba(0,0,0,.2),inset 0 0 0 1px var(--line)}
+
+/* stepper */
+.stepper{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:8px 0 8px}
+.st{position:relative;padding-right:16px}
+.st:not(:last-child)::after{content:"";position:absolute;left:44px;right:8px;top:18px;height:1px;background:var(--line-3)}
+.st .node{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--surface);box-shadow:var(--sh-1);color:var(--t2);position:relative;z-index:1}
+.st .node .i{width:18px;height:18px}
+.st.done .node{color:var(--green)}
+.st.now .node{background:var(--acc);color:#fff;box-shadow:0 0 0 4px var(--acc-t)}
+.st b{display:block;margin-top:12px;font-size:15px}
+.st span{display:block;font-size:13px;color:var(--t3);margin-top:2px}
+
+/* publish */
+.pub{background:var(--surface);border-radius:var(--r-lg);box-shadow:0 0 0 1px var(--acc-line),0 12px 40px rgba(0,0,0,.3);overflow:hidden;font-size:13px}
+.pubhead{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--acc-t)}
+.pubhead .t{font-weight:600}
+.pubhead .to{display:flex;align-items:center;gap:4px;color:var(--t2)}
+.pubhead .sp{flex:1}
+.prev{margin:14px;padding:12px 14px;border-radius:var(--r-md);background:var(--canvas);box-shadow:inset 0 0 0 1px var(--line);display:grid;grid-template-columns:32px 1fr;gap:10px;line-height:1.55}
+.prev .who{font-weight:700}.prev .who small{font-weight:400;color:var(--t3);font-size:11.5px;margin-left:6px}
+.prev ul{margin:2px 0 8px;padding-left:18px}
+.prev .h{font-weight:700;margin-top:8px}
+.pubrules{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:0 14px 12px;color:var(--t3);font-size:12px}
+.pubfoot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:var(--surface-2)}
+.pubfoot .sp{flex:1}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ba .col{padding:16px 18px}
+.ba .bh{font-size:12px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.chk{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px;font-size:14px;color:var(--t2)}
+.chk li{display:grid;grid-template-columns:16px 1fr;gap:10px;align-items:start}
+.chk li .i{margin-top:3px}
+.chk.no .i{color:var(--red)}.chk.yes .i{color:var(--green)}
+
+/* palette (search) */
+.palette{max-width:820px;background:var(--raised);border-radius:var(--r-lg);box-shadow:var(--sh-2);overflow:hidden;font-size:13px}
+.palin{display:flex;align-items:center;gap:10px;height:52px;padding:0 16px;font-size:16px;border-bottom:1px solid var(--line)}
+.palin .i{width:18px;height:18px;color:var(--t3)}
+.palin .caret{width:1.5px;height:20px;background:var(--acc);margin-left:-8px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.palin .sp{flex:1}
+.paltabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.paltabs span{height:24px;padding:0 9px;display:inline-flex;align-items:center;gap:6px;border-radius:var(--r-sm);color:var(--t3);font-size:12px;font-weight:500}
+.paltabs span.on{background:var(--select);color:var(--t1)}
+.paltabs span em{font-style:normal;color:var(--t4);font-variant-numeric:tabular-nums}
+.answer{margin:12px;padding:12px 14px;border-radius:var(--r-md);background:var(--acc-t);display:grid;grid-template-columns:20px 1fr;gap:10px;line-height:1.55}
+.answer .i{color:var(--acc-fg);margin-top:2px}
+.ref{display:inline-flex;align-items:center;height:17px;padding:0 5px;border-radius:4px;background:var(--select);font:600 10.5px var(--mono);color:var(--t2);vertical-align:1px}
+.hit{display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:center;padding:8px 16px}
+.hit.on{background:var(--select)}
+.hit .src{width:28px;height:28px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line);color:var(--t2)}
+.hit .tt{font-weight:500}
+.hit mark{background:none;color:var(--acc-fg);font-weight:600}
+.hit .mt{font-size:12px;color:var(--t3)}
+.hit .kind{font-size:11.5px;color:var(--t3)}
+.palfoot{display:flex;align-items:center;gap:14px;padding:8px 16px;border-top:1px solid var(--line);color:var(--t3);font-size:11.5px}
+.palfoot span{display:inline-flex;align-items:center;gap:5px}
+
+/* meeting */
+.trans{font-size:12.5px;line-height:1.55}
+.tline{display:grid;grid-template-columns:62px 1fr;gap:8px;padding:5px 8px;border-radius:var(--r-sm);color:var(--t2)}
+.tline .at{font:11px var(--mono);color:var(--t3);padding-top:2px}
+.tline b{color:var(--t1);font-weight:600;margin-right:4px}
+.tline.hit{background:var(--acc-t);color:var(--t1)}
+.decide{display:flex;gap:4px}
+.decide .btn.ok{color:var(--green)}
+.decide .btn .i{color:inherit}
+
+/* phases */
+.phases{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;position:relative}
+.phase{position:relative}
+.phase .bar{height:4px;border-radius:2px;background:var(--line-2);margin-bottom:18px;overflow:hidden}
+.phase .bar i{display:block;height:100%;background:var(--acc)}
+.phase .w{font:500 11.5px var(--mono);color:var(--t3);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.phase h3{margin-bottom:8px}
+.phase p{margin:0;color:var(--t2);font-size:13.5px}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--sh-1),var(--hi)}
+.stat{padding:22px 24px;border-left:1px solid var(--line)}
+.stat:first-child{border-left:0}
+.stat .big{font-size:40px;font-weight:600;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.stat .big small{font-size:20px;color:var(--t3);font-weight:500;margin-left:2px}
+.stat p{margin:12px 0 0;color:var(--t2);font-size:13.5px}
+.hero-mark{display:flex;align-items:center;gap:10px;margin-bottom:40px;font-weight:650;font-size:18px;letter-spacing:-.03em}
+.hero-mark .mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--acc);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 6px 20px var(--acc-t)}
+.hero-mark .mark svg{width:22px;height:22px}
+.hero-mark span{color:var(--t3);font-weight:400;font-size:14px;letter-spacing:0;margin-left:4px}
+
+/* design-system slides */
+.split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px;align-items:start}
+.prin{display:flex;flex-direction:column;gap:2px}
+.prin .p{display:grid;grid-template-columns:28px 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.prin .p:first-child{border-top:0;padding-top:0}
+.prin .p .k{font:500 12px var(--mono);color:var(--t4);padding-top:2px}
+.prin .p b{display:block;font-size:15px}
+.prin .p span{display:block;color:var(--t2);font-size:13.5px;margin-top:2px}
+.ramp{display:grid;grid-template-columns:repeat(8,1fr);border-radius:var(--r-md);overflow:hidden;box-shadow:var(--sh-1)}
+.ramp div{height:48px;padding:6px 7px;display:flex;flex-direction:column;justify-content:flex-end;font:500 9.5px/1.25 var(--mono)}
+.ramp div span{opacity:.75}
+.rl{font-size:11.5px;color:var(--t3);margin:14px 0 6px;font-weight:500}
+.sem{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.sem .sw{border-radius:var(--r-md);background:var(--surface);box-shadow:var(--sh-1);padding:10px;font-size:12px}
+.sem .sw .chip{height:24px;border-radius:var(--r-sm);margin-bottom:8px;display:flex}
+.sem .sw .chip i{flex:1}
+.sem .sw b{display:block;font-size:12.5px}
+.sem .sw span{color:var(--t3);font-size:11.5px;line-height:1.35;display:block;margin-top:2px}
+.type{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:6px 16px}
+.type .r{display:grid;grid-template-columns:96px 1fr;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.type .r:first-child{border-top:0}
+.type .r .m{font:11px var(--mono);color:var(--t3)}
+.tok{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.tok .b{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line-2);display:grid;place-items:center;font:10.5px var(--mono);color:var(--t3)}
+.elev{display:flex;gap:10px}
+.elev div{flex:1;height:52px;border-radius:var(--r-md);display:grid;place-items:center;font:10.5px var(--mono);color:var(--t3)}
+.icons{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:10px}
+.icons div{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 2px 8px;border-radius:var(--r-sm);color:var(--t2);font-size:10px;text-align:center;line-height:1.2}
+.icons div:hover{background:var(--hover);color:var(--t1)}
+.icons .i{width:20px;height:20px}
+.icons div span{color:var(--t3);font-family:var(--mono);font-size:9.5px}
+.bacol .bh{font-size:12px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.bacol .bh.b{color:var(--t3)}.bacol .bh.a{color:var(--acc-fg)}
+.minis{display:grid;grid-template-columns:240px minmax(0,1fr);gap:12px;align-items:start}
+.comp{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* mini sidebar (after) */
+.mside{background:var(--chrome);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:8px;font-size:13px}
+
+/* decision card (after) */
+.dcard{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-1),var(--hi);overflow:hidden;font-size:13px}
+.dcard .hd{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.dcard .hd b{flex:1}
+.dcard .q{padding:10px 14px 4px;color:var(--t1)}
+.dcard .q small{display:block;color:var(--t3);font-size:12px}
+.opt{display:grid;grid-template-columns:16px 1fr auto;gap:10px;align-items:center;margin:6px 14px;padding:8px 10px;border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--t2)}
+.opt .rd{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--t4)}
+.opt.on{box-shadow:inset 0 0 0 1px var(--acc-line);background:var(--acc-t);color:var(--t1)}
+.opt.on .rd{box-shadow:inset 0 0 0 4px var(--acc)}
+.dcard .ft{display:flex;align-items:center;gap:8px;padding:10px 14px;margin-top:8px;border-top:1px solid var(--line);background:var(--surface-2)}
+.dcard .ft .sp{flex:1}
+
+/* project chips, labels, filters, contexts */
+.proj{--tc:var(--t4);display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;font-weight:500;line-height:1;white-space:nowrap;background:color-mix(in srgb,var(--tc) 15%,transparent);color:color-mix(in srgb,var(--tc) 72%,var(--t1))}
+.proj::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--tc);flex:none}
+.proj.dr{--tc:#E0795A}.proj.mp{--tc:#D7A43C}
+.proj .x{width:12px;height:12px;margin-right:-3px;opacity:.7}
+.tags{display:inline-flex;gap:4px;flex-wrap:wrap}
+.tdot{width:6px;height:6px;border-radius:2px;flex:none}
+.lchip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;font-weight:500;line-height:1;white-space:nowrap;box-shadow:inset 0 0 0 1px var(--line-2);color:var(--t2)}
+.lchip em{font-style:normal;color:var(--t3);font-weight:400}
+.lchip.dim{color:var(--t4)}
+.fchip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:var(--r-sm);font-size:12px;font-weight:500;color:var(--t2);box-shadow:inset 0 0 0 1px var(--line-2);white-space:nowrap}
+.fchip .i{width:12px;height:12px;color:var(--t3)}
+.fchip.on{background:var(--select);color:var(--t1);box-shadow:none}
+.fchip.ghost{box-shadow:none;color:var(--t3)}
+.fchips{display:inline-flex;gap:4px;align-items:center}
+.lgrp{display:grid;grid-template-columns:160px 40px 1fr;gap:10px;align-items:center;padding:9px 14px;border-top:1px solid var(--line)}
+.lgrp .nm{font-weight:600;display:flex;align-items:center;gap:6px}
+.lgrp .ty{font:11px var(--mono);color:var(--t3)}
+.lgrp .vs{display:flex;flex-wrap:wrap;gap:4px}
+.srow{display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:center;padding:8px 14px;border-top:1px solid var(--line)}
+.srow>span:first-child{color:var(--t3);font-size:12px}
+.srow .vs{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.rule{display:grid;grid-template-columns:1fr 14px auto;gap:8px;align-items:center;padding:6px 14px;font:11.5px var(--mono);color:var(--t2)}
+.rule .i{width:12px;height:12px;color:var(--t4)}
+.inherit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);background:var(--surface-2);color:var(--t3);font-size:12px}
+.inherit b{color:var(--t1);font-weight:500}
+.xref{margin:0 14px 12px;padding:10px 12px;border-radius:var(--r-md);background:var(--canvas);box-shadow:inset 0 0 0 1px var(--line);font-size:12.5px;line-height:1.55}
+.xref .mt{font-size:11.5px;color:var(--t3);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.ngrp{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px 0 30px;font-size:11.5px;font-weight:500;color:var(--t3)}
+.ngrp .n{margin-left:auto;color:var(--t4);font-variant-numeric:tabular-nums}
+.ngrp .i{width:12px;height:12px}
+.nav.kid2{padding-left:48px}
+.nav.kid2 .lbl{color:var(--t3)}
+.nav .codechip{display:inline-flex;align-items:center;gap:3px;height:16px;padding:0 5px;border-radius:4px;background:var(--blue-t);color:var(--blue);font:500 10.5px var(--mono)}
+.nav .codechip .i{width:11px;height:11px}
+.bub{max-width:78%;margin-left:auto;padding:9px 13px;border-radius:14px 14px 4px 14px;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line)}
+.agm{display:grid;grid-template-columns:24px 1fr;gap:10px;margin-top:14px}
+.agm .av{width:24px;height:24px}
+.agm .nm{font-size:11.5px;color:var(--t3);margin-bottom:2px}
+/* Slack-like shell: rail + resizable column + content */
+[data-theme=dark]{--col:#101114}[data-theme=light]{--col:#F5F5F7}
+.win.slack{grid-template-columns:64px var(--colw,260px) minmax(0,1fr);height:580px}.win.slack.tall{height:600px}.rail>*{flex:none}
+.rail{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0 12px;min-height:0}
+.rail .lights{padding:2px 0 12px;gap:5px}.rail .lights i{width:9px;height:9px}
+.rail .ws{width:36px;height:36px;border-radius:10px;background:var(--acc);color:#fff;font-weight:700;font-size:15px;display:grid;place-items:center;margin-bottom:10px;box-shadow:0 0 0 2px var(--chrome),0 0 0 3.5px var(--t3)}
+.ritem{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:58px;padding:3px 0 4px;color:var(--t3);font-size:10px;font-weight:500;line-height:1.1}
+.ritem .ib{width:34px;height:30px;border-radius:8px;display:grid;place-items:center}
+.ritem .ib .i{width:18px;height:18px}
+.ritem.on{color:var(--t1)}.ritem.on .ib{background:var(--select)}
+.ritem .bdg{position:absolute;top:0;right:7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--amber);color:#1C1300;font-size:10px;font-weight:700;display:grid;place-items:center;box-shadow:0 0 0 2px var(--chrome)}
+.ritem .bdg.n{background:var(--t2);color:var(--chrome)}
+[data-theme=light] .ritem .bdg,[data-theme=light] .nav .cnt.you{color:#fff}
+.rail .bot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:8px}
+.rail .rb{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--t3);box-shadow:inset 0 0 0 1px var(--line-2)}
+.rail .me{width:28px;height:28px;border-radius:8px;background:var(--blue-t);color:var(--blue);font-size:11px;font-weight:700;display:grid;place-items:center;position:relative}
+.rail .me::after{content:"";position:absolute;right:-2px;bottom:-2px;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 2px var(--chrome)}
+.col{position:relative;display:flex;flex-direction:column;min-width:0;padding:8px 8px 10px;margin:6px 0;background:var(--col);border-radius:9px 0 0 9px;box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}
+.col .grip{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize}
+.col .grip::after{content:"";position:absolute;right:2px;top:50%;width:3px;height:34px;margin-top:-17px;border-radius:2px;background:var(--line-3)}
+.colhead{display:flex;align-items:center;gap:2px;height:32px;padding:0 2px 0 6px}
+.colhead .ws-t{display:flex;align-items:center;gap:4px;font-size:15px;font-weight:650;letter-spacing:-.01em;margin-right:auto}
+.colhead .ws-t .i{width:14px;height:14px;color:var(--t3)}
+.colsearch{display:flex;align-items:center;gap:8px;height:28px;margin:6px 0 4px;padding:0 8px;border-radius:var(--r-sm);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);color:var(--t3);font-size:12.5px}
+.colsearch kbd{margin-left:auto}
+.psec{display:flex;align-items:center;gap:6px;height:26px;margin-top:8px;padding:0 8px;font-size:12px;font-weight:600;color:var(--t2)}
+.psec .i{width:12px;height:12px;color:var(--t3)}
+.psec .psq{width:9px;height:9px;border-radius:3px;flex:none}
+.psec .n{margin-left:auto;font-weight:400;color:var(--t4);font-size:11.5px}
+.col .nav{height:26px;font-size:12.5px}
+.col .nav.kid{padding-left:22px}.col .nav.kid2{padding-left:40px}
+.nav.unread .lbl{color:var(--t1);font-weight:650}
+.nav .cnt{display:inline-grid;place-items:center;min-width:18px;height:16px;padding:0 5px;border-radius:8px;background:var(--t2);color:var(--chrome);font-size:10.5px;font-weight:700}
+.nav .cnt.you{background:var(--amber);color:#1C1300}
+.dd{position:absolute;z-index:6;width:330px;padding:5px;border-radius:var(--r-md);background:var(--raised);box-shadow:var(--sh-2);font-size:13px}
+.dd .o{display:flex;align-items:center;gap:9px;height:30px;padding:0 8px;border-radius:var(--r-sm);color:var(--t1)}
+.dd .o.hl{background:var(--select)}
+.dd .o .lg{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:10.5px;font-weight:700;color:#fff;background:var(--t4)}
+.dd .o .lg.a{background:var(--acc)}
+.dd .o .i{color:var(--t3)}
+.dd .o kbd{margin-left:auto}
+.dd .o .ck{margin-left:auto;color:var(--acc-fg)}
+.dd hr{border:0;border-top:1px solid var(--line);margin:5px 2px}
+.co{position:absolute;z-index:8;width:22px;height:22px;border-radius:50%;background:var(--acc);color:#fff;font:700 11.5px var(--sans);display:grid;place-items:center;box-shadow:0 0 0 3px var(--page),0 4px 12px rgba(0,0,0,.35)}
+.legend{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:22px}
+.legend div{display:grid;grid-template-columns:22px 1fr;gap:10px;font-size:13px;color:var(--t2);line-height:1.45}
+.legend div b{display:block;color:var(--t1);font-size:13.5px}
+.legend .co{position:static;box-shadow:none}
+.floatwin{position:absolute;z-index:7;background:var(--canvas);border-radius:11px;box-shadow:var(--sh-win);overflow:hidden;font-size:12.5px}
+.floatwin .fh{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--line);color:var(--t2);font-weight:500}
+.floatwin .fh .lights{padding:0;gap:6px}.floatwin .fh .lights i{width:9px;height:9px}
+.floatwin .fh .sp{flex:1}
+.bars{display:flex;align-items:flex-end;gap:10px;height:120px;padding:14px 16px 0;border-bottom:1px solid var(--line)}
+.bars i{flex:1;border-radius:4px 4px 0 0;background:var(--acc);opacity:.85}
+.bars i.b{background:#D7A43C}
+.ctx{display:grid;grid-template-columns:1fr 1fr;padding:2px;gap:2px;border-radius:7px;background:var(--select)}
+.ctx span{height:26px;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:5px;font-size:12.5px;font-weight:500;color:var(--t3)}
+.ctx span.on{background:var(--raised);color:var(--t1);box-shadow:0 1px 2px rgba(0,0,0,.2),inset 0 0 0 1px var(--line)}
+.ctx .lg{font-style:normal;width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-size:9.5px;font-weight:700;color:#fff;background:var(--t4)}
+.ctx .on .lg{background:var(--acc)}
+.ctxcard{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-1),var(--hi);overflow:hidden;font-size:13px}
+.ctxcard .hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.ctxcard .hd>.lg{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--acc)}
+.ctxcard .hd b{font-size:14px}
+.ctxcard .rw{display:grid;grid-template-columns:132px 1fr;gap:12px;align-items:center;padding:9px 14px;border-top:1px solid var(--line)}
+.ctxcard .hd+.rw{border-top:0}
+.ctxcard .rw>:first-child{justify-self:start}
+.ctxcard .rw .w{color:var(--t3);font-size:12px}
+.wall{display:flex;align-items:center;gap:10px;margin:10px 4px;color:var(--t3);font-size:12px}
+.wall::before,.wall::after{content:"";flex:1;border-top:1px dashed var(--line-3)}
+.why{font:11px var(--mono);color:var(--t3);white-space:nowrap}
+
+/* ───────── "Before": today's mag tokens (packages/core/src/tokens.ts) ───────── */
+.old{--o-bg:#ffffff;--o-side:#f2f2f4;--o-line:#e4e5e9;--o-text:#17181c;--o-muted:#5f6470;--o-faint:#9096a1;--o-accent:#3b5bdb;--o-soft:#e6e9f7;--o-surface:#fff;--o-border:#dcdee3;--o-hover:#eef0f3;--o-amber-bg:#fff4de;--o-amber-fg:#9a5a00;--o-green-fg:#1f7a47;--o-badge:#c2410c;
+  font:13.5px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:var(--o-text)}
+[data-theme=dark] .old{--o-bg:#1a1b1f;--o-side:#17181b;--o-line:#2a2c32;--o-text:#e8e9ec;--o-muted:#a0a5b0;--o-faint:#6d727d;--o-accent:#7d95ff;--o-soft:#232a45;--o-surface:#1f2025;--o-border:#34363d;--o-hover:#26272d;--o-amber-bg:#33270f;--o-amber-fg:#f2b860;--o-green-fg:#62cf8f}
+.old .oside{background:var(--o-side);border:1px solid var(--o-line);border-radius:10px;padding:10px 8px;display:flex;flex-direction:column;gap:8px}
+.old .oproj{display:flex;align-items:center;gap:8px;height:28px;padding:0 6px;font-weight:600}
+.old .oproj i{width:12px;height:12px;border-radius:3px;background:#8b85f8}
+.old .oproj em{font-style:normal;color:var(--o-muted);font-size:11px;margin-left:auto}
+.old .onew{display:flex;align-items:center;padding:8px 10px;border:1px solid var(--o-line);border-radius:8px;background:var(--o-surface);font-weight:600}
+.old .onew kbd,.old .osearch kbd{margin-left:auto;background:none;box-shadow:none;font:11.5px ui-monospace,monospace;color:var(--o-faint)}
+.old .osearch{display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--o-faint);font-size:12.5px}
+.old .ofilt{display:flex;gap:4px;flex-wrap:wrap}
+.old .ofilt span{border:1px solid var(--o-border);border-radius:999px;padding:2px 9px;font-size:12px;color:var(--o-muted)}
+.old .ofilt span.on{border-color:var(--o-accent);color:var(--o-text);background:var(--o-surface)}
+.old .ogrp{padding:6px 8px 2px;font-size:11.5px;font-weight:600;color:var(--o-muted);display:flex}
+.old .ogrp em{font-style:normal;margin-left:auto;color:var(--o-faint);font-weight:400}
+.old .orow{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;margin-left:10px}
+.old .orow.on{background:var(--o-soft)}
+.old .orow .dt{width:7px;height:7px;border-radius:4px;flex:none}
+.old .orow .tt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.old .orow .yb{padding:0 6px;border-radius:999px;background:var(--o-amber-bg);color:var(--o-amber-fg);font-size:11.5px;font-weight:500;line-height:17px}
+.old .orow .tm{font-size:11.5px;color:var(--o-faint)}
+.old .ofoot{display:flex;gap:14px;border-top:1px solid var(--o-line);padding:8px 4px 0;font-size:12.5px;color:var(--o-muted)}
+.old .ofoot span:last-child{margin-left:auto}
+.old .ocard{border:1px solid var(--o-line);border-left:3px solid var(--o-amber-fg);border-radius:8px;background:var(--o-surface);padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.old .ocard b{font-weight:600}
+.old .ocard .mu{color:var(--o-muted);font-size:12.5px}
+.old .ocard ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.old .ocard .rec{color:var(--o-green-fg)}
+.old .ocard .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.old .ocard .b{border:1px solid var(--o-border);border-radius:8px;padding:6px 12px;background:var(--o-surface)}
+.old .ocard .b.p{background:var(--o-accent);border-color:var(--o-accent);color:#fff}
+[data-theme=dark] .old .ocard .b.p{color:#0f1220}
+.old .ocard .l{color:var(--o-accent);font-size:12.5px;padding:0 4px}
+</style>
+</head>
+<body>
+
+<!-- ───────── Icon set: 20px grid, 1.5px stroke, round caps ───────── -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<symbol id="i-mag" viewBox="0 0 44 44"><path d="M36 9H22a13 13 0 0 0 0 26h14" stroke-width="4"/><path d="M36 16H22a6 6 0 0 0 0 12h14" stroke-width="4" opacity=".6"/><circle cx="25" cy="22" r="2.5" class="f" opacity=".5"/></symbol>
+<symbol id="i-inbox" viewBox="0 0 20 20"><path d="M3 11.5 5.1 4.7A1.75 1.75 0 0 1 6.8 3.5h6.4a1.75 1.75 0 0 1 1.7 1.2L17 11.5"/><path d="M3 11.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15v-3.5h-3.5l-1 2h-5l-1-2Z"/></symbol>
+<symbol id="i-users" viewBox="0 0 20 20"><circle cx="7.5" cy="6.75" r="2.75"/><path d="M2.5 16c0-2.8 2.2-4.5 5-4.5s5 1.7 5 4.5"/><path d="M12.75 4.25a2.5 2.5 0 0 1 0 5"/><path d="M14.5 11.75c1.8.5 3 1.9 3 4.25"/></symbol>
+<symbol id="i-user" viewBox="0 0 20 20"><circle cx="10" cy="6.75" r="3.25"/><path d="M3.75 16.5c0-3.1 2.8-5 6.25-5s6.25 1.9 6.25 5"/></symbol>
+<symbol id="i-mic" viewBox="0 0 20 20"><rect x="7.25" y="2.5" width="5.5" height="9.5" rx="2.75"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5"/></symbol>
+<symbol id="i-repeat" viewBox="0 0 20 20"><path d="M3.5 9.5v-1a3 3 0 0 1 3-3h10"/><path d="m14 3 2.5 2.5L14 8"/><path d="M16.5 10.5v1a3 3 0 0 1-3 3h-10"/><path d="M6 17 3.5 14.5 6 12"/></symbol>
+<symbol id="i-library" viewBox="0 0 20 20"><rect x="3" y="3.5" width="3.5" height="13" rx=".75"/><rect x="8" y="3.5" width="3.5" height="13" rx=".75"/><path d="m13.2 4.9 2.6-.65a.75.75 0 0 1 .9.55l2.55 10.4a.75.75 0 0 1-.55.9l-2.6.65a.75.75 0 0 1-.9-.55L12.65 5.8a.75.75 0 0 1 .55-.9Z"/></symbol>
+<symbol id="i-chat" viewBox="0 0 20 20"><path d="M4.5 3.75h11A1.5 1.5 0 0 1 17 5.25v7.25A1.5 1.5 0 0 1 15.5 14H9.25L5.5 17v-3h-1A1.5 1.5 0 0 1 3 12.5V5.25a1.5 1.5 0 0 1 1.5-1.5Z"/></symbol>
+<symbol id="i-chat-plus" viewBox="0 0 20 20"><path d="M4.5 3.75h11A1.5 1.5 0 0 1 17 5.25v7.25A1.5 1.5 0 0 1 15.5 14H9.25L5.5 17v-3h-1A1.5 1.5 0 0 1 3 12.5V5.25a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="M10 6.5v4.5M7.75 8.75h4.5"/></symbol>
+<symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 6A1.5 1.5 0 0 1 4 4.5h3.4L9 6.5h7A1.5 1.5 0 0 1 17.5 8v6.5A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></symbol>
+<symbol id="i-search" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"/><path d="m13 13 4 4"/></symbol>
+<symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></symbol>
+<symbol id="i-send" viewBox="0 0 20 20"><path d="M16.75 3.25 8.5 11.5"/><path d="M16.75 3.25 11.75 16.75 8.5 11.5 3.25 8.25Z"/></symbol>
+<symbol id="i-send-off" viewBox="0 0 20 20"><path d="M16.75 3.25 11.75 16.75 8.5 11.5 3.25 8.25Z"/><path d="M2.5 2.5l15 15"/></symbol>
+<symbol id="i-check" viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></symbol>
+<symbol id="i-x" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></symbol>
+<symbol id="i-pencil" viewBox="0 0 20 20"><path d="M13.25 3.75a1.77 1.77 0 0 1 2.5 2.5L7 15l-3.25.75L4.5 12.5Z"/><path d="m11.75 5.25 2.5 2.5"/></symbol>
+<symbol id="i-pen-line" viewBox="0 0 20 20"><path d="M11.75 3.75a1.77 1.77 0 0 1 2.5 2.5L6.5 14l-3 .5.5-3Z"/><path d="M10.5 16.5h6"/></symbol>
+<symbol id="i-more" viewBox="0 0 20 20"><circle cx="5" cy="10" r="1.1" class="f"/><circle cx="10" cy="10" r="1.1" class="f"/><circle cx="15" cy="10" r="1.1" class="f"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"/></symbol>
+<symbol id="i-chev-d" viewBox="0 0 20 20"><path d="m5.5 8 4.5 4.5L14.5 8"/></symbol>
+<symbol id="i-chev-ud" viewBox="0 0 20 20"><path d="m6.5 8 3.5-3.5L13.5 8M6.5 12l3.5 3.5 3.5-3.5"/></symbol>
+<symbol id="i-arrow-r" viewBox="0 0 20 20"><path d="M4 10h12M11.5 5.5 16 10l-4.5 4.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 6.25V10l2.5 1.75"/></symbol>
+<symbol id="i-calendar" viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="12.5" rx="1.75"/><path d="M3 8.5h14M7 2.75v3.5M13 2.75v3.5"/></symbol>
+<symbol id="i-hash" viewBox="0 0 20 20"><path d="M8.25 3 6.5 17M13.5 3l-1.75 14M3.5 7.25h13.25M3.25 12.75H16.5"/></symbol>
+<symbol id="i-pr" viewBox="0 0 20 20"><circle cx="5.5" cy="4.75" r="1.75"/><circle cx="5.5" cy="15.25" r="1.75"/><circle cx="14.5" cy="15.25" r="1.75"/><path d="M5.5 6.5v7M14.5 13.5V8a2 2 0 0 0-2-2H9.5"/><path d="M11 4.25 9.25 6 11 7.75"/></symbol>
+<symbol id="i-ticket" viewBox="0 0 20 20"><path d="M3 6.25A1.25 1.25 0 0 1 4.25 5h11.5A1.25 1.25 0 0 1 17 6.25V8a2 2 0 0 0 0 4v1.75A1.25 1.25 0 0 1 15.75 15H4.25A1.25 1.25 0 0 1 3 13.75V12a2 2 0 0 0 0-4Z"/><path d="M12.25 7.5v.75M12.25 9.75v.5M12.25 11.75v.75"/></symbol>
+<symbol id="i-doc" viewBox="0 0 20 20"><path d="M5.25 2.5h6.25l4 4v9.75a1.25 1.25 0 0 1-1.25 1.25h-9a1.25 1.25 0 0 1-1.25-1.25v-12.5A1.25 1.25 0 0 1 5.25 2.5Z"/><path d="M11.25 2.5v4.25h4.25M7.25 10.5h5.5M7.25 13.5h4"/></symbol>
+<symbol id="i-docs" viewBox="0 0 20 20"><path d="M7.5 5.5V3.75a1.25 1.25 0 0 1 1.25-1.25h4.75l3.5 3.5v7.75A1.25 1.25 0 0 1 15.75 15H14"/><rect x="3" y="5.5" width="11" height="12" rx="1.25"/><path d="M5.75 10h5.5M5.75 13h3.5"/></symbol>
+<symbol id="i-chart" viewBox="0 0 20 20"><path d="M3.5 16.5h13"/><rect x="4.75" y="9.5" width="2.5" height="4.5" rx=".5"/><rect x="8.75" y="4.5" width="2.5" height="9.5" rx=".5"/><rect x="12.75" y="7" width="2.5" height="7" rx=".5"/></symbol>
+<symbol id="i-signpost" viewBox="0 0 20 20"><path d="M10 2.5v15M7.5 17.5h5"/><path d="M4.5 4.5h9l2.25 2.25L13.5 9h-9Z"/><path d="M15.5 10.5h-9l-2.25 2.25L6.5 15h9Z" opacity=".55"/></symbol>
+<symbol id="i-lock" viewBox="0 0 20 20"><rect x="4.25" y="8.75" width="11.5" height="8.25" rx="1.75"/><path d="M7 8.75V6.5a3 3 0 0 1 6 0v2.25"/></symbol>
+<symbol id="i-sparkle" viewBox="0 0 20 20"><path d="M9 2.75c.45 3.4 1.85 4.8 5.25 5.25C10.85 8.45 9.45 9.85 9 13.25 8.55 9.85 7.15 8.45 3.75 8 7.15 7.55 8.55 6.15 9 2.75Z"/><path d="M15 12.5v4M13 14.5h4"/></symbol>
+<symbol id="i-eye" viewBox="0 0 20 20"><path d="M2.25 10S5 4.75 10 4.75 17.75 10 17.75 10 15 15.25 10 15.25 2.25 10 2.25 10Z"/><circle cx="10" cy="10" r="2.25"/></symbol>
+<symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 2.5 16 4.75V9.5c0 3.75-2.5 6.25-6 7.75-3.5-1.5-6-4-6-7.75V4.75Z"/><path d="m7.25 9.75 2 2 3.5-3.75"/></symbol>
+<symbol id="i-circle-check" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25"/><path d="m7 10.25 2 2 4-4.25"/></symbol>
+<symbol id="i-circle" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/></symbol>
+<symbol id="i-circle-half" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 0 1 0 13Z" class="f"/></symbol>
+<symbol id="i-alert" viewBox="0 0 20 20"><path d="M8.7 3.9a1.5 1.5 0 0 1 2.6 0l6.2 10.8a1.5 1.5 0 0 1-1.3 2.25H3.8a1.5 1.5 0 0 1-1.3-2.25Z"/><path d="M10 8v3.25M10 13.9v.1"/></symbol>
+<symbol id="i-link" viewBox="0 0 20 20"><path d="M8.5 11.5a3 3 0 0 0 4.25 0l2.5-2.5A3 3 0 0 0 11 4.75l-.75.75"/><path d="M11.5 8.5a3 3 0 0 0-4.25 0l-2.5 2.5A3 3 0 0 0 9 15.25l.75-.75"/></symbol>
+<symbol id="i-external" viewBox="0 0 20 20"><path d="M11.5 3.5h5v5M16.5 3.5l-7 7"/><path d="M14.5 11.5v3.75A1.25 1.25 0 0 1 13.25 16.5h-8.5a1.25 1.25 0 0 1-1.25-1.25v-8.5A1.25 1.25 0 0 1 4.75 5.5H8.5"/></symbol>
+<symbol id="i-sun" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.25"/><path d="M10 2.5V4M10 16v1.5M2.5 10H4M16 10h1.5M4.7 4.7l1.05 1.05M14.25 14.25l1.05 1.05M4.7 15.3l1.05-1.05M14.25 5.75l1.05-1.05"/></symbol>
+<symbol id="i-moon" viewBox="0 0 20 20"><path d="M16.25 12.25A6.5 6.5 0 0 1 7.75 3.75a6.75 6.75 0 1 0 8.5 8.5Z"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 20 20"><path d="M3.5 6h7.5M15.5 6h1M3.5 14h1M9 14h7.5"/><circle cx="13.25" cy="6" r="2.25"/><circle cx="6.75" cy="14" r="2.25"/></symbol>
+<symbol id="i-layers" viewBox="0 0 20 20"><path d="M10 2.75 17.25 6.5 10 10.25 2.75 6.5Z"/><path d="m2.75 10 7.25 3.75L17.25 10"/><path d="m2.75 13.5 7.25 3.75 7.25-3.75"/></symbol>
+<symbol id="i-table" viewBox="0 0 20 20"><rect x="3" y="3.5" width="14" height="13" rx="1.75"/><path d="M3 8h14M8.25 8v8.5"/></symbol>
+<symbol id="i-kanban" viewBox="0 0 20 20"><rect x="3" y="3.5" width="14" height="13" rx="1.75"/><path d="M7.5 6.5v5M10 6.5v8M12.5 6.5v3"/></symbol>
+<symbol id="i-bot" viewBox="0 0 20 20"><rect x="4" y="6.5" width="12" height="9.5" rx="2.5"/><path d="M10 3.5v3M7.75 10.5v1.25M12.25 10.5v1.25M2 10.5v2.5M18 10.5v2.5"/><circle cx="10" cy="3" r=".9" class="f"/></symbol>
+<symbol id="i-star" viewBox="0 0 20 20"><path d="m10 2.9 2.15 4.45 4.9.65-3.6 3.4.9 4.85L10 13.9l-4.35 2.35.9-4.85-3.6-3.4 4.9-.65Z"/></symbol>
+<symbol id="i-rules" viewBox="0 0 20 20"><path d="m3 5.5 1.25 1.25L6.5 4.5M3 10.5l1.25 1.25L6.5 9.5"/><path d="M9.5 5.75h7.5M9.5 10.75h7.5M9.5 15.25h7.5M3.75 15.25h1.5"/></symbol>
+<symbol id="i-bulb" viewBox="0 0 20 20"><path d="M7.5 14.5h5M8.25 17h3.5"/><path d="M10 2.75a5 5 0 0 0-3.1 8.9c.6.5.85 1.15.85 1.85v1h4.5v-1c0-.7.25-1.35.85-1.85A5 5 0 0 0 10 2.75Z"/></symbol>
+<symbol id="i-zap" viewBox="0 0 20 20"><path d="M11 2.5 4.5 11H10l-1 6.5L15.5 9H10Z"/></symbol>
+<symbol id="i-history" viewBox="0 0 20 20"><path d="M3.5 10a6.5 6.5 0 1 0 1.9-4.6L3.5 7.25"/><path d="M3.5 3.75v3.5H7M10 6.75V10l2.5 1.5"/></symbol>
+<symbol id="i-reply" viewBox="0 0 20 20"><path d="M8 5 3.5 9.25 8 13.5"/><path d="M3.5 9.25H12a4.5 4.5 0 0 1 4.5 4.5V15"/></symbol>
+<symbol id="i-filter" viewBox="0 0 20 20"><path d="M3.25 4.5h13.5L11.5 10.75v4.75l-3 1.25v-6Z"/></symbol>
+<symbol id="i-snooze" viewBox="0 0 20 20"><path d="M16.5 10A6.5 6.5 0 1 1 10 3.5"/><path d="M12.5 3.5h4l-4 4.5h4M10 7v3.25l2 1.25"/></symbol>
+<symbol id="i-wave" viewBox="0 0 20 20"><path d="M3 9v2M6 6.5v7M9 4v12M12 7v6M15 5.5v9M18 9v2"/></symbol>
+<symbol id="i-quote" viewBox="0 0 20 20"><path d="M4 15.5c2.5-.75 3.75-2.5 3.75-5.25V5H3.5v5h4.25"/><path d="M11.5 15.5c2.5-.75 3.75-2.5 3.75-5.25V5H11v5h4.25"/></symbol>
+<symbol id="i-cmd" viewBox="0 0 20 20"><path d="M7.5 7.5h5v5h-5Z"/><path d="M7.5 7.5H5.75a1.75 1.75 0 1 1 1.75-1.75Zm5 0V5.75a1.75 1.75 0 1 1 1.75 1.75Zm0 5h1.75a1.75 1.75 0 1 1-1.75 1.75Zm-5 0v1.75a1.75 1.75 0 1 1-1.75-1.75Z"/></symbol>
+<symbol id="i-enter" viewBox="0 0 20 20"><path d="M16 4.5v5.75a2 2 0 0 1-2 2H4.5"/><path d="M8 8.75 4.5 12.25 8 15.75"/></symbol>
+<symbol id="i-play" viewBox="0 0 20 20"><path d="M6.5 4.5v11l9-5.5Z"/></symbol>
+<symbol id="i-tag" viewBox="0 0 20 20"><path d="M3 4.5v4.6a1.5 1.5 0 0 0 .44 1.06l6.4 6.4a1.5 1.5 0 0 0 2.12 0l4.6-4.6a1.5 1.5 0 0 0 0-2.12l-6.4-6.4A1.5 1.5 0 0 0 9.1 3H4.5A1.5 1.5 0 0 0 3 4.5Z"/><circle cx="6.75" cy="6.75" r="1.1" class="f"/></symbol>
+<symbol id="i-code" viewBox="0 0 20 20"><path d="M7 6 3 10l4 4M13 6l4 4-4 4"/></symbol>
+<symbol id="i-home" viewBox="0 0 20 20"><path d="M3.5 8.75 10 3.5l6.5 5.25V16a1 1 0 0 1-1 1H12v-4.5H8V17H4.5a1 1 0 0 1-1-1Z"/></symbol>
+<symbol id="i-compose" viewBox="0 0 20 20"><path d="M9 3.5H5A1.5 1.5 0 0 0 3.5 5v10A1.5 1.5 0 0 0 5 16.5h10a1.5 1.5 0 0 0 1.5-1.5v-4"/><path d="M14.25 3.25a1.6 1.6 0 0 1 2.5 2.5L10.5 12 8 12.5l.5-2.5Z"/></symbol>
+<symbol id="i-gauge" viewBox="0 0 20 20"><path d="M3.25 14.5a7.25 7.25 0 1 1 13.5 0"/><path d="m10 11.5 3.5-4"/><circle cx="10" cy="11.5" r="1" class="f"/></symbol>
+</defs>
+</svg>
+
+<div class="progress" id="progress"></div>
+<nav class="dots" id="dots" aria-label="Слайди"></nav>
+<div class="hud">
+  <button class="themebtn" id="themebtn" title="Тема (T)"><svg class="i s14 moon"><use href="#i-moon"/></svg><svg class="i s14 sun"><use href="#i-sun"/></svg><span id="themelabel">Темна</span><kbd>T</kbd></button>
+  <span><kbd>↑</kbd> <kbd>↓</kbd> слайди</span>
+  <span class="count" id="count">01 / 17</span>
+</div>
+
+<!-- 1 -->
+<section class="slide" id="s1"><div class="wrap">
+  <div class="hero-mark"><span class="mark"><svg class="i"><use href="#i-mag"/></svg></span>mag<span>бачення · листопад 2026</span></div>
+  <h1>Від «агентів, що пишуть код»<br>до робочого простору</h1>
+  <p class="lead">Сьогодні mag добре веде одну історію: проблема → план → PR → рев'ю → мердж. Але робота — це не лише код: відповіді на запити, звіти, рішення, документи, оцінки. У розробника більше PR, у менеджера — більше документів і рішень; механіка одна. Ось як mag зміниться, щоб будь-яка робота мала свій дім, свій цикл перевірки і свою кнопку «готово».</p>
+  <div class="stats">
+    <div class="stat"><div class="big">48</div><p>works за весь час — <b>усі</b> про код або рев'ю</p></div>
+    <div class="stat"><div class="big">70<small>%</small></div><p>топіків — нерозробницька робота, що жила в голих чатах</p></div>
+    <div class="stat"><div class="big">5</div><p>HTML-файлів однієї оцінки — і питання «а який фінальний?»</p></div>
+    <div class="stat"><div class="big">3<small>×</small></div><p>«що ти робиш?» — коли агент сам постив на GitHub</p></div>
+  </div>
+</div></section>
+
+<!-- 2 -->
+<section class="slide" id="s2"><div class="wrap">
+  <div class="kicker"><span class="no">02</span><svg class="i"><use href="#i-alert"/></svg>Що болить сьогодні</div>
+  <h2>Чотири речі, які ми побачили у твоїх топіках</h2>
+  <p class="lead">Не баги — прогалини: у mag немає місця для результату, правил і обіцянок.</p>
+  <div class="grid g2">
+    <div class="card"><div class="ibox red"><svg class="i"><use href="#i-send"/></svg></div><h3>Публікація без попередження</h3><p>Агент відповідає в PR, резолвить треди, постить у Slack — інколи без прев'ю. Пост у Slack не відредагуєш, а «покажи перед публікацією» доводиться просити щоразу.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-docs"/></svg></div><h3>Немає «фінальної версії»</h3><p>Звіт чи оцінка — купа файлів і канвасів. Незрозуміло, що результат, а що чернетка. Результат губиться в чаті.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-rules"/></svg></div><h3>Правила живуть деінде</h3><p>Як писати ups/downs, як оцінювати інженера — записано в пам'яті Claude Code іншого проєкту. mag про це не знає, і щоразу доводиться пояснювати заново.</p></div>
+    <div class="card"><div class="ibox amber"><svg class="i"><use href="#i-clock"/></svg></div><h3>«Відповім у понеділок» — і ніде не записано</h3><p>Запити зі Slack, рев'ю колег, обіцянки після зустрічей — mag не знає, що чекає саме на тебе, і не нагадає.</p></div>
+  </div>
+</div></section>
+
+<!-- 3 -->
+<section class="slide" id="s3"><div class="wrap">
+  <div class="kicker"><span class="no">03</span><svg class="i"><use href="#i-layers"/></svg>Головна ідея</div>
+  <h2>У будь-якої роботи є результат — і він проходить рев'ю, як PR</h2>
+  <p class="lead">Новий тип результату — <b>Deliverable</b>: звіт, оцінка, рішення, відповідь у Slack, тікет, план 1:1. Він живе так само, як код: чернетка, перевірка, твій погляд, публікація.</p>
+  <div class="stepper">
+    <div class="st done"><div class="node"><svg class="i"><use href="#i-pen-line"/></svg></div><b>Чернетка</b><span>агент пише за твоїми правилами</span></div>
+    <div class="st done"><div class="node"><svg class="i"><use href="#i-shield"/></svg></div><b>Перевірка агентом</b><span>окремий агент шукає докази</span></div>
+    <div class="st now"><div class="node"><svg class="i"><use href="#i-eye"/></svg></div><b>Твоє рев'ю</b><span>правиш, питаєш, погоджуєш</span></div>
+    <div class="st"><div class="node"><svg class="i"><use href="#i-send"/></svg></div><b>Publish / Final</b><span>одна фінальна версія</span></div>
+  </div>
+  <div class="grid g3" style="margin-top:32px">
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-pr"/></svg></div><span class="pill">код</span><h3 style="margin-top:10px">PR → Merge</h3><p>як і зараз, нічого не змінюється</p></div>
+    <div class="card"><div class="ibox acc"><svg class="i"><use href="#i-doc"/></svg></div><span class="pill acc">документ</span><h3 style="margin-top:10px">Чернетка → Final</h3><p>звіт, оцінка, рішення — з версіями і однією фінальною</p></div>
+    <div class="card"><div class="ibox acc"><svg class="i"><use href="#i-chat"/></svg></div><span class="pill acc">повідомлення</span><h3 style="margin-top:10px">Прев'ю → Publish</h3><p>Slack, Jira, коментар у PR — тільки після твого «так»</p></div>
+  </div>
+</div></section>
+
+<!-- 4 -->
+<section class="slide" id="s4"><div class="wrap">
+  <div class="kicker"><span class="no">04</span><svg class="i"><use href="#i-folder"/></svg>Новий сайдбар</div>
+  <h2>Workspace над проєктами</h2>
+  <p class="lead">Ліворуч — rail з розділами workspace, спільними для всіх проєктів. Поруч — топіки, згруповані за проєктами. Проєкти лишаються як є: проєкт — це системний лейбл зі своїми налаштуваннями.</p>
+  <div class="win slack">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">Starred</div><div class="nav"><svg class="i" style="color:var(--amber)"><use href="#i-star"/></svg><span class="lbl">Ups &amp; Downs · W47</span></div><div class="nav"><svg class="i" style=""><use href="#i-doc"/></svg><span class="lbl">Оцінка: внесок Олени</span><svg class="i s14" style="color:var(--t3)"><use href="#i-lock"/></svg></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#E0795A"></span>Data Removal<span class="n">9</span></div><div class="nav kid"><svg class="i" style="color:var(--green)"><use href="#i-pr"/></svg><span class="lbl">PRVP-2339 Riviera → duff-brewery</span><span class="n">2h</span></div><div class="nav kid unread"><svg class="i" style="color:var(--amber)"><use href="#i-circle-half"/></svg><span class="lbl">Міграція черги без Redis</span><span class="cnt you">2</span></div><div class="nav kid2"><span class="lbl">локи без Redis</span><span class="n">1d</span></div><div class="nav kid unread"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">DBO sync: дії</span><span class="cnt">3</span></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#D7A43C"></span>Money Problems<span class="n">4</span></div><div class="nav kid unread"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Рефанди: план</span><span class="cnt">1</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-ticket"/></svg><span class="lbl">MP-118 ліміти платежів</span><span class="n">3d</span></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:var(--t4)"></span>Без проєкту<span class="n">3</span></div><div class="nav kid"><svg class="i" style="color:var(--green)"><use href="#i-sparkle"/></svg><span class="lbl">Прототип: дашборд PR</span><span class="codechip"><svg class="i"><use href="#i-code"/></svg>code</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Підготовка до 1:1 з Марко</span><span class="n">чт</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Крос-проєктний звіт</span><span class="n">3d</span></div><span class="grip" title="ширину можна тягнути"></span></div>
+    <div class="pane"><div class="pmain">
+      <div class="phead"><span class="t">Що з'являється</span><span class="pill">спільне для всіх проєктів</span></div>
+      <div class="pbody">
+        <div class="grid g2" style="gap:12px">
+          <div class="mcard"><div class="ibox amber"><svg class="i"><use href="#i-inbox"/></svg></div><h4>Inbox</h4><p>Усе, що чекає саме на тебе, з усіх проєктів: питання агентів, відповіді в PR, запити зі Slack, чернетки звітів.</p></div>
+          <div class="mcard"><div class="ibox"><svg class="i"><use href="#i-users"/></svg></div><h4>People</h4><p>Хто є хто: GitHub, Slack, Jira і імена в зустрічах — одна людина. Історія 1:1, відкриті домовленості.</p></div>
+          <div class="mcard"><div class="ibox"><svg class="i"><use href="#i-repeat"/></svg></div><h4>Routines</h4><p>Регулярна робота за розкладом: щотижневі ups/downs, статистика PR, дайджест по проєктах.</p></div>
+          <div class="mcard"><div class="ibox"><svg class="i"><use href="#i-library"/></svg></div><h4>Library</h4><p>Фінальні документи і рішення. Одна версія — фінальна, решта в історії.</p></div>
+        </div>
+        <p class="note"><svg class="i"><use href="#i-chat"/></svg><span>«Мої топіки» — розмови без проєкту: оцінка людини, крос-проєктний звіт, особисте. Більше не треба класти їх «у mag, бо більше нікуди».</span></p>
+      </div>
+    </div></div>
+  </div>
+</div></section>
+
+<!-- 4b -->
+<section class="slide" id="s4b"><div class="wrap">
+  <div class="kicker"><span class="no">05</span><svg class="i"><use href="#i-tag"/></svg>Лейбли</div>
+  <h2>Лейбли, як у Linear</h2>
+  <p class="lead">Усе, що класифікує річ, — <b>лейбл у групі</b>. Кожен workspace створює свої групи; група — ексклюзивна (0..1) або множинна (0..n). Системні групи мають налаштування, і перша з них — <b>Project</b>.</p>
+  <div class="split" style="grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:20px">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="ctxcard">
+        <div class="hd"><span class="lg">A</span><b>Aura</b><svg class="i s14" style="color:var(--t3)"><use href="#i-chev-d"/></svg><span class="sp" style="flex:1"></span><span class="pill">типова область, не стіна</span></div>
+        <p style="margin:10px 14px;color:var(--t2);font-size:12.5px">Workspace — область за замовчуванням. Коли ти просиш, агент читає й шукає в іншому workspace і посилається на джерело.</p>
+        <div class="xref"><div class="mt"><svg class="i s12"><use href="#i-chat"/></svg>Personal · mag · топік «Inbox у workspace»</div>Беру схему з Aura <span class="ref">aura:topic:dbr-queue-redis</span> — там черга обійшлась без Redis, повторю для Inbox.</div>
+      </div>
+      <div class="ctxcard">
+        <div class="hd"><svg class="i" style="color:var(--t2)"><use href="#i-tag"/></svg><b>Групи лейблів · Aura</b><span class="sp" style="flex:1"></span><span class="btn ghost sm"><svg class="i"><use href="#i-plus"/></svg>Група</span></div>
+        <div class="lgrp" style="border-top:0"><span class="nm">Project<span class="pill acc" style="height:18px">системна</span></span><span class="ty">0..1</span><span class="vs"><span class="proj dr">Data Removal</span><span class="proj mp">Money Problems</span></span></div>
+        <div class="lgrp"><span class="nm">Kind</span><span class="ty">0..1</span><span class="vs"><span class="lchip">report</span><span class="lchip">assessment</span><span class="lchip">prototype</span></span></div>
+        <div class="lgrp"><span class="nm">Area</span><span class="ty">0..n</span><span class="vs"><span class="lchip">billing</span><span class="lchip">privacy</span></span></div>
+        <div class="lgrp"><span class="nm" style="color:var(--t3)">Milestone<span class="pill" style="height:18px">пізніше</span></span><span class="ty">0..1</span><span class="vs"><span class="lchip dim">—</span></span></div>
+        <div class="inherit"><svg class="i s14"><use href="#i-layers"/></svg>Налаштування успадковуються лише з ексклюзивних системних:<b>Aura</b><svg class="i s12"><use href="#i-arrow-r"/></svg><b>Project</b><svg class="i s12"><use href="#i-arrow-r"/></svg><b>Work</b></div>
+      </div>
+      <div class="ctxcard">
+        <div class="lrow" style="border-top:0;padding:10px 14px"><span class="src"><svg class="i"><use href="#i-doc"/></svg></span><div><div class="tt">Оцінка: внесок Олени за Q4</div><div class="mt" style="margin-top:4px"><span class="proj dr">Data Removal</span><span class="lchip"><em>Kind</em>assessment</span><span class="lchip"><em>Area</em>privacy</span></div></div><span class="btn ghost sm sq"><svg class="i"><use href="#i-tag"/></svg></span></div>
+      </div>
+    </div>
+    <div class="dcard">
+      <div class="hd"><span class="psq" style="width:12px;height:12px;border-radius:3px;background:#E0795A"></span><b>Data Removal</b><span class="pill acc">Project · 0..1</span><span class="btn sm">Відкрити вигляд<svg class="i"><use href="#i-arrow-r"/></svg></span></div>
+      <div class="srow" style="border-top:0"><span>Репозиторії</span><span class="vs"><span class="pill line"><svg class="i"><use href="#i-pr"/></svg>duff-brewery</span><span class="pill line"><svg class="i"><use href="#i-pr"/></svg>riviera</span></span></div>
+      <div class="srow"><span>Jira</span><span class="vs"><span class="pill line"><svg class="i"><use href="#i-ticket"/></svg>PRVP</span></span></div>
+      <div class="srow"><span>Slack</span><span class="vs"><span class="pill line"><svg class="i"><use href="#i-hash"/></svg>data-removal</span><span class="pill line"><svg class="i"><use href="#i-hash"/></svg>dbr-alerts</span></span></div>
+      <div class="srow"><span>Перевизначення</span><span class="vs"><span class="lchip"><em>playbook</em>своє</span><span class="lchip"><em>шаблони</em>з Aura</span><span class="lchip"><em>знання</em>своє · 4</span></span></div>
+      <div class="srow"><span>Routines</span><span class="vs"><span class="pill line"><svg class="i"><use href="#i-repeat"/></svg>PR stats</span><span class="pill line"><svg class="i"><use href="#i-repeat"/></svg>Що чекає на мене</span></span></div>
+      <div class="srow"><span>Вигляд</span><span class="vs" style="color:var(--t2);font-size:12.5px">свої топіки і works · 9 відкритих</span></div>
+      <div class="lab" style="padding:12px 14px 2px;margin:0;border-top:1px solid var(--line)">Правила зіставлення<span class="c">3</span></div>
+      <div class="rule"><span>repo = duff-brewery</span><svg class="i"><use href="#i-arrow-r"/></svg><span class="proj dr">Data Removal</span></div>
+      <div class="rule"><span>jira.key = PRVP-*</span><svg class="i"><use href="#i-arrow-r"/></svg><span class="proj dr">Data Removal</span></div>
+      <div class="rule"><span>slack = #data-removal</span><svg class="i"><use href="#i-arrow-r"/></svg><span class="proj dr">Data Removal</span></div>
+      <div class="ft"><svg class="i s14" style="color:var(--t3)"><use href="#i-shield"/></svg><span style="color:var(--t3);font-size:12px">Тільки з самої речі — ніколи з людини. Помилився — виправ одним кліком.</span></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 4c -->
+<section class="slide" id="s4c"><div class="wrap">
+  <div class="kicker"><span class="no">06</span><svg class="i"><use href="#i-home"/></svg>Новий вигляд</div>
+  <h2>Новий вигляд: як у Slack</h2>
+  <p class="lead">Ліворуч — rail з розділами workspace. Поруч — колонка топіків, ширину якої можна тягнути: Starred, проєкти з топіками і works, «Без проєкту». Праворуч — вміст. Топік лишається головною одиницею; <b>жирне</b> — непрочитане або чекає на тебе.</p>
+  <div style="position:relative;margin-right:40px">
+    <div class="floatwin" style="right:-40px;top:-30px;width:300px;opacity:.9;z-index:0"><div class="fh"><span class="lights"><i></i><i></i><i></i></span><span style="display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;background:var(--t4);color:#fff;font-size:9.5px;font-weight:700">P</span>Personal<span class="sp"></span></div><div style="height:80px"></div></div>
+    <div class="win slack" style="height:640px;position:relative;z-index:1;overflow:visible">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">Starred</div><div class="nav"><svg class="i" style="color:var(--amber)"><use href="#i-star"/></svg><span class="lbl">Ups &amp; Downs · W47</span></div><div class="nav"><svg class="i" style=""><use href="#i-doc"/></svg><span class="lbl">Оцінка: внесок Олени</span><svg class="i s14" style="color:var(--t3)"><use href="#i-lock"/></svg></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#E0795A"></span>Data Removal<span class="n">9</span></div><div class="nav kid"><svg class="i" style="color:var(--green)"><use href="#i-pr"/></svg><span class="lbl">PRVP-2339 Riviera → duff-brewery</span><span class="n">2h</span></div><div class="nav kid unread"><svg class="i" style="color:var(--amber)"><use href="#i-circle-half"/></svg><span class="lbl">Міграція черги без Redis</span><span class="cnt you">2</span></div><div class="nav kid2"><span class="lbl">локи без Redis</span><span class="n">1d</span></div><div class="nav kid unread"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">DBO sync: дії</span><span class="cnt">3</span></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#D7A43C"></span>Money Problems<span class="n">4</span></div><div class="nav kid unread"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Рефанди: план</span><span class="cnt">1</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-ticket"/></svg><span class="lbl">MP-118 ліміти платежів</span><span class="n">3d</span></div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:var(--t4)"></span>Без проєкту<span class="n">3</span></div><div class="nav kid"><svg class="i" style="color:var(--green)"><use href="#i-sparkle"/></svg><span class="lbl">Прототип: дашборд PR</span><span class="codechip"><svg class="i"><use href="#i-code"/></svg>code</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Підготовка до 1:1 з Марко</span><span class="n">чт</span></div><div class="nav kid"><svg class="i" style=""><use href="#i-chat"/></svg><span class="lbl">Крос-проєктний звіт</span><span class="n">3d</span></div><span class="grip" title="ширину можна тягнути"></span></div><div class="pane"><div class="pmain"><div class="phead"><span class="t">Прототип: дашборд PR</span><span class="pill blue"><svg class="i"><use href="#i-code"/></svg>scratch/pr-dashboard</span><span class="lchip"><em>Kind</em>prototype</span><span class="sp"></span><span class="btn">Додати в проєкт<svg class="i"><use href="#i-chev-d"/></svg></span></div><div class="pbody" style="padding:22px max(24px,calc((100% - 600px)/2))"><div class="bub">Зроби швидкий прототип дашборду PR по обох проєктах — просто подивитись, чи корисно.</div><div class="agm"><span class="av acc"><svg class="i s12"><use href="#i-sparkle"/></svg></span><div><div class="nm">агент</div>Готово: окремий репо <code>scratch/pr-dashboard</code>, дані з GitHub за жовтень. Проєкт не потрібен — це топік з кодом. Приживеться — додай у проєкт.</div></div><div class="mcard" style="margin-top:16px;display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:center"><span class="src" style="width:28px;height:28px;border-radius:6px;display:grid;place-items:center;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line);color:var(--t2)"><svg class="i"><use href="#i-chart"/></svg></span><div><h4 style="margin:0">PR за жовтень · канвас</h4><p>34 змерджено · медіана до першого рев'ю 0,9 дня</p></div><span class="btn sm"><svg class="i"><use href="#i-external"/></svg>у вікні</span></div></div></div></div>
+    <div class="dd" style="left:72px;top:46px"><div class="o hl"><span class="lg a">A</span>Aura<span class="ck"><svg class="i"><use href="#i-check"/></svg></span></div><div class="o"><span class="lg">P</span>Personal</div><hr><div class="o"><svg class="i"><use href="#i-external"/></svg>Відкрити Personal у новому вікні<kbd>⌘⇧N</kbd></div><div class="o"><svg class="i"><use href="#i-sliders"/></svg>Налаштування workspace</div><div class="o"><svg class="i"><use href="#i-tag"/></svg>Лейбли</div></div>
+    </div>
+    <div class="floatwin" style="right:-28px;bottom:36px;width:360px"><div class="fh"><span class="lights"><i></i><i></i><i></i></span>PR за жовтень · канвас<span class="sp"></span><span class="pill" style="height:18px">Aura</span></div><div class="bars"><i style="height:55%"></i><i class="b" style="height:30%"></i><i style="height:80%"></i><i class="b" style="height:45%"></i><i style="height:62%"></i><i class="b" style="height:38%"></i><i style="height:92%"></i><i class="b" style="height:50%"></i></div><div style="display:flex;gap:14px;padding:10px 16px;color:var(--t3);font-size:11.5px"><span class="proj dr">Data Removal · 31</span><span class="proj mp">Money Problems · 3</span><span style="margin-left:auto">тиждень 40–44</span></div></div>
+    <span class="co" style="left:54px;top:34px">1</span>
+    <span class="co" style="left:300px;top:40px">2</span>
+    <span class="co" style="left:290px;top:300px">3</span>
+    <span class="co" style="right:248px;top:-40px">4</span>
+    <span class="co" style="right:322px;bottom:216px">5</span>
+  </div>
+  <div class="legend">
+    <div><span class="co">1</span><span><b>Rail</b>розділи workspace з бейджами; знизу — новий топік, тема, ти</span></div>
+    <div><span class="co">2</span><span><b>Меню workspace</b>Aura ✓, Personal, налаштування, лейбли</span></div>
+    <div><span class="co">3</span><span><b>Ширину можна тягнути</b>колонка топіків запам'ятовує ширину</span></div>
+    <div><span class="co">4</span><span><b>Кілька вікон</b>кілька workspace — в окремих вікнах, поруч</span></div>
+    <div><span class="co">5</span><span><b>Канваси у вікні</b>«↗ у вікні» відкриває артефакт окремим вікном</span></div>
+  </div>
+</div></section>
+
+<!-- 5 -->
+<section class="slide" id="s5"><div class="wrap">
+  <div class="kicker"><span class="no">07</span><svg class="i"><use href="#i-inbox"/></svg>Inbox</div>
+  <h2>Один екран: що чекає на тебе</h2>
+  <p class="lead">Inbox не створює топіки сам — це просто список. Відкриваєш пункт — і тоді він стає топіком (або додається до наявного).</p>
+  <div class="win slack">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">Inbox</div><div class="nav on unread"><svg class="i" style=""><use href="#i-inbox"/></svg><span class="lbl">Усе</span><span class="cnt you">7</span></div><div class="nav unread"><svg class="i" style=""><use href="#i-reply"/></svg><span class="lbl">Відповідь за тобою</span><span class="cnt you">1</span></div><div class="nav"><svg class="i" style=""><use href="#i-eye"/></svg><span class="lbl">Чернетки на рев'ю</span><span class="n">2</span></div><div class="nav"><svg class="i" style=""><use href="#i-pr"/></svg><span class="lbl">Змінилось у PR</span><span class="n">2</span></div><div class="nav"><svg class="i" style=""><use href="#i-snooze"/></svg><span class="lbl">Snoozed</span><span class="n">2</span></div><div class="sec" style="padding-top:10px">Збережені фільтри</div><div class="nav"><svg class="i" style=""><use href="#i-filter"/></svg><span class="lbl">Project: Data Removal</span><span class="n">5</span></div><div class="nav"><svg class="i" style=""><use href="#i-filter"/></svg><span class="lbl">Kind: report</span><span class="n">1</span></div><span class="grip" title="ширину можна тягнути"></span></div>
+    <div class="pane"><div class="pmain">
+      <div class="phead"><span class="t">Inbox</span><span class="fchips"><span class="fchip on">Усі</span><span class="fchip">Project<svg class="i"><use href="#i-chev-d"/></svg></span><span class="fchip">Kind<svg class="i"><use href="#i-chev-d"/></svg></span><span class="fchip ghost"><svg class="i"><use href="#i-plus"/></svg>лейбл</span></span><span class="sp"></span><span class="btn ghost"><svg class="i"><use href="#i-snooze"/></svg>Snoozed · 2</span><span class="btn ghost sq"><svg class="i"><use href="#i-filter"/></svg></span></div>
+      <div class="pbody flush">
+        <div class="grp"><svg class="i"><use href="#i-reply"/></svg>Відповідь за тобою<span class="c">1</span></div>
+        <div class="lrow on"><span class="src"><svg class="i"><use href="#i-hash"/></svg></span><div><div class="tt">Марко питає про строки міграції черги</div><div class="mt"><span class="proj dr">Data Removal</span>#data-removal<span class="sep">·</span>агент підготував відповідь<span class="sep">·</span><span class="you">обіцяв до понеділка</span></div></div><div class="acts"><span class="btn ghost sm"><svg class="i"><use href="#i-snooze"/></svg>Snooze</span><span class="btn pri sm">Відкрити<kbd>↵</kbd></span></div></div>
+        <div class="grp"><svg class="i"><use href="#i-eye"/></svg>Чернетки на рев'ю<span class="c">2</span></div>
+        <div class="lrow"><span class="src"><svg class="i"><use href="#i-repeat"/></svg></span><div><div class="tt">Ups &amp; Downs — тиждень 47, два проєкти</div><div class="mt"><span class="lchip"><em>Kind</em>report</span>Routine<span class="sep">·</span>зібрано з Jira, GitHub, Slack і четвергової ретро</div></div><div class="acts"><span class="when">15:02</span><span class="btn sm">Переглянути</span></div></div>
+        <div class="lrow"><span class="src"><svg class="i"><use href="#i-mic"/></svg></span><div><div class="tt">DBO sync: 3 рішення, 4 дії</div><div class="mt"><span class="proj dr">Data Removal</span>Зустріч 20.11<span class="sep">·</span>прийняти / змінити / відкинути</div></div><div class="acts"><span class="when">12:40</span><span class="btn sm">Розібрати</span></div></div>
+        <div class="grp"><svg class="i"><use href="#i-pr"/></svg>Змінилось у PR<span class="c">2</span></div>
+        <div class="lrow"><span class="src"><svg class="i"><use href="#i-pr"/></svg></span><div><div class="tt">duff-brewery#311 — автор відповів на 2 коментарі</div><div class="mt"><span class="proj dr">Data Removal</span>твоє рев'ю<span class="sep">·</span>1 тред можна закрити</div></div><div class="acts"><span class="when">вчора</span><span class="btn ghost sm sq"><svg class="i"><use href="#i-check"/></svg></span><span class="btn sm">Відкрити</span></div></div>
+        <div class="lrow"><span class="src"><svg class="i"><use href="#i-ticket"/></svg></span><div><div class="tt">PRVP-2401: план готовий до рев'ю</div><div class="mt"><span class="proj dr">Data Removal</span>Jira<span class="sep">·</span>6 питань із рекомендаціями</div></div><div class="acts"><span class="when">вчора</span><span class="btn sm">Відповісти</span></div></div>
+      </div>
+    </div></div>
+  </div>
+</div></section>
+
+<!-- 6 -->
+<section class="slide" id="s6"><div class="wrap">
+  <div class="kicker"><span class="no">08</span><svg class="i"><use href="#i-send"/></svg>Publish</div>
+  <h2>Нічого не йде назовні без твого «так»</h2>
+  <p class="lead">Будь-який запис у Slack, Jira, GitHub чи Google Docs — це картка з тим, <b>як саме</b> воно виглядатиме. Агенту нічого не заборонено: він може все, що може CLI, але Publish натискаєш ти. Для «безпечних» місць (наприклад, чернетковий док) можна увімкнути «публікувати самому».</p>
+  <div class="grid g2" style="align-items:start">
+    <div class="pub">
+      <div class="pubhead"><svg class="i" style="color:var(--acc-fg)"><use href="#i-send"/></svg><span class="t">Publish</span><span class="to"><svg class="i s14"><use href="#i-arrow-r"/></svg><svg class="i s14"><use href="#i-hash"/></svg>data-removal</span><span class="sp"></span><span class="pill amber"><svg class="i"><use href="#i-lock"/></svg>не редагується після</span></div>
+      <div class="prev">
+        <span class="av lg acc">Т</span>
+        <div><div class="who">Ти<small>зараз</small></div>
+          <div class="h" style="margin-top:2px">Ups &amp; Downs · W47</div>
+          <div class="h">Ups</div>
+          <ul><li>Riviera перенесено в duff-brewery, Redis прибрано</li><li>Черга DBO: спостережуваність по користувачу</li></ul>
+          <div class="h">Downs</div>
+          <ul style="margin-bottom:0"><li>Інтеграційні тести ще не в CI</li></ul>
+        </div>
+      </div>
+      <div class="pubrules"><svg class="i s14"><use href="#i-rules"/></svg>Правила місця:<span class="pill line">рівень епіків</span><span class="pill line">без сирих посилань</span><span class="pill green"><svg class="i"><use href="#i-check"/></svg>3 / 3 виконано</span></div>
+      <div class="pubfoot"><span class="btn ghost">Скасувати</span><span class="sp"></span><span class="btn"><svg class="i"><use href="#i-pencil"/></svg>Редагувати</span><span class="btn pri"><svg class="i"><use href="#i-send"/></svg>Publish<kbd>⌘↵</kbd></span></div>
+    </div>
+    <div class="ba">
+      <div class="card col"><div class="bh" style="color:var(--t3)">Було</div><ul class="chk no"><li><svg class="i"><use href="#i-x"/></svg>агент постить сам</li><li><svg class="i"><use href="#i-x"/></svg>«стоп, нічого не роби!»</li><li><svg class="i"><use href="#i-x"/></svg>зламане форматування — назавжди</li><li><svg class="i"><use href="#i-x"/></svg>гейт тільки на gh/git</li></ul></div>
+      <div class="card col"><div class="bh" style="color:var(--acc-fg)">Стане</div><ul class="chk yes"><li><svg class="i"><use href="#i-check"/></svg>прев'ю, як буде в Slack / Jira</li><li><svg class="i"><use href="#i-check"/></svg>одна кнопка Publish</li><li><svg class="i"><use href="#i-check"/></svg>правила місця: «тільки дописувати», «не чіпати старі секції»</li><li><svg class="i"><use href="#i-check"/></svg>гейт на всі записи, не лише GitHub</li></ul></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 7 -->
+<section class="slide" id="s7"><div class="wrap">
+  <div class="kicker"><span class="no">09</span><svg class="i"><use href="#i-shield"/></svg>Рев'ю документа</div>
+  <h2>Кожне твердження — з джерелом</h2>
+  <p class="lead">Для коду mag порівнює план і факт. Для документа — твердження і докази. Наведи на підкреслене — побачиш, звідки це. Хвиляста червона лінія — перевіряльник не знайшов підтвердження.</p>
+  <div class="win slack tall">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">Library</div><div class="fchips" style="padding:0 6px 6px;flex-wrap:wrap"><span class="fchip">Project<svg class="i"><use href="#i-chev-d"/></svg></span><span class="fchip on">Kind: assessment<svg class="i"><use href="#i-x"/></svg></span></div><div class="nav"><svg class="i" style=""><use href="#i-chart"/></svg><span class="lbl">PR stats · жовтень</span></div><div class="nav on"><svg class="i" style=""><use href="#i-doc"/></svg><span class="lbl">Оцінка: внесок Олени</span><svg class="i s14" style="color:var(--t3)"><use href="#i-lock"/></svg></div><div class="nav"><svg class="i" style=""><use href="#i-signpost"/></svg><span class="lbl">Рішення: email-сервіс</span></div><div class="nav"><svg class="i" style=""><use href="#i-doc"/></svg><span class="lbl">Ups &amp; Downs · W46</span></div><span class="grip" title="ширину можна тягнути"></span></div>
+    <div class="pane">
+      <div class="pmain">
+        <div class="phead"><span class="t">Оцінка: внесок Олени за Q4</span><span class="proj dr">Data Removal</span><span class="pill"><svg class="i"><use href="#i-lock"/></svg>приватне</span><span class="sp"></span><span class="btn pri"><svg class="i"><use href="#i-circle-check"/></svg>Позначити фінальною</span></div>
+        <div class="pbody" style="padding:22px 28px">
+          <div class="doc">
+            <h5>Факти</h5>
+            <p>Олена змерджила <span class="claim" data-src="gh pr list --author olena --state merged --search 'merged:2026-10-01..2026-12-31' → 34">34 PR за квартал<sup>1</sup></span>, з них <span class="claim" data-src="PR #301, #304, #311 — зміни в queue/*">три великі зміни черги DBR<sup>2</sup></span>. Середній час до першого рев'ю — <span class="claim bad open" data-src="Немає запиту, яким це пораховано. Перевіряльник просить уточнити або прибрати.">1,2 дня</span>.</p>
+            <h5 style="margin-top:48px">Судження</h5>
+            <p class="judg">Велика ініціатива з чергою — <i>цінність ще не видно</i>, це не мінус. Self-merge у своїй зоні — норма.</p>
+          </div>
+        </div>
+      </div>
+      <div class="pside">
+        <div><div class="lab">Перевірка<span class="c"><span class="pill amber"><span class="d"></span>подивись</span></span></div>
+          <div class="tl">
+            <div class="e"><span class="ic green"><svg class="i"><use href="#i-check"/></svg></span><div class="x">11 з 12 тверджень з джерелом</div></div>
+            <div class="e"><span class="ic red"><svg class="i"><use href="#i-alert"/></svg></span><div class="x" style="color:var(--red)">«1,2 дня» — немає запиту</div></div>
+            <div class="e"><span class="ic"><svg class="i"><use href="#i-user"/></svg></span><div class="x">та сама рубрика на контрольній людині (на тобі) — для калібрування</div></div>
+            <div class="e"><span class="ic"><svg class="i"><use href="#i-shield"/></svg></span><div class="x">перевіряв окремий агент, без контексту цього топіку</div></div>
+          </div>
+        </div>
+        <div><div class="lab">Версії</div><span class="seg"><span>v1 чернетка</span><span>v2 правки</span><span class="on">v3</span></span></div>
+        <div><div class="lab">Джерела</div>
+          <div class="tl"><div class="e"><span class="ic"><svg class="i"><use href="#i-pr"/></svg></span><div class="x">GitHub<small>34 PR · 3 репо</small></div></div><div class="e"><span class="ic"><svg class="i"><use href="#i-ticket"/></svg></span><div class="x">Jira<small>DBR epic · 18 тікетів</small></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 8 -->
+<section class="slide" id="s8"><div class="wrap">
+  <div class="kicker"><span class="no">10</span><svg class="i"><use href="#i-repeat"/></svg>Routines</div>
+  <h2>Регулярна робота — сама, за розкладом</h2>
+  <p class="lead">Routine = розклад + джерела + твої правила + куди публікувати. Кожен запуск кладе чернетку в Inbox. Ти виправляєш — агент пропонує записати це як правило, щоб наступного разу не повторювати.</p>
+  <div class="win slack tall">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">Routines</div><div class="nav on"><svg class="i" style=""><use href="#i-repeat"/></svg><span class="lbl">Ups &amp; Downs</span><span class="n">чт</span></div><div class="nav"><svg class="i" style=""><use href="#i-chart"/></svg><span class="lbl">PR stats по проєктах</span><span class="n">1-го</span></div><div class="nav"><svg class="i" style=""><use href="#i-inbox"/></svg><span class="lbl">Що чекає на мене</span><span class="n">9:00</span></div><span class="grip" title="ширину можна тягнути"></span></div>
+    <div class="pane"><div class="pmain">
+      <div class="phead"><span class="t">Ups &amp; Downs</span><span class="pill green"><svg class="i"><use href="#i-calendar"/></svg>щочетверга 15:00</span><span class="pill">2 проєкти</span><span class="sp"></span><span class="btn ghost sq"><svg class="i"><use href="#i-history"/></svg></span><span class="btn"><svg class="i"><use href="#i-play"/></svg>Запустити зараз</span></div>
+      <div class="pbody">
+        <div class="grid g2" style="gap:12px">
+          <div class="mcard"><div class="lab">Джерела</div><div style="display:flex;flex-wrap:wrap;gap:6px"><span class="pill line"><svg class="i"><use href="#i-ticket"/></svg>Jira · епіки проєкту</span><span class="pill line"><svg class="i"><use href="#i-pr"/></svg>GitHub · змерджені PR</span><span class="pill line"><svg class="i"><use href="#i-hash"/></svg>Slack · #data-removal</span><span class="pill line"><svg class="i"><use href="#i-mic"/></svg>ретро четверга</span></div></div>
+          <div class="mcard"><div class="lab">Куди</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill line"><svg class="i"><use href="#i-doc"/></svg>Google Doc проєкту</span><span class="sub" style="font-size:11.5px;color:var(--t3)">тільки нова секція</span><svg class="i s14" style="color:var(--t4)"><use href="#i-arrow-r"/></svg><span class="pill line"><svg class="i"><use href="#i-hash"/></svg>пост у Slack</span></div></div>
+        </div>
+        <div class="mcard" style="margin-top:12px;padding:0">
+          <div class="lab" style="padding:12px 14px 4px;margin:0">Правила<span class="pill" style="margin-left:4px;font-family:var(--mono)">rules.md</span><span class="c">4</span></div>
+          <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:7px 14px;border-top:0"><span class="mono" style="color:var(--t4)">1</span><span>відправлені секції не змінювати ніколи</span><span class="btn ghost sm sq"><svg class="i"><use href="#i-pencil"/></svg></span></div>
+          <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:7px 14px"><span class="mono" style="color:var(--t4)">2</span><span>не повторювати пункти з минулих тижнів</span><span></span></div>
+          <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:7px 14px"><span class="mono" style="color:var(--t4)">3</span><span>у Slack — рівень епіків, без деталей</span><span></span></div>
+          <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:7px 14px"><span class="mono" style="color:var(--t4)">4</span><span>порожній рядок перед підзаголовками в Slack</span><span></span></div>
+          <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:10px 14px;background:var(--acc-t);border-radius:0 0 var(--r-md) var(--r-md)"><svg class="i" style="color:var(--acc-fg)"><use href="#i-bulb"/></svg><div><div class="tt">Агент пропонує правило: «посилання замість сирого тексту»</div><div class="mt">ти виправив це двічі в минулому запуску</div></div><div class="acts"><span class="btn ghost sm">Ні</span><span class="btn pri sm"><svg class="i"><use href="#i-plus"/></svg>Додати</span></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</div></section>
+
+<!-- 9 -->
+<section class="slide" id="s9"><div class="wrap">
+  <div class="kicker"><span class="no">11</span><svg class="i"><use href="#i-users"/></svg>People</div>
+  <h2>Людина — не нікнейм у GitHub</h2>
+  <p class="lead">mag сам зводить GitHub-логін, Slack, Jira та ім'я в транскрипті в одну людину — ти тільки поправляєш, якщо помилився. Жодних полів і рейтингів. Ці дані приватні: агенти проєктів їх не бачать, поки ти не дозволиш. «Де працює» — з активності по проєктах, а не з членства в команді.</p>
+  <div class="win slack">
+    <nav class="rail"><div class="lights"><i></i><i></i><i></i></div><div class="ws" title="Aura">A</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-home"/></svg></span>Топіки</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-inbox"/></svg></span>Inbox<span class="bdg">7</span></div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>Meetings</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-repeat"/></svg></span>Routines</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-library"/></svg></span>Library</div><div class="ritem on"><span class="ib"><svg class="i"><use href="#i-users"/></svg></span>People</div><div class="ritem"><span class="ib"><svg class="i"><use href="#i-search"/></svg></span>Пошук</div><div class="bot"><span class="rb" title="Новий топік"><svg class="i"><use href="#i-plus"/></svg></span><span class="rb" title="Тема"><svg class="i"><use href="#i-moon"/></svg></span><span class="me">Т</span></div></nav><div class="col"><div class="colhead"><span class="ws-t">Aura<svg class="i"><use href="#i-chev-d"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-sliders"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-compose"/></svg></span></div><div class="colsearch"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="sec" style="padding-top:10px">People · за активністю</div><div class="psec"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#E0795A"></span>Data Removal<span class="n">5</span></div><div class="nav kid on"><span class="av blue">М</span><span class="lbl">Марко</span><span class="n">чт</span></div><div class="nav kid"><span class="av green">О</span><span class="lbl">Олена</span></div><div class="psec"><svg class="i"><use href="#i-chev-r"/></svg><span class="psq" style="background:#D7A43C"></span>Money Problems<span class="n">4</span></div><div class="foot" style="margin-top:auto"><svg class="i s14"><use href="#i-lock"/></svg><span style="font-size:11.5px">приватне, лише для тебе</span></div><span class="grip" title="ширину можна тягнути"></span></div>
+    <div class="pane">
+      <div class="pmain">
+        <div class="phead"><span class="av lg blue">М</span><span class="t">Марко</span><span class="proj dr">Data Removal · 31 PR</span><span class="proj mp">Money Problems · 3</span><span class="pill line"><svg class="i"><use href="#i-pr"/></svg>marko-gh</span><span class="pill line"><svg class="i"><use href="#i-hash"/></svg>marko</span><span class="sp"></span><span class="btn pri"><svg class="i"><use href="#i-sparkle"/></svg>Підготувати 1:1</span></div>
+        <div class="pbody" style="padding:18px 22px">
+          <div class="lab"><svg class="i"><use href="#i-calendar"/></svg>1:1 · четвер — чернетка порядку денного</div>
+          <div class="mcard" style="padding:4px 0">
+            <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:9px 14px;border-top:0"><svg class="i" style="color:var(--green)"><use href="#i-circle-check"/></svg><span>минулого разу домовились: рев'ю черги до п'ятниці — зроблено</span><span class="pill line">#311</span></div>
+            <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:9px 14px"><svg class="i" style="color:var(--amber)"><use href="#i-circle-half"/></svg><span>відкрите: доступ до прод-логів — ще не видали</span><span class="pill amber">за тобою</span></div>
+            <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:9px 14px"><svg class="i" style="color:var(--t3)"><use href="#i-mic"/></svg><span>згадувався на DBO sync: блокер з Phalcon API</span><span class="mono" style="color:var(--t3);font-size:11px">20.11 · 00:21:07</span></div>
+            <div class="lrow" style="grid-template-columns:20px 1fr auto;padding:9px 14px"><svg class="i" style="color:var(--t3)"><use href="#i-star"/></svg><span>новина: перший інцидент на чергуванні, впорався сам</span><span></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="pside">
+        <div><div class="lab">Історія</div>
+          <div class="tl">
+            <div class="e"><span class="ic"><svg class="i"><use href="#i-mic"/></svg></span><div class="x">DBO sync — 3 згадки<small>20.11</small></div></div>
+            <div class="e"><span class="ic green"><svg class="i"><use href="#i-pr"/></svg></span><div class="x">PR #311 змерджено<small>18.11</small></div></div>
+            <div class="e"><span class="ic"><svg class="i"><use href="#i-users"/></svg></span><div class="x">1:1 — 2 домовленості<small>13.11</small></div></div>
+            <div class="e"><span class="ic"><svg class="i"><use href="#i-hash"/></svg></span><div class="x">питання в Slack про доступи<small>06.11</small></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 10 -->
+<section class="slide" id="s10"><div class="wrap">
+  <div class="kicker"><span class="no">12</span><svg class="i"><use href="#i-mic"/></svg>Зустрічі → дії</div>
+  <h2>Після дзвінка — одна картка, не транскрипт</h2>
+  <p class="lead">Meetings уже записує і розшифровує дзвінки локально. Далі: з підсумку mag складає картку з рішеннями, діями і чернетками відповідей. Кожен рядок — прийняти, змінити або відкинути.</p>
+  <div class="grid split" style="grid-template-columns:minmax(0,7fr) minmax(0,4fr);gap:16px">
+    <div class="dcard">
+      <div class="hd"><svg class="i" style="color:var(--t2)"><use href="#i-mic"/></svg><b>DBO sync · 20.11</b><span class="pill"><svg class="i"><use href="#i-clock"/></svg>42 хв</span><span class="pill">uk / en</span><span class="tags"><span class="proj dr">Data Removal</span></span></div>
+      <div class="grp" style="padding-top:12px"><svg class="i"><use href="#i-signpost"/></svg>Рішення<svg class="i s12"><use href="#i-arrow-r"/></svg>Library</div>
+      <div class="lrow" style="grid-template-columns:1fr auto;border-top:0"><div><div class="tt">Черга DBR лишається в duff-brewery, Redis прибираємо</div><div class="mt"><span class="ref">00:14:32</span>у транскрипті</div></div><div class="decide"><span class="btn sm sq ok"><svg class="i"><use href="#i-check"/></svg></span><span class="btn sm sq"><svg class="i"><use href="#i-pencil"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-x"/></svg></span></div></div>
+      <div class="grp"><svg class="i"><use href="#i-ticket"/></svg>Дії<svg class="i s12"><use href="#i-arrow-r"/></svg>люди / Jira</div>
+      <div class="lrow" style="grid-template-columns:20px 1fr auto;border-top:0"><span class="av blue">М</span><div><div class="tt">Марко: інтеграційні тести в CI до 27.11</div><div class="mt">створити тікет у PRVP<span class="sep">·</span>прев'ю перед Publish</div></div><div class="decide"><span class="btn sm sq ok"><svg class="i"><use href="#i-check"/></svg></span><span class="btn sm sq"><svg class="i"><use href="#i-pencil"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-x"/></svg></span></div></div>
+      <div class="lrow" style="grid-template-columns:20px 1fr auto"><span class="av acc">Т</span><div><div class="tt">Ти: відповісти Олені про доступи</div><div class="mt"><span class="you" style="color:var(--amber)">за тобою</span><span class="sep">·</span>чернетка відповіді в Slack готова</div></div><div class="decide"><span class="btn sm sq ok"><svg class="i"><use href="#i-check"/></svg></span><span class="btn sm sq"><svg class="i"><use href="#i-pencil"/></svg></span><span class="btn ghost sm sq"><svg class="i"><use href="#i-x"/></svg></span></div></div>
+      <div class="ft"><span style="color:var(--t3);font-size:12px">3 з 7 розібрано</span><span class="sp"></span><span class="btn ghost">Відкинути решту</span><span class="btn pri"><svg class="i"><use href="#i-check"/></svg>Прийняти все<kbd>⌘↵</kbd></span></div>
+    </div>
+    <div class="card" style="padding:14px 12px">
+      <div class="lab" style="padding:0 8px"><svg class="i"><use href="#i-wave"/></svg>Транскрипт<span class="c mono">local · whisper</span></div>
+      <div class="trans">
+        <div class="tline"><span class="at">00:13:58</span><span><b>Олена</b>Redis там лише для локів, можна без нього.</span></div>
+        <div class="tline"><span class="at">00:14:10</span><span><b>Марко</b>Тоді й Riviera переносимо в duff-brewery?</span></div>
+        <div class="tline hit"><span class="at">00:14:32</span><span><b>Ти</b>Так, черга лишається в duff-brewery, Redis прибираємо.</span></div>
+        <div class="tline"><span class="at">00:15:04</span><span><b>Марко</b>Ок, тести в CI до наступного четверга.</span></div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 11 -->
+<section class="slide" id="s11"><div class="wrap">
+  <div class="kicker"><span class="no">13</span><svg class="i"><use href="#i-search"/></svg>Пошук</div>
+  <h2>«Що ми вирішили з X про Y?» — з будь-якого топіку</h2>
+  <p class="lead">Один пошук по всьому: топіки, документи, рішення, зустрічі, люди. Відповідь завжди з посиланням на джерело. Агенти теж шукають тут — тобі не треба копіювати контекст між проєктами.</p>
+  <div class="palette">
+    <div class="palin"><svg class="i"><use href="#i-search"/></svg><span>черга redis рішення</span><span class="caret"></span><span class="sp"></span><span class="fchips"><span class="fchip on">Усі</span><span class="fchip">Project<svg class="i"><use href="#i-chev-d"/></svg></span><span class="fchip">Kind<svg class="i"><use href="#i-chev-d"/></svg></span><span class="fchip ghost"><svg class="i"><use href="#i-plus"/></svg>лейбл</span></span></div>
+    <div class="paltabs"><span class="on">Усе <em>14</em></span><span><svg class="i s14"><use href="#i-signpost"/></svg>Рішення <em>2</em></span><span><svg class="i s14"><use href="#i-mic"/></svg>Зустрічі <em>3</em></span><span><svg class="i s14"><use href="#i-chat"/></svg>Топіки <em>6</em></span><span><svg class="i s14"><use href="#i-users"/></svg>Люди <em>3</em></span></div>
+    <div class="answer"><svg class="i"><use href="#i-sparkle"/></svg><div><b>Черга DBR лишається в duff-brewery, без Redis</b> — вирішили на DBO sync 20.11 <span class="ref">1</span>, реалізовано в PRVP-2339 <span class="ref">2</span>.</div></div>
+    <div class="hit on"><span class="src"><svg class="i"><use href="#i-signpost"/></svg></span><div><div class="tt"><span class="ref" style="margin-right:6px">1</span><mark>Черга</mark> DBR без <mark>Redis</mark></div><div class="mt">DBO sync 20.11 · 00:14:32 · Рішення</div></div><span class="tags"><span class="proj dr">Data Removal</span></span></div>
+    <div class="hit"><span class="src"><svg class="i"><use href="#i-pr"/></svg></span><div><div class="tt"><span class="ref" style="margin-right:6px">2</span>PRVP-2339: Move Riviera into duff-brewery, drop <mark>Redis</mark></div><div class="mt">§Decisions · змерджено · Work</div></div><span class="tags"><span class="proj dr">Data Removal</span></span></div>
+    <div class="hit"><span class="src"><svg class="i"><use href="#i-chat"/></svg></span><div><div class="tt">DBR jobs refactor: thin scheduled <mark>queue</mark></div><div class="mt">обговорення варіантів · 3 тижні тому · Топік</div></div><span class="tags"><span class="proj dr">Data Removal</span></span></div>
+    <div class="palfoot"><span><kbd>↑</kbd><kbd>↓</kbd> вибрати</span><span><kbd>↵</kbd> відкрити</span><span><kbd>⌘</kbd><kbd>↵</kbd> додати в топік як контекст</span><span style="margin-left:auto"><kbd>esc</kbd></span></div>
+  </div>
+</div></section>
+
+<!-- 12 -->
+<section class="slide" id="s12"><div class="wrap">
+  <div class="kicker"><span class="no">14</span><svg class="i"><use href="#i-x"/></svg>Чого не буде</div>
+  <h2>Свідомо не робимо</h2>
+  <p class="lead">Кожне «ні» тут береже головне: mag допомагає, а не додає роботи.</p>
+  <div class="grid g3">
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-table"/></svg></div><h3>Клон Notion</h3><p>Жодних баз, полів, тегів руками. Агенти зв'язують, ти лише поправляєш.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-kanban"/></svg></div><h3>Свій трекер</h3><p>Jira лишається трекером. mag знає тікети як посилання.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-bot"/></svg></div><h3>Бот на дзвінках</h3><p>Тільки локальний запис, коли ти сам на дзвінку.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-star"/></svg></div><h3>Рейтинги людей</h3><p>Ні оцінок, ні HR-циклів. Оцінка — тільки на запит, з доказами, приватна.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-send-off"/></svg></div><h3>Авто-відправка</h3><p>Нічого назовні без Publish, хіба що ти сам дозволив для конкретного місця.</p></div>
+    <div class="card"><div class="ibox"><svg class="i"><use href="#i-chat-plus"/></svg></div><h3>Авто-топіки</h3><p>Топіки створюєш тільки ти. Inbox — це список, не нові чати.</p></div>
+  </div>
+</div></section>
+
+<!-- 13 -->
+<section class="slide" id="s13"><div class="wrap">
+  <div class="kicker"><span class="no">15</span><svg class="i"><use href="#i-arrow-r"/></svg>Як це прийде</div>
+  <h2>Поступово, кожен крок — уже корисний</h2>
+  <p class="lead">Розробка в mag лишається такою ж: works, кроки, PR, рев'ю. Додається все інше, що ти й так робиш щодня.</p>
+  <div class="phases">
+    <div class="phase"><div class="bar"><i style="width:100%"></i></div><div class="w"><svg class="i s14"><use href="#i-gauge"/></svg>Фаза 0</div><h3>Швидший і надійніший mag</h3><p>Вікна не гальмують на довгих чатах, дані не ламаються при крашах, щоденні бекапи. Для тебе — просто «стало швидше».</p></div>
+    <div class="phase"><div class="bar"><i style="width:35%"></i></div><div class="w"><svg class="i s14"><use href="#i-inbox"/></svg>Фаза 1</div><h3>Inbox · Publish · Library</h3><p>Топіки без проєкту, один Inbox, прев'ю перед кожною публікацією, фінальні версії документів, правила, що запам'ятовуються.</p></div>
+    <div class="phase"><div class="bar"><i style="width:0"></i></div><div class="w"><svg class="i s14"><use href="#i-repeat"/></svg>Фаза 2</div><h3>Routines</h3><p>Ups &amp; Downs і статистика PR за розкладом. Ранковий «що чекає на мене». Нагадування про обіцяні відповіді.</p></div>
+    <div class="phase"><div class="bar"><i style="width:0"></i></div><div class="w"><svg class="i s14"><use href="#i-users"/></svg>Фаза 3–4</div><h3>People · 1:1 · Пошук</h3><p>Сторінка людини і підготовка 1:1, зустрічі → дії, один пошук по всьому workspace.</p></div>
+  </div>
+</div></section>
+
+<!-- 14 -->
+<section class="slide" id="s14"><div class="wrap">
+  <div class="kicker"><span class="no">16</span><svg class="i"><use href="#i-sparkle"/></svg>Новий вигляд mag</div>
+  <h2>Спокійний, щільний, чесний</h2>
+  <p class="lead">Один набір токенів для застосунку, канвасів і експорту рев'ю. Сірий — за замовчуванням; колір — тільки коли щось означає.</p>
+  <div class="split">
+    <div class="prin">
+      <div class="p"><span class="k">01</span><div><b>Тиша за замовчуванням</b><span>Інтерфейс сірий. Бурштиновий — «чекає на тебе», акцент — «головна дія / назовні». Решта кольорів — лише статус і лейбли проєктів.</span></div></div>
+      <div class="p"><span class="k">02</span><div><b>Одна форма — одне значення</b><span>Один pill, один рядок, одна картка, один набір іконок. Не 11 видів «чипів» з різними радіусами.</span></div></div>
+      <div class="p"><span class="k">03</span><div><b>Щільно, але з повітрям</b><span>Рядок 28 px, текст 13 px, сітка 4 px. Ієрархія — тоном і вагою, не рамками й заливками.</span></div></div>
+      <div class="p"><span class="k">04</span><div><b>Назовні — тільки через Publish</b><span>Кожен запис у Slack, Jira, GitHub, Docs — одна й та сама картка: куди, як виглядатиме, які правила, одна кнопка.</span></div></div>
+      <div class="p"><span class="k">05</span><div><b>Доказ — на відстані наведення</b><span>Твердження підкреслені, джерело в моноширинному, таймкод клікабельний. Довіра видна, а не обіцяна.</span></div></div>
+    </div>
+    <div>
+      <div class="rl" style="margin-top:0">Нейтральні · темна</div>
+      <div class="ramp">
+        <div style="background:#0B0C0E;color:#71747D">chrome<span>#0B0C0E</span></div><div style="background:#121316;color:#71747D">canvas<span>#121316</span></div><div style="background:#17181C;color:#71747D">surface<span>#17181C</span></div><div style="background:#212228;color:#A6A9B2">raised<span>#212228</span></div><div style="background:#4B4E56;color:#EDEEF1">t4<span>#4B4E56</span></div><div style="background:#71747D;color:#0B0C0E">t3<span>#71747D</span></div><div style="background:#A6A9B2;color:#0B0C0E">t2<span>#A6A9B2</span></div><div style="background:#EDEEF1;color:#0B0C0E">t1<span>#EDEEF1</span></div>
+      </div>
+      <div class="rl">Нейтральні · світла</div>
+      <div class="ramp">
+        <div style="background:#ECECEF;color:#868992">chrome<span>#ECECEF</span></div><div style="background:#FFFFFF;color:#868992">canvas<span>#FFFFFF</span></div><div style="background:#F6F6F8;color:#868992">surface-2<span>#F6F6F8</span></div><div style="background:#E3E3E8;color:#55585F">line-2<span>#E3E3E8</span></div><div style="background:#B5B7BE;color:#16171B">t4<span>#B5B7BE</span></div><div style="background:#868992;color:#fff">t3<span>#868992</span></div><div style="background:#55585F;color:#fff">t2<span>#55585F</span></div><div style="background:#16171B;color:#fff">t1<span>#16171B</span></div>
+      </div>
+      <div class="rl">Семантика · темна / світла</div>
+      <div class="sem">
+        <div class="sw"><div class="chip"><i style="background:#7C75FF"></i><i style="background:#5A51E6"></i></div><b>accent</b><span>головна дія, Publish, вибране</span></div>
+        <div class="sw"><div class="chip"><i style="background:#F0B45A"></i><i style="background:#9E5B00"></i></div><b>amber</b><span>чекає на тебе</span></div>
+        <div class="sw"><div class="chip"><i style="background:#4CC98A"></i><i style="background:#147A46"></i></div><b>green</b><span>працює, перевірено, з доказом</span></div>
+        <div class="sw"><div class="chip"><i style="background:#F0716B"></i><i style="background:#BF372D"></i></div><b>red</b><span>збій, без доказу</span></div>
+        <div class="sw"><div class="chip"><i style="background:#6AACF6"></i><i style="background:#2260C4"></i></div><b>blue</b><span>інфо, посилання</span></div>
+      </div>
+      <div class="grid g2" style="margin-top:16px;gap:12px">
+        <div class="type">
+          <div class="r"><span class="m">24 / 600</span><span style="font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.2">Inbox</span></div>
+          <div class="r"><span class="m">15 / 600</span><span style="font-size:15px;font-weight:600">Заголовок картки</span></div>
+          <div class="r"><span class="m">13 / 400</span><span style="font-size:13px">Основний текст і рядки</span></div>
+          <div class="r"><span class="m">12 / 400</span><span style="font-size:12px;color:var(--t3)">мета · 15:02 · #data-removal</span></div>
+          <div class="r"><span class="m">11.5 / 500</span><span style="font-size:11.5px;font-weight:500;color:var(--t3)">Мітка секції</span></div>
+          <div class="r"><span class="m">mono 12</span><span class="mono" style="font-size:12px;color:var(--t2)">gh pr list → 34</span></div>
+        </div>
+        <div class="card" style="padding:14px 16px;display:flex;flex-direction:column;gap:14px">
+          <div><div class="rl" style="margin-top:0">Відступи · 4 px</div><div class="tok"><div class="b" style="width:4px;height:24px"></div><div class="b" style="width:8px;height:24px"></div><div class="b" style="width:12px;height:24px"></div><div class="b" style="width:16px;height:24px"></div><div class="b" style="width:24px;height:24px"></div><div class="b" style="width:32px;height:24px"></div><div class="b" style="width:48px;height:24px">48</div></div></div>
+          <div><div class="rl" style="margin-top:0">Радіуси</div><div class="tok"><div class="b" style="width:38px;height:28px;border-radius:4px">4</div><div class="b" style="width:38px;height:28px;border-radius:6px">6</div><div class="b" style="width:38px;height:28px;border-radius:8px">8</div><div class="b" style="width:38px;height:28px;border-radius:12px">12</div></div></div>
+          <div><div class="rl" style="margin-top:0">Висота</div><div class="elev"><div style="background:var(--canvas);box-shadow:inset 0 0 0 1px var(--line)">e0</div><div style="background:var(--surface);box-shadow:var(--sh-1)">e1</div><div style="background:var(--raised);box-shadow:var(--sh-2)">e2</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- 15 -->
+<section class="slide" id="s15"><div class="wrap">
+  <div class="kicker"><span class="no">17</span><svg class="i"><use href="#i-layers"/></svg>Новий вигляд mag</div>
+  <h2>Іконки, компоненти і було → стане</h2>
+  <p class="lead" style="margin-bottom:20px">Сітка 20 px, лінія 1.5 px, круглі кінці, <code>currentColor</code>. Замість ⧉ ✕ ⋯ ▸ ⚙ ★ ＋, що малюються шрифтом і різні на кожному екрані.</p>
+  <div class="icons">
+    <div><svg class="i"><use href="#i-inbox"/></svg><span>inbox</span></div><div><svg class="i"><use href="#i-users"/></svg><span>people</span></div><div><svg class="i"><use href="#i-mic"/></svg><span>meeting</span></div><div><svg class="i"><use href="#i-repeat"/></svg><span>routine</span></div><div><svg class="i"><use href="#i-library"/></svg><span>library</span></div><div><svg class="i"><use href="#i-chat"/></svg><span>topic</span></div><div><svg class="i"><use href="#i-layers"/></svg><span>deliverable</span></div><div><svg class="i"><use href="#i-send"/></svg><span>publish</span></div><div><svg class="i"><use href="#i-shield"/></svg><span>verify</span></div><div><svg class="i"><use href="#i-eye"/></svg><span>review</span></div><div><svg class="i"><use href="#i-pen-line"/></svg><span>draft</span></div><div><svg class="i"><use href="#i-circle-check"/></svg><span>final</span></div>
+    <div><svg class="i"><use href="#i-signpost"/></svg><span>decision</span></div><div><svg class="i"><use href="#i-doc"/></svg><span>doc</span></div><div><svg class="i"><use href="#i-chart"/></svg><span>report</span></div><div><svg class="i"><use href="#i-pr"/></svg><span>pr</span></div><div><svg class="i"><use href="#i-hash"/></svg><span>channel</span></div><div><svg class="i"><use href="#i-ticket"/></svg><span>ticket</span></div><div><svg class="i"><use href="#i-sparkle"/></svg><span>agent</span></div><div><svg class="i"><use href="#i-rules"/></svg><span>rules</span></div><div><svg class="i"><use href="#i-bulb"/></svg><span>suggest</span></div><div><svg class="i"><use href="#i-lock"/></svg><span>private</span></div><div><svg class="i"><use href="#i-alert"/></svg><span>warning</span></div><div><svg class="i"><use href="#i-snooze"/></svg><span>snooze</span></div>
+    <div><svg class="i"><use href="#i-search"/></svg><span>search</span></div><div><svg class="i"><use href="#i-plus"/></svg><span>new</span></div><div><svg class="i"><use href="#i-check"/></svg><span>accept</span></div><div><svg class="i"><use href="#i-x"/></svg><span>close</span></div><div><svg class="i"><use href="#i-pencil"/></svg><span>edit</span></div><div><svg class="i"><use href="#i-more"/></svg><span>more</span></div><div><svg class="i"><use href="#i-tag"/></svg><span>label</span></div><div><svg class="i"><use href="#i-link"/></svg><span>link</span></div><div><svg class="i"><use href="#i-reply"/></svg><span>reply</span></div><div><svg class="i"><use href="#i-history"/></svg><span>history</span></div><div><svg class="i"><use href="#i-sliders"/></svg><span>settings</span></div><div><svg class="i"><use href="#i-code"/></svg><span>code</span></div>
+  </div>
+  <div class="grid g2" style="margin-top:20px;gap:24px">
+    <div class="bacol">
+      <div class="bh b">Було · сайдбар і картка сьогодні</div>
+      <div class="minis old">
+        <div class="oside">
+          <div class="oproj"><i></i>mag<em>▾</em></div>
+          <div class="onew">＋ New topic<kbd>⌘N</kbd></div>
+          <div class="osearch">⌕ Search topics<kbd>⌘K</kbd></div>
+          <div class="ofilt"><span class="on">All 9</span><span>You 2</span><span>Agents 1</span></div>
+          <div class="ogrp">▾ Meetings<em>3</em></div>
+          <div class="orow on"><span class="dt" style="background:#9a5a00"></span><span class="tt">workspace vision</span><span class="yb">you</span></div>
+          <div class="orow"><span class="dt" style="background:#1f7a47"></span><span class="tt">meetings: search</span><span class="tm">2h</span></div>
+          <div class="orow"><span class="dt" style="background:#9096a1"></span><span class="tt">questions card fold</span><span class="tm">1d</span></div>
+          <div class="ofoot"><span>Architecture</span><span>⚙</span></div>
+        </div>
+        <div class="ocard">
+          <b>2 decisions needed from you</b>
+          <span class="mu">The plan has open questions</span>
+          <ol><li>Where do summaries live?<div class="rec">★ In the meeting's doc</div></li><li>Search scope?<div class="rec">★ All projects</div></li></ol>
+          <div class="acts"><span class="b p">Accept recommendations</span><span class="b">Answer differently</span><span class="l">Dismiss</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="bacol">
+      <div class="bh a">Стане</div>
+      <div class="minis">
+        <div class="mside" style="display:grid;grid-template-columns:40px 1fr;gap:6px;padding:6px"><div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding-top:4px"><span style="width:28px;height:28px;border-radius:8px;background:var(--t4);color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center">P</span><span class="ritem on" style="width:auto"><span class="ib" style="width:28px;height:26px"><svg class="i s14"><use href="#i-home"/></svg></span></span><span class="ritem" style="width:auto"><span class="ib" style="width:28px;height:26px"><svg class="i s14"><use href="#i-inbox"/></svg></span><span class="bdg" style="right:-4px">2</span></span><span class="ritem" style="width:auto"><span class="ib" style="width:28px;height:26px"><svg class="i s14"><use href="#i-mic"/></svg></span></span></div><div class="col" style="margin:0;border-radius:8px;padding:6px"><div class="colhead"><span class="ws-t" style="font-size:13.5px">Personal<svg class="i"><use href="#i-chev-d"/></svg></span></div><div class="colsearch" style="margin-top:2px"><svg class="i s14"><use href="#i-search"/></svg>Знайти топік…</div><div class="psec" style="margin-top:4px"><svg class="i"><use href="#i-chev-d"/></svg><span class="psq" style="background:#8B85F8"></span>mag</div><div class="nav on unread"><svg class="i" style="color:var(--amber)"><use href="#i-circle-half"/></svg><span class="lbl">workspace vision</span><span class="cnt you">1</span></div><div class="nav"><svg class="i" style="color:var(--green)"><use href="#i-sparkle"/></svg><span class="lbl">meetings: search</span><span class="n">2h</span></div><div class="nav"><svg class="i" style=""><use href="#i-circle"/></svg><span class="lbl">questions card fold</span><span class="n">1d</span></div><span class="grip"></span></div></div>
+        <div class="dcard">
+          <div class="hd"><svg class="i" style="color:var(--amber)"><use href="#i-circle-half"/></svg><b>2 рішення за тобою</b><span class="pill amber">план</span></div>
+          <div class="q">Де живуть підсумки?<small>1 з 2</small></div>
+          <div class="opt on"><span class="rd"></span><span>У доці зустрічі</span><span class="pill acc">рекомендовано</span></div>
+          <div class="opt"><span class="rd"></span><span>Окремим документом у Library</span><span></span></div>
+          <div class="ft"><span class="btn ghost sm">Пропустити</span><span class="sp"></span><span class="btn sm">Інакше…</span><span class="btn pri sm">Прийняти<kbd>↵</kbd></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<script>
+(function(){
+  var slides=[].slice.call(document.querySelectorAll('.slide')),dots=document.getElementById('dots'),
+      count=document.getElementById('count'),bar=document.getElementById('progress'),cur=0;
+  var pad=function(n){return (n<10?'0':'')+n};
+  slides.forEach(function(s,i){var a=document.createElement('a');a.href='#'+s.id;var h=s.querySelector('h1,h2');a.title=h?h.textContent:'';a.setAttribute('aria-label','Слайд '+(i+1));dots.appendChild(a)});
+  var links=[].slice.call(dots.children);
+  function mark(i){cur=i;links.forEach(function(a,j){a.classList.toggle('on',j===i)});count.textContent=pad(i+1)+' / '+pad(slides.length);bar.style.width=((i+1)/slides.length*100)+'%'}
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting&&e.intersectionRatio>=.5)mark(slides.indexOf(e.target))})},{threshold:[.5]});
+  slides.forEach(function(s){io.observe(s)});
+  mark(0);
+  function go(i){i=Math.max(0,Math.min(slides.length-1,i));slides[i].scrollIntoView({behavior:'smooth'})}
+  var root=document.documentElement,label=document.getElementById('themelabel');
+  function setLabel(){label.textContent=root.dataset.theme==='light'?'Світла':'Темна'}
+  function toggle(){root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('mag.vision.theme',root.dataset.theme)}catch(e){}setLabel()}
+  setLabel();
+  document.getElementById('themebtn').addEventListener('click',toggle);
+  document.addEventListener('keydown',function(e){
+    if(e.metaKey||e.ctrlKey||e.altKey)return;
+    var k=e.key;
+    if(k==='ArrowDown'||k==='ArrowRight'||k==='PageDown'||(k===' '&&!e.shiftKey)){e.preventDefault();go(cur+1)}
+    else if(k==='ArrowUp'||k==='ArrowLeft'||k==='PageUp'||(k===' '&&e.shiftKey)){e.preventDefault();go(cur-1)}
+    else if(k==='Home'){e.preventDefault();go(0)}
+    else if(k==='End'){e.preventDefault();go(slides.length-1)}
+    else if(k==='t'||k==='T'||k==='е'||k==='Е'){toggle()}
+  });
+})();
+</script>
+</body>
+</html>
