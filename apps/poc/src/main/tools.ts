@@ -1,4 +1,4 @@
-import { FALLBACK_BASE, deviationsLine } from '@mag/core'
+import { FALLBACK_BASE, deviationsLine, workspacePrefix } from '@mag/core'
 import { MAG_MCP_ID, integrationOf, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, reportWarnings, reviewDiagrams, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
@@ -247,6 +247,60 @@ function taskType(v: unknown): TaskType {
   if (v === undefined || v === null || v === '') return 'dev'
   if (!TYPES.includes(v as TaskType)) throw new Error(`type must be one of ${TYPES.join(', ')}`)
   return v as TaskType
+}
+
+/** The kinds of a ref (workspaces-and-labels-project-as.3), with the words agents use for them. */
+const REF_KINDS: Record<string, 'topic' | 'work'> = { topic: 'topic', chat: 'topic', work: 'work', task: 'work', review: 'work', step: 'work' }
+
+/**
+ * A ref as tools take it: `kind:id` in the caller's workspace, `<workspace>:kind:id` elsewhere, `<workspace>:id`, or a
+ * bare id or key. kind: topic (a session id) or work (a key or task id, a review's or step's too); null: either.
+ */
+export function parseRef(ref: string): { workspace: string | null; kind: 'topic' | 'work' | null; id: string } {
+  const parts = ref.trim().split(':').map((x) => x.trim())
+  let out: { workspace: string | null; kind: 'topic' | 'work' | null; id: string }
+  if (parts.length >= 3) {
+    const kind = REF_KINDS[parts[1].toLowerCase()]
+    if (!kind) throw new Error(`${ref}: the kind of a ref is topic or work, e.g. aura:work:ABC-12`)
+    out = { workspace: parts[0], kind, id: parts.slice(2).join(':') }
+  } else if (parts.length === 2) {
+    const kind = REF_KINDS[parts[0].toLowerCase()]
+    out = kind ? { workspace: null, kind, id: parts[1] } : { workspace: parts[0], kind: null, id: parts[1] }
+  } else out = { workspace: null, kind: null, id: parts[0] }
+  if (!out.id || out.workspace === '') throw new Error(`${ref || '(empty)'}: pass a ref (topic:<id>, work:<key>, <workspace>:work:<key>), a topic id or a work key`)
+  return out
+}
+
+/** The workspace an item is in. */
+const workspaceOf = (store: Store, item: AgentSession | Task) => ('key' in item ? store.project(item.projectId).workspaceId : item.workspaceId)
+
+/** An item's ref as the caller in workspace `here` writes it: prefixed with its workspace when that is another. */
+function refOf(store: Store, item: AgentSession | Task, here: string): string {
+  const ws = workspaceOf(store, item)
+  return `${ws === here ? '' : `${workspacePrefix(store.workspace(ws))}:`}${'key' in item ? `work:${item.key}` : `topic:${item.id}`}`
+}
+
+/**
+ * The topic (any session) or work (a step or review too) a ref points at, wherever it is; nothing is out of reach for
+ * being in another project or workspace. A bare id or key is looked for in the caller's project, then its workspace,
+ * then everywhere; a key two items share at that level is refused with their refs.
+ */
+function findItem(store: Store, here: Project, ref: string): AgentSession | Task {
+  const r = parseRef(ref)
+  const ws = r.workspace === null ? null : store.workspaces().find((w) => w.id === r.workspace || workspacePrefix(w) === r.workspace!.toLowerCase())
+  if (r.workspace !== null && !ws) throw new Error(`No workspace ${r.workspace}: one of ${store.workspaces().map(workspacePrefix).join(', ')}`)
+  const inProject = (item: AgentSession | Task) => ('key' in item ? item.projectId === here.id : (item.projectId ?? '') === here.id && item.workspaceId === here.workspaceId)
+  const inWorkspace = (id: string) => (item: AgentSession | Task) => workspaceOf(store, item) === id
+  const levels = ws ? (ws.id === here.workspaceId ? [inProject, inWorkspace(ws.id)] : [inWorkspace(ws.id)]) : [inProject, inWorkspace(here.workspaceId), () => true]
+  const id = r.id.toLowerCase()
+  for (const at of levels) {
+    const topics = r.kind === 'work' ? [] : store.data.sessions.filter((s) => s.id === r.id && at(s))
+    const works = r.kind === 'topic' ? [] : store.data.tasks.filter((t) => (t.id === r.id || t.key.toLowerCase() === id) && at(t))
+    const found = [...topics, ...works]
+    if (found.length === 1) return found[0]
+    if (found.length > 1) throw new Error(`${ref} is ambiguous: ${found.map((x) => refOf(store, x, here.workspaceId)).join(', ')}; pass one of these refs`)
+  }
+  throw new Error(`No chat ${ref}: pass a ref (topic:<id>, work:<key>, <workspace>:work:<key>), a topic id, a work key or a task id; list_chats lists them`)
 }
 
 /**
@@ -957,6 +1011,13 @@ function sharedTool(
     if (!project.id) throw new Error(`This topic has no project, and ${name} needs one: ask the user to put the topic into a project (the Project label in its header), then call again.`)
   }
   const withSubtasks = (t: Task): Task[] => [t, ...subtasksOf(t.id, tasks).flatMap(withSubtasks)]
+  /** Where an item outside the caller's project is, as the first line of what is read from it. */
+  const elsewhere = (item: AgentSession | Task) => {
+    const pid = 'key' in item ? item.projectId : (item.projectId ?? '')
+    if (pid === project.id && workspaceOf(store, item) === project.workspaceId) return ''
+    const ws = store.workspace(workspaceOf(store, item))
+    return `(${refOf(store, item, project.workspaceId)}: workspace ${ws.name}, ${pid ? `project ${store.project(pid).name}` : 'no project'})\n\n`
+  }
 
   switch (name) {
     case 'list_tasks': {
@@ -992,19 +1053,33 @@ function sharedTool(
       return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
 
     case 'read_chat': {
-      const id = String(args.id ?? '').trim()
-      const sessions = store.data.sessions.filter((s) => s.projectId === project.id)
-      const item = sessions.find((s) => s.id === id) ?? tasks.find((t) => t.id === id) ?? taskByKey(tasks, id)
-      if (!id || !item) throw new Error(`No chat ${id} in this project: pass a topic id, a work key or a task id`)
+      const item = findItem(store, project, String(args.id ?? ''))
       const offset = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 0
-      const page = chatTranscript(item, sessions, 'key' in item ? store.data.docs[item.id] : '', offset)
-      return `${page.text}\n\n${page.next === null ? '(end of the chat)' : `(more: call read_chat with offset ${page.next})`}`
+      const page = chatTranscript(item, store.data.sessions, 'key' in item ? store.data.docs[item.id] : '', offset)
+      return `${elsewhere(item)}${page.text}\n\n${page.next === null ? '(end of the chat)' : `(more: call read_chat with offset ${page.next})`}`
     }
 
     case 'read_task': {
-      const t = byKey(args.key)
-      return JSON.stringify({ ...t, parent: t.parentId && keyOf(t.parentId), doc: store.data.docs[t.id] ?? '(empty)' }, null, 2)
+      const t = findItem(store, project, String(args.key ?? ''))
+      if (!('key' in t)) throw new Error(`${args.key} is a topic: read_chat reads it`)
+      const parent = t.parentId ? store.data.tasks.find((x) => x.id === t.parentId)?.key : undefined
+      const where = t.projectId === project.id ? {} : { ref: refOf(store, t, project.workspaceId), project: store.project(t.projectId).name }
+      return JSON.stringify({ ...where, ...t, parent, doc: store.data.docs[t.id] ?? '(empty)' }, null, 2)
     }
+
+    case 'list_workspaces':
+      return JSON.stringify(
+        store.workspaces().map((w) => ({
+          id: w.id,
+          name: w.name,
+          prefix: workspacePrefix(w),
+          ...(w.id === project.workspaceId && { this: true }),
+          profile: w.profile || undefined,
+          projects: store.data.projects.filter((p) => p.workspaceId === w.id).map((p) => ({ id: p.id, name: p.name, ...(p.id === project.id && project.id && { this: true }) })),
+        })),
+        null,
+        2,
+      )
 
     case 'create_work': {
       const md = typeof args.doc === 'string' ? args.doc : ''
@@ -1408,30 +1483,39 @@ const day = (at: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** The scopes of list_chats (workspaces-and-labels-project-as.3); the caller's workspace by default. */
+const CHAT_SCOPES = ['project', 'workspace', 'all'] as const
+
 /**
- * A project chat closes, deletes and restores topics and works, as the sidebar's buttons do
- * (chat-archives-and-deletes-topics.1): each target through the orchestrator method its button calls, so the checks are
- * the same. A target is a topic id or the key of a top-level work or review of this project; each is handled on its own,
- * in order, and gets one line. The calling topic is never closed or deleted: that would end this very turn.
+ * list_chats lists the topics and works of a scope for any run. A project chat closes, deletes and restores topics and
+ * works, as the sidebar's buttons do (chat-archives-and-deletes-topics.1): each target through the orchestrator method
+ * its button calls, so the checks are the same. A target is a ref, a topic id or the key of a top-level work or review,
+ * of any project or workspace (findItem); each is handled on its own, in order, and gets one line. The calling topic is
+ * never closed or deleted: that would end this very turn.
  */
 async function chatsTool(store: Store, actions: ToolActions, project: Project, ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<string> {
   const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
-  if (!session || runRole(session) !== 'chat') throw new Error(`${name} is for a project chat`)
-  const self = session.id
-  const sessions = () => store.data.sessions.filter((s) => s.projectId === project.id)
+  if (name !== 'list_chats' && (!session || runRole(session) !== 'chat')) throw new Error(`${name} is for a project chat`)
+  const self = session?.id
+  const sessions = () => store.data.sessions
   // Topics are the roots of their trees; a child goes with its topic (topics-a-tree-of-agent.2).
-  const topics = () => sessions().filter((s) => s.role === 'chat' && !s.taskId && !s.parentId)
+  const isTopic = (s: AgentSession) => s.role === 'chat' && !s.taskId && !s.parentId
+  const topics = () => sessions().filter(isTopic)
   /** Closing or deleting a topic does the same to its whole tree: never the tree this turn runs in. */
   const holdsSelf = (topicId: string) => sessionTree(topicId, sessions()).some((s) => s.id === self)
-  const works = () => store.data.tasks.filter((t) => t.projectId === project.id && !t.parentId)
+  const works = () => store.data.tasks.filter((t) => !t.parentId)
   /** The sessions whose items make up a work's conversation: its own, and mag's topics of a review. */
   const conversation = (t: Task) => sessions().filter((s) => s.taskId === t.id || s.reviewOf === t.id)
   const resolve = (target: string): { topic: AgentSession } | { work: Task } | { none: string } => {
-    const topic = topics().find((s) => s.id === target)
-    if (topic) return { topic }
-    const t = taskByKey(store.data.tasks.filter((x) => x.projectId === project.id), target)
-    if (t?.parentId) return { none: `no such topic or work (${t.key} is a step: pass its work)` }
-    return t ? { work: t } : { none: 'no such topic or work in this project' }
+    let item: AgentSession | Task
+    try {
+      item = findItem(store, project, target)
+    } catch (e) {
+      return { none: /ambiguous|No workspace|kind of a ref/.test((e as Error).message) ? (e as Error).message : 'no such topic or work' }
+    }
+    if (!('key' in item)) return isTopic(item) ? { topic: item } : { none: 'no such topic or work (a session under a topic: pass its topic)' }
+    if (item.parentId) return { none: `no such topic or work (${item.key} is a step: pass its work)` }
+    return { work: item }
   }
   /** Deleting a review deletes mag's topics of it (deleteReview) too; deleting a work leaves its topic. */
   const deletesSelf = (t: Task) =>
@@ -1448,9 +1532,27 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
   const said = (e: unknown) => `refused: ${(e as Error).message}`
 
   if (name === 'list_chats') {
+    const scope = (args.scope == null || args.scope === '' ? 'workspace' : String(args.scope)) as (typeof CHAT_SCOPES)[number]
+    if (!CHAT_SCOPES.includes(scope)) throw new Error(`scope must be one of ${CHAT_SCOPES.join(', ')}`)
+    const here = project.workspaceId
+    const projectOf = (item: AgentSession | Task) => ('key' in item ? item.projectId : (item.projectId ?? ''))
+    const inScope = (item: AgentSession | Task) =>
+      scope === 'all' || (workspaceOf(store, item) === here && (scope === 'workspace' || projectOf(item) === project.id))
+    /** Where a row is, past the project scope: its ref, project, workspace (scope all) and labels other than Project. */
+    const where = (item: AgentSession | Task) => {
+      const pid = projectOf(item)
+      const labels = store.labels.labelsOf('key' in item ? `work:${item.id}` : `topic:${item.id}`).filter((l) => !store.data.projects.some((p) => p.id === l.id)).map((l) => l.name)
+      return {
+        ref: refOf(store, item, here),
+        ...(scope !== 'project' && { project: pid ? store.project(pid).name : null }),
+        ...(scope === 'all' && { workspace: store.workspace(workspaceOf(store, item)).name }),
+        ...(labels.length && { labels }),
+      }
+    }
     const rows = [
-      ...topics().map((s) => ({
+      ...topics().filter(inScope).map((s) => ({
         id: s.id,
+        ...where(s),
         kind: 'topic',
         title: s.title ?? 'New topic',
         state: s.status,
@@ -1460,10 +1562,11 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
         items: s.items.length,
         ...(s.id === self && { this: true }),
       })),
-      ...works().map((t) => {
+      ...works().filter(inScope).map((t) => {
         const conv = conversation(t)
         return {
           key: t.key,
+          ...where(t),
           kind: isReview(t) ? 'review' : 'work',
           title: t.title,
           state: t.status,
@@ -1473,7 +1576,7 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
         }
       }),
     ].sort((a, b) => b.lastAt - a.lastAt)
-    if (!rows.length) return 'No topics or works in this project.'
+    if (!rows.length) return `No topics or works in ${scope === 'all' ? 'any workspace' : `this ${scope}`}.`
     return `[\n${rows.map((r) => JSON.stringify({ ...r, lastAt: day(r.lastAt) })).join(',\n')}\n]`
   }
 

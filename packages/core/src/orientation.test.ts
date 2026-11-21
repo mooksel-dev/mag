@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, GLOSSARY, PLAYBOOK_SECTIONS, THE_USER, howMagWorks, orientation } from './index.ts'
+import { CODE_CHECKS, DEFAULT_PLAYBOOK, DEVELOPER_BAR, GLOSSARY, PLAYBOOK_SECTIONS, THE_USER, howMagWorks, orientation, workspacePrefix } from './index.ts'
 
 test('howMagWorks: the lifecycle, the doc as the only handoff, diagram kinds, plan ↔ fact and what mag checks, each with why (prompts-use-the-models-to.5)', () => {
   const h = howMagWorks(2)
@@ -40,4 +40,16 @@ test('the plan is a goal: the doc stands alone, draw what a reviewer needs, step
   assert.match(p, /reviewable and shippable\s+on its own/)
   assert.match(p, /one is fine when it is the only sensible way, with why/)
   assert.doesNotMatch(p, /Draw every level|at least one diagram per\s+repository|^\d\. /m, 'no script of numbered steps and no forced drawing')
+})
+
+test('orientation: no role for the user; the profile and the card between who reads and the glossary, left out when empty (workspaces-and-labels-project-as.3)', () => {
+  assert.doesNotMatch(orientation(2), /the user: a developer|## The user\n/i)
+  const o = orientation(2, '  Team lead  ', '## Where you are\nWorkspace Aura.')
+  assert.ok(o.indexOf(THE_USER) < o.indexOf('## The user\nIn their own words, from the workspace profile:\nTeam lead') && o.indexOf('Team lead') < o.indexOf('## Where you are') && o.indexOf('## Where you are') < o.indexOf(GLOSSARY))
+  assert.equal(orientation(2, ' ', ''), orientation(2))
+})
+
+test('workspacePrefix: lower case, spaces and colons as dashes', () => {
+  assert.equal(workspacePrefix({ name: ' Aura ' }), 'aura')
+  assert.equal(workspacePrefix({ name: 'My  Team: Ops' }), 'my-team-ops')
 })

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { emptyResult, normalizeReport, type Diagram, type IssuesReport, type TaskWork } from '@mag/core'
 import { Store } from './store.ts'
-import { createTools, type ToolActions } from './tools.ts'
+import { createTools, parseRef, type ToolActions } from './tools.ts'
 import { toolsFor } from './tool-defs.ts'
 
 /** The chat's control tools: tested against the orchestrator (orchestrator.test.ts). */
@@ -705,7 +705,92 @@ test('a project chat gets list_chats, close_chats, delete_chats and restore_chat
   const by = (n: string) => chat.find((t) => t.name === n)!.description
   for (const n of ['close_chats', 'restore_chat']) assert.match(by(n), /Only when the user has asked for exactly this in this conversation/)
   assert.match(by('delete_chats'), /Only for targets the user said yes to deleting in this conversation/)
-  for (const role of ['developer', 'groomer', 'reviewer']) assert.ok(!toolsFor('task', role).some((t) => names.includes(t.name)), role)
+  // Listing reads, so every run has it (workspaces-and-labels-project-as.3); the buttons stay a project chat's.
+  for (const role of ['developer', 'groomer', 'reviewer']) {
+    const got = toolsFor('task', role).map((t) => t.name).filter((n) => names.includes(n))
+    assert.deepEqual(got, ['list_chats'], role)
+  }
+})
+
+test('parseRef: kind:id here, <workspace>:kind:id elsewhere, <workspace>:id, a bare id; a bad kind or an empty id is refused', () => {
+  assert.deepEqual(parseRef('topic:abc'), { workspace: null, kind: 'topic', id: 'abc' })
+  assert.deepEqual(parseRef(' Work:ABC-12 '), { workspace: null, kind: 'work', id: 'ABC-12' })
+  assert.deepEqual(parseRef('aura:review:app-7'), { workspace: 'aura', kind: 'work', id: 'app-7' })
+  assert.deepEqual(parseRef('aura:ABC-12.3'), { workspace: 'aura', kind: null, id: 'ABC-12.3' })
+  assert.deepEqual(parseRef('ABC-12'), { workspace: null, kind: null, id: 'ABC-12' })
+  assert.throws(() => parseRef('aura:thing:x'), /kind of a ref is topic or work/)
+  assert.throws(() => parseRef('topic:'), /pass a ref/)
+  assert.throws(() => parseRef(''), /pass a ref/)
+})
+
+/** A second workspace Aura with project Data Removal, a topic, a work with its doc and a step there. */
+const aura = (s: ReturnType<typeof setup>) => {
+  const ws = s.store.createWorkspace('Aura')
+  const dr = s.store.createProject('Data Removal', ws.id)
+  const topic = s.store.createSession({ projectId: dr.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', title: 'Purge' })
+  topic.items.push({ kind: 'user', text: 'Purge old rows', at: 10 })
+  const work = s.store.createTask({ projectId: dr.id, title: 'Purge job', type: 'dev', description: '', status: 'planning', ownerSessionId: topic.id })
+  const step = s.store.createTask({ projectId: dr.id, parentId: work.id, title: 'one', type: 'dev', description: '', status: 'todo' })
+  s.store.data.docs[work.id] = '# Purge\nNightly'
+  return { ws, dr, topic, work, step }
+}
+
+test('read_chat, read_task: any project or workspace by ref or bare key; nothing refused for being elsewhere (workspaces-and-labels-project-as.3)', async () => {
+  const s = setup()
+  const { store, project, tools } = s
+  const a = aura(s)
+  const me = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const call = (name: string, args: Record<string, unknown>) => tools({ projectId: project.id, sessionId: me.id }, name, args)
+  const topic = await call('read_chat', { id: `aura:topic:${a.topic.id}` })
+  assert.match(topic, new RegExp(`^\\(aura:topic:${a.topic.id}: workspace Aura, project Data Removal\\)\n\nTopic: .*\n\n\\[.*\\] User: Purge old rows`))
+  assert.match(await call('read_chat', { id: `aura:work:${a.work.key}` }), /Work .*: Purge job \(planning\)\n\nDocument:\n# Purge\nNightly\n\nConversation:\n\[.*\] User: Purge old rows/)
+  assert.match(await call('read_chat', { id: a.topic.id }), /User: Purge old rows/, 'a bare id is found everywhere')
+  const task = JSON.parse(await call('read_task', { key: `aura:${a.step.key}` }))
+  assert.deepEqual([task.ref, task.project, task.key, task.parent, task.doc], [`aura:work:${a.step.key}`, 'Data Removal', a.step.key, a.work.key, '(empty)'])
+  assert.equal(JSON.parse(await call('read_task', { key: s.task.key })).ref, undefined, 'one of this project has no ref')
+  await assert.rejects(call('read_task', { key: `topic:${a.topic.id}` }), /is a topic: read_chat reads it/)
+  await assert.rejects(call('read_chat', { id: 'mars:topic:x' }), /No workspace mars: one of personal, aura/)
+  await assert.rejects(call('read_chat', { id: `personal:topic:${a.topic.id}` }), /No chat/, 'a ref of another workspace is not found here')
+
+  // The same key in two other projects of one workspace: refused with both refs.
+  const other = store.createProject('Money', a.ws.id)
+  const twin = store.createTask({ projectId: other.id, title: 'Twin', type: 'dev', description: '' })
+  store.updateTask(twin.id, { key: a.work.key })
+  await assert.rejects(call('read_chat', { id: a.work.key }), new RegExp(`ambiguous: aura:work:${a.work.key}, aura:work:${a.work.key}`))
+  assert.match(await call('read_chat', { id: a.work.id }), /Purge job/, 'a task id stays unique')
+})
+
+test('list_chats: the own workspace by default, the project or every workspace by scope, with refs and labels; list_workspaces (workspaces-and-labels-project-as.3)', async () => {
+  const s = setup()
+  const { store, project, tools } = s
+  const a = aura(s)
+  const sibling = store.createProject('q')
+  const near = store.createSession({ projectId: sibling.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const me = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const call = (name: string, args: Record<string, unknown>) => tools({ projectId: project.id, sessionId: me.id }, name, args)
+  const list = async (scope?: string) => JSON.parse(await call('list_chats', scope ? { scope } : {})) as Record<string, unknown>[]
+  const refs = (rows: Record<string, unknown>[]) => rows.map((r) => r.ref).sort()
+  assert.deepEqual(refs(await list('project')), [`topic:${me.id}`, `work:${s.task.key}`].sort())
+  assert.deepEqual(refs(await list()), [`topic:${me.id}`, `topic:${near.id}`, `work:${s.task.key}`].sort())
+  const all = await list('all')
+  assert.deepEqual(refs(all), [`aura:topic:${a.topic.id}`, `aura:work:${a.work.key}`, `topic:${me.id}`, `topic:${near.id}`, `work:${s.task.key}`].sort())
+  const row = all.find((r) => r.ref === `aura:work:${a.work.key}`)!
+  assert.deepEqual([row.project, row.workspace, row.kind], ['Data Removal', 'Aura', 'work'])
+  assert.equal(all.find((r) => r.id === me.id)!.this, true)
+  await assert.rejects(call('list_chats', { scope: 'galaxy' }), /scope must be one of project, workspace, all/)
+
+  const area = store.labels.upsertGroup({ workspaceId: a.ws.id, name: 'Area', exclusive: true })
+  const billing = store.labels.upsertLabel({ groupId: area.id, name: 'Billing' })
+  store.labels.setLabel(`topic:${a.topic.id}`, billing.id, 'user')
+  assert.deepEqual((await list('all')).find((r) => r.id === a.topic.id)!.labels, ['Billing'])
+
+  // A developer of a step lists too: reading is for every run.
+  const dev = store.createSession({ projectId: project.id, taskId: s.task.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  assert.ok((JSON.parse(await tools({ taskId: s.task.id, sessionId: dev.id }, 'list_chats', { scope: 'all' })) as unknown[]).length === 5)
+
+  const ws = JSON.parse(await call('list_workspaces', {}))
+  assert.deepEqual(ws.map((w: { name: string; prefix: string; this?: boolean }) => [w.name, w.prefix, !!w.this]), [['Personal', 'personal', true], ['Aura', 'aura', false]])
+  assert.deepEqual(ws[1].projects.map((p: { name: string }) => p.name), ['Data Removal'])
 })
 
 test('request_integration: one card per integration while it is off; an integration that is on or unknown says so (redesign-start-screen-big-composer.4)', async () => {

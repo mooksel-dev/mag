@@ -48,6 +48,9 @@ export const MESSAGED_ROLES = ['developer', 'reviewer', 'groomer'] as const
 export type MessagedRole = (typeof MESSAGED_ROLES)[number]
 
 /** The control tools of a project chat act only on the user's word, as cancel_task does. */
+/** What a tool that reads a topic or work takes (workspaces-and-labels-project-as.3). */
+const REF_ARG = 'A ref from list_chats (topic:<id>, work:<key>; another workspace\'s prefixed, e.g. aura:work:ABC-12), a topic id, a work\'s, review\'s or step\'s key (e.g. ABC-12, ABC-12.3) or a task id. A bare id or key is looked for in this project, then this workspace, then everywhere.'
+
 const ASKED = 'Only when the user has asked for exactly this in this conversation ("approve", "start it", "tell the developer…"); never on your own. Then say in one line what you did, not "press the button".'
 
 const STEP_REPOS = {
@@ -879,11 +882,11 @@ export const TOOL_DEFS = [
     scope: 'any',
     reviewer: 'also',
     description:
-      'The full history of another chat of this project, e.g. one the user references (its id is in <referenced-chats>): a topic\'s messages, a work\'s or review\'s title, doc and its owner topic\'s messages; tool calls on one line, with times. Archived chats too. Pages of ~40k characters: pass the answer\'s next as offset for the next one.',
+      'The full history of another chat, of this project or any other project or workspace, e.g. one the user references (its id is in <referenced-chats>) or one list_chats found: a topic\'s messages, a work\'s or review\'s title, doc and its owner topic\'s messages; tool calls on one line, with times. Archived chats too. A chat of another project starts with where it is. Pages of ~40k characters: pass the answer\'s next as offset for the next one.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'A topic id, a work\'s or review\'s key (e.g. ABC-12) or a task id.' },
+        id: { type: 'string', description: REF_ARG },
         offset: { type: 'number', description: 'Where the page starts, in characters; 0 by default.' },
       },
       required: ['id'],
@@ -898,9 +901,17 @@ export const TOOL_DEFS = [
   },
   {
     name: 'read_task',
-    scope: 'project',
-    description: 'One work or step with its document, by key (e.g. ABC-12, step ABC-12.3).',
-    inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+    scope: 'any',
+    reviewer: 'also',
+    description: 'One work or step with its document, of this project or any other project or workspace; one elsewhere comes with its ref and project.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string', description: `The work or step: ${REF_ARG}` } }, required: ['key'] },
+  },
+  {
+    name: 'list_workspaces',
+    scope: 'any',
+    reviewer: 'also',
+    description: "The user's workspaces: id, name, prefix (of their refs, e.g. aura:work:ABC-12), the user's profile there, and their projects; this: true on yours.",
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'create_work',
@@ -1057,10 +1068,14 @@ export const TOOL_DEFS = [
   // The sidebar's Close, Delete and Restore for a project chat (chat-archives-and-deletes-topics.1).
   {
     name: 'list_chats',
-    scope: 'project',
+    scope: 'any',
+    reviewer: 'also',
     description:
-      'The topics and works (reviews too) of this project, one compact row each: id (a topic) or key (a work), kind (topic, work, review), title, state (a topic: idle or running; a work: its status), closed, owns (a topic: the keys of the works it owns), lastAt (day of the last item), items (count); this: true on the topic you are in. Newest first. No docs or steps: read_chat and read_task give those. Use it to find what close_chats, delete_chats or restore_chat should get.',
-    inputSchema: { type: 'object', properties: {} },
+      'The topics and works (reviews too) of your workspace, or of your project or every workspace by scope, one compact row each: id (a topic) or key (a work), ref (what read_chat, read_task and the chat tools take), project (past the project scope; null: none), workspace (scope all), labels (other than the project), kind (topic, work, review), title, state (a topic: idle or running; a work: its status), closed, owns (a topic: the keys of the works it owns), lastAt (day of the last item), items (count); this: true on the topic you are in. Newest first. No docs or steps: read_chat and read_task give those. Use it to find what close_chats, delete_chats or restore_chat should get.',
+    inputSchema: {
+      type: 'object',
+      properties: { scope: { type: 'string', enum: ['project', 'workspace', 'all'], description: 'project: this project (a topic without one: the topics without a project); workspace (default): this workspace; all: every workspace.' } },
+    },
   },
   {
     name: 'close_chats',
@@ -1068,7 +1083,7 @@ export const TOOL_DEFS = [
     description: `Close (archive) topics and works, as the user's Close: a topic goes to Done with its history (refused while it owns an open work: cancel or finish that), a done work or a review goes to Closed. The topic of an open work or of a review is refused: close that work instead. Each target on its own, in order; one line each: closed, already closed, refused: <why>, or no such…. This topic is never closed. ${ASKED}`,
     inputSchema: {
       type: 'object',
-      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
+      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Refs, topic ids or keys of works or reviews, from list_chats; not step keys.' } },
       required: ['targets'],
     },
   },
@@ -1078,7 +1093,7 @@ export const TOOL_DEFS = [
     description: `Delete topics and works for good, as the user's Delete: a topic with its history; a work with its steps, sessions, docs, diagrams and worktrees, its owner topic staying (refused while its agents run); a review with mag's topics of it. Branches and PRs stay. A topic that owns an open work is refused until that work is closed or deleted. Each target on its own, in order; one line each: deleted, refused: <why>, or no such… This topic is never deleted. Only for targets the user said yes to deleting in this conversation: list them and ask first; never on your own.`,
     inputSchema: {
       type: 'object',
-      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Topic ids or keys of works or reviews, from list_chats; not step keys.' } },
+      properties: { targets: { type: 'array', items: { type: 'string' }, description: 'Refs, topic ids or keys of works or reviews, from list_chats; not step keys.' } },
       required: ['targets'],
     },
   },
@@ -1086,7 +1101,7 @@ export const TOOL_DEFS = [
     name: 'restore_chat',
     scope: 'project',
     description: `Restore a closed topic, work or review, as the user's Restore: back where it was in the list. A canceled work cannot be restored. One line: restored, not closed, refused: <why>, or no such…. ${ASKED}`,
-    inputSchema: { type: 'object', properties: { target: { type: 'string', description: 'A topic id or the key of a work or review, from list_chats.' } }, required: ['target'] },
+    inputSchema: { type: 'object', properties: { target: { type: 'string', description: 'A ref, a topic id or the key of a work or review, from list_chats.' } }, required: ['target'] },
   },
   {
     name: 'update_notes',

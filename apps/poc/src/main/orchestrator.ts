@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, ASKING_ROLES, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, ASKING_ROLES, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, workspaceCard, type ItemRef, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -52,11 +52,11 @@ deny answers their note: revise it and call publish again. Reads, a push of your
 yourself.`
 
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
-const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
+const groomerPrompt = (playbook: Playbook, orient: string) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
 of yourself. Your output is the work's doc, not chat: it is all a fresh developer and a fresh reviewer get besides the
 code, so it has to stand on its own.
 
-${orientation(playbook.reviewRounds)}
+${orient}
 
 ${stanceLine(playbook)}
 
@@ -102,7 +102,7 @@ const developerRules = (bases: string[]) =>
 Only the user merges, after the review: mag blocks merges and pushes to ${bases.join(', ')}. Anything you post on GitHub starts with "${AGENT_MARK}", so the team can tell an agent wrote it.`
 
 /** Developer of one step (T-28): mag's frame around the playbook's step section (T-55.2). */
-const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) => {
+const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork, orient: string) => {
   const playbook = playbookOf(project)
   const others = project.repos.filter((r) => !work.repos.some((w) => w.repo === r))
   const repos = work.repos.length
@@ -114,7 +114,7 @@ const stepPrompt = (project: Project, task: Task, step: Task, work: TaskWork) =>
   return `You are a developer agent in "mag". You implement step ${step.key} of ${task.key}: "${step.title}". Restarts and PR feedback of this step come back to this session.
 Your cwd and worktrees are for this step only; each repository starts from its fresh base branch. ${repos}${rest}
 
-${orientation(playbook.reviewRounds)}
+${orient}
 
 ## Your step
 You start fresh: what the owner planned is in the doc and the diagrams, so read get_task (all steps, with status) and get_doc first. The doc is the agreed plan. Do only this step, with at most one PR per changed repository, because each step is reviewed and merged on its own; never mix steps.
@@ -132,14 +132,14 @@ ${stanceLine(playbook)}`
 }
 
 /** Developer of a legacy task (started before T-28): the whole task in one session. */
-const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean) => {
+const developerPrompt = (project: Project, task: Task, work: TaskWork, checklist: boolean, orient: string) => {
   const repos = workLines(project, work)
   const playbook = playbookOf(project)
   return `You are a developer agent in "mag". You own task ${task.key} from start to merge: restarts and PR feedback come back to this session.
 Your cwd is the task directory. Every project repository has its own git worktree there, on its own branch, based on its base branch:
 ${repos.join('\n')}
 
-${orientation(playbook.reviewRounds)}
+${orient}
 
 ## Your task
 First call get_task and get_doc. The doc is the agreed plan; follow it.${checklist ? '\nget_task lists the subtasks: the plan as a checklist. Call set_subtask_status(key, "in_progress") when you start a step\nand set_subtask_status(key, "done") as soon as it is finished; the user watches them live.' : ''}
@@ -201,14 +201,14 @@ ${brief}
 
 Do that. When it is done, or you need a decision, report to that session in a few lines: message_session with session_id "${parent.id}". The user sees this conversation too and may write to you here.`
 
-const chatPrompt = (project: Project, logsDir: string) => {
+const chatPrompt = (project: Project, logsDir: string, orient: string) => {
   const playbook = playbookOf(project)
   return `You are the user's partner for project "${project.name}" in "mag", a workspace that organizes agents' work on problems;
 tickets live in the user's trackers, and mag knows them as links. This topic is about whatever the user brings: ideas,
 product and design decisions, architecture, priorities, reviewing what agents did, a quick change, a script, a prototype.
 You read the code, the web and tickets.
 
-${orientation(playbook.reviewRounds)}
+${orient}
 
 ## What you do here
 - mag has no backlog and no priorities: priority lives in the tracker, and what nobody works on yet is an idea on the
@@ -2307,6 +2307,27 @@ export class Orchestrator {
     return this.store.data.sessions.filter((s) => s.stepId === stepId && s.role === 'developer').at(-1)
   }
 
+  /**
+   * mag's orientation for a session's prompt (workspaces-and-labels-project-as.3): with its workspace's profile and the
+   * card of where it is: workspace, project, the labels of its topic or work, the other workspaces.
+   */
+  private orientationOf(session: AgentSession, project: Project): string {
+    const ws = this.store.workspace(project.workspaceId)
+    const topic = rootSession(session.id, this.store.data.sessions) ?? session
+    const ref: ItemRef = session.taskId ? `work:${session.stepId ?? session.taskId}` : `topic:${topic.id}`
+    const groups = new Map(this.store.labels.groups(ws.id).map((g) => [g.id, g]))
+    // A session not stored yet (spec of a new run) has no labels.
+    const stored = session.taskId ? this.store.data.tasks.some((t) => t.id === (session.stepId ?? session.taskId)) : this.store.data.sessions.some((s) => s.id === topic.id)
+    const labels = stored
+      ? this.store.labels.labelsOf(ref).flatMap((l) => {
+          const g = groups.get(l.groupId)
+          return g && g.system !== 'project' ? [{ group: g.name, name: l.name }] : []
+        })
+      : []
+    const others = this.store.workspaces().filter((w) => w.id !== ws.id)
+    return orientation(playbookOf(project).reviewRounds, ws.profile, workspaceCard(ws, project.id ? project : null, labels, others))
+  }
+
   private spec(session: AgentSession): Omit<RunSpec, 'prompt'> {
     const project = this.store.sessionScope(session)
     const [first = homedir(), ...rest] = project.repos
@@ -2317,7 +2338,7 @@ export class Orchestrator {
       // Every topic is full Claude Code, a review's too. A child with a preset (topics-a-tree-of-agent.2): a reviewer reads only; neither writes to GitHub.
       const preset = session.role === 'developer' || session.role === 'reviewer' ? session.role : null
       const reads = preset === 'reviewer'
-      const prompt = chatPrompt(project, this.paths.logsDir) + (preset ? blocks(CHILD_ROLE_LINES[preset]) : '')
+      const prompt = chatPrompt(project, this.paths.logsDir, this.orientationOf(session, project)) + (preset ? blocks(CHILD_ROLE_LINES[preset]) : '')
       return {
         cwd: scratch ? this.scratchRoot(session) : first,
         addDirs: [...(scratch ? project.repos : rest), this.paths.attachmentsDir, this.paths.logsDir],
@@ -2348,7 +2369,7 @@ export class Orchestrator {
         // A fork keeps the owner's system prompt; this one is for a fresh reviewer. The job and the decisions are in the message.
         appendSystemPrompt:
           `You are the first reviewer of a step's PRs in "mag", before the user. You read the code and may run it in your scratch worktree, but you never change the PRs: the developer fixes what you find, in their branch.` +
-          blocks(orientation(playbookOf(project).reviewRounds)) +
+          blocks(this.orientationOf(session, project)) +
           arch +
           blocks(contextBlocks({ notes: project.notes })),
         // Bash for gh, git and focused tests in its scratch worktrees; nothing that edits the PR or writes to GitHub.
@@ -2365,7 +2386,7 @@ export class Orchestrator {
         // checkout; the step works in its local ones there.
         addDirs: [...project.repos.filter((r) => !work.repos.some((w) => w.repo === r && w.worktree !== r)), ...outsideDir(work), this.paths.attachmentsDir],
         appendSystemPrompt:
-          (owner.parentId ? stepPrompt(project, task, owner, work) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0)) +
+          (owner.parentId ? stepPrompt(project, task, owner, work, this.orientationOf(session, project)) : developerPrompt(project, task, work, subtasksOf(task.id, this.store.data.tasks).length > 0, this.orientationOf(session, project))) +
           ticketLine(project, task) +
           (project.enforceArchitecture
             ? `\n\n${ARCH_RULES}\nBefore opening the PR, call check_architecture and fix every violation; mention warnings in the PR body.`
@@ -2379,7 +2400,7 @@ export class Orchestrator {
       cwd: first,
       addDirs: [...rest, this.paths.attachmentsDir],
       appendSystemPrompt:
-        groomerPrompt(playbookOf(project)) +
+        groomerPrompt(playbookOf(project), this.orientationOf(session, project)) +
         ticketLine(project, task) +
         (project.enforceArchitecture
           ? `\n\n${ARCH_RULES}\nCall get_architecture for the recorded design and check_architecture for rule checks on the code. In the doc, design changes per layer: infra first if it changes, then clients and services with their interfaces (signatures + semantics), then the app layer.`
