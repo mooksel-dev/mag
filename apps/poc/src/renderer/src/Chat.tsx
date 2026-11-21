@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, filesRestorePoint, rewindPoint, type RewindMode, type RewindScope, type SessionHeader, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type ModelChoice, type Project, type Task } from '@mag/core'
+import { HEIGHT_MESSAGE, TASK_KEY_RE, approvalCommand, findModel, backgroundLabel, canvasDocument, canvasPieces, canvasTheme, chatCommands, linkedCanvasIds, liveSession, resolveChoice, agentAllowed, isSubagent, sessionChoice, sessionJob, resolveRef, turnMeta, interimReplies, uniqueRefs, canRewindSession, filesRestorePoint, rewindPoint, type RewindMode, type RewindScope, type SessionHeader, type Attachment, type BackgroundTask, type Canvas, type CanvasPiece, type CanvasRef, type CanvasTheme, type ChatItem, type ChatRef, type Destination, type ModelChoice, type Project, type Task } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { ChoiceChip, ContextGauge, ModelPopover, agentName, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
@@ -16,6 +16,8 @@ import { SearchPalette } from './SearchPalette'
 import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
 import { useSessionItems } from './useSessionItems'
 import { Caret, Icon, iconSvg, type IconName } from './ui/Icon'
+import { PublishCard } from './ui/PublishCard'
+import { publishView } from './publishApproval'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -627,16 +629,16 @@ type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 const APPROVAL_STATUS: Record<ApprovalItem['status'], string> = { pending: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', expired: 'Expired: the run ended first' }
 
 /**
- * A tool call that waits for the user (an ask-mode integration's, or a write to a destination: an integration's or a
- * CLI's as a Bash command): where it publishes, Allow / Deny while pending, then its outcome. `who`: the agent, when
+ * A tool call that waits for the user: a write to a destination as its Publish card; any other (an ask-mode
+ * integration's read, an asking role's call) with Allow / Deny while pending, then its outcome. `who`: the agent, when
  * not this chat's.
  */
 export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item: ApprovalItem; who?: string }) {
+  if (item.destination) return <PublishApproval sessionId={sessionId} item={item} destination={item.destination} who={who} />
   // A Bash call (a GitHub write, chat-publishes-to-github-prs.2) shows its whole command: that is what runs on Allow.
   const command = approvalCommand(item)
   return (
     <div className="approval">
-      {item.destination && <div className="small"><b>Publishes to {item.destination.label}</b></div>}
       {command !== null ? (
         <>
           <div>{who ? `The ${who}` : 'Agent'} wants to run</div>
@@ -657,6 +659,68 @@ export function ApprovalCard({ sessionId, item, who }: { sessionId: string; item
         <div className="muted small">{APPROVAL_STATUS[item.status]}</div>
       )}
     </div>
+  )
+}
+
+const PUBLISH_STATUS: Record<ApprovalItem['status'], string> = { pending: '', allowed: 'Allowed to publish', denied: 'Canceled', expired: APPROVAL_STATUS.expired }
+
+/** A preview's link opens in the browser, never in mag's window. */
+const openPreviewLink = (e: MouseEvent) => {
+  const a = (e.target as HTMLElement).closest('a')
+  if (!a) return
+  e.preventDefault()
+  const href = a.getAttribute('href') ?? ''
+  if (/^https:\/\//.test(href)) mag.open(href)
+}
+
+/**
+ * An approval of a write to a destination (publish-gate-for-every-outbound.2): the payload as the destination will
+ * show it and its rules. Publish allows; Cancel denies; Edit denies with the user's note, so the agent revises and
+ * asks again with a new card. The exact call stays one click away.
+ */
+function PublishApproval({ sessionId, item, destination, who }: { sessionId: string; item: ApprovalItem; destination: Destination; who?: string }) {
+  const [note, setNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const view = useMemo(() => publishView(destination, item.input), [destination, item.input])
+  const html = useMemo(() => (view.html === null ? null : DOMPurify.sanitize(view.html)), [view.html])
+  const command = approvalCommand(item)
+  const decide = (allow: boolean, said?: string) => {
+    setBusy(true)
+    void mag.decideApproval(sessionId, item.id, allow, said).finally(() => setBusy(false))
+  }
+  const pending = item.status === 'pending'
+  const outcome = pending ? undefined : item.status === 'denied' && item.note ? `Sent back: ${item.note}` : PUBLISH_STATUS[item.status]
+  const call = command ?? `${item.server ? `${item.server} · ` : ''}${item.tool} ${JSON.stringify(item.input, null, 2)}`
+  return (
+    <PublishCard
+      dest={view.dest}
+      preview={html !== null ? <div className="md pubmd" onClick={openPreviewLink} dangerouslySetInnerHTML={{ __html: html }} /> : <pre className="input command">{call}</pre>}
+      rules={view.rules}
+      onPublish={() => decide(true)}
+      onEdit={pending && note === null ? () => setNote('') : undefined}
+      onCancel={() => decide(false)}
+      publishing={busy}
+      outcome={outcome}
+    >
+      <div className="pubextra">
+        {who && <div className="muted small">Asked by the {who}</div>}
+        {html !== null && (
+          <details className="small">
+            <summary>{command !== null ? 'Command' : 'Call'}</summary>
+            <pre className="input command">{call}</pre>
+          </details>
+        )}
+        {pending && note !== null && (
+          <form className="pubnote" onSubmit={(e) => { e.preventDefault(); if (note.trim()) decide(false, note) }}>
+            <textarea autoFocus rows={2} value={note} placeholder="What should change? The agent rewrites it and asks again." onChange={(e) => setNote(e.target.value)} />
+            <div className="actions">
+              <button type="button" className="ghost" onClick={() => setNote(null)}>Back</button>
+              <button type="submit" disabled={busy || !note.trim()}>Send back</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </PublishCard>
   )
 }
 

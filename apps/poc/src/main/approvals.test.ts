@@ -214,12 +214,20 @@ test("a write to a destination on the project's auto list runs without a card; o
   assert.equal(read?.kind === 'approval' && read.destination, undefined, 'a read has no destination')
 })
 
-test("deny with the user's note: the agent gets it, the item keeps it", async () => {
-  const { session, approvals, call } = slackSetup()
-  const pending = call('mcp__claude_ai_Slack__slack_send_message', { channel: 'x' }, 'n1')
+test("Edit: a write denied with the user's note goes back to be revised, and the agent's next ask parks a new card", async () => {
+  const { store, session, approvals, call } = slackSetup()
+  const pending = call('mcp__claude_ai_Slack__slack_send_message', { channel: 'x', message: 'Intro\n*Ups*' }, 'n1')
   await sleep(5)
-  approvals.decide(session.id, 'n1', false, '  revise: a blank line before the header ')
-  assert.deepEqual(JSON.parse(await pending), { behavior: 'deny', message: 'User denied: revise: a blank line before the header' })
+  approvals.decide(session.id, 'n1', false, '  a blank line before the header ')
+  assert.deepEqual(JSON.parse(await pending), { behavior: 'deny', message: 'User sent it back to revise: a blank line before the header\nRewrite it and ask again.' })
   const item = session.items[0]
-  assert.equal(item.kind === 'approval' && item.note, 'revise: a blank line before the header')
+  assert.equal(item.kind === 'approval' && item.note, 'a blank line before the header')
+  assert.equal(await answerWithin(call('mcp__claude_ai_Slack__slack_send_message', { channel: 'x', message: 'Intro\n\n*Ups*' }, 'n2')), 'waits')
+  assert.deepEqual(session.items.map((i) => i.kind === 'approval' && [i.id, i.status]), [['n1', 'denied'], ['n2', 'pending']])
+  // A deny without a destination keeps the plain message.
+  store.updateProject(session.projectId, { integrations: { chat: { claude_ai_Slack: 'ask' } } })
+  const read = call('mcp__claude_ai_Slack__slack_search_public', { query: 'q' }, 'r1')
+  await sleep(5)
+  approvals.decide(session.id, 'r1', false, 'not now')
+  assert.deepEqual(JSON.parse(await read), { behavior: 'deny', message: 'User denied: not now' })
 })

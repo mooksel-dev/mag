@@ -16,10 +16,14 @@ interface PublishCardProps {
   onCancel: () => void
   /** The write is on its way: the actions wait. */
   publishing?: boolean
+  /** Decided: this line replaces the actions. */
+  outcome?: string
+  /** Below the rules, e.g. the note Edit sends back. */
+  children?: ReactNode
 }
 
 /** The one card for every outbound write: where it goes, how it will look, the destination's rules, one Publish. */
-export function PublishCard({ dest, preview, rules, onPublish, onEdit, onCancel, publishing }: PublishCardProps) {
+export function PublishCard({ dest, preview, rules, onPublish, onEdit, onCancel, publishing, outcome, children }: PublishCardProps) {
   const summary = rulesSummary(rules)
   return (
     <section className="pubcard" aria-label={`Publish to ${dest.name}`}>
@@ -46,12 +50,17 @@ export function PublishCard({ dest, preview, rules, onPublish, onEdit, onCancel,
           {summary && <Pill tone={summary.tone} icon={summary.tone === 'green' ? 'check' : 'alert'}>{summary.text}</Pill>}
         </div>
       )}
-      <footer className="pubfoot">
-        <button type="button" className="ghost" disabled={publishing} onClick={onCancel}>Cancel</button>
-        <span className="sp" />
-        {onEdit && <button type="button" disabled={publishing} onClick={onEdit}><Icon name="pencil" size={14} />Edit</button>}
-        <button type="button" className="primary" disabled={publishing} onClick={onPublish}><Icon name="send" size={14} />{publishing ? 'Publishing…' : 'Publish'}</button>
-      </footer>
+      {children}
+      {outcome !== undefined ? (
+        <footer className="pubfoot muted small">{outcome}</footer>
+      ) : (
+        <footer className="pubfoot">
+          <button type="button" className="ghost" disabled={publishing} onClick={onCancel}>Cancel</button>
+          <span className="sp" />
+          {onEdit && <button type="button" disabled={publishing} onClick={onEdit}><Icon name="pencil" size={14} />Edit</button>}
+          <button type="button" className="primary" disabled={publishing} onClick={onPublish}><Icon name="send" size={14} />{publishing ? 'Publishing…' : 'Publish'}</button>
+        </footer>
+      )}
     </section>
   )
 }

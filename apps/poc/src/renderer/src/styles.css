@@ -1142,6 +1142,18 @@ details.inline { display: inline-block; margin-left: 6px; }
 .pubrules { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 14px 12px; color: var(--t3); font-size: var(--fs-sm); }
 .pubfoot { display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-top: 1px solid var(--line); background: var(--surface-2); }
 .pubfoot button { display: inline-flex; align-items: center; gap: 6px; }
+.pubmd > :first-child { margin-top: 0; }
+.pubmd > :last-child { margin-bottom: 0; }
+.pubmd .pubtitle { font-weight: 600; margin-bottom: 6px; }
+.pubmd .mention { padding: 0 2px; border-radius: 3px; background: var(--acc-t); color: var(--acc-fg); }
+.pubmd blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--t2); }
+.pubcard pre.command { margin: 0; padding: 6px 8px; border-radius: var(--r-md); background: var(--subtle); font: 11px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+.pubextra { display: flex; flex-direction: column; gap: 6px; padding: 0 14px 12px; }
+.pubextra:empty { display: none; }
+.pubextra summary { cursor: pointer; color: var(--t3); }
+.pubnote { display: flex; flex-direction: column; gap: 6px; }
+.pubnote textarea { width: 100%; resize: vertical; font: inherit; }
+.pubnote .actions { display: flex; justify-content: flex-end; gap: 6px; }
 button.ghost { border-color: transparent; background: none; color: var(--t2); }
 button.ghost:hover:not(:disabled) { background: var(--hover); }
 

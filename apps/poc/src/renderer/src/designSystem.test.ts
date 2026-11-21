@@ -42,9 +42,10 @@ test('one Pill, one Seg, one selected row: the old chip and segmented variants a
   }
 })
 
-test('PublishCard and Claim are not used in production yet: only the dev fixtures page imports them, lazily', () => {
-  const importers = sources.filter((f) => /from '\.\.?\/(ui\/)?(PublishCard|Claim)'/.test(code(f)))
-  assert.deepEqual(importers.sort(), ['UiFixtures.tsx'])
+test('PublishCard renders approvals with a destination (Chat); Claim is not used in production yet; the fixtures page loads lazily', () => {
+  const importers = (name: string) => sources.filter((f) => new RegExp(`from '\\.\\.?\\/(ui\\/)?${name}'`).test(code(f))).sort()
+  assert.deepEqual(importers('PublishCard'), ['Chat.tsx', 'UiFixtures.tsx'])
+  assert.deepEqual(importers('Claim'), ['UiFixtures.tsx'])
   const all = (readdirSync(here, { recursive: true }) as string[]).filter((f) => /\.tsx?$/.test(f) && f !== 'UiFixtures.tsx')
   assert.deepEqual(all.filter((f) => /from '\.\/UiFixtures'/.test(code(f))), [], 'no static import of the fixtures page')
   assert.match(code('main.tsx'), /lazy\(\(\) => import\('\.\/UiFixtures'\)\)/)
