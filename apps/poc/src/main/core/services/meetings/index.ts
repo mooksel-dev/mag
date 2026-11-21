@@ -4,22 +4,19 @@
 import type { Capture, Channel, OnChunk } from '../../clients/audio-capture/index.ts'
 import type { ClaudeCli } from '../../clients/claude-cli/index.ts'
 import type { MeetingContent, MeetingFiles, MeetingLink, TranscriptLine } from '../../clients/meeting-files/index.ts'
-import type { MeetingIndex } from '../../clients/meeting-index/index.ts'
 import type { Stt } from '../../clients/stt/index.ts'
-import type { Meeting, MeetingHit, Recording, SearchFilters } from './types.ts'
+import type { Meeting, Recording, SearchFilters } from './types.ts'
 
 export type * from './types.ts'
-export { MARK_END, MARK_START } from '../../clients/meeting-index/index.ts'
 
 export interface MeetingsDeps {
   capture(onChunk: OnChunk): Promise<Capture>
   stt: Pick<Stt, 'ensureModel' | 'transcribe'>
   files: MeetingFiles
   llm: ClaudeCli
-  index: MeetingIndex
   now?: () => Date
   onChange?: (status: Recording | null) => void
-  /** A meeting's files changed: saved, summarized, renamed, linked or deleted. */
+  /** A meeting's files changed: saved, summarized, renamed, linked or deleted; the search index follows it. */
   onMeetingsChanged?: () => void
   /** A meeting's end: by stop() or on its own (the helper ended, transcription could not start). */
   onStopped?: (meeting: Meeting, dir: string) => void
@@ -45,13 +42,10 @@ export interface Meetings {
   /** Links the meeting to a topic or a work; a link it has already is kept once. */
   link(id: string, ref: MeetingLink): Meeting
   unlink(id: string, ref: MeetingLink): Meeting
-  /** Ranked lines of meetings that match all words of `q` (prefixes, any case and accents), within the filters. */
-  search(q: string, filters?: SearchFilters): MeetingHit[]
-  /**
-   * Brings the search index in step with the folders: on start, and when the storage root changes. Only meetings whose
-   * files changed since are read; it yields between meetings, so a year of calls does not hold the app up.
-   */
-  reindex(): Promise<{ updated: number; removed: number }>
+  /** When the meeting's files last changed (ms): the version the search index keeps it at. */
+  changedAt(id: string): number
+  /** The meeting being recorded now, if any: not indexed until it ends. */
+  recordingId(): string | null
 }
 
 /** A date-only bound is the user's local day: `from` its start, `to` its end. */
@@ -292,7 +286,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       meeting.endedAt = now().toISOString()
       if (s.errors.length) meeting.error = [...new Set(s.errors)].slice(0, MAX_ERRORS).join('; ')
       deps.files.writeMeta(meeting.id, meeting)
-      indexed(meeting.id)
     } finally {
       rec = null
       session = null
@@ -302,17 +295,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     deps.onMeetingsChanged?.()
     if (s.lines) void summarize(meeting.id).catch(() => {})
     return meeting
-  }
-
-  /** Keeps the index in step with a meeting's files; search heals on the next reindex when it fails. */
-  const indexed = (id: string) => {
-    try {
-      const version = deps.files.changedAt(id)
-      const { meta, summary, transcript } = deps.files.read(id)
-      deps.index.upsert({ id, version, title: meta.title, summary, transcript })
-    } catch (e) {
-      deps.onError?.(`Indexing ${id} failed: ${(e as Error).message}`, e)
-    }
   }
 
   const current = (id: string, fallback: Meeting) => {
@@ -334,7 +316,6 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
       deps.files.writeSummary(id, summary)
       const participants = participantsOf(summary)
       if (participants.length) deps.files.writeMeta(id, { ...deps.files.read(id).meta, participants })
-      indexed(id)
     })()
       .catch((e) => {
         deps.onError?.(`Summarizing ${id} failed: ${(e as Error).message}`, e)
@@ -443,44 +424,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     remove(id) {
       if (rec?.meeting?.id === id) throw new Error('Stop the recording before deleting it')
       deps.files.remove(id)
-      try {
-        deps.index.remove(id)
-      } catch (e) {
-        deps.onError?.(`Removing ${id} from the index failed: ${(e as Error).message}`, e)
-      }
       deps.onMeetingsChanged?.()
     },
     rename(id, title) {
       const t = title.trim()
       if (!t) throw new Error('A meeting needs a title')
-      const meta = updateMeta(id, (m) => ({ ...m, title: t }))
-      if (rec?.meeting?.id !== id) indexed(id)
-      return meta
+      return updateMeta(id, (m) => ({ ...m, title: t }))
     },
     link: (id, ref) => updateMeta(id, (m) => ({ ...m, links: [...(m.links ?? []).filter((l) => !sameLink(l, ref)), ref] })),
     unlink: (id, ref) => updateMeta(id, (m) => ({ ...m, links: (m.links ?? []).filter((l) => !sameLink(l, ref)) })),
-    search(q, filters = {}) {
-      const all = deps.files.list()
-      const shown = filterMeetings(all, filters)
-      const byId = new Map(shown.map((m) => [m.id, m]))
-      // Only meetings whose folders are there: one deleted in Finder drops out before the next reindex.
-      return deps.index.query(q, { meetingIds: [...byId.keys()], limit: filters.limit }).map((h) => ({ ...h, title: byId.get(h.meetingId)!.title, startedAt: byId.get(h.meetingId)!.startedAt }))
-    },
-    async reindex() {
-      const versions = deps.index.versions()
-      const metas = deps.files.list()
-      let updated = 0
-      for (const m of metas) {
-        if (rec?.meeting?.id === m.id) continue
-        if (versions.get(m.id) === deps.files.changedAt(m.id)) continue
-        indexed(m.id)
-        updated++
-        await new Promise((r) => setImmediate(r))
-      }
-      const there = new Set(metas.map((m) => m.id))
-      const gone = [...versions.keys()].filter((id) => !there.has(id))
-      for (const id of gone) deps.index.remove(id)
-      return { updated, removed: gone.length }
-    },
+    changedAt: (id) => deps.files.changedAt(id),
+    recordingId: () => rec?.meeting?.id ?? null,
   }
 }

@@ -1,14 +1,15 @@
 import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MeetingStatus } from '../preload/api'
 import { openCapture } from './core/clients/audio-capture/index.ts'
 import { createClaudeCli } from './core/clients/claude-cli/index.ts'
 import { createMeetingFiles, type MeetingLink } from './core/clients/meeting-files/index.ts'
-import { createMeetingIndex } from './core/clients/meeting-index/index.ts'
 import { createStt } from './core/clients/stt/index.ts'
 import { createMeetings, type Meetings, type SearchFilters } from './core/services/meetings/index.ts'
+import type { Search } from './core/services/search/index.ts'
 import { log } from './log'
+import { meetingHits } from './meeting-tools.ts'
 import { ICON } from './windows'
 
 /** ⌘⇧R is a browser's hard reload; the hotkey is global, so it takes one no app uses. */
@@ -64,12 +65,11 @@ function rootSetting(userData: string, fallback: string) {
  * hotkey, the recording shown in every window and on the dock, a notification when the transcript is saved; the
  * Meetings section's list, meeting view, rename, delete, links, Show in Finder and the storage root.
  */
-export function startMeetings(): Meetings {
+export function startMeetings(opts: { search: Pick<Search, 'query'>; onMeetingsChanged: () => void; indexPath: string }): Meetings {
   const userData = app.getPath('userData')
   const root = rootSetting(userData, join(app.getPath('documents'), 'mag', 'meetings'))
   const stt = createStt({ modelsDir: join(userData, 'whisper') })
   const helper = join(app.getAppPath(), 'native', 'mag-audio', 'build', 'mag-audio')
-  const index = createMeetingIndex(() => join(root.get(), '.index.sqlite'))
   const llmDir = join(userData, 'runs', 'meetings')
   mkdirSync(llmDir, { recursive: true })
   let status: MeetingStatus = { recording: null, last: null, root: root.get(), hotkey: RECORD_HOTKEY, summarizing: [] }
@@ -89,10 +89,10 @@ export function startMeetings(): Meetings {
     stt,
     files: createMeetingFiles(root.get),
     llm: createClaudeCli({ cwd: llmDir }),
-    index,
     onChange: (recording) => send({ recording }),
     onMeetingsChanged: () => {
       send({ summarizing: meetings.summarizing() })
+      opts.onMeetingsChanged()
       for (const win of BrowserWindow.getAllWindows()) win.webContents.send('meetings:changed')
     },
     onError: (message, e) => log.warn('meetings', message, e),
@@ -108,18 +108,9 @@ export function startMeetings(): Meetings {
     },
   })
 
-  // The index is derived: built again from the folders on start, so meetings changed or deleted in Finder heal.
-  const reindex = () => {
-    const t0 = Date.now()
-    meetings.reindex().then(
-      (r) => {
-        log.info('meetings', `search index: ${r.updated} updated, ${r.removed} removed in ${Date.now() - t0} ms`)
-        if (r.updated || r.removed) for (const win of BrowserWindow.getAllWindows()) win.webContents.send('meetings:changed')
-      },
-      (e) => log.warn('meetings', 'updating the search index failed', e),
-    )
-  }
-  reindex()
+  // The meetings-only index of before (unified-search-across-the-workspace.1): derived, the shared one replaces it.
+  const old = join(root.get(), '.index.sqlite')
+  if (old !== opts.indexPath) rmSync(old, { force: true })
 
   const start = async (title?: string) => {
     try {
@@ -153,7 +144,7 @@ export function startMeetings(): Meetings {
   })
   ipcMain.handle('meetings:link', (_, id: string, ref: MeetingLink) => meetings.link(id, ref))
   ipcMain.handle('meetings:unlink', (_, id: string, ref: MeetingLink) => meetings.unlink(id, ref))
-  ipcMain.handle('meetings:search', (_, q: string, filters?: SearchFilters) => meetings.search(q, filters))
+  ipcMain.handle('meetings:search', (_, q: string, filters?: SearchFilters) => meetingHits(opts.search, meetings, q, filters))
   ipcMain.handle('meetings:summarize', (_, id: string) => meetings.summarize(id))
   ipcMain.handle('meetings:reveal', (_, id?: string) => {
     if (!id) {
@@ -168,7 +159,7 @@ export function startMeetings(): Meetings {
     const r = await dialog.showOpenDialog({ title: 'Where mag keeps meetings', defaultPath: root.get(), properties: ['openDirectory', 'createDirectory'] })
     if (r.canceled || !r.filePaths[0]) return null
     root.set(r.filePaths[0])
-    reindex()
+    opts.onMeetingsChanged()
     send({ root: root.get(), last: null })
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send('meetings:changed')
     return root.get()
@@ -180,7 +171,6 @@ export function startMeetings(): Meetings {
   app.on('will-quit', () => {
     globalShortcut.unregister(RECORD_HOTKEY)
     stt.close()
-    index.close()
   })
   // Quitting mid-call still saves what was said.
   let saved = false

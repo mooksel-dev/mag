@@ -92,13 +92,21 @@ function sessionText(s: AgentSession): string {
   return s.items.flatMap((i) => line(i) ?? []).join('\n\n')
 }
 
+const topicHead = (s: AgentSession) => `Topic: ${shortTitle(s)}${isArchived(s) ? ' (archived)' : ''}\n\n`
+
+/** Where item `n` of a topic starts in its chatTranscript (the next message's line when it has none). */
+export function itemOffset(s: AgentSession, n: number): number {
+  const before = s.items.slice(0, Math.max(0, n)).flatMap((i) => line(i) ?? []).join('\n\n')
+  return topicHead(s).length + (before ? before.length + 2 : 0)
+}
+
 /**
  * A chat's history for read_chat, one page of `limit` characters from `offset`: a topic's messages; a work's (or
  * review's) title, doc, then its owner topic's messages. `next`: the offset of the next page, null on the last one.
  */
 export function chatTranscript(item: AgentSession | Task, sessions: AgentSession[], doc = '', offset = 0, limit = TRANSCRIPT_PAGE): { text: string; next: number | null } {
   let full: string
-  if (!isTask(item)) full = `Topic: ${shortTitle(item)}${isArchived(item) ? ' (archived)' : ''}\n\n${sessionText(item)}`
+  if (!isTask(item)) full = `${topicHead(item)}${sessionText(item)}`
   else {
     const topic = sessions.find((s) => s.id === item.ownerSessionId)
     full = [
