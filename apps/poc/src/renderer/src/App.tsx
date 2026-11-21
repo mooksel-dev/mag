@@ -221,7 +221,7 @@ export function App({ view }: { view: WindowView }) {
     if (!t) return 'What this hit points at is gone.'
     switch (t.kind) {
       case 'elsewhere':
-        void mag.openHit(t.workspaceId, ref, title)
+        mag.openHit(t.workspaceId, ref, title).catch((e: Error) => alert(e.message))
         return null
       case 'topic':
         select({ kind: 'topic', id: t.id })

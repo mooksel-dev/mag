@@ -87,7 +87,7 @@ export function searchWorkspace(deps: SearchToolDeps, project: Pick<Project, 'wo
   return `${lines.join('\n')}\n\nOpen one with read(ref).`
 }
 
-/** Hits of each palette tab; a tab with this many shows the count as "50+". */
+/** Hits of each palette tab; a tab this full shows its count as "50+". */
 export const PALETTE_LIMIT = 50
 
 /** The palette's query (over IPC): one ranking across kinds and one per kind, so each tab has its own count. */
@@ -101,7 +101,7 @@ export function paletteSearch(search: Pick<Search, 'query'>, q: string, o: Palet
   }
   const query = typeof q === 'string' ? q : ''
   const byKind = Object.fromEntries(SEARCH_KINDS.map((k) => [k, search.query(query, { ...opts, kinds: [k] })])) as Record<SearchKind, Hit[]>
-  return { all: search.query(query, opts), byKind }
+  return { all: search.query(query, opts), byKind, limit: PALETTE_LIMIT }
 }
 
 /** A person as read shows them: what the directories say and every handle. */

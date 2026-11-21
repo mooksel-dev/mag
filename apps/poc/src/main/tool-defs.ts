@@ -799,7 +799,7 @@ export const TOOL_DEFS = [
     scope: 'any',
     reviewer: 'also',
     description:
-      "Search everything the user has in mag: topics (their messages and final replies, summaries), works' docs per section, decisions (lines of a doc's Decisions), recorded meetings (summaries and transcript lines). This workspace by default; scope \"all\" or another workspace when the user asks. All words must match, as prefixes, any case and accents; there is no stemming (Ukrainian, Russian), so pass word stems, e.g. \"реліз\" for релізу/релізом. One hit per source, best first: ref, kind, title, time, labels and the matched snippet; open one with read(ref). Rows about people and of the Personal workspace (outside its own scope) only with people: true, when the user asks about them.",
+      "Search everything the user has in mag: topics (their messages and final replies, summaries), works' docs per section, decisions (lines of a doc's Decisions), recorded meetings (summaries and transcript lines), deliverables (their current version, with their labels) and persons (name, title, email, handles). This workspace by default; scope \"all\" or another workspace when the user asks. All words must match, as prefixes, any case and accents; there is no stemming (Ukrainian, Russian), so pass word stems, e.g. \"реліз\" for релізу/релізом. One hit per source, best first: ref, kind, title, time, labels and the matched snippet; open one with read(ref). Rows about people (persons, people-sensitive deliverables such as assessments) and of the Personal workspace (outside its own scope) only with people: true, when the user asks about them.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -819,7 +819,7 @@ export const TOOL_DEFS = [
     scope: 'any',
     reviewer: 'also',
     description:
-      'The text of a ref mag gave you, in any project or workspace: a hit of search_workspace (a topic from that message on, a work with its doc and owner topic, a doc section, a work\'s Decisions, a meeting from that line), paged at ~40k characters (pass the answer\'s offset for the next page); a deliverable (<workspace>:dlv:<slug> or dlv:<slug>): its final version when it is final or published, else its latest; version picks one; its claims follow the text when set_claims recorded them.',
+      'The text of a ref mag gave you, in any project or workspace: a hit of search_workspace (a topic from that message on, a work with its doc and owner topic, a doc section, a work\'s Decisions, a meeting from that line, a person with their handles), paged at ~40k characters (pass the answer\'s offset for the next page); a deliverable (<workspace>:dlv:<slug> or dlv:<slug>): its final version when it is final or published, else its latest; @<n> on the ref (a search hit\'s) or version picks one; its claims follow the text when set_claims recorded them.',
     inputSchema: {
       type: 'object',
       properties: {

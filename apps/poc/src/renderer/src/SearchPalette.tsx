@@ -10,8 +10,6 @@ import { Icon } from './ui/Icon'
 import { Seg } from './ui/Seg'
 
 const mag = window.mag
-/** As main's PALETTE_LIMIT: a tab this full shows "50+". */
-const LIMIT = 50
 const DELAY_MS = 120
 
 /**
@@ -83,7 +81,7 @@ export function SearchPalette({ workspace, state, onOpen, onClose }: {
     setTab(PALETTE_TABS[(i + by + PALETTE_TABS.length) % PALETTE_TABS.length].id)
     setActive(0)
   }
-  const count = (t: PaletteTab) => (result ? countText((t === 'all' ? result.all : result.byKind[t]).length, LIMIT) : '')
+  const count = (t: PaletteTab) => (result ? countText((t === 'all' ? result.all : result.byKind[t]).length, result.limit) : '')
   const now = Date.now()
   return (
     <>

@@ -9,6 +9,7 @@ test('paletteSearch: one ranking across kinds and one per kind; scope, labels an
   const search = { query: (_q: string, o: QueryOptions) => (asked.push(o), o.kinds ? [hit(o.kinds[0])] : [hit('topic'), hit('doc')]) }
   const r = paletteSearch(search, 'queue', { workspaceId: 'w', scope: 'all', labels: [['l1', 7 as never], []], people: true })
   assert.deepEqual(r.all.map((h) => h.kind), ['topic', 'doc'])
+  assert.equal(r.limit, PALETTE_LIMIT)
   assert.deepEqual(Object.keys(r.byKind), SEARCH_KINDS)
   assert.deepEqual(r.byKind.person.map((h) => h.ref), ['w:person'])
   assert.deepEqual(asked.map((o) => o.kinds?.[0] ?? 'all'), [...SEARCH_KINDS, 'all'])

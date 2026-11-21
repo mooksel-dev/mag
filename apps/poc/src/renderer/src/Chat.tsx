@@ -864,7 +864,7 @@ export function Composer({
   /** Files dropped or picked go here first; true = taken (Home: a review's .zip imports), else they are attached. */
   onFiles?: (files: File[]) => boolean
   autoFocus?: boolean
-  /** The project's chats to reference: "@" or the @ button pick one (SearchPalette) as a chip; `self` is this chat. */
+  /** The project's chats to reference: "@" or the @ button pick one (ChatPicker) as a chip; `self` is this chat. */
   refsFrom?: { projectId: string; tasks: Task[]; sessions: SessionHeader[]; self?: ChatRef }
 }) {
   /** The message as markdown, what is sent; `plain` its text, what a /command is read from. */

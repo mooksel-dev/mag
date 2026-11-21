@@ -489,4 +489,6 @@ export interface PaletteQuery {
 export interface PaletteResult {
   all: Hit[]
   byKind: Record<SearchKind, Hit[]>
+  /** Most hits of each; a tab this full may have more. */
+  limit: number
 }
