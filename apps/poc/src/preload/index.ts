@@ -170,6 +170,7 @@ const api: MagApi = {
   markDeliverableFinal: (id, n) => ipcRenderer.invoke('dlv:markFinal', id, n),
   revealDeliverable: (id) => ipcRenderer.invoke('dlv:reveal', id),
   publishDeliverable: (id) => ipcRenderer.invoke('dlv:publish', id),
+  listLibrary: (ws, filter) => ipcRenderer.invoke('library:list', ws, filter),
   onMeetingsChanged: (cb) => {
     const fn = () => cb()
     ipcRenderer.on('meetings:changed', fn)

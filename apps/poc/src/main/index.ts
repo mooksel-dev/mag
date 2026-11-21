@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task, type Workspace, type ItemRef, type LabelGroupInput, type LabelInput } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
-import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
+import type { AppState, LibraryFilter, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { appState, coalesce } from './state'
 import { createPublish, createTools, type ToolActions } from './tools'
@@ -28,6 +28,7 @@ import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 import { startMeetings } from './meetings'
 import { startDeliverables } from './deliverables'
+import { createLibrary } from './library'
 import { createSearchIndex } from './core/clients/search-index/index.ts'
 import { createSearch } from './core/services/search/index.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
@@ -481,6 +482,8 @@ app.whenReady().then(async () => {
   const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
+  const library = createLibrary({ store, deliverables, meetings: () => meetings })
+  handle('library:list', (_, ws: string, filter?: LibraryFilter) => library.list(ws, filter ?? {}))
   const people = createStorePeople(store, join(userData, 'runs'), () => meetings)
   actions.people = people
   const peopleIpc = startPeopleIpc(people, store, () => meetings)
