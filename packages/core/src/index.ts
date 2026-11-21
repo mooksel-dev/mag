@@ -955,8 +955,11 @@ export type ChatItem =
   | { kind: 'result'; ok: boolean; costUsd?: number; at: number }
   | { kind: 'error'; text: string; at: number }
   /** Service line from mag itself, e.g. "context compacted". */
-  /** forAgent: an event of a work the conversation owns, which its agent gets with the next message (see eventsSinceTurn). */
-  | { kind: 'notice'; text: string; at: number; forAgent?: boolean }
+  /**
+   * forAgent: an event its agent gets with the next message (see eventsSinceTurn): of a work the conversation owns, a
+   * command the user ran from it. agentText: what the agent gets instead of the line, e.g. with the command's output.
+   */
+  | { kind: 'notice'; text: string; at: number; forAgent?: boolean; agentText?: string }
   /**
    * A tool call waiting for (or answered by) the user: an integration's in ask mode (`server` its name), or a Bash call
    * that matched an ask rule (chat-publishes-to-github-prs.2: a GitHub write; no `server`, `input.command` the command).
@@ -1853,16 +1856,16 @@ export function withUnheard(prompt: string, unheard: string[]): string {
 }
 
 /**
- * What happened to the works a conversation owns since its agent's last turn (the user's Approve, a step started, a PR
- * ready, a step done): the notices for it after its last result. Its agent never sees notices, so the next message
- * carries them.
+ * What happened since its agent last got a message (the user's Approve, a step started, a PR ready, a step done, a
+ * command the user ran): the notices for it after the last message, those during that turn too. Its agent never sees
+ * notices, so the next message carries them.
  */
 export function eventsSinceTurn(items: ChatItem[]): string[] {
   const out: string[] = []
   for (let n = items.length - 1; n >= 0; n--) {
     const i = items[n]
-    if (i.kind === 'result') break
-    if (i.kind === 'notice' && i.forAgent) out.unshift(i.text)
+    if (i.kind === 'user' || i.kind === 'job') break
+    if (i.kind === 'notice' && i.forAgent) out.unshift(i.agentText ?? i.text)
   }
   return out
 }

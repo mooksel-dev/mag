@@ -505,6 +505,16 @@ test('renameChat: project topics only, a non-empty title, kept over the first me
   assert.equal(store.session(id).title, 'Pricing ideas')
 })
 
+test('commandRan: a line in the chat; the agent gets the command, exit code and output with the next message', async () => {
+  const { store, orch, project } = setup()
+  const id = orch.newChat(project.id)
+  orch.commandRan(id, 'git status', '/repo', 1, 'fatal: not a git repository\n')
+  assert.ok(store.session(id).items.some((i) => i.kind === 'notice' && i.text === 'You ran `git status`: exit 1'))
+  await orch.send(id, 'why?')
+  const prompt = opened.at(-1)!.sent.at(-1) ?? ''
+  assert.match(prompt, /^Since your last turn in mag:\n- The user ran a command from this chat, in \/repo:\n```bash\ngit status\n```\nexit 1, output:\n```\nfatal: not a git repository\n```[\s\S]*why\?$/)
+})
+
 test('nameChat: the title lands after the turn; a failed naming runs again after the next one; a rename meanwhile wins', async () => {
   const { store, orch, project } = setup()
   const id = orch.newChat(project.id)

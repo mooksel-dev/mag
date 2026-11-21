@@ -58,7 +58,7 @@ let runSeq = 0
 
 /**
  * ▶ Run on each shell block under `root` (topic-run-commands): it runs in the user's shell, its output under the block as
- * it comes, ■ stops it, and Send to agent sends the command with its output and exit code to the chat.
+ * it comes, ■ stops it; its agent gets the command, exit code and output with the next message (Ask agent: now).
  */
 function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (text: string) => Promise<void> }) {
   for (const code of Array.from(root.querySelectorAll<HTMLElement>('pre > code'))) {
@@ -96,11 +96,11 @@ function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (te
       const send = document.createElement('button')
       send.type = 'button'
       send.className = 'small runsend'
-      send.textContent = 'Send to agent'
+      send.textContent = 'Ask agent'
+      send.title = 'The agent gets the output with your next message anyway; this asks it to look now'
       send.onclick = () => {
         send.disabled = true
-        const tail = text.length > 20_000 ? `…\n${text.slice(-20_000)}` : text
-        void runner.send(`I ran:\n\`\`\`bash\n${command}\n\`\`\`\n${status.textContent}${'cwd' in result && result.cwd ? ` in ${result.cwd}` : ''}:\n\`\`\`\n${tail.trim() || '(no output)'}\n\`\`\``)
+        void runner.send('Look at the output of the command I just ran.')
       }
       bar.querySelector('.runstatus')?.remove()
       run.after(status, send)
