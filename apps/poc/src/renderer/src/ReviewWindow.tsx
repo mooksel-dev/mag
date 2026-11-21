@@ -279,7 +279,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
   }
   const onView = (id: string) => {
     setShown(id)
-    const at = diagramsAt.current?.querySelector(`[data-set~="${CSS.escape(id)}"]`) ?? diagramsAt.current
+    const at = document.querySelector(`.reviewmain [data-set~="${CSS.escape(id)}"]`) ?? diagramsAt.current
     at?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
   const review = task.prReview
@@ -327,6 +327,12 @@ export function ReviewWindow({ state, taskId, still = null }: {
               } : undefined}
               onView={onView}
               expand={(target) => <InlineHunks target={target} />}
+              essence={model.essence && (
+                <section className="reportcard">
+                  <div className="cardhead"><h2>Diagram</h2><span className="muted small">click a node: its code here</span></div>
+                  <InlineDiagrams entry={model.essence} step={task} current={model.essence.set.some((c) => c.id === shown) ? shown : model.essence.current} />
+                </section>
+              )}
             />
           )}
           {model.blocks.includes('comparison') && (

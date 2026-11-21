@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { hunksOf, type ChangeInventory, type IssuesReport, type LegacyReport, type ReviewResult, type Task } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
-import { askHunk, hunkCacheFor, paneShowsFact, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
+import { askHunk, essentialSet, hunkCacheFor, paneShowsFact, reviewWindowModel, shownHunks } from './reviewWindowModel.ts'
 
 // A synthetic review of a PR: a legacy v2 report over a two-unit inventory, its fact set of a Component and a Data diagram.
 const inventory: ChangeInventory = {
@@ -95,19 +95,19 @@ const issues: IssuesReport = {
   conclusion: 'Approve; the nit can go with the next PR.',
 }
 
-test('an issues report: intent → issues → acceptance → verified → direction → its one diagram → conclusion → the diff; no inventory groups', () => {
+test('an issues report: intent → its essence → issues → acceptance → verified → direction → conclusion → the diff; no inventory groups', () => {
   const withIssues = { ...review, prReview: { ...review.prReview!, results: { v2: { ...result, report: issues } } } } as Task
   const m = reviewWindowModel(withIssues, canvases, view)
-  assert.deepEqual(m.blocks, ['intent', 'issues', 'acceptance', 'verified', 'direction', 'diagrams', 'conclusion', 'diff'])
-  // Only the set of its diagram, opened on it; never the rest of the fact.
-  assert.deepEqual(m.sets.map((s) => [s.title, s.set.map((c) => c.id), s.current]), [['Diagram', ['c1', 'c2'], 'c2']])
+  assert.deepEqual(m.blocks, ['intent', 'essence', 'issues', 'acceptance', 'verified', 'direction', 'conclusion', 'diff'])
+  // A review recorded before role review: the set of its diagram, opened on it; never another fact set.
+  assert.deepEqual([m.essence?.set.map((c) => c.id), m.essence?.current, m.sets], [['c1', 'c2'], 'c2', []])
   // The diff is reference: one group of every file, not the inventory's changes.
   assert.deepEqual(m.groups.map((g) => [g.title, g.files.length]), [['Files', 3]])
   assert.deepEqual(hunksOf({ kind: 'claim', cites: [issues.issues[0].where!] }, m.inventory, files).map((p) => p.hunk.id), ['H1'], 'an issue expands its file:line')
   // Without a diagram, no fact diagram at all.
   const { diagram: _, ...bare } = issues
   const none = reviewWindowModel({ ...withIssues, prReview: { ...withIssues.prReview!, results: { v2: { ...result, report: bare } } } } as Task, canvases, view)
-  assert.deepEqual([none.blocks.includes('diagrams'), none.sets], [false, []])
+  assert.deepEqual([none.blocks.includes('essence'), none.blocks.includes('diagrams'), none.essence, none.sets], [false, false, null, []])
   // A step keeps its plan ↔ fact and plan diagrams.
   const step = { ...review, id: 'st', type: 'dev', parentId: 'w', prReview: undefined, review: { verdict: 'merge', findings: [], report: bare, round: 1, heads: {}, withContext: false, at: 1 } } as unknown as Task
   const stepCanvases = [
@@ -116,7 +116,31 @@ test('an issues report: intent → issues → acceptance → verified → direct
   ]
   const s = reviewWindowModel(step, stepCanvases, view)
   assert.deepEqual(s.blocks, ['intent', 'issues', 'acceptance', 'verified', 'direction', 'comparison', 'diagrams', 'conclusion', 'diff'])
+  assert.equal(s.essence, null)
   assert.deepEqual(s.sets.map((x) => x.title), ['Plan'])
+})
+
+test('a PR review\'s essential diagrams (role review) are their own set, above the issues, apart from the hidden fact', () => {
+  const withIssues = { ...review, prReview: { ...review.prReview!, results: { v2: { ...result, report: { ...issues, diagram: undefined } } } } } as Task
+  const essential = [
+    ...canvases,
+    canvas('e1', { type: 'component', modules: [] }, { role: 'review', root: true }),
+    canvas('e2', { type: 'sequence', participants: [], messages: [] }, { role: 'review' }),
+    canvas('x', { type: 'component', modules: [] }, { role: 'review', taskId: 'other' }),
+  ]
+  const m = reviewWindowModel(withIssues, essential, view)
+  assert.deepEqual(m.blocks.slice(0, 3), ['intent', 'essence', 'issues'])
+  assert.deepEqual([m.essence?.title, m.essence?.set.map((c) => c.id), m.essence?.current], ['Essence', ['e1', 'e2'], 'e1'], 'opens on its root; the fact and another review\'s stay out')
+  assert.equal(m.inventory, inventory, 'the fact stays the inventory hunks expand from')
+  // report.diagram picks the one it opens on; one outside the set does not pull the fact in.
+  assert.equal(essentialSet(withIssues, { ...issues, diagram: 'e2' }, essential)?.current, 'e2')
+  assert.deepEqual(essentialSet(withIssues, { ...issues, diagram: 'c2' }, essential)?.set.map((c) => c.id), ['e1', 'e2'])
+  assert.equal(essentialSet(withIssues, report, essential), null, 'a legacy report keeps its fact sets')
+  assert.equal(paneShowsFact(issues), false, 'the pane hides the fact, not the essence')
+  // The pane and the window render it right under the verdict card.
+  const read = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8')
+  assert.match(read('./ReportView.tsx'), /<ChecksWhy report=\{report\} \/>\s*<\/section>\s*\{essence\}/)
+  for (const f of ['./Reviews.tsx', './ReviewWindow.tsx']) assert.match(read(f), /essence=\{/)
 })
 
 test('no diagram of the window opens a separate window: the window never calls openWindow, the inline set hides ⧉', () => {

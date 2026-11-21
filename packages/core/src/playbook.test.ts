@@ -127,7 +127,20 @@ test('DEFAULT_PLAYBOOK: design first, threads before own issues, criteria PR →
   for (const s of [p, DEFAULT_PLAYBOOK.review]) assert.doesNotMatch(s, /pass \/\s+fail|solved \/\s+partly/)
   assert.match(DEFAULT_PLAYBOOK.review, /First pass, scope and design/)
   assert.match(DEFAULT_PLAYBOOK.review, /Lay out a direction only when/)
-  assert.match(DEFAULT_PLAYBOOK.fact, /names one diagram that shows the essence of the change/)
+})
+
+test('prReview and fact: one essential system view, role review, for a change of behaviour; none for a trivial one', () => {
+  for (const s of [DEFAULT_PLAYBOOK.prReview, DEFAULT_PLAYBOOK.fact]) {
+    assert.match(s, /show_diagram, role review/)
+    assert.match(s, /boundary of kind app/)
+    assert.match(s, /collapsed into one block/)
+    assert.match(s, /sequence, role review,[\s\S]*where order matters/)
+    assert.match(s, /config, version or typo change/)
+    assert.doesNotMatch(s, /if any/)
+  }
+  assert.match(DEFAULT_PLAYBOOK.prReview, /handlers and workers → services → clients → storage/)
+  assert.match(DEFAULT_PLAYBOOK.prReview, /get_architecture, none when the project records no architecture/)
+  assert.match(DEFAULT_PLAYBOOK.fact, /the review page does not show it/)
 })
 
 test('PRINCIPLES: the audit\'s nine, said once in the code (prompts-use-the-models-to.4)', () => {

@@ -1,5 +1,5 @@
 import { FALLBACK_BASE, deviationsLine } from '@mag/core'
-import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, reportWarnings, reviewDiagrams, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { analyze, formatReport } from '@mag/arch'
@@ -344,6 +344,7 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
         if (!placement) throw new Error(`role is required: ${PLACE_ROLES.join(', ')}`)
         const c = store.data.canvases[String(args.id ?? '')]
         if (!c || c.projectId !== project.id || c.kind !== 'diagram' || !c.diagram) throw new Error(`No diagram ${args.id} in this project`)
+        if (placement.role === 'review' && generated(c)) throw new Error(GENERATED_ESSENCE)
         if (c.taskId === task.id || c.taskId === null) {
           store.adoptCanvases(task.id, [c.id])
           store.placeCanvas(c.id, placement)
@@ -553,7 +554,9 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
           if (unknown.length) throw new Error(`Not recorded: no direction decision ${unknown.map((id) => `decision:${id}`).join(', ')}; cite those your job lists`)
           // A teammate's PR has no plan of ours and no rules mag enforces: CI is the floor mag owns there.
           const report = withFloor(agent, verdictFloor({ ci: await failedChecks(actions, pr.url), rules: [] }))
-          return actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
+          const recorded = actions.setPrReview(task.id, ctx.sessionId, { problem: text(args.problem), approach: text(args.approach), verdict: prVerdictOf(report.checks), findings: reportFindings(report), report })
+          const warnings = reportWarnings(report, reviewDiagrams(Object.values(store.data.canvases), task.id).length)
+          return warnings.length ? `${recorded}\nRecorded, but answer each warning with a fix or a reason:\n- ${warnings.join('\n- ')}` : recorded
         }
         if (args.report != null) throw new Error('Not recorded: this is the v1 review of the PR: record verdict and findings (problem and approach beside them), no report')
         const verdict = args.verdict as PrVerdict
@@ -623,7 +626,9 @@ function taskDiagrams(store: Store, taskId: string): Canvas[] {
 }
 
 /** Roles an agent places a diagram in; none takes it out of the groups. Facts come with the PR review (T-55.4). */
-const PLACE_ROLES = ['option', 'plan', 'none'] as const
+const PLACE_ROLES = ['option', 'plan', 'review', 'none'] as const
+
+const GENERATED_ESSENCE = 'Not placed: mag generates this diagram from the inventory; draw the system view yourself with show_diagram, role review'
 
 /**
  * A diagram's placement from tool arguments (T-55.3): role option with option, role plan with step and an optional
@@ -639,6 +644,11 @@ function placementArg(store: Store, task: Task | null, project: Project, args: R
   if (!(PLACE_ROLES as readonly string[]).includes(role)) throw new Error(`role must be one of ${PLACE_ROLES.join(', ')}`)
   const none = { role: null, option: null, stepId: null, repo: null, planOf: null }
   if (role === 'none') return none
+  if (role === 'review') {
+    if (text(args.option) || text(args.step) || text(args.repo)) throw new Error('A review diagram has no option, step or repo')
+    if (!task || !isReview(task)) throw new Error("role review is for the essential diagrams of a review of a teammate's PR")
+    return { ...none, role: 'review', repo: task.prReview?.pr.repo ?? null }
+  }
   if (role === 'option') {
     if (text(args.step) || text(args.repo)) throw new Error('An option diagram has no step or repo')
     if (!text(args.option)) throw new Error('role option needs option: its name as in §Options, e.g. "A"')
@@ -678,6 +688,7 @@ const repoName = (project: Project, path: string) => repoNames(project)[project.
 function placedAs(store: Store, project: Project, p: CanvasPlacement): string {
   if (p.role === 'option') return ` as option ${p.option}`
   if (p.role === 'fact' && !p.stepId) return ' as the fact'
+  if (p.role === 'review') return " as the review's essential diagram"
   if (p.role !== 'plan' && p.role !== 'fact') return ' (unplaced)'
   const key = store.data.tasks.find((t) => t.id === p.stepId)?.key
   return ` in the ${p.role} of ${key}${p.repo ? ` (${repoName(project, p.repo)})` : ''}`
@@ -1195,6 +1206,7 @@ function sharedTool(
         // The topic of a review draws its fact set: a new diagram without a role joins it.
         placement = { ...none, role: 'fact', stepId: null, repo: task.prReview?.pr.repo ?? null }
       } else placement = placementArg(store, task, project, args)
+      if (placement?.role === 'review' && prev && generated(prev)) throw new Error(GENERATED_ESSENCE)
       const role = placement?.role ?? prev?.role
       const factSet = role === 'fact' ? setOf<Canvas>({ ...(prev ?? { id: '', projectId: project.id, taskId: ctx.taskId ?? null, sessionId: null, title: '', version: 0, updatedAt: 0 }), ...placement, kind: 'diagram', diagram } as Canvas, Object.values(store.data.canvases)) : null
       if (factSet) {

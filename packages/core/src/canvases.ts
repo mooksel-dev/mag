@@ -6,11 +6,16 @@ import type { Canvas, Task } from './index.ts'
 
 /**
  * option: sketches one option; plan: the planned change of a step (in one repo); fact: what a step's PR, or a reviewed
- * PR, did. A role of an older model (intent, before reviews-prybraty-spysok-pr-i.1) reads as none.
+ * PR, did; review: the essential diagrams of a reviewed PR (its system view, a sequence where order matters), shown on
+ * the review page. A role of an older model (intent, before reviews-prybraty-spysok-pr-i.1) reads as none.
  */
-export type CanvasRole = 'option' | 'plan' | 'fact'
+export type CanvasRole = 'option' | 'plan' | 'fact' | 'review'
 
-export const CANVAS_ROLES: CanvasRole[] = ['option', 'plan', 'fact']
+export const CANVAS_ROLES: CanvasRole[] = ['option', 'plan', 'fact', 'review']
+
+/** The essential diagrams of a reviewed PR's work, in the order they were drawn. */
+export const reviewDiagrams = <C extends Pick<Canvas, 'taskId' | 'kind' | 'diagram' | 'role'>>(canvases: C[], taskId: string): C[] =>
+  canvases.filter((c) => c.taskId === taskId && c.role === 'review' && c.kind === 'diagram' && !!c.diagram)
 
 /** A diagram's place in its work; the fields of other roles are null. */
 export type CanvasPlacement = Pick<Canvas, 'role' | 'option' | 'stepId' | 'repo' | 'planOf'>

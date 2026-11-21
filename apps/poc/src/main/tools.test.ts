@@ -643,8 +643,8 @@ test("a review of a teammate's PR: its v1 topic reads the fact, without an inten
 
   // No intent any more (reviews-prybraty-spysok-pr-i.1): the review draws only its fact, which mag starts.
   const diagram: Diagram = { type: 'component', summary: 'Retries are idempotent.', modules: [{ id: 'charge', name: 'charge', description: '', diff: 'mod', uses: [] }] }
-  await assert.rejects(own('show_diagram', { title: 'Intent', diagram, role: 'intent' }), /role must be one of option, plan, none/)
-  await assert.rejects(own('place_diagram', { id: 'x', role: 'intent' }), /role must be one of option, plan, none/)
+  await assert.rejects(own('show_diagram', { title: 'Intent', diagram, role: 'intent' }), /role must be one of option, plan, review, none/)
+  await assert.rejects(own('place_diagram', { id: 'x', role: 'intent' }), /role must be one of option, plan, review, none/)
   const fact = store.saveCanvas({ projectId: project.id, taskId: review.id, sessionId: null, title: 'Fact', kind: 'diagram', diagram, placement: { role: 'fact', option: null, stepId: null, repo: null, planOf: null } })
 
   assert.equal(await own('get_pr_changes'), 'Fact')
@@ -785,6 +785,29 @@ test("set_pr_review: a look at new commits is a delta against the result at the 
   // A first review has no delta.
   store.updateTask(review.id, { prReview: { pr, results: { v2: emptyResult('v2', topic.id) }, shown: 'v2', posted: null } })
   await assert.rejects(own({ report: { ...raw, delta: [{ title: 'x', status: 'new' }] } }), /delta: only a re-review has one/)
+})
+
+test('a review draws its essential system view with role review, apart from the fact set; set_pr_review warns without one', async () => {
+  const { store, project, actions } = setup()
+  const tools = createTools(store, { ...actions, setPrReview: () => 'Recorded.' })
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'running' })
+  const review = store.createTask({ projectId: project.id, title: 'api#419: Retry', type: 'review', description: '', status: 'in_progress', ownerSessionId: topic.id })
+  const pr = { url: 'https://github.com/acme/api/pull/419', repo: '/r/api', number: 419, author: 'olena', base: 'main', head: 'h1' }
+  store.updateTask(review.id, { prReview: { pr, results: { v2: emptyResult('v2', topic.id) }, shown: 'v2', posted: null } })
+  const call = (name: string, args: Record<string, unknown>) => tools({ projectId: project.id, sessionId: topic.id }, name, { work: review.key, ...args })
+  const raw = { intent: 'Makes retries idempotent.', verdict: 'approve', why: 'fine', issues: [], acceptance: [{ criterion: 'no double charge', source: 'ticket', evidence: 'charge_test.go', status: 'met' }], verified: [], notChecked: [], follows: 'the ticket', conclusion: 'Approve.' }
+  const record = () => call('set_pr_review', { problem: 'p', approach: 'a', report: raw })
+  assert.match(await record(), /^Recorded\.\nRecorded, but answer each warning[\s\S]*no essential diagram/)
+  assert.equal(await call('set_pr_review', { problem: 'p', approach: 'a', report: { ...raw, trivial: true } }), 'Recorded.')
+  // A component diagram is refused in the fact set, taken as the review's essence.
+  const system = { type: 'component', summary: 'The handler retries through the charge service.', boundaries: [{ id: 'api', name: 'api', kind: 'app' }], modules: [{ id: 'handler', name: 'Handler', boundary: 'api', diff: 'mod', uses: [{ to: 'charges', calls: ['charge(key)'] }] }, { id: 'charges', name: 'Charges', boundary: 'api', uses: [] }] }
+  await assert.rejects(call('show_diagram', { title: 'System', diagram: system }), /a fact set takes only sequence and flowchart/)
+  const out = await call('show_diagram', { title: 'System', diagram: system, role: 'review', root: true })
+  assert.match(out, /as the review's essential diagram/)
+  const essence = Object.values(store.data.canvases).filter((c) => c.taskId === review.id && c.role === 'review')
+  assert.deepEqual(essence.map((c) => [c.title, c.root]), [['System', true]])
+  assert.equal(await record(), 'Recorded.')
+  await assert.rejects(call('show_diagram', { title: 'X', diagram: system, role: 'review', step: 'S-1' }), /no option, step or repo/)
 })
 
 test('review_pr passes again only when asked (review-v3-concise-design-first.3)', async () => {

@@ -1,5 +1,5 @@
 // Diagram sets (povnyi-diff-nabir-pov-iazanykh.1, Decisions 1–3): the diagrams of one place (an option, a step's plan,
-// a step's fact, the fact of a reviewed PR) are one set, computed, not stored. One of them is its root; explicit links
+// a step's fact, the fact of a reviewed PR, its essential diagrams) are one set, computed, not stored. One of them is its root; explicit links
 // lead from modules, interface lines, uses, entities and flowchart steps to the other diagrams of the set. A
 // flowchart's `of` reads as a logic link from its method, so diagrams drawn before links still hang together.
 import { methodName, walkArch } from './arch.ts'
@@ -14,7 +14,7 @@ export function setKey(c: Omit<Member, 'id' | 'title' | 'root' | 'projectId'>): 
   if (c.role === 'option' && c.option) return `${c.taskId}:option:${c.option}`
   if ((c.role === 'plan' || c.role === 'fact') && c.stepId) return `${c.role}:${c.stepId}`
   // The fact of a reviewed PR is its work's.
-  if (c.role === 'fact' && c.taskId) return `${c.taskId}:fact`
+  if ((c.role === 'fact' || c.role === 'review') && c.taskId) return `${c.taskId}:${c.role}`
   return ''
 }
 

@@ -1,7 +1,7 @@
 // The review window as a view model (review-v2-part-2-v1-2.2): which blocks the page shows in which order, the diagram
 // sets it draws inline, the inventory its hunks expand from and the full diff by change. Pure, so a test covers what the
 // page renders without a DOM.
-import { diffByChange, isIssuesReport, isReview, setOf, shownResult, type ChangeGroup, type ChangeInventory, type ReportKind, type ReviewReport, type ReviewResult, type Task } from '@mag/core'
+import { diffByChange, isIssuesReport, isReview, reviewDiagrams, setOf, setRoot, shownResult, type ChangeGroup, type ChangeInventory, type ReportKind, type ReviewReport, type ReviewResult, type Task } from '@mag/core'
 import type { FileChange } from '@mag/diff/types'
 import type { AppState, FactView } from '../../preload/api'
 
@@ -10,11 +10,11 @@ type DiagramCanvas = StateCanvas & { diagram: NonNullable<StateCanvas['diagram']
 
 /**
  * A block of the window, in page order. An issues report's (review-v3-concise-design-first.1): intent with the verdict,
- * issues, acceptance, verified and not checked, the direction. A legacy report's: the verdict strip, the direction card,
+ * its essential diagrams, issues, acceptance, verified and not checked, the direction. A legacy report's: the verdict strip, the direction card,
  * the four question cards, the changes table. Then a step's plan ↔ fact; a v1 result's or an old review's own text
  * (legacy); the diagrams inline; the report's conclusion; the full diff, folded, as reference.
  */
-export type WindowBlock = 'intent' | 'issues' | 'acceptance' | 'verified' | 'strip' | 'direction' | 'questions' | 'changes' | 'comparison' | 'legacy' | 'diagrams' | 'conclusion' | 'diff'
+export type WindowBlock = 'intent' | 'essence' | 'issues' | 'acceptance' | 'verified' | 'strip' | 'direction' | 'questions' | 'changes' | 'comparison' | 'legacy' | 'diagrams' | 'conclusion' | 'diff'
 
 /** A set of diagrams the window draws inline, under its title. */
 export interface InlineSet {
@@ -31,6 +31,8 @@ export interface ReviewWindowModel {
   report: ReviewReport | null
   blocks: WindowBlock[]
   sets: InlineSet[]
+  /** An issues report's essential diagrams, drawn right under its intent and verdict. */
+  essence: InlineSet | null
   /** The fact's inventory: what claims, nodes and change rows expand their hunks from. */
   inventory: ChangeInventory | null
   /** The full diff by change; empty until the fact view has loaded. */
@@ -47,9 +49,22 @@ export function setsOf(diagrams: DiagramCanvas[]): DiagramCanvas[][] {
 }
 
 /**
+ * An issues report's essential diagrams: a PR review's set of role review, opened on report.diagram or its root; else
+ * (a step, a review recorded before the role) the set of report.diagram. Null for a legacy report or with none.
+ */
+export function essentialSet(task: Task, report: ReviewReport | null, canvases: AppState['canvases']): InlineSet | null {
+  if (!isIssuesReport(report)) return null
+  const diagrams = canvases.filter(isDiagram)
+  const own = isReview(task) ? reviewDiagrams(diagrams, task.id) : []
+  if (own.length) return { title: 'Essence', set: own, current: own.find((c) => c.id === report.diagram)?.id ?? setRoot(own)?.id ?? own[0].id }
+  const named = report.diagram ? diagrams.find((c) => c.id === report.diagram) : undefined
+  return named ? { title: 'Essence', set: setOf(named, diagrams), current: named.id } : null
+}
+
+/**
  * The window of a task: a PR's review (its shown result: a v2 report, else the legacy layout) or a step (its agent
- * review's report, plan ↔ fact, its plan diagrams). The fact diagrams: an issues report's one diagram (its set, opened on
- * it), never the rest of the fact; a legacy report's whole fact set. `view` is the fact of its PRs, once loaded.
+ * review's report, plan ↔ fact, its plan diagrams). An issues report shows its essential diagrams (essentialSet), never
+ * the fact set; a legacy report its whole fact set. `view` is the fact of its PRs, once loaded.
  */
 export function reviewWindowModel(task: Task, canvases: AppState['canvases'], view: FactView | null | undefined): ReviewWindowModel {
   const pr = isReview(task)
@@ -62,28 +77,28 @@ export function reviewWindowModel(task: Task, canvases: AppState['canvases'], vi
   // A review's other diagrams (an older review's intent) show as their own sets.
   const rest = pr ? diagrams.filter((c) => c.taskId === task.id && !factOf(c)) : []
   const issues = isIssuesReport(report)
-  const essence = issues && report.diagram ? diagrams.find((c) => c.id === report.diagram) : undefined
+  const essence = essentialSet(task, report, canvases)
   const sets: InlineSet[] = [
     ...setsOf(plan).map((set) => ({ title: 'Plan', set })),
-    ...(issues ? (essence ? [{ title: 'Diagram', set: setOf(essence, diagrams), current: essence.id }] : []) : [...setsOf(fact).map((set) => ({ title: 'Fact', set })), ...setsOf(rest).map((set) => ({ title: 'Other diagrams', set }))]),
+    ...(issues ? [] : [...setsOf(fact).map((set) => ({ title: 'Fact', set })), ...setsOf(rest).map((set) => ({ title: 'Other diagrams', set }))]),
   ]
   // The inventory of the fact the view was computed with, else of the fact set's root.
   const root = (view?.fact && fact.find((c) => c.id === view.fact!.id)) || fact.find((c) => c.root) || fact.find((c) => c.inventory)
   const inventory = root?.inventory ?? null
   const blocks: WindowBlock[] = [
-    ...(issues ? (['intent', 'issues', 'acceptance', 'verified', 'direction'] as const) : report ? (['strip', 'direction', 'questions', 'changes'] as const) : []),
+    ...(issues ? (['intent', ...(essence ? (['essence'] as const) : []), 'issues', 'acceptance', 'verified', 'direction'] as const) : report ? (['strip', 'direction', 'questions', 'changes'] as const) : []),
     ...(!pr ? (['comparison'] as const) : []),
     ...(pr && !report ? (['legacy'] as const) : []),
     ...(sets.length ? (['diagrams'] as const) : []),
     ...(report ? (['conclusion'] as const) : []),
     'diff',
   ]
-  return { kind: pr ? 'pr' : 'step', result, report, blocks, sets, inventory, groups: view ? diffByChange(report, inventory, view.files) : [] }
+  return { kind: pr ? 'pr' : 'step', result, report, blocks, sets, essence, inventory, groups: view ? diffByChange(report, inventory, view.files) : [] }
 }
 
 /**
  * Whether a PR review's pane shows its inventory and fact diagrams (review-v3-concise-design-first.3): only for a
- * legacy report. An issues report shows its one diagram; the inventory stays the reviewer's, for mag's checks.
+ * legacy report. An issues report shows its essential diagrams (essentialSet); the inventory stays the reviewer's.
  */
 export const paneShowsFact = (report: ReviewReport | null | undefined) => !isIssuesReport(report)
 
