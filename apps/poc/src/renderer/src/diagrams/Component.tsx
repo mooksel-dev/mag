@@ -7,6 +7,9 @@ import { paintPlan, type Painted } from '../planOverlay'
 import { DiffLegend } from './DiffLegend'
 import { FlowchartView } from './Graph'
 import { layoutFramed, type FramedLayout } from '../graphLayout'
+import { Icon } from '../ui/Icon'
+import { Pill, type Tone } from '../ui/Pill'
+import { Seg } from '../ui/Seg'
 
 const LANES: { layer: ArchLayer; label: string; hint: string }[] = [
   { layer: 'app', label: 'App layer', hint: 'UI, handlers, workers' },
@@ -44,6 +47,7 @@ function ruleOf(all: DNode[], from: DNode, to: string) {
 const diffCls = (on: boolean, m: LineMark | undefined) => (on ? ` diff-${m ?? 'none'}` : '')
 
 const DIFF_NAMES: Record<DiffMark, string> = { add: 'added', mod: 'changed', del: 'removed' }
+const DIFF_TONES: Record<DiffMark, Tone> = { add: 'green', mod: 'amber', del: 'red' }
 const SIGNS: Record<LineMark, string> = { add: '+', mod: '~', del: '−', move: '↷' }
 
 /** The lane a module goes in, as lanesFor places it. */
@@ -174,8 +178,8 @@ export function ComponentView({ modules: drawn, boundaries = NO_BOUNDARIES, flow
       <div className="archlegend muted small">
         <span>
           {diff
-            ? 'Click a module with ▸ to go inside. Hover or click a box to see its calls; Esc clears.'
-            : 'Click a module with ▸ to go inside. Hover or select a box to see its links; hover an arrow label for the calls.'}
+            ? 'Click a module with “inside” to go inside. Hover or click a box to see its calls; Esc clears.'
+            : 'Click a module with “inside” to go inside. Hover or select a box to see its links; hover an arrow label for the calls.'}
         </span>
         {paint ? (
           <span className="ovlegend">
@@ -198,14 +202,14 @@ export function ComponentView({ modules: drawn, boundaries = NO_BOUNDARIES, flow
         {diff ? (
           shown && (
             <aside className="archside">
-              <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
+              <button className="icon close" title="Close (Esc)" aria-label="Close" onClick={() => setSelected(null)}><Icon name="x" /></button>
               <DiffDetails all={modules} flows={flows} node={shown} onReveal={reveal} onOpen={go} onFlow={openFlow} />
             </aside>
           )
         ) : (
           sel && (
             <aside className="archside">
-              <button className="icon close" title="Close (Esc)" onClick={() => setSelected(null)}>✕</button>
+              <button className="icon close" title="Close (Esc)" aria-label="Close" onClick={() => setSelected(null)}><Icon name="x" /></button>
               <NodeDetails all={modules} node={sel} onReveal={reveal} onOpen={go} />
             </aside>
           )
@@ -443,7 +447,7 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
         )}
         {inner > 0 && !compact && (
           <span className="inside">
-            ▸ {inner} inside
+            <Icon name="chev-r" size={12} /> {inner} inside
             {changes && <span className="changes" title="Changes inside">{changes}</span>}
             <button className="link" title="Details" onClick={(e) => (e.stopPropagation(), onSelect(n.id))}>details</button>
           </span>
@@ -557,7 +561,7 @@ function Level({ all, boundaries, flowDefs, diff, paint, flows, parentId, select
           </span>
         ))}
         {routes.filter((r) => r.moved).map((r) => (
-          <span key={`move:${r.from}>${r.to}`} className="archbadge pill d-move" style={{ left: r.mid.x, top: r.mid.y }} title={`moved ${findNode(all, r.from)?.name} → ${findNode(all, r.to)?.name}\n${r.moved!.join('\n')}`}>
+          <span key={`move:${r.from}>${r.to}`} className="archbadge count d-move" style={{ left: r.mid.x, top: r.mid.y }} title={`moved ${findNode(all, r.from)?.name} → ${findNode(all, r.to)?.name}\n${r.moved!.join('\n')}`}>
             ↷{r.moved!.length}
           </span>
         ))}
@@ -652,7 +656,7 @@ function NodeDetails({ all, node, onReveal, onOpen }: { all: DNode[]; node: DNod
       {node.concern && <div className="violation error">{node.concern}</div>}
       {!!node.children?.length && (
         <>
-          <div className="label">Inside <button className="link" onClick={() => onOpen(node.id)}>open ▸</button></div>
+          <div className="label">Inside <button className="link" onClick={() => onOpen(node.id)}>open <Icon name="chev-r" size={12} /></button></div>
           <div className="chips">{node.children.map((c) => link(c.id))}</div>
         </>
       )}
@@ -749,13 +753,13 @@ function DiffDetails({ all, flows, node, onReveal, onOpen, onFlow }: {
       {meta.length > 0 && <div className="muted small">{meta.join(' · ')}</div>}
       <h2>
         {node.name}
-        {mark && <span className={`diffpill${diffCls(true, mark)}`}>{DIFF_NAMES[mark]}</span>}
+        {mark && <Pill tone={DIFF_TONES[mark]}>{DIFF_NAMES[mark]}</Pill>}
       </h2>
       <p>{node.description}</p>
       {node.concern && <div className="violation error">{node.concern}</div>}
       {!!node.children?.length && (
         <>
-          <div className="label">Inside <button className="link" onClick={() => onOpen(node.id)}>open ▸</button></div>
+          <div className="label">Inside <button className="link" onClick={() => onOpen(node.id)}>open <Icon name="chev-r" size={12} /></button></div>
           <div className="chips">{node.children.map((c) => <Fragment key={c.id}>{link(c.id)}</Fragment>)}</div>
         </>
       )}
@@ -883,13 +887,7 @@ function FlowLevel({ all, flows, item, node, onTop, onModule, onFlow }: {
         <button className="link" disabled>{method}()</button>
       </nav>
       <div className="archlegend muted small">
-        <div className="seg views" role="tablist">
-          {VIEWS.map((v) => (
-            <button key={v.view} role="tab" aria-selected={view === v.view} className={view === v.view ? 'on' : ''} title={v.hint} onClick={() => setView(v.view)}>
-              {v.label}
-            </button>
-          ))}
-        </div>
+        <Seg options={VIEWS.map((v) => ({ value: v.view, label: v.label, title: v.hint }))} value={view} onChange={setView} label="View" />
         <span>{item.title}</span>
         <span>Esc goes back to the modules.</span>
       </div>
@@ -902,7 +900,7 @@ function FlowLevel({ all, flows, item, node, onTop, onModule, onFlow }: {
             <div className="muted small">{node.name}</div>
             <h2>
               {method}()
-              <span className={`diffpill${diffCls(true, mark)}`}>{DIFF_NAMES[mark]}</span>
+              <Pill tone={DIFF_TONES[mark]}>{DIFF_NAMES[mark]}</Pill>
             </h2>
             <div className="label">Що змінилось у логіці</div>
             {summary && <p>{summary}</p>}

@@ -8,6 +8,7 @@ import { DiffSetView, setContext } from './DiffSetView'
 import { useRenderReviewExport } from './ReviewExport'
 import { ReviewWindow } from './ReviewWindow'
 import { useTheme } from './useTheme'
+import { StatusPill } from './Tasks'
 
 const mag = window.mag
 
@@ -111,7 +112,7 @@ function DocWindow({ state, taskId }: { state: AppState; taskId: string }) {
       <div className="taskrow">
         <span className="key">{task.key}</span>
         <span className="title">{task.title}</span>
-        <span className={`status s-${task.status}`}>{task.status.replace('_', ' ')}</span>
+        <StatusPill status={task.status} />
       </div>
       {doc ? <Markdown className="md docmd" text={doc} canvases={canvases} onOpenTask={openKey} /> : <p className="muted">No document yet.</p>}
     </div>

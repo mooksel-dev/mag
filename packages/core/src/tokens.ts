@@ -1,45 +1,44 @@
-// mag's design tokens (redesign-start-screen-big-composer.1), the one source for the app, every canvas and the
-// exported review.html (prompts-use-the-models-to.7). Moved here unchanged from the app's styles.css: the redesign owns
-// the names and values; this file only makes them reachable from core, where canvases are wrapped.
+// mag's design tokens, the one source for the app, every canvas and the exported review.html. The v2 set
+// (design-system-refresh-tokens-icon.1, docs/workspace-vision-v2.html): grey by default, amber = waits on you,
+// accent = the primary or outbound action; neutrals step chrome < canvas < surface < raised.
+
+/** Project colors, readable on light and dark backgrounds; stored on a project as its hex, so the values stay. */
+export const PROJECT_COLORS: string[] = ['#e5484d', '#f76b15', '#d6a000', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#7d7d86']
+
+const projectTokens = PROJECT_COLORS.map((c, i) => `--proj-${i + 1}: ${c};`).join(' ')
 
 export const TOKENS_CSS = `
 /*
- * One token set (redesign-start-screen-big-composer.1): colours for light and dark, a 4px spacing grid, radius 8 / 12,
- * one type scale. amber = waiting on you, green = an agent working / as planned, accent = the primary action.
+ * v2 tokens: 4px grid, radius 4 / 6 / 8 / 12, 13px text, theme-aware shadows, 5 semantic colours (acc, amber, green,
+ * red, blue) with a tint each (-t). The names before v2 (--text, --muted, --accent, --amber-bg…) are aliases at the end
+ * of :root, kept for one release so canvases written on them keep rendering.
  */
 :root {
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 28px; --sp-8: 32px;
-  --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-xl: 14px; --r-pill: 999px;
-  --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 15px; --fs-xl: 18px; --fs-2xl: 26px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 28px; --sp-8: 32px; --sp-12: 48px;
+  --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-md: 8px; --r-lg: 12px; --r-xl: 14px; --r-pill: 999px;
+  --fs-xs: 11.5px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 15px; --fs-xl: 18px; --fs-2xl: 24px;
   --lh: 1.5;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 4px 16px rgba(0, 0, 0, .06);
-  --bg: #ffffff;
-  --side: #f2f2f4;
-  --line: #e4e5e9;
-  --text: #17181c;
-  --muted: #5f6470;
-  --faint: #9096a1;
-  --accent: #3b5bdb;
-  --soft: #e6e9f7;
-  --surface: #ffffff;
-  --border: #dcdee3;
-  --hover: #eef0f3;
-  --row-line: #f0f1f3;
-  --subtle: #f5f6f8;
-  --code: #f0f1f3;
-  --panel: #fafafb;
-  --on-accent: #ffffff;
-  --status: #f0f1f3;
-  --badge: #c2410c;
-  --on-badge: #ffffff;
+  --row-h: 28px;
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Tight', 'Segoe UI', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  /* A chevron as a CSS mask, for carets drawn in CSS (::before); its colour is the background under the mask. */
+  --icon-chev-r: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 5 5 5-5 5'/%3E%3C/svg%3E");
+  ${projectTokens}
+
+  --page: #f3f3f5; --chrome: #ececef; --canvas: #ffffff; --surface: #ffffff; --surface-2: #f6f6f8; --raised: #ffffff;
+  --line: rgba(16, 18, 30, .08); --line-2: rgba(16, 18, 30, .13); --line-3: rgba(16, 18, 30, .22);
+  --hover: rgba(16, 18, 30, .04); --select: rgba(16, 18, 30, .07);
+  --t1: #16171b; --t2: #55585f; --t3: #868992; --t4: #b5b7be;
+  --acc: #5a51e6; --acc-fg: #4b42d4; --acc-t: rgba(90, 81, 230, .1); --acc-line: rgba(90, 81, 230, .42); --on-acc: #ffffff;
+  --amber: #9e5b00; --amber-t: rgba(214, 140, 20, .14);
+  --green: #147a46; --green-t: rgba(30, 150, 90, .12);
+  --red: #bf372d; --red-t: rgba(210, 60, 50, .1);
+  --blue: #2260c4; --blue-t: rgba(37, 99, 201, .1);
+  --sh-1: 0 0 0 1px var(--line), 0 1px 2px rgba(16, 18, 30, .05);
+  --sh-2: 0 0 0 1px var(--line-2), 0 12px 32px rgba(16, 18, 30, .14);
+  --sh-win: 0 0 0 1px rgba(16, 18, 30, .1), 0 24px 64px rgba(16, 18, 30, .16);
+  --hi: none;
   --scrim: rgba(21, 23, 28, .45);
-  --amber-bg: #fff4de; --amber-fg: #9a5a00; --amber-line: #f0c77a;
-  --violet-bg: #e3e0f7; --violet-fg: #44337a;
-  --info-bg: #e6e9f7; --info-fg: #2c3a8c;
-  --green-bg: #e5f4ea; --green-fg: #1f7a47;
-  --danger-bg: #fdecea; --danger-fg: #b8352a; --danger-line: #f2c4c4;
-  --warn-bg: #fff6e5; --warn-fg: #6b4a08; --warn-line: #f1d9a6;
-  --notice-bg: #fdf0e9; --notice-fg: #8e2e07;
   --arch-app-bg: #f3f4f6; --arch-app-line: #c4c8d0; --arch-app-fg: #3d4250;
   --arch-service-bg: #eef1fd; --arch-service-line: #3451d1; --arch-service-fg: #23389c;
   --arch-client-bg: #fdf1e6; --arch-client-line: #c2410c; --arch-client-fg: #8e2e07;
@@ -47,42 +46,44 @@ export const TOKENS_CSS = `
   --arch-lane: #fafafb;
   --arch-edge: #9aa0ad; --arch-error: #c0392b; --arch-warning: #d68910;
   --diff-add: #2fa463; --diff-mod: #d6a23a; --diff-del: #d64545; --diff-move: #7c5ce0;
+
+  /* Aliases of the names before v2: computed on :root, so they follow [data-theme] there. */
+  --bg: var(--canvas); --side: var(--chrome); --panel: var(--surface); --subtle: var(--surface-2); --code: var(--surface-2);
+  --border: var(--line-2); --row-line: var(--line);
+  --text: var(--t1); --muted: var(--t2); --faint: var(--t3);
+  --accent: var(--acc); --soft: var(--acc-t); --on-accent: var(--on-acc);
+  --status: var(--select); --badge: var(--amber); --on-badge: var(--canvas);
+  --shadow: var(--sh-1);
+  --amber-bg: var(--amber-t); --amber-fg: var(--amber); --amber-line: color-mix(in srgb, var(--amber) 40%, transparent);
+  --violet-bg: var(--acc-t); --violet-fg: var(--acc-fg);
+  --info-bg: var(--blue-t); --info-fg: var(--blue);
+  --green-bg: var(--green-t); --green-fg: var(--green);
+  --danger-bg: var(--red-t); --danger-fg: var(--red); --danger-line: color-mix(in srgb, var(--red) 35%, transparent);
+  --warn-bg: var(--amber-t); --warn-fg: var(--amber); --warn-line: var(--amber-line);
+  --notice-bg: var(--amber-t); --notice-fg: var(--amber);
+
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter Tight', system-ui, sans-serif;
+  font-family: var(--sans);
   font-size: var(--fs-md);
   line-height: var(--lh);
-  color: var(--text);
+  color: var(--t1);
 }
 [data-theme='dark'] {
   color-scheme: dark;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .35);
-  --bg: #1a1b1f;
-  --side: #17181b;
-  --line: #2a2c32;
-  --text: #e8e9ec;
-  --muted: #a0a5b0;
-  --faint: #6d727d;
-  --accent: #7d95ff;
-  --soft: #232a45;
-  --surface: #1f2025;
-  --border: #34363d;
-  --hover: #26272d;
-  --row-line: #24262b;
-  --subtle: #222328;
-  --code: #26272d;
-  --panel: #18191d;
-  --on-accent: #0f1220;
-  --status: #26272d;
-  --badge: #c2410c;
-  --on-badge: #ffffff;
+  --page: #0d0e11; --chrome: #0b0c0e; --canvas: #121316; --surface: #17181c; --surface-2: #1d1e23; --raised: #212228;
+  --line: rgba(255, 255, 255, .07); --line-2: rgba(255, 255, 255, .11); --line-3: rgba(255, 255, 255, .18);
+  --hover: rgba(255, 255, 255, .04); --select: rgba(255, 255, 255, .075);
+  --t1: #edeef1; --t2: #a6a9b2; --t3: #71747d; --t4: #4b4e56;
+  --acc: #7c75ff; --acc-fg: #a7a2ff; --acc-t: rgba(124, 117, 255, .15); --acc-line: rgba(124, 117, 255, .5); --on-acc: #ffffff;
+  --amber: #f0b45a; --amber-t: rgba(240, 180, 90, .13);
+  --green: #4cc98a; --green-t: rgba(76, 201, 138, .13);
+  --red: #f0716b; --red-t: rgba(240, 113, 107, .14);
+  --blue: #6aacf6; --blue-t: rgba(106, 172, 246, .13);
+  --sh-1: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, .35);
+  --sh-2: 0 0 0 1px var(--line-2), 0 12px 32px rgba(0, 0, 0, .5);
+  --sh-win: 0 0 0 1px rgba(255, 255, 255, .08), 0 30px 80px rgba(0, 0, 0, .6);
+  --hi: inset 0 1px 0 rgba(255, 255, 255, .035);
   --scrim: rgba(0, 0, 0, .6);
-  --amber-bg: #33270f; --amber-fg: #f2b860; --amber-line: #6b5020;
-  --violet-bg: #2e2846; --violet-fg: #c4b8f5;
-  --info-bg: #232a45; --info-fg: #a9b8ff;
-  --green-bg: #15301f; --green-fg: #62cf8f;
-  --danger-bg: #3a1d1b; --danger-fg: #f07b6e; --danger-line: #5a2a2d;
-  --warn-bg: #33290f; --warn-fg: #eacb85; --warn-line: #5a4718;
-  --notice-bg: #3a2318; --notice-fg: #f0a77e;
   --arch-app-bg: #23262d; --arch-app-line: #5a606c; --arch-app-fg: #d5d8de;
   --arch-service-bg: #1c2340; --arch-service-line: #6f86ff; --arch-service-fg: #b4c1ff;
   --arch-client-bg: #33221a; --arch-client-line: #e8793f; --arch-client-fg: #f5b48f;

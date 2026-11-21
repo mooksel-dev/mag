@@ -4,8 +4,10 @@ import type { Change, FileChange } from '@mag/diff/types'
 import type { FactView } from '../../preload/api'
 import { ComponentView } from './diagrams/Component'
 import { STATUS_ICON, fileKey, filesOf, hunksOf, mark, summary, what, type FactItem } from './factView'
-import { FACT_TAG, factCard } from './conversationCards'
+import { FACT_TAG, TAG_TONES, factCard } from './conversationCards'
 import { StructuredCard } from './Cards'
+import { Pill } from './ui/Pill'
+import { Caret, Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -40,7 +42,7 @@ export function FileLink({ f, hunks }: { f: FileChange; hunks: Hunks }) {
   return (
     <div className="factline">
       <button className="link small" title="Show the diff of this file" onClick={() => hunks.toggle(f)}>
-        {f.path} {lines !== undefined ? '▾' : '▸'}
+        {f.path} <Caret open={lines !== undefined} />
       </button>
       {lines === null && <div className="muted small">Loading…</div>}
       {typeof lines === 'string' && <div className="muted small">{lines}</div>}
@@ -68,7 +70,7 @@ function Deviation({ item, view, hunks }: { item: FactItem; view: FactView; hunk
   const inner = item.folded ?? []
   return (
     <li>
-      <span className={`tag t-${FACT_TAG[item.status].replace(/ /g, '-')}`}>{FACT_TAG[item.status]}</span> {item.phrase}
+      <Pill tone={TAG_TONES[FACT_TAG[item.status]]}>{FACT_TAG[item.status]}</Pill> {item.phrase}
       {item.note && <div className="muted small">{item.note}</div>}
       {item.fact && filesOf(item.fact, view.files).map((f) => <FileLink key={fileKey(f)} f={f} hunks={hunks} />)}
       {inner.length > 0 && <Folded line={`${inner.length} change${inner.length > 1 ? 's' : ''} in it`} changes={inner} view={view} hunks={hunks} />}
@@ -116,7 +118,7 @@ export function InventoryView({ view, hunks }: { view: FactView; hunks: Hunks })
         {view.outside && <span className="diffchip" title="The repository is outside the project: its modules are its folders">without the project architecture</span>}
         {other.length > 0 && (
           <button className="diffchip link" onClick={() => setRest(!rest)}>
-            {rest ? '▾' : '▸'} not code {other.length}
+            <Caret open={rest} /> not code {other.length}
           </button>
         )}
       </div>
@@ -127,7 +129,7 @@ export function InventoryView({ view, hunks }: { view: FactView; hunks: Hunks })
               const f = fileOf(b.repo, b.path)
               return (
                 <tr key={b.id}>
-                  <td className="factstatus s-missing">✗</td>
+                  <td className="factstatus s-missing"><Icon name="x" size={14} /></td>
                   <td className="muted small">{b.id}</td>
                   <td className="muted small">{b.module ?? 'no module'}</td>
                   <td>{f ? <FileLink f={f} hunks={hunks} /> : `${b.repo}:${b.path}`}</td>
@@ -279,12 +281,12 @@ export function FactPanel({ step, diagramsKey }: { step: Task; diagramsKey: stri
     <div className="factpanel">
       <div className="factbar">
         <button className="link diffsub" onClick={() => setOpen(!open)}>
-          {open ? '▾' : '▸'} {review ? 'Fact' : 'Plan ↔ fact'}
+          <Caret open={open} /> {review ? 'Fact' : 'Plan ↔ fact'}
         </button>
         {!open && step.fact && <span className="muted small">{review ? reviewSummary(step.fact) : summary(step.fact, merged)}</span>}
         <div className="grow" />
         {open && view && (
-          <button className="link small" title="Check the fact again" onClick={() => setNonce(nonce + 1)}>↻</button>
+          <button className="link small" title="Check the fact again" aria-label="Check again" onClick={() => setNonce(nonce + 1)}><Icon name="repeat" size={14} /></button>
         )}
       </div>
       {open && (

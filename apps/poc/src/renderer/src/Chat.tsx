@@ -15,6 +15,7 @@ import { IntegrationCard } from './Cards'
 import { SearchPalette } from './SearchPalette'
 import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
 import { useSessionItems } from './useSessionItems'
+import { Caret, Icon, iconSvg, type IconName } from './ui/Icon'
 
 const mag = window.mag
 // A trailing period is not part of the key: "see T-1." links T-1.
@@ -69,7 +70,7 @@ function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (te
     const run = document.createElement('button')
     run.type = 'button'
     run.className = 'small runbtn'
-    run.textContent = '▶ Run'
+    run.innerHTML = `${iconSvg('play')} Run`
     run.title = "Run it in your shell, in the project's first repository"
     bar.append(run)
     pre.after(bar)
@@ -82,11 +83,11 @@ function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (te
       const out = document.createElement('pre')
       out.className = 'runout'
       bar.append(out)
-      run.textContent = '■ Stop'
+      run.innerHTML = `${iconSvg('stop')} Stop`
       let text = ''
       const result = await mag.runCommand(id, runner.sessionId, command, (chunk) => { text += chunk; out.textContent = text; out.scrollTop = out.scrollHeight }).catch((e: Error) => ({ code: null, cwd: '', error: e.message }))
       id = null
-      run.textContent = '▶ Run again'
+      run.innerHTML = `${iconSvg('play')} Run again`
       const status = document.createElement('span')
       status.className = `muted small runstatus${result.code === 0 ? '' : ' failed'}`
       status.textContent = 'error' in result ? result.error : result.code === 0 ? 'done' : `exit ${result.code ?? 'stopped'}`
@@ -306,7 +307,7 @@ export function CanvasCard({ canvas, latest = true, focus, onOpen }: { canvas: C
       <div className="canvashead">
         {latest ? (
           <button className="canvasfold" aria-expanded={unfolded} title={unfolded ? 'Fold' : 'Show here'} onClick={() => setUnfolded(!unfolded)}>
-            <span aria-hidden>{unfolded ? '▾' : '▸'}</span> <span className="title">{canvas.title}</span>
+            <Caret open={unfolded} /> <span className="title">{canvas.title}</span>
           </button>
         ) : (
           <span className="title">{canvas.title}</span>
@@ -326,7 +327,7 @@ export function CanvasCard({ canvas, latest = true, focus, onOpen }: { canvas: C
 function OpenCanvasWindow({ canvas }: { canvas: CanvasRef }) {
   return (
     <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>
-      ⧉ Window
+      <Icon name="window" size={14} /> Window
     </button>
   )
 }
@@ -405,12 +406,12 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
       copy,
       ...(user
         ? [
-            ...(can('edit') ? [{ label: 'Edit', icon: 'edit', title: 'Drop this message and what follows; its text goes back to the composer', run: () => setChoosing({ n, mode: 'edit' }) } as MessageAction] : []),
+            ...(can('edit') ? [{ label: 'Edit', icon: 'pencil', title: 'Drop this message and what follows; its text goes back to the composer', run: () => setChoosing({ n, mode: 'edit' }) } as MessageAction] : []),
             ...(can('retry') ? [{ label: 'Retry', icon: 'retry', title: 'Drop what follows this message and send it again', run: () => rewind(n, 'retry') } as MessageAction] : []),
             ...(actions && branchable ? [branch('A subtopic with the conversation before this message; this topic stays as it is')] : []),
           ]
         : [
-            ...(can('rewind') ? [{ label: 'Rewind here', icon: 'rewind', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => setChoosing({ n, mode: 'rewind' }) } as MessageAction] : []),
+            ...(can('rewind') ? [{ label: 'Rewind here', icon: 'history', title: 'Drop what came after this reply, from the chat and the agent’s context', run: () => setChoosing({ n, mode: 'rewind' }) } as MessageAction] : []),
             ...(can('retry') ? [{ label: 'Retry', icon: 'retry', title: 'Drop this reply and send the message before it again', run: () => rewind(n, 'retry') } as MessageAction] : []),
             ...(branchable ? [branch('A subtopic with the conversation up to this reply; this topic stays as it is')] : []),
           ]),
@@ -526,32 +527,13 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   )
 }
 
-type ActionIcon = 'copy' | 'edit' | 'retry' | 'rewind' | 'branch' | 'done'
-
 interface MessageAction {
   label: string
-  icon: ActionIcon
+  icon: IconName
   title: string
   /** Works while the agent works too (Copy, Branch from here); the rest wait for its turn to end. */
   always?: boolean
   run: () => void
-}
-
-const ICON_PATHS: Record<ActionIcon, string> = {
-  copy: 'M9 9h10v10H9zM5 15V5h10',
-  edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
-  retry: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',
-  rewind: 'M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5M12 8v4l3 2',
-  branch: 'M6 4v12M6 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM18 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM18 8a8 8 0 0 1-8 8H8',
-  done: 'M5 12l5 5L20 7',
-}
-
-function Icon({ name }: { name: ActionIcon }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={ICON_PATHS[name]} />
-    </svg>
-  )
 }
 
 /** A message's actions as icons, shown on hover (chat-message-actions-rewind-edit.1). */
@@ -569,7 +551,7 @@ function MessageActions({ actions, busy }: { actions: MessageAction[]; busy: boo
         const title = off ? 'Stop the agent first' : done === a.label ? 'Copied' : a.title
         return (
           <button key={a.label} type="button" className="iconbtn" disabled={off} title={`${a.label} · ${title}`} aria-label={a.label} onClick={() => { a.run(); if (a.icon === 'copy') setDone(a.label) }}>
-            <Icon name={done === a.label ? 'done' : a.icon} />
+            <Icon name={done === a.label ? 'check' : a.icon} />
           </button>
         )
       })}
@@ -627,13 +609,13 @@ function InterimReply({ text, canvases, onOpenTask }: { text: string; canvases?:
 
 type JobItem = Extract<ChatItem, { kind: 'job' }>
 
-/** mag's job for the agent, not the user's message: "⚙ <title>" and its first line; a click shows the whole job. */
+/** mag's job for the agent, not the user's message: its icon, the title and its first line; a click shows the whole job. */
 function JobCard({ item }: { item: JobItem }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="jobcard">
       <button className="jobhead" aria-expanded={open} title={open ? 'Hide the job' : 'Show the whole job mag gave the agent'} onClick={() => setOpen((o) => !o)}>
-        <span>⚙ <b>{item.title}</b></span>
+        <span><Icon name="bot" size={14} /> <b>{item.title}</b></span>
         {!open && <span className="muted small">{jobPreview(item.text)}</span>}
       </button>
       {open && <pre className="jobtext">{item.text}</pre>}
@@ -687,7 +669,7 @@ function EventLine({ label, mark, items }: { label: string; mark: string; items:
   return (
     <div className="eventline">
       <button className="eventrow" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={label}>
-        <span className="eventlabel">{open ? '▾' : '▸'} {mark && <span className={mark === '✗' ? 'err' : ''}>{mark} </span>}{label}</span>
+        <span className="eventlabel"><Caret open={open} /> {mark && <span className={mark === '✗' ? 'err' : ''}>{mark} </span>}{label}</span>
       </button>
       {open && (
         <div className="eventitems">
@@ -709,14 +691,14 @@ function BackgroundTasks({ sessionId, tasks }: { sessionId: string; tasks: Backg
   return (
     <div className="bgtasks">
       <button className="toolsrow" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {open ? '▾' : '▸'} {backgroundLabel(tasks)}
+        <Caret open={open} /> {backgroundLabel(tasks)}
       </button>
       {open && tasks.map((t) => (
         <div key={t.id} className="bgtask">
           <span>{t.name}</span>
           <span className="muted small">{t.id}</span>
           <div className="grow" />
-          <button type="button" className="iconbtn stop" onClick={() => void mag.stopBackground(sessionId, t.id)} title={`Stop ${t.name}`} aria-label={`Stop ${t.name}`}>■</button>
+          <button type="button" className="iconbtn stop" onClick={() => void mag.stopBackground(sessionId, t.id)} title={`Stop ${t.name}`} aria-label={`Stop ${t.name}`}><Icon name="stop" size={14} /></button>
         </div>
       ))}
     </div>
@@ -731,9 +713,9 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
           {a.mime.startsWith('image/') ? (
             <img src={fileUrl(a)} alt={a.name} onClick={() => mag.open(a.path)} />
           ) : (
-            <button type="button" className="link" onClick={() => mag.open(a.path)}>📎 {a.name}</button>
+            <button type="button" className="link" onClick={() => mag.open(a.path)}><Icon name="clip" size={14} /> {a.name}</button>
           )}
-          {onRemove && <button type="button" className="x" aria-label={`Remove ${a.name}`} onClick={() => onRemove(a)}>×</button>}
+          {onRemove && <button type="button" className="x" aria-label={`Remove ${a.name}`} onClick={() => onRemove(a)}><Icon name="x" size={12} /></button>}
         </span>
       ))}
     </div>
@@ -755,7 +737,7 @@ function RefChips({ refs, tasks, sessions, onOpen, onRemove }: { refs: ChatRef[]
             <button type="button" className="link" disabled={!t || !onOpen} title={t ? `Open ${label}` : undefined} onClick={() => onOpen?.(r)}>
               @ {label}{t?.archived && <span className="sparch">Archived</span>}
             </button>
-            {onRemove && <button type="button" className="x" aria-label={`Remove ${label}`} onClick={() => onRemove(r)}>×</button>}
+            {onRemove && <button type="button" className="x" aria-label={`Remove ${label}`} onClick={() => onRemove(r)}><Icon name="x" size={12} /></button>}
           </span>
         )
       })}
@@ -973,16 +955,16 @@ export function Composer({
           onAt={canRef ? () => setPicking({ at: 0 }) : undefined}
         />
         <div className="composerbar">
-          <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}>＋</button>
+          <button type="button" className="iconbtn" title={isCommand ? 'Commands take no files' : 'Attach files'} aria-label="Attach files" disabled={isCommand} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
           <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files) void add(e.target.files); e.target.value = '' }} />
           {refsFrom && <button type="button" className="iconbtn" title={isCommand ? 'Commands take no references' : 'Reference another chat: its summary goes with the message (or type @)'} aria-label="Reference a chat" disabled={isCommand} onClick={() => setPicking({ at: null })}>@</button>}
           {chip}
           <div className="grow" />
           {commands.length > 0 && <span className="muted small nowrap">/ commands</span>}
           {intent?.(text)}
-          {busy && onStop && <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop">■</button>}
+          {busy && onStop && <button type="button" className="iconbtn stop" onClick={onStop} title="Stop the agent" aria-label="Stop"><Icon name="stop" /></button>}
           {(!busy || !onStop || queue) && (
-            <button type="submit" className="iconbtn send" disabled={busy && !queue} title={`Send (${keys})`} aria-label="Send">↑</button>
+            <button type="submit" className="iconbtn send" disabled={busy && !queue} title={`Send (${keys})`} aria-label="Send"><Icon name="send" /></button>
           )}
         </div>
       </div>

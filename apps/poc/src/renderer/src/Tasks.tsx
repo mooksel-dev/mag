@@ -18,6 +18,8 @@ import {
 import { ago } from './format'
 import { PrPills, TicketPill } from './LinkPill'
 import { StartButton } from './LocalMode'
+import { Icon, type IconName } from './ui/Icon'
+import { Pill, type Tone } from './ui/Pill'
 
 const mag = window.mag
 
@@ -31,8 +33,10 @@ export function useNow(ms: number) {
   return now
 }
 
+const STATUS_TONES: Record<Task['status'], Tone> = { planning: 'acc', ready: 'blue', todo: 'blue', in_progress: 'amber', done: 'green', canceled: 'red' }
+
 export function StatusPill({ status }: { status: Task['status'] }) {
-  return <span className={`status s-${status}`}>{STATUS_LABELS[status].toLowerCase()}</span>
+  return <Pill tone={STATUS_TONES[status]}>{STATUS_LABELS[status].toLowerCase()}</Pill>
 }
 
 /** Green pulsing dot + role and duration while an agent works; yellow + "waiting on you" (reason in the tooltip). */
@@ -49,12 +53,12 @@ export function AgentDot({ state, now }: { state: AgentState; now: number }) {
   )
 }
 
-export const SUBTASK_ICONS: Record<SubtaskStatus, string> = { todo: '○', in_progress: '◐', done: '●' }
+const SUBTASK_ICONS: Record<SubtaskStatus, IconName> = { todo: 'circle', in_progress: 'circle-half', done: 'circle-check' }
 
-/** ○ / ◐ / ● for a subtask status. */
+/** An empty, half or checked circle for a subtask status. */
 export function SubtaskIcon({ status }: { status: Task['status'] }) {
   const s = status as SubtaskStatus
-  return <span className={`subicon sub-${s}`} title={STATUS_LABELS[s]} aria-label={STATUS_LABELS[s]}>{SUBTASK_ICONS[s] ?? '○'}</span>
+  return <span className={`subicon sub-${s}`} title={STATUS_LABELS[s]} aria-label={STATUS_LABELS[s]}><Icon name={SUBTASK_ICONS[s] ?? 'circle'} size={14} /></span>
 }
 
 /**
@@ -82,7 +86,7 @@ export function TicketLinks({ task }: { task: Task }) {
         <span key={t.url} className="ticketlink">
           <TicketPill ticket={t} />
           <span className="menu">
-            <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu === t.url} title="Ticket link" onClick={() => setMenu((m) => (m === t.url ? null : t.url))}>⋯</button>
+            <button className="iconbtn" aria-label="Ticket link" aria-haspopup="menu" aria-expanded={menu === t.url} title="Ticket link" onClick={() => setMenu((m) => (m === t.url ? null : t.url))}><Icon name="more" size={14} /></button>
             {menu === t.url && (
               <>
                 <div className="menuscrim" onClick={() => setMenu(null)} />
@@ -193,7 +197,7 @@ export function SubtaskList({ parent, subs, tasks, steps, project }: { parent: T
         {done}/{total} done.{' '}
         {steps
           ? 'Steps run one after another, each in a new developer session with its own branch and PRs. A step is done when its PRs are merged; the next one starts on its own unless it starts manually.'
-          : 'A plan: one developer works through it in one session and marks each step ◐ in progress, then ● done. Click an icon to change it.'}
+          : 'A plan: one developer works through it in one session and marks each step in progress, then done. Click a circle to change it.'}
       </p>
     </>
   )
@@ -228,7 +232,7 @@ export function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task
       <span className="ord">
         {(['up', 'down'] as const).map((dir) => (
           <button key={dir} className="icon" disabled={!canMove(dir)} aria-label={`Move ${sub.key} ${dir}`} onClick={() => onMove(dir)}>
-            {dir === 'up' ? '▲' : '▼'}
+            <Icon name={dir === 'up' ? 'chev-u' : 'chev-d'} size={12} />
           </button>
         ))}
       </span>
@@ -260,7 +264,7 @@ export function SubtaskRow({ sub, steps, project, canMove, onMove }: { sub: Task
             {sub.description && <div className="muted small">{sub.description}</div>}
           </div>
           <span className="subextra">
-            {steps && sub.startManually && <span className="pill" title="Waits for your Start when the previous step is done">start manually</span>}
+            {steps && sub.startManually && <Pill title="Waits for your Start when the previous step is done">start manually</Pill>}
             {repos && <span className="muted small" title="Repositories the step changes; only they get a worktree">{repos.length ? repos.join(', ') : 'no code'}</span>}
             {steps && <PrPills prs={taskPrs(sub)} />}
             {editable && <button className="link small" onClick={edit}>Edit</button>}

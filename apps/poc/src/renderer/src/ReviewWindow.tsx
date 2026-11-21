@@ -28,6 +28,8 @@ import { ReportConclusion, ReportView, diagramAnchor } from './ReportView'
 import { ImportedBanner } from './ReviewExport'
 import { ReviewMenu, ReviewRunLine } from './Reviews'
 import { askHunk, hunkCacheFor, reviewWindowModel, shownHunks, type HunkCache, type HunkLines, type InlineSet } from './reviewWindowModel'
+import { Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
 
 const mag = window.mag
 
@@ -294,7 +296,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
             {pr && review && project ? (
               <>
                 {still ? <span title={review.pr.url}><b>{prRepoName(project, review.pr)}#{review.pr.number}</b></span>
-                  : <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} ↗</button>}
+                  : <button className="link" title="Open the PR on GitHub" onClick={() => mag.open(review.pr.url)}>{prRepoName(project, review.pr)}#{review.pr.number} <Icon name="external" size={12} /></button>}
                 <span className="muted small">· @{review.pr.author} → {review.pr.base}</span>
               </>
             ) : (
@@ -353,7 +355,7 @@ export function ReviewWindow({ state, taskId, still = null }: {
               <h2>Findings</h2>
               {r.findings.length ? findingsByLevel(r.findings).map(({ level, findings }) => findings.map((f, i) => (
                 <div key={`${level}${i}`} className="finding">
-                  <span className="pill">{FINDING_LEVEL_LABELS[level]}</span>
+                  <Pill>{FINDING_LEVEL_LABELS[level]}</Pill>
                   <div className="grow">
                     <div>{f.text}</div>
                     {f.where && (

@@ -7,6 +7,7 @@ import { CanvasFrame, Chat, SessionModelChip } from './Chat'
 import { DiffSetView, setContext } from './DiffSetView'
 import { diagramsOf } from './DiffTab'
 import type { Selection } from './WorkList'
+import { Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -46,8 +47,8 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
     <aside className={`drawer${open.kind === 'doc' ? '' : ' set'}`} aria-label={head.title}>
       <div className="drawerhead">
         <span className="title" title={head.title}>{head.title}</span>
-        {head.window && <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={head.window}>⧉</button>}
-        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+        {head.window && <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={head.window}><Icon name="window" /></button>}
+        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}><Icon name="x" /></button>
       </div>
       <div className="drawerbody">
         <TaskArtifact key={`${open.kind}:${task.id}`} target={open} task={task} state={state} onOpenKey={onOpenKey} onSelect={onSelect} onDeleted={onGone} />
@@ -71,7 +72,7 @@ function AgentDrawer({ session, state, onClose, onOpenKey }: { session: SessionH
         {project && <SessionModelChip project={project} session={session} tasks={state.tasks.filter((t) => t.projectId === session.projectId)} />}
         <span className="muted small">{session.status}</span>
         {session.status === 'running' && <button className="small" onClick={() => void mag.stop(session.id).catch((e: Error) => alert(e.message))}>Stop</button>}
-        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}><Icon name="x" /></button>
       </div>
       <div className="drawerbody">
         <p className="muted small">An agent's chat is a log: write to the owner in the conversation, it passes things on.</p>
@@ -92,8 +93,8 @@ function CanvasDrawer({ canvas, focus, state, onClose }: { canvas: AppState['can
       <aside className="drawer set" aria-label={`Diagrams: ${canvas.title}`}>
         <div className="drawerhead">
           <span className="title">Diagrams · {set.length}</span>
-          <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>⧉</button>
-          <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+          <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}><Icon name="window" /></button>
+          <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}><Icon name="x" /></button>
         </div>
         <div className="drawerbody">
           <DiffSetView key={set[0].id} set={set} current={own.id} {...setContext(set, state.tasks)} />
@@ -106,8 +107,8 @@ function CanvasDrawer({ canvas, focus, state, onClose }: { canvas: AppState['can
       <div className="drawerhead">
         <span className="title" title={canvas.title}>{canvas.title}</span>
         <span className="muted small">v{canvas.version}</span>
-        <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}>⧉</button>
-        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}>✕</button>
+        <button className="iconbtn" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: canvas.id })}><Icon name="window" /></button>
+        <button className="iconbtn" title="Close (Esc)" aria-label="Close the drawer" onClick={onClose}><Icon name="x" /></button>
       </div>
       <div className="drawerbody">
         <CanvasFrame key={canvas.id + canvas.version} canvas={canvas} height="100%" focus={focus} />

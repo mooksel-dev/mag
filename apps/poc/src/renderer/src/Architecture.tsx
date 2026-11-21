@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { archToDNodes, type Project } from '@mag/core'
 import { ComponentView } from './diagrams/Component'
+import { Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -23,13 +24,13 @@ export function Architecture({ project, inWindow = false }: { project: Project; 
         {arch && <span className="muted small">updated {new Date(arch.updatedAt).toLocaleString()}</span>}
         {run && run.status !== 'done' && (
           <span className={`small ${run.status === 'error' ? 'err' : 'muted'}`}>
-            {run.status === 'running' ? '● ' : '✗ '}
+            <Icon name={run.status === 'running' ? 'dot' : 'x'} size={12} />{' '}
             {run.note ?? ''}
           </span>
         )}
         {!inWindow && (
           <button className="link popbtn" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'architecture', projectId: project.id })}>
-            ⧉ Open in window
+            <Icon name="window" size={14} /> Open in window
           </button>
         )}
       </div>

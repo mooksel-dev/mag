@@ -23,6 +23,7 @@ import type { AppState, FactView } from '../../preload/api'
 import { FileLink, useHunks, type Hunks } from './FactPanel'
 import { DIAGRAM_NAMES, DiagramView } from './diagrams/DiagramView'
 import { fileKey } from './factView'
+import { Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -166,7 +167,7 @@ export function DiffSetView({ set, current, step, findings = [], onClose, inline
         <span className="muted small">{DIAGRAM_NAMES[open.diagram.type]}</span>
         <Changes count={diagramSummary(open.diagram)} />
         <span className="muted small">v{open.version}</span>
-        {!inline && <button className="link" title="Open in a separate window" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: open.id })}>⧉</button>}
+        {!inline && <button className="link" title="Open in a separate window" aria-label="Pop out" onClick={() => mag.openWindow({ kind: 'canvas', canvasId: open.id })}><Icon name="window" /></button>}
       </div>
       <div className="setbody">
         <nav className="setlevels">

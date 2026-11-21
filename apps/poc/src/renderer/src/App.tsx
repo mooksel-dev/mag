@@ -35,6 +35,9 @@ import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkL
 import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 import { MeetingView, MeetingsRootSetting } from './Meetings'
+import { Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
+import { Seg, type SegOption } from './ui/Seg'
 
 const mag = window.mag
 /** Pages the list's footer opens; they take the place of the conversation. */
@@ -94,7 +97,7 @@ export function App({ projectId }: { projectId: string }) {
   }, [openTaskId, state]) // eslint-disable-line react-hooks/exhaustive-deps
   // ⌘O, File → Open Project… / New Project…, the dock menu.
   useEffect(() => mag.onOpenPicker(setPicker), [])
-  // ⌘N opens Home, as ＋ New does.
+  // ⌘N opens Home, as New does.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'n') return
@@ -148,7 +151,7 @@ export function App({ projectId }: { projectId: string }) {
         <span className="brand"><Logo size={16} />mag <span>PoC</span></span>
         <div className="grow" />
         <AgentCounter state={state} />
-        {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude.">⚠ Claude CLI not found</span>}
+        {!state.claudeBin && <span className="clawarn" role="img" aria-label="Warning" title="Claude Code CLI not found. Set MAG_CLAUDE_BIN or install claude."><Icon name="alert" size={14} /> Claude CLI not found</span>}
         <ThemeSwitch mode={theme} onChange={setTheme} />
       </div>
       <div className="layout" style={leftPane.style}>
@@ -164,7 +167,7 @@ export function App({ projectId }: { projectId: string }) {
               <div className="pagehead">
                 <span>{PAGE_NAMES[page]}</span>
                 <div className="grow" />
-                <button className="small" onClick={() => openPage(null)}>✕ Close</button>
+                <button className="small" onClick={() => openPage(null)}><Icon name="x" size={14} /> Close</button>
               </div>
               {page === 'architecture' ? (
                 <Architecture key={project.id} project={project} />
@@ -192,7 +195,11 @@ export function App({ projectId }: { projectId: string }) {
   )
 }
 
-const THEMES: [ThemeMode, string, string][] = [['light', '☀︎', 'Light'], ['dark', '☾', 'Dark'], ['system', 'Auto', 'Follow the system']]
+const THEMES: SegOption<ThemeMode>[] = [
+  { value: 'light', label: <Icon name="sun" size={14} />, title: 'Light' },
+  { value: 'dark', label: <Icon name="moon" size={14} />, title: 'Dark' },
+  { value: 'system', label: 'Auto', title: 'Follow the system' },
+]
 
 /** Agents running now across all projects; there is no limit on how many. */
 function AgentCounter({ state }: { state: AppState }) {
@@ -205,18 +212,14 @@ function AgentCounter({ state }: { state: AppState }) {
   }
   return (
     <span className="agentcount" title={running.map(line).join('\n')}>
-      ● {running.length} {running.length === 1 ? 'agent' : 'agents'}
+      <span className="pdot" aria-hidden /> {running.length} {running.length === 1 ? 'agent' : 'agents'}
     </span>
   )
 }
 
 function ThemeSwitch({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
   return (
-    <div className="seg" role="group" aria-label="Theme">
-      {THEMES.map(([m, label, title]) => (
-        <button key={m} className={m === mode ? 'on' : ''} aria-pressed={m === mode} title={title} onClick={() => onChange(m)}>{label}</button>
-      ))}
-    </div>
+    <Seg options={THEMES} value={mode} onChange={onChange} label="Theme" />
   )
 }
 
@@ -226,8 +229,8 @@ function RepoStatus({ path }: { path: string }) {
     mag.repoInfo(path).then(setInfo)
   }, [path])
   if (!info) return null
-  if (!info.git) return <span className="pill amber">not a git repo</span>
-  if (!info.origin) return <span className="pill amber">no origin remote</span>
+  if (!info.git) return <Pill tone="amber">not a git repo</Pill>
+  if (!info.origin) return <Pill tone="amber">no origin remote</Pill>
   return <span className="muted small">{info.origin}</span>
 }
 

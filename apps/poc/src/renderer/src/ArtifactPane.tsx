@@ -35,6 +35,8 @@ import { ReportView } from './ReportView'
 import { ReviewView } from './Reviews'
 import { AgentDot, ReopenButton, SubtaskIcon, SubtaskList, TicketLinks, useNow } from './Tasks'
 import { RowMenu, type MenuCard, type Selection } from './WorkList'
+import { Caret, Icon } from './ui/Icon'
+import { Pill } from './ui/Pill'
 
 /**
  * The artifacts of a topic (topics-a-tree-of-agent.3): the list beside its conversation, and the bodies the drawer
@@ -68,7 +70,7 @@ export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
           {!agents.active.length && <p className="muted small">None running now.</p>}
           {agents.finished.length > 0 && (
             <>
-              <button className="wlfold" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>{showDone ? '▾' : '▸'} Finished · {agents.finished.length}</button>
+              <button className="wlfold" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}><Caret open={showDone} /> Finished · {agents.finished.length}</button>
               {showDone && agents.finished.map(line)}
             </>
           )}
@@ -106,7 +108,7 @@ function ArtifactRow({ chip: c, onOpen }: { chip: ArtifactChip; onOpen: () => vo
       </button>
       {ids && (
         <span className="menu">
-          <button className="iconbtn" aria-label={`More for ${c.label}`} aria-haspopup="menu" aria-expanded={menu} title="Delete…" onClick={() => setMenu(!menu)}>⋯</button>
+          <button className="iconbtn" aria-label={`More for ${c.label}`} aria-haspopup="menu" aria-expanded={menu} title="Delete…" onClick={() => setMenu(!menu)}><Icon name="more" size={14} /></button>
           {menu && (
             <>
               <div className="menuscrim" onClick={() => setMenu(false)} />
@@ -175,7 +177,7 @@ const STEP_STATE: Record<StepLine['state'], string> = { done: 'done', merge: 'me
 const stepState = (s: StepLine) => (s.state === 'waiting' ? `waits for ${s.waitsFor}` : STEP_STATE[s.state])
 
 /**
- * The work's steps as one line of chips: "✓ 1 · Model · PR #84 › 2 · Rows · PR #85 · merge"; done ones green, the
+ * The work's steps as one line of chips: "1 · Model · PR #84 › 2 · Rows · PR #85 · merge"; done ones green, the
  * current one amber with where it stands; every chip names its key and state on hover.
  */
 function StepChips({ steps }: { steps: StepLine[] }) {
@@ -185,11 +187,11 @@ function StepChips({ steps }: { steps: StepLine[] }) {
       {steps.map((s, i) => (
         <Fragment key={s.key}>
           {i > 0 && <span className="arrow" aria-hidden>›</span>}
-          <span className={`stepchip${s.state === 'done' ? ' done' : s === current ? ' now' : ''}`} title={`${s.key} · ${s.title} · ${stepState(s)}`}>
-            <span className="t">{s.state === 'done' ? '✓ ' : ''}{s.no} · {s.title}</span>
+          <Pill tone={s.state === 'done' ? 'green' : s === current ? 'amber' : 'grey'} icon={s.state === 'done' ? 'check' : undefined} className={s === current ? 'now' : undefined} title={`${s.key} · ${s.title} · ${stepState(s)}`}>
+            <span className="t">{s.no} · {s.title}</span>
             {s.pr && <span> · {s.pr}</span>}
             {s === current && <span> · {stepState(s)}</span>}
-          </span>
+          </Pill>
         </Fragment>
       ))}
     </div>
@@ -212,7 +214,7 @@ export function HeadMenu({ card, onSelect, onGone }: { card: MenuCard; onSelect:
   const [open, setOpen] = useState(false)
   return (
     <span className="menu">
-      <button className="iconbtn" aria-label={`More for ${card.title}`} aria-haspopup="menu" aria-expanded={open} title="Rename, close, delete…" onClick={() => setOpen(!open)}>⋯</button>
+      <button className="iconbtn" aria-label={`More for ${card.title}`} aria-haspopup="menu" aria-expanded={open} title="Rename, close, delete…" onClick={() => setOpen(!open)}><Icon name="more" /></button>
       {open && <RowMenu card={card} className="wlmenu headmenu" onClose={() => setOpen(false)} onSelect={onSelect} onGone={onGone} />}
     </span>
   )
@@ -413,7 +415,7 @@ function RepoList({ work }: { work: TaskWork }) {
             <button className="link" onClick={() => mag.open(r.worktree)}>worktree</button>
           )}
           {r.prUrl ? <PrPill pr={r} /> : <span className="muted">no PR</span>}
-          {r.checkError && <span className="pill amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</span>}
+          {r.checkError && <Pill tone="amber" title={r.checkError}>check failed: {r.checkError.slice(0, 60)}</Pill>}
         </div>
       ))}
     </div>
@@ -429,7 +431,7 @@ function SessionList({ sessions, all, ownerId, onShow }: { sessions: SessionHead
           <span className="no">#{all.indexOf(s) + 1}</span>
           <span>{s.role}{s.id === ownerId ? ' · owner' : ''}</span>
           <span className="muted grow">{agentName(agents, s.agent)} · {s.activeModel ?? 'default'}</span>
-          <span className={`status ${s.status === 'running' ? 's-in_progress' : ''}`}>{s.status}</span>
+          <Pill tone={s.status === 'running' ? 'amber' : 'grey'}>{s.status}</Pill>
           <span className="muted small">${s.costUsd.toFixed(2)}</span>
         </button>
       ))}

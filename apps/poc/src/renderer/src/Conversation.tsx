@@ -27,6 +27,7 @@ import { ArtifactDrawer } from './Drawer'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { TicketLinks, AgentDot, useNow } from './Tasks'
 import type { MenuCard, Selection } from './WorkList'
+import { Icon } from './ui/Icon'
 
 const mag = window.mag
 
@@ -133,12 +134,12 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
           <div className="headline">
             {topic ? <TopicTitle topic={topic} /> : <h1 title={subject!.title}>{shortTitle(subject!)}</h1>}
             <span className="kind">{review ? `review · ${review.key}` : topic ? (!topic.parentId ? 'topic' : isSubtopic(topic) ? 'subtopic' : `agent · ${sessionRole(topic)}`) : subject!.key}</span>
-            {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} ↗</button> : subject && <TicketLinks task={subject} />}
+            {review && pr && project ? <button className="link small" onClick={() => mag.open(pr.url)}>{prRepoName(project, pr)}#{pr.number} <Icon name="external" size={12} /></button> : subject && <TicketLinks task={subject} />}
             {subject && !review && <AgentDot state={agentState(subject, workSessions(subject, state), tasks)} now={now} />}
             <div className="grow" />
             {project && chat && <SessionModelChip project={project} session={chat} tasks={tasks} />}
             {canGroom && !chat && <button className="small" onClick={() => mag.groom(subject!.id)}>Groom</button>}
-            {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review ⧉</button>}
+            {review && <button className="small" title="The whole review in its own window" onClick={() => mag.openWindow({ kind: 'review', taskId: review.id })}>Open review <Icon name="window" size={14} /></button>}
             {hasPanel && (
               <button className={`small agentsbtn${listShown ? ' on' : ''}`} aria-pressed={listShown} title="The agents of this topic, and the documents and diagrams made here" onClick={() => (drawer.open ? (drawer.close(), setPanelChoice(true)) : setPanelChoice(!listShown))}>
                 <AgentCounts agents={agents} total={agentCount} />
