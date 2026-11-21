@@ -1104,6 +1104,28 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'publish',
+    scope: 'any',
+    description:
+      'Hand mag a write that speaks for the user (a post, comment, ticket or doc edit), to run after their Allow: the user gets the Publish card with its preview and rules (a write mag publishes unasked for this project runs at once). With command, mag runs it in its shell in cwd after the Allow and answers its output; with payload, the Allow lets you make exactly that call of your own tool once, without a second card. A deny answers the user\'s note: revise and call again. A push to a base branch is refused. The call waits for the user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        destination: { type: 'string', description: 'Where it goes, kind first: "Slack #channel", "Jira ABC-12", "Confluence <page>", "GitHub owner/repo#4", "Google Docs <doc>", or a plain name for anything else. A gh or acli command\'s own target wins.' },
+        command: { type: 'string', description: 'A shell command that does the write (gh, acli, curl…), run in the user\'s login shell.' },
+        cwd: { type: 'string', description: 'Absolute directory to run command in; default your work\'s directory, else the project\'s first repository.' },
+        payload: {
+          type: 'object',
+          description: 'Instead of command: the call of your own MCP tool that does the write.',
+          properties: { tool: { type: 'string', description: 'Its full name, e.g. mcp__slack__post_message.' }, input: { type: 'object' } },
+          required: ['tool', 'input'],
+        },
+        why: { type: 'string', description: 'One line for the card: what this is and why it goes out now.' },
+      },
+      required: ['destination', 'why'],
+    },
+  },
+  {
     name: 'approve_tool',
     scope: 'any',
     reviewer: 'also',

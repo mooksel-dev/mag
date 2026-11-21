@@ -120,6 +120,28 @@ export function classify(tool: string, server: string | undefined, input: unknow
   return destination(kind, mcpTarget(kind, fields))
 }
 
+/** Kinds by the words an agent may name them with: "slack", "Jira", "Google Docs", "gh"… */
+const KIND_WORDS: [RegExp, DestinationKind][] = [
+  [/^slack\b/i, 'slack'],
+  [/^jira\b/i, 'jira'],
+  [/^confluence\b/i, 'confluence'],
+  [/^(github|gh)\b/i, 'github'],
+  [/^(google[ -]?docs?|gdocs?)\b/i, 'gdocs'],
+]
+
+/**
+ * A destination as the agent names it for publish ("Slack #general", "jira ABC-12", "GitHub o/r#4"): a known kind's
+ * word first, the rest its target; anything else is "other" with the whole text as its target.
+ */
+export function declared(text: string): Destination {
+  const t = text.trim().replace(/\s+/g, ' ')
+  for (const [re, kind] of KIND_WORDS) {
+    const m = re.exec(t)
+    if (m) return destination(kind, t.slice(m[0].length).replace(/^[\s:·-]+/, ''))
+  }
+  return destination('other', t, t || KIND_LABELS.other)
+}
+
 /** A Bash rule from the command's start, and the same after leading options (`gh -R o/r issue comment`). */
 const prefixRules = (cli: string, sub: string) => [`Bash(${cli} ${sub}:*)`, `Bash(${cli} * ${sub} *)`]
 

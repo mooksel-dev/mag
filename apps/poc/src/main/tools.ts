@@ -1,7 +1,8 @@
 import { FALLBACK_BASE, deviationsLine } from '@mag/core'
-import { MAG_MCP_ID, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, reportWarnings, reviewDiagrams, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
+import { MAG_MCP_ID, integrationOf, canvasEmbedWarnings, chatTranscript, runRole, sessionTree, CHILD_ROLES, type ChildRole, integrationMode, DIRECTION_CHOICES, unknownDecisions, type DirectionChoice, verdictFloor, withFloor, type MagFloors, checkReport, deltaErrors, reportWarnings, reviewDiagrams, isIssuesReport, markChecked, normalizeReport, prVerdictOf, reportFindings, stepVerdict, type IssuesReport, type ReviewReport, CANVAS_ROLES, needsQuestions, DEFAULT_TEMPLATES, diagramWarnings, mergeDraft, setKey, setOf, validateLinks, withScenarioLinks, type ComponentDiagram, FINDING_LEVELS, PR_VERDICTS, REVIEW_VERDICTS, isReview, formatOfTopic, reviewTopic, reviewTopicIds, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, type PrVerdict, linkedCanvasIds, stepDiagrams, taskDiagrams as workDiagrams, SUBTASK_STATUSES, workSections, parkedTopics, canCancel, taskByKey, currentStep, diagramSummary, findRepoWork, formatDiffCount, isLegacy, normalizeDiagram, parseFlowRef, projectRepo, prRollup, repoNames, repoWorkName, stepRepoNames, subtaskProgress, subtaskStatusChanges, subtasksOf, stepsWithoutAcceptance, taskPrs, ticketRef, withTicket, validateDiagram, walkArch, renameIds, type AgentSession, type ArchNode, type ArchUse, type Canvas, type CanvasPlacement, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type SubtaskStatus, type Task, type TaskType, type TaskWork, type TicketRef } from '@mag/core'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { analyze, formatReport } from '@mag/arch'
 import { carryIds, formatFiles, sharedPaths, unowned, vocabularyOf } from '@mag/diff'
 import type { Store } from './store'
@@ -12,6 +13,10 @@ import { changes as factChanges, draftListing, factDiagrams, factReport, factRoo
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepBacking, stepFact, stepSet } from './fact.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
 import { meetingTool } from './meeting-tools.ts'
+import type { Approvals, ParkResult } from './approvals.ts'
+import { blockedPush, projectBases } from './git-push.ts'
+import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
+import type { ShellRun } from './core/clients/shell/index.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -1471,4 +1476,90 @@ async function chatsTool(store: Store, actions: ToolActions, project: Project, c
     lines.push(`${target}: ${await line()}`)
   }
   return lines.join('\n')
+}
+
+/** runShell's shape: the shell client, or a fake in tests. */
+export type RunShell = (command: string, cwd: string, onOutput: (chunk: string) => void) => ShellRun
+
+/**
+ * The publish tool (publish-gate-for-every-outbound.3): a write an agent hands to mag, for Codex (no permission prompt)
+ * and scripted writes. It parks the Publish card as approve_tool does; after the user's Allow it runs `command` in the
+ * shell client and answers its output, or grants one run of the agent's own `payload` call. A known CLI write the
+ * project publishes unasked runs at once. Answers {"pending":true} while the user has not decided: the MCP server
+ * repeats the call with the same call_id.
+ */
+export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 'grant'>, shell: RunShell): ToolHandler {
+  /** A command's run per approval id: a repeated poll after the Allow answers the same run, never a second. */
+  const runs = new Map<string, Promise<string>>()
+  const execute = (id: string, command: string, cwd: string) => {
+    const run =
+      runs.get(id) ??
+      (async () => {
+        let output = ''
+        const { code } = await shell(command, cwd, (chunk) => (output += chunk)).done
+        const text = output.trim() || '(no output)'
+        if (code !== 0) throw new Error(`Published command failed (exit ${code ?? 'error'}):\n${text}`)
+        return text
+      })()
+    runs.set(id, run)
+    return run
+  }
+
+  return async (ctx, _name, args) => {
+    const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+    if (!session) throw new Error('publish needs a session to show its card in')
+    if (runRole(session) === 'reviewer') throw new Error('publish is not available to the reviewer agent')
+    const project = store.project(session.projectId)
+    const why = typeof args.why === 'string' ? args.why.trim() : ''
+    const named = typeof args.destination === 'string' ? args.destination.trim() : ''
+    if (!named) throw new Error('destination is required: where it goes, e.g. "Slack #general" or "Jira ABC-12"')
+    if (!why) throw new Error('why is required: one line for the card')
+    const command = typeof args.command === 'string' && args.command.trim() ? args.command : undefined
+    const payload = args.payload && typeof args.payload === 'object' ? (args.payload as { tool?: unknown; input?: unknown }) : undefined
+    if (!!command === !!payload) throw new Error('Give exactly one of command or payload')
+    const id = typeof args.call_id === 'string' && args.call_id ? args.call_id : randomUUID()
+
+    if (command) {
+      const blocked = blockedPush(command, projectBases(project, store.data.tasks))
+      if (blocked) throw new Error(blocked)
+      const cwd = publishCwd(store, ctx, project, args.cwd)
+      const input = { command, description: why }
+      const known = classify('Bash', undefined, input)
+      if (known && isAuto(known, project.publish)) return execute(id, command, cwd)
+      const decision = await approvals.park(ctx, { id, tool: 'Bash', input, destination: known ?? declared(named) })
+      if (decision.status === 'allowed') return execute(id, command, cwd)
+      return publishAnswer(decision)
+    }
+
+    const toolName = typeof payload!.tool === 'string' ? payload!.tool.trim() : ''
+    if (!toolName) throw new Error('payload.tool is required: the full name of your tool')
+    const input = payload!.input && typeof payload!.input === 'object' ? payload!.input : {}
+    const found = integrationOf(toolName, store.data.integrations)
+    const known = found ? classify(found.tool, found.integration.name, input) : null
+    if (known && isAuto(known, project.publish)) return `Allowed: this destination publishes without asking. Call ${toolName} now with exactly this input.`
+    const decision = await approvals.park(ctx, { id, tool: found?.tool ?? toolName, ...(found && { server: found.integration.name }), input, destination: known ?? declared(named) })
+    if (decision.status !== 'allowed') return publishAnswer(decision)
+    approvals.grant(session.id, toolName, input)
+    return `Allowed by the user. Call ${toolName} now with exactly this input, once: it runs without a second card.`
+  }
+}
+
+/** What a publish that did not run answers: pending (the MCP server asks again), or why it did not. */
+function publishAnswer(decision: ParkResult): string {
+  if (decision.status === 'pending') return JSON.stringify({ pending: true })
+  if (decision.status === 'denied') throw new Error(decision.message)
+  throw new Error('The request expired before the user answered')
+}
+
+/** Where a published command runs: the cwd given (an existing absolute dir), else the run's work dir, else the project's first repository. */
+function publishCwd(store: Store, ctx: ToolContext, project: Project, given: unknown): string {
+  if (typeof given === 'string' && given.trim()) {
+    const dir = given.trim()
+    if (!isAbsolute(dir) || !existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`cwd must be an existing absolute directory: ${dir}`)
+    return dir
+  }
+  const work = ctx.taskId ? runWork(store, ctx) : null
+  const dir = work?.dir ?? project.repos[0]
+  if (!dir) throw new Error('Give cwd: this project has no repository to run the command in')
+  return dir
 }
