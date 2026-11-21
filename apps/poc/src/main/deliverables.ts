@@ -2,6 +2,8 @@ import { app, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { createWorkspaceFiles } from './core/clients/workspace-files/index.ts'
 import { createDeliverables, currentVersion, type Deliverable, type Deliverables } from './core/services/deliverables/index.ts'
+import { claimRefResolver } from './deliverable-tools.ts'
+import type { Meetings } from './core/services/meetings/index.ts'
 import { log } from './log'
 import type { Store } from './store'
 
@@ -16,8 +18,8 @@ export function publishMessage(ref: string, d: Deliverable): string {
  * records in the store; the artifact pane's Mark final, Show in Finder and Publish. Deliverables whose folder was
  * deleted are forgotten on start and whenever a window gets focus.
  */
-export function startDeliverables(store: Store, send: (sessionId: string, text: string, job: string) => Promise<void>): Deliverables {
-  const dlv = createDeliverables({ files: createWorkspaceFiles(() => join(app.getPath('documents'), 'mag')), records: store.deliverableRecords() })
+export function startDeliverables(store: Store, meetings: Pick<Meetings, 'read'> | undefined, send: (sessionId: string, text: string, job: string) => Promise<void>): Deliverables {
+  const dlv = createDeliverables({ files: createWorkspaceFiles(() => join(app.getPath('documents'), 'mag')), records: store.deliverableRecords(), resolveRef: claimRefResolver(store, meetings) })
   const prune = () => {
     try {
       dlv.prune()

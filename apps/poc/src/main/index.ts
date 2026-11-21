@@ -107,7 +107,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => store.flush())
   const attachmentsDir = join(userData, 'attachments')
   mkdirSync(attachmentsDir, { recursive: true })
-  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, messageStepAgent: async () => { throw new Error('Not ready') }, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
+  const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, startVerifier: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, messageStepAgent: async () => { throw new Error('Not ready') }, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
   const publish = createPublish(store, approvals, runShell)
@@ -142,6 +142,7 @@ app.whenReady().then(async () => {
   actions.askOwner = (id, question) => orch.askOwner(id, question)
   actions.answerDeveloper = (id, text) => orch.answerDeveloper(id, text)
   actions.startChild = (parentId, brief, role, fork, subtopic) => orch.startChild(parentId, brief, role, fork, 'agent', subtopic)
+  actions.startVerifier = (topicId, fresh, brief) => orch.startVerifier(topicId, fresh, brief)
   actions.sessionInTree = (callerId, targetId) => orch.sessionInTree(callerId, targetId)
   actions.stop = (id) => orch.stop(id)
   actions.reviewPr = (projectId, url, by, format, again) => orch.reviewPr(projectId, url, by, format, again)
@@ -456,7 +457,7 @@ app.whenReady().then(async () => {
   startAppMenu(store, windows, openLogs)
   startAttention(store, windows, inbox)
   actions.meetings = startMeetings()
-  const deliverables = startDeliverables(store, (sid, text, job) => orch.send(sid, text, [], job))
+  const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
 
