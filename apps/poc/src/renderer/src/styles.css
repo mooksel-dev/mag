@@ -1125,3 +1125,42 @@ details.inline { display: inline-block; margin-left: 6px; }
 .fulldiff > summary::-webkit-details-marker { display: none; }
 .fulldiff > summary h2::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 6px; background: var(--faint); mask: var(--icon-chev-r) center / contain no-repeat; }
 .fulldiff[open] > summary h2::before { transform: rotate(90deg); }
+
+/* Publish card (ui/PublishCard): one card for every outbound write. */
+.pubcard { background: var(--surface); border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--acc-line), var(--sh-2); overflow: hidden; font-size: var(--fs-md); }
+.pubhead { display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--acc-t); }
+.pubhead .pubsend { color: var(--acc-fg); }
+.pubhead .t { font-weight: 600; }
+.pubhead .to { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; color: var(--t2); }
+.pubhead .to .svc { color: var(--t3); }
+.pubhead .to .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pubhead .sp, .pubfoot .sp { flex: 1; }
+.pubprev { margin: 14px; padding: 12px 14px; border-radius: var(--r-md); background: var(--canvas); box-shadow: inset 0 0 0 1px var(--line); line-height: 1.55; overflow-wrap: anywhere; }
+.pubrules { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 14px 12px; color: var(--t3); font-size: var(--fs-sm); }
+.pubfoot { display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.pubfoot button { display: inline-flex; align-items: center; gap: 6px; }
+button.ghost { border-color: transparent; background: none; color: var(--t2); }
+button.ghost:hover:not(:disabled) { background: var(--hover); }
+
+/* Claim (ui/Claim): a statement with its evidence on hover; wavy red when unverified. */
+.claimhl { position: relative; border-radius: 3px; cursor: help; text-decoration: underline dotted var(--green) 1.5px; text-underline-offset: 4px; }
+.claimhl:hover, .claimhl:focus-visible { background: var(--green-t); outline: none; }
+.claimhl.bad { text-decoration: underline wavy var(--red) 1px; }
+.claimhl.bad:hover, .claimhl.bad:focus-visible { background: var(--red-t); }
+.claimhl sup { margin-left: 2px; font: 600 9.5px var(--mono); color: var(--t3); }
+.claimpop { display: none; position: absolute; left: 0; top: calc(100% + 8px); z-index: 4; width: 300px; padding: 8px 10px; border-radius: var(--r-md); background: var(--raised); box-shadow: var(--sh-2); color: var(--t2); font: var(--fs-xs) / 1.5 var(--sans); white-space: normal; cursor: auto; }
+.claimhl:hover .claimpop, .claimhl:focus .claimpop { display: flex; flex-direction: column; gap: 6px; }
+.claimpop .ev { display: flex; flex-direction: column; gap: 2px; }
+.claimpop .ev.st { color: var(--red); font-weight: 600; }
+.claimpop b { color: var(--t1); font-weight: 600; }
+.claimpop code { font: var(--fs-xs) / 1.5 var(--mono); overflow-wrap: anywhere; }
+
+/* UI fixtures (dev only). */
+.fixtures { max-width: 1100px; }
+.fxhead { display: flex; align-items: center; gap: var(--sp-4); }
+.fxgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: var(--sp-6); }
+.fxname { margin-bottom: 6px; }
+.fxmsg b { display: block; margin-top: 6px; }
+.fxmsg b:first-child { margin-top: 0; }
+.fxmsg ul { margin: 2px 0; padding-left: 18px; }
+.fxdoc { max-width: 600px; font-size: 13.5px; line-height: 1.65; padding-bottom: 120px; }

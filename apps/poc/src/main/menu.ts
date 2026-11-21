@@ -1,4 +1,4 @@
-import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { Menu, app, type MenuItemConstructorOptions } from 'electron'
 import type { Project } from '@mag/core'
 import type { Store } from './store'
 import type { Windows } from './windows'
@@ -21,7 +21,7 @@ export function rebuildOnChange(store: Store, key: () => string, build: () => vo
   store.onChange(run)
 }
 
-/** The application menu: File → New Project…, Open Project… (⌘O), Open Recent. */
+/** The application menu: File → New Project…, Open Project… (⌘O), Open Recent; Develop → UI fixtures when not packaged. */
 export function startAppMenu(store: Store, windows: Windows, openLogs: () => void) {
   const build = () => {
     const recent = recentProjects(store)
@@ -44,6 +44,7 @@ export function startAppMenu(store: Store, windows: Windows, openLogs: () => voi
         { role: 'editMenu' },
         { role: 'viewMenu' },
         { role: 'windowMenu' },
+        ...(app.isPackaged ? [] : [{ label: 'Develop', submenu: [{ label: 'UI fixtures', click: () => windows.openUiFixtures() }] }]),
         { role: 'help', submenu: [{ label: 'Open logs folder', click: () => void openLogs() }] },
       ]),
     )
