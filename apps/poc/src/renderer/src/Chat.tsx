@@ -11,7 +11,7 @@ import { useAppliedTheme } from './useTheme'
 import { canvasHref, mdSegments, parseCanvasHref } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 import { foldEvents, type EventItem } from './conversationCards'
-import { IntegrationCard } from './Cards'
+import { IntegrationCard, RuleCard } from './Cards'
 import { SearchPalette } from './SearchPalette'
 import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
 import { useSessionItems } from './useSessionItems'
@@ -490,6 +490,8 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
               return <ApprovalCard key={n} sessionId={session.id} item={i} />
             case 'integration':
               return <IntegrationCard key={n} sessionId={session.id} item={i} />
+            case 'rule':
+              return <RuleCard key={n} sessionId={session.id} item={i} />
           }
         })}
         {busy && <div className="muted small">Agent is working…</div>}

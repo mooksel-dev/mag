@@ -23,6 +23,7 @@ import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
 import type { ShellRun } from './core/clients/shell/index.ts'
 import { workspaceFolder, type Deliverables, type Origin } from './core/services/deliverables/index.ts'
 import { claimsTool, deliverableTool } from './deliverable-tools.ts'
+import { packTool, verifierRubric, type PackPrompts } from './pack-tools.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -111,6 +112,8 @@ export interface ToolActions {
   deliverables?: Deliverables
   /** The people of each workspace (who, people); set once started. */
   people?: Pick<People, 'who' | 'find'>
+  /** get_pack, propose_rule and the verifier's rubric; set once started. */
+  packs?: PackPrompts
 }
 
 /**
@@ -1074,7 +1077,11 @@ function sharedTool(
     case 'set_claims':
     case 'verify_deliverable':
     case 'set_verdict':
-      return claimsTool(actions.deliverables, deliverableOrigin(store, project, ctx), ctx.sessionId, actions.startVerifier, name, args)
+      return claimsTool(actions.deliverables, deliverableOrigin(store, project, ctx), ctx.sessionId, actions.startVerifier, name, args, (d) => verifierRubric(actions.packs, d))
+
+    case 'get_pack':
+    case 'propose_rule':
+      return packTool(actions.packs, store, deliverableOrigin(store, project, ctx), ctx.sessionId, name, args)
 
     case 'who':
     case 'people':

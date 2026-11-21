@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatItem, StepFact } from '@mag/core'
-import { MAX_ROWS, factCard, foldEvents, integrationCard, mergeCard, stepLabel } from './conversationCards.ts'
+import { MAX_ROWS, factCard, foldEvents, integrationCard, mergeCard, ruleCard, stepLabel } from './conversationCards.ts'
 
 const step = { id: 's3', key: 'review-v2.3', title: 'Archive' }
 const counts = (c: Partial<StepFact['counts']>): StepFact['counts'] => ({ match: 0, differs: 0, missing: 0, unplanned: 0, unaccounted: 0, ungrounded: 0, ...c })
@@ -125,4 +125,15 @@ test('factCard: a dependency between modules is no deviation (review-v3-concise-
   const edge = { status: 'unplanned', phrase: 'new dependency tools → git, not on the plan', fact: { kind: 'edge' } } as never
   const card = factCard({ key: 'w.1', title: 'x' }, { items: [edge], additions: [], outsidePlan: { modules: [], line: '' }, check: null, inventory: { units: 1, summary: [] } } as never)
   assert.deepEqual(card.verdict, { label: 'as planned', tone: 'good' })
+})
+
+test('ruleCard: the rule, why and where with Accept and Reject; an answered one says what was written (deliverables-library-claims-review-and.3)', () => {
+  const proposed = ruleCard({ pack: 'report', rule: 'Use links, not raw text', why: 'said twice', scope: 'workspace', status: 'proposed' })
+  assert.equal(proposed.title, 'A rule for the report pack')
+  assert.deepEqual(proposed.rows, [{ text: 'Use links, not raw text' }, { lead: 'Because', text: 'said twice' }])
+  assert.deepEqual(proposed.buttons.map((b) => b.label), ['Accept', 'Reject'])
+  assert.match(proposed.note!, /the workspace's rules\.md of the report pack/)
+  const accepted = ruleCard({ pack: 'report', rule: 'x', why: '', scope: 'project', status: 'accepted', path: '/d/rules.md' })
+  assert.deepEqual([accepted.buttons, accepted.verdict?.label, accepted.note, accepted.rows.length], [[], 'accepted', 'Added to /d/rules.md.', 1])
+  assert.equal(ruleCard({ pack: 'reply', rule: 'x', why: '', scope: 'workspace', status: 'rejected' }).note, 'Nothing was written.')
 })

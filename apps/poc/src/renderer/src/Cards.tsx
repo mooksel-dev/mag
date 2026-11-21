@@ -22,7 +22,7 @@ import {
 import type { AppState } from '../../preload/api'
 import { ApprovalCard, CanvasOpener, Markdown } from './Chat'
 import { canvasHref, mdOutline, type OutlinePoint } from './markdown'
-import { TAG_TONES, canAskFor, integrationCard, mergeCard, type CardButton, type CardModel, type IntegrationItem } from './conversationCards'
+import { TAG_TONES, canAskFor, integrationCard, mergeCard, ruleCard, type CardButton, type CardModel, type IntegrationItem, type RuleItem } from './conversationCards'
 import { prName } from './format'
 import { LocalChecks, StartButton } from './LocalMode'
 import { ApproveButton } from './Tasks'
@@ -306,13 +306,26 @@ export function IntegrationCard({ sessionId, item }: { sessionId: string; item: 
   return <StructuredCard card={integrationCard(item, canAskFor(item.role))} onEnable={enable} busy={busy} error={error} />
 }
 
+/** An agent's propose_rule: Accept appends the rule to its pack's rules.md, Reject writes nothing. */
+export function RuleCard({ sessionId, item }: { sessionId: string; item: RuleItem }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const answer = (accept: boolean) => {
+    setBusy(true)
+    setError(null)
+    mag.answerRule(sessionId, item.id, accept).catch((e) => setError(String((e as Error).message ?? e))).finally(() => setBusy(false))
+  }
+  return <StructuredCard card={ruleCard(item)} onAnswer={answer} busy={busy} error={error} />
+}
+
 /**
  * A card of the conversation from its model (conversationCards): a title with a verdict chip, short facts, 2–5 tagged
  * rows, folded details and the buttons in a footer.
  */
-export function StructuredCard({ card, onEnable, onFact, busy, error }: {
+export function StructuredCard({ card, onEnable, onAnswer, onFact, busy, error }: {
   card: CardModel
   onEnable?: (mode: 'ask' | 'reads' | 'auto') => void
+  onAnswer?: (accept: boolean) => void
   /** Plan ↔ fact: opens the fact's canvas. */
   onFact?: (canvasId: string) => void
   busy?: boolean
@@ -322,6 +335,7 @@ export function StructuredCard({ card, onEnable, onFact, busy, error }: {
     if (b.kind === 'open_pr') return mag.open(b.url)
     if (b.kind === 'review_window') return mag.openWindow({ kind: 'review', taskId: b.taskId })
     if (b.kind === 'enable') return onEnable?.(b.mode)
+    if (b.kind === 'answer') return onAnswer?.(b.accept)
     return onFact?.(b.canvasId)
   }
   return (

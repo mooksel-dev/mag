@@ -63,7 +63,7 @@ const claimLine = (c: Claim) =>
 const claimLines = (claims: Claim[]) => claims.map(claimLine).join('\n')
 
 /** The verifier's first message: what to check and how it ends; a fresh one gets the text itself and no topic. */
-export function verifierBrief(ref: string, d: Deliverable, n: number, md: string, claims: Claim[], fresh: boolean): string {
+export function verifierBrief(ref: string, d: Deliverable, n: number, md: string, claims: Claim[], fresh: boolean, rubric = ''): string {
   const what = `${ref} v${n}, a ${d.kind} "${d.title}"`
   const ledger = claims.length ? claimLines(claims) : '(none recorded: the author says it states nothing to check)'
   const text = fresh
@@ -73,8 +73,8 @@ export function verifierBrief(ref: string, d: Deliverable, n: number, md: string
 
 ## Its claims, with mag's mechanical check
 ${ledger}
-
-For every claim: open its refs and check they back the span as written; re-run each recorded query (read-only) and compare the result; a failed check is a finding. Then read the text for statements a reader would check that are not recorded as claims. Change nothing.
+${rubric ? `\n${rubric}\n` : ''}
+For every claim: open its refs and check they back the span as written; re-run each recorded query (read-only) and compare the result; a failed check is a finding. Then read the text for statements a reader would check that are not recorded as claims${rubric ? ', and judge it by the rubric and rules above' : ''}. Change nothing.
 End with set_verdict(ref "${ref}", version ${n}): publish when every claim holds, changes with one finding per problem (claimId when it is about a claim), look when the user must decide (say why).`
 }
 
@@ -86,6 +86,7 @@ export function claimsTool(
   startVerifier: (topicId: string, fresh: boolean, brief: (fresh: boolean) => string) => { session: AgentSession; fresh: boolean },
   name: 'set_claims' | 'verify_deliverable' | 'set_verdict',
   args: Record<string, unknown>,
+  rubricOf: (d: Deliverable) => string = () => '',
 ): string {
   if (!dlv) throw new Error('Deliverables are not ready yet')
   const ref = text(args.ref)
@@ -105,7 +106,8 @@ export function claimsTool(
     const claims = dlv.claimsOf(d.id, n)
     if (!d.topicId) throw new Error(`${full} has no topic to verify it in`)
     const md = dlv.read(d.id, n)
-    const started = startVerifier(d.topicId, d.sensitivity === 'people', (fresh) => verifierBrief(full, d, n, md, claims, fresh))
+    const rubric = rubricOf(d)
+    const started = startVerifier(d.topicId, d.sensitivity === 'people', (fresh) => verifierBrief(full, d, n, md, claims, fresh, rubric))
     dlv.beginVerify(d.id, n, started.session.id, started.fresh)
     return `Verifier ${started.session.id} started for ${full} v${n} (${started.fresh ? 'a fresh session without the topic\'s context' : 'a fork of its topic'}). Its verdict shows on the document; it reports to the topic.`
   }

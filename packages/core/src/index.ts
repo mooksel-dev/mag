@@ -1038,6 +1038,12 @@ export type ChatItem =
    * sets the project's mode and repeats the turn. `server`: its name as the CLI reported it. status off until enabled.
    */
   | { kind: 'integration'; id: string; integrationId: string; server: string; role: AgentRole; why: string; status: IntegrationMode; at: number }
+  /**
+   * An agent's propose_rule (deliverables-library-claims-review-and.3): a rule for the `pack` kind's rules.md, of the
+   * workspace or (scope project) of `projectId`. Accept appends it (`path` the file); Reject writes nothing. Shown on the
+   * proposer's topic; `by`: the proposing session when it is another one (a work's agent), which hears the answer too.
+   */
+  | { kind: 'rule'; id: string; pack: string; rule: string; why: string; scope: 'workspace' | 'project'; workspaceId: string; projectId: string | null; status: 'proposed' | 'accepted' | 'rejected'; path?: string; by?: string; at: number }
 
 /** expired = the run ended before the user answered. */
 export type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'expired'

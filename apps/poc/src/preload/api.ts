@@ -283,6 +283,8 @@ export interface MagApi {
   decideApproval(sessionId: string, approvalId: string, allow: boolean, note?: string): Promise<void>
   /** An integration card's Enable: Ask / Auto: the project's mode for the card's role; the agent repeats its last step. */
   enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto'): Promise<void>
+  /** A propose_rule card's Accept (appends the rule to its pack's rules.md) or Reject (writes nothing). */
+  answerRule(sessionId: string, itemId: string, accept: boolean): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */
   openWindow(target: WindowTarget): Promise<void>
   /** What this main window shows (its workspace, filtered to a project or not); null in Welcome and pop-outs. */
