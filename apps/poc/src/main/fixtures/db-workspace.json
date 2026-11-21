@@ -1,8 +1,24 @@
 {
+  "workspaces": [
+    {
+      "id": "w1",
+      "name": "Personal",
+      "profile": "",
+      "notes": "",
+      "repos": [
+        "/src/mag"
+      ],
+      "playbook": null,
+      "agents": {},
+      "integrations": {},
+      "createdAt": 1
+    }
+  ],
   "projects": [
     {
       "id": "p1",
       "name": "mag",
+      "workspaceId": "w1",
       "repos": [
         "/src/mag"
       ],
@@ -18,6 +34,7 @@
     {
       "id": "p2",
       "name": "other",
+      "workspaceId": "w1",
       "repos": [],
       "notes": "n",
       "enforceArchitecture": true,
@@ -240,5 +257,5 @@
       "p2"
     ]
   },
-  "schemaVersion": 12
+  "schemaVersion": 13
 }

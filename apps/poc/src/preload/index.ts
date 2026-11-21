@@ -37,6 +37,7 @@ const api: MagApi = {
   pickDir: () => ipcRenderer.invoke('dialog:pickDir'),
   createProject: (name) => ipcRenderer.invoke('project:create', name),
   updateProject: (id, patch) => ipcRenderer.invoke('project:update', id, patch),
+  updateWorkspace: (id, patch) => ipcRenderer.invoke('workspace:update', id, patch),
   createTask: (t) => ipcRenderer.invoke('task:create', t),
   updateTask: (id, patch) => ipcRenderer.invoke('task:update', id, patch),
   groom: (taskId) => ipcRenderer.invoke('task:groom', taskId),

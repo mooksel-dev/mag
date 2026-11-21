@@ -1,13 +1,14 @@
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { digestOf, type SessionDigest, ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { digestOf, type SessionDigest, ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task, type Workspace } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 import { log } from './log.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 
 interface Data {
+  workspaces: Workspace[]
   projects: Project[]
   tasks: Task[]
   sessions: AgentSession[]
@@ -109,6 +110,17 @@ export function migrateArch(a: ArchDiagram | LegacyArch | null | undefined): Arc
   return { summary: a.summary, modules, updatedAt: a.updatedAt }
 }
 
+/** Where migrateToWorkspaces puts projects: workspace names with their projects' names, and the workspace for the rest. */
+export interface WorkspaceMap {
+  workspaces: Record<string, string[]>
+  fallback: string
+}
+
+/** The user's workspaces (mag-as-the-user-s). */
+export const WORKSPACE_MAP: WorkspaceMap = { workspaces: { Aura: ['Aura Data Removal', 'Money Problems'], Personal: ['mag', 'synapse'] }, fallback: 'Personal' }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
 /** Daily backups of db.json kept. */
 export const BACKUPS_KEPT = 7
 
@@ -156,7 +168,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -223,7 +235,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -243,6 +255,7 @@ export class Store {
   ) {
     const stored = backend === 'json' ? this.readFile() : this.openDb()
     if (stored) this.data = { ...this.data, ...stored }
+    this.data.workspaces ??= []
     this.data.events ??= []
     this.data.integrations ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
@@ -345,7 +358,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { projects: [], tasks: [], sessions: [], events: [], integrations: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)
@@ -407,6 +420,7 @@ export class Store {
     () => this.migrateToTopicOwners(),
     () => this.migrateToReadsAuto(),
     () => this.migrateToEffort(),
+    () => this.migrateToWorkspaces(WORKSPACE_MAP),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -456,6 +470,24 @@ export class Store {
       topic.closedAt = null
     }
     delete data.ideas
+  }
+
+  /**
+   * Projects move into workspaces (workspaces-and-labels-project-as.1): one without a workspace goes to the one `map`
+   * names it under (else `map.fallback`), made when missing; each workspace's repos get its projects' repos. With no
+   * project, the fallback workspace is made. Idempotent: a second run changes nothing.
+   */
+  migrateToWorkspaces(map: WorkspaceMap) {
+    const before = JSON.stringify([this.data.workspaces, this.data.projects.map((p) => p.workspaceId)])
+    const named = (name: string) => this.data.workspaces.find((w) => sameName(w.name, name)) ?? this.newWorkspace(name)
+    for (const p of this.data.projects) {
+      if (this.data.workspaces.some((w) => w.id === p.workspaceId)) continue
+      const target = Object.entries(map.workspaces).find(([, projects]) => projects.some((n) => sameName(n, p.name)))?.[0] ?? map.fallback
+      p.workspaceId = named(target).id
+    }
+    if (!this.data.workspaces.length) named(map.fallback)
+    for (const p of this.data.projects) this.addRepos(p)
+    if (JSON.stringify([this.data.workspaces, this.data.projects.map((p) => p.workspaceId)]) !== before) this.changed()
   }
 
   /** A choice gets an effort (model-picker-full-model-list.1): none stored = the provider's default. */
@@ -918,8 +950,64 @@ export class Store {
     return moved
   }
 
-  createProject(name: string): Project {
-    const p: Project = { id: id(), name, repos: [], notes: '', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: Date.now() }
+  workspaces(): Workspace[] {
+    return this.data.workspaces
+  }
+
+  workspace(wid: string) {
+    const w = this.data.workspaces.find((x) => x.id === wid)
+    if (!w) throw new Error(`No workspace ${wid}`)
+    return w
+  }
+
+  /** A new empty workspace; `name` trimmed, required and unique (case aside). */
+  createWorkspace(name: string): Workspace {
+    const w = this.newWorkspace(name)
+    this.changed()
+    return w
+  }
+
+  private newWorkspace(name: string): Workspace {
+    const n = this.workspaceName(name)
+    const w: Workspace = { id: id(), name: n, profile: '', notes: '', repos: [], playbook: null, agents: {}, integrations: {}, createdAt: Date.now() }
+    this.data.workspaces.push(w)
+    return w
+  }
+
+  private workspaceName(name: string, except?: string) {
+    const n = name.trim()
+    if (!n) throw new Error('A workspace needs a name')
+    if (this.data.workspaces.some((w) => w.id !== except && sameName(w.name, n))) throw new Error(`A workspace named ${n} exists`)
+    return n
+  }
+
+  /** Changes a workspace; its repos must keep every repo of its projects. */
+  updateWorkspace(wid: string, patch: Partial<Omit<Workspace, 'id' | 'createdAt'>>) {
+    const w = this.workspace(wid)
+    const next = { ...patch }
+    if (next.name !== undefined) next.name = this.workspaceName(next.name, wid)
+    if (next.repos) {
+      const used = this.data.projects.filter((p) => p.workspaceId === wid).flatMap((p) => p.repos.filter((r) => !next.repos!.includes(r)).map((r) => `${r} (${p.name})`))
+      if (used.length) throw new Error(`Repos of the workspace's projects stay: ${used.join(', ')}`)
+    }
+    Object.assign(w, next, { id: wid, createdAt: w.createdAt })
+    this.changed()
+  }
+
+  /** The project's repos join its workspace's. */
+  private addRepos(p: Project) {
+    const w = this.data.workspaces.find((x) => x.id === p.workspaceId)
+    if (!w) return
+    const missing = p.repos.filter((r) => !w.repos.includes(r))
+    if (missing.length) w.repos = [...w.repos, ...missing]
+  }
+
+  /** A new project, in `workspaceId`, else in the workspace of the last opened project, else the first. */
+  createProject(name: string, workspaceId?: string): Project {
+    if (workspaceId) this.workspace(workspaceId)
+    const recent = this.data.projects.find((x) => x.id === this.data.ui.recent[0])?.workspaceId
+    const wid = workspaceId ?? recent ?? this.data.workspaces[0]?.id ?? this.newWorkspace(WORKSPACE_MAP.fallback).id
+    const p: Project = { id: id(), name, workspaceId: wid, repos: [], notes: '', enforceArchitecture: true, architecture: null, archRun: null, agents: {}, integrations: {}, sidebar: [], createdAt: Date.now() }
     this.data.projects.push(p)
     this.changed()
     return p
@@ -941,8 +1029,12 @@ export class Store {
     if (changed) this.changed()
   }
 
+  /** Changes a project; moved to another workspace (`workspaceId`) or given repos, its repos join that workspace's. */
   updateProject(pid: string, patch: Partial<Project>) {
-    Object.assign(this.project(pid), patch, { id: pid })
+    if (patch.workspaceId !== undefined) this.workspace(patch.workspaceId)
+    const p = this.project(pid)
+    Object.assign(p, patch, { id: pid })
+    this.addRepos(p)
     this.changed()
   }
 

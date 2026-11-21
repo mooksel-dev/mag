@@ -57,10 +57,34 @@ export const SUBTASK_STATUSES: SubtaskStatus[] = ['todo', 'in_progress', 'done']
 /** The base branch of a repository without origin/HEAD; every other one uses its own default branch. */
 export const FALLBACK_BASE = 'main'
 
+/**
+ * The top level above projects (workspaces-and-labels-project-as.1), e.g. Aura and Personal: a default scope, not a
+ * wall. Its settings are the layer under its projects'.
+ */
+export interface Workspace {
+  id: string
+  name: string
+  /** The user in this workspace: their role, what they lead, how they work. */
+  profile: string
+  /** Workspace knowledge for agents; a project's notes override it. */
+  notes: string
+  /** Absolute paths of the workspace's repositories; each project's repos are also here. */
+  repos: string[]
+  /** Playbook sections for its projects; missing or null = mag's default. */
+  playbook?: Partial<Playbook> | null
+  /** As Project.agents, for its projects. */
+  agents: Partial<Record<AgentRole, ModelChoice>>
+  /** As Project.integrations, for its projects. */
+  integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
+  createdAt: number
+}
+
 export interface Project {
   id: string
   name: string
-  /** Absolute paths of repositories attached to the project. */
+  /** The workspace the project is in. */
+  workspaceId: string
+  /** Absolute paths of repositories attached to the project; each is also in its workspace's repos. */
   repos: string[]
   /** Free-form notes / links the agents should know about. */
   notes: string

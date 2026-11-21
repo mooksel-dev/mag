@@ -22,6 +22,7 @@ import {
   type IntegrationMode,
   type PlaybookSection,
   type Project,
+  type Workspace,
 } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { ChoiceChip, ModelPopover, useAgents } from './Agents'
@@ -38,6 +39,7 @@ import { WorkList, type HomeGroup, type ListPage, type Selection } from './WorkL
 import { DraftSubtopic } from './SessionTree'
 import { useRenderReviewExport } from './ReviewExport'
 import { MeetingView, MeetingsRootSetting } from './Meetings'
+import { WorkspaceSettings } from './WorkspaceSettings'
 import { Icon } from './ui/Icon'
 import { Pill } from './ui/Pill'
 import { Seg, type SegOption } from './ui/Seg'
@@ -175,7 +177,7 @@ export function App({ projectId }: { projectId: string }) {
               {page === 'architecture' ? (
                 <Architecture key={project.id} project={project} />
               ) : (
-                <Settings project={project} integrations={state.integrations} />
+                <Settings project={project} integrations={state.integrations} workspaces={state.workspaces} projects={state.projects} />
               )}
             </main>
           ) : draftParent ? (
@@ -388,12 +390,33 @@ function PlaybookSettings({ project, update }: { project: Project; update: (patc
   )
 }
 
-function Settings({ project, integrations }: { project: Project; integrations: Integration[] }) {
+function Settings({ project, integrations, workspaces, projects }: { project: Project; integrations: Integration[]; workspaces: Workspace[]; projects: Project[] }) {
   const update = (patch: Partial<Project>) => mag.updateProject(project.id, patch)
+  const [showWorkspace, setShowWorkspace] = useState(false)
+  const workspace = workspaces.find((w) => w.id === project.workspaceId)
+  if (showWorkspace && workspace) {
+    return (
+      <>
+        <div className="pad"><button className="small" onClick={() => setShowWorkspace(false)}>← Project settings</button></div>
+        <WorkspaceSettings key={workspace.id} workspace={workspace} projects={projects} />
+      </>
+    )
+  }
   return (
     <section className="page">
       <h1>Settings</h1>
       <label className="field">Name<input defaultValue={project.name} onChange={(e) => update({ name: e.target.value })} /></label>
+      <div className="field">
+        Workspace
+        <div className="repo">
+          <select value={project.workspaceId} aria-label="Workspace" onChange={(e) => update({ workspaceId: e.target.value })}>
+            {!workspace && <option value={project.workspaceId}>none</option>}
+            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+          {workspace && <button className="small" onClick={() => setShowWorkspace(true)}>Workspace settings</button>}
+        </div>
+        <span className="muted small">Moving the project adds its repositories to the new workspace.</span>
+      </div>
       <div className="field">
         Color
         <div className="swatches" role="radiogroup" aria-label="Project color">

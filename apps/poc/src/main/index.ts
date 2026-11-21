@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task } from '@mag/core'
+import { SUBTASK_STATUSES, bundleFileName, searchAll, canApprove, isLegacy, isReview, subtaskStatusChanges, subtasksOf, ticketRef, withTicket, type Attachment, type ChatRef, type ChildRole, type RewindMode, type RewindScope, type LocalChoice, type ModelChoice, type DirectionChoice, type PrVerdict, type Project, type ReviewFormat, type ReviewPage, type SubtaskStatus, type Task, type Workspace } from '@mag/core'
 import { claudeCode } from '@mag/agents'
 import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
@@ -217,6 +217,7 @@ app.whenReady().then(async () => {
   })
   handle('project:create', (_, name: string) => store.createProject(name))
   handle('project:update', (_, id: string, patch: Partial<Project>) => store.updateProject(id, patch))
+  handle('workspace:update', (_, id: string, patch: Partial<Omit<Workspace, 'id' | 'createdAt'>>) => store.updateWorkspace(id, patch))
   handle('task:create', (_, t: NewTask) => store.createTask(t))
   const projectTasks = (projectId: string) => store.data.tasks.filter((t) => t.projectId === projectId)
   /** A legacy task, or the parent of a legacy checklist subtask: the only ones whose subtask status the user sets. */
