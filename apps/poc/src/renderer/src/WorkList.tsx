@@ -543,7 +543,7 @@ export function RowMenu({ card: c, onClose, onSelect, onGone, className = 'wlmen
           ? <button role="menuitem" title="Back in the list, where it was" onClick={act(() => mag.restore('topic', s.id))}>Restore</button>
           : <button role="menuitem" onClick={act(() => mag.closeChat(s.id))}>Close (keep history)</button>}
         <button role="menuitem" className="danger" onClick={() => {
-          if (!confirm(`Delete topic "${c.title}"${c.sessions?.length ? ' with its subtopics and agents' : ''}? Its history is lost.`)) return onClose()
+          if (!confirm(`Delete topic "${c.title}"${c.sessions?.length ? ' with its subtopics and agents' : ''}? Its history and its PR reviews are lost; nothing changes on GitHub.`)) return onClose()
           act(() => mag.deleteChat(s.id).then(onGone))()
         }}>Delete…</button>
       </>
