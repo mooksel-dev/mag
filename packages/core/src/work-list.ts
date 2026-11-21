@@ -5,7 +5,7 @@
 import {
   approvalName,
   currentStep,
-  inbox,
+  projectInbox,
   isArchived,
   isLegacy,
   isReview,
@@ -497,7 +497,7 @@ function chatCard(s: SessionLike, children: WorkCard[], tree: SessionNode[], app
  * sidebarRows): it never moves a row.
  */
 export function workCards(projectId: string, tasks: Task[], sessions: SessionLike[], now: number): WorkCard[] {
-  const items = inbox(projectId, tasks, sessions)
+  const items = projectInbox(projectId, tasks, sessions)
   const mine = sessions.filter((s) => s.projectId === projectId)
   const works = tasks.filter((t) => !t.parentId && t.projectId === projectId)
   const chats = chatTopics(mine)

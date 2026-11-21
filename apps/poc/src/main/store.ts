@@ -6,6 +6,7 @@ import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 import { log } from './log.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
+import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
 
 interface Data {
   workspaces: Workspace[]
@@ -19,6 +20,10 @@ interface Data {
   events: ProjectEvent[]
   /** MCP servers agents reported on start; global, since connectors belong to the account. */
   integrations: Integration[]
+  /** The user's snooze and done of inbox items, by item key; not sent to the renderer (it gets the inbox). */
+  inboxStates: InboxState[]
+  /** Inbox items added by sources without state of their own (see services/inbox); not sent to the renderer. */
+  inboxItems: AddedItem[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
   /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
@@ -75,6 +80,13 @@ type PrReviewOnDisk = NonNullable<Task['prReview']> | LegacyPrReview
 const EVENTS_PER_PROJECT = 300
 
 const id = () => randomUUID().slice(0, 8)
+
+/** Replaces the element of `list` with `x`'s id, or appends `x`. */
+function upsert<T extends { id: string }>(list: T[], x: T) {
+  const i = list.findIndex((y) => y.id === x.id)
+  if (i >= 0) list[i] = x
+  else list.push(x)
+}
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'app'
 
@@ -168,7 +180,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -235,7 +247,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -258,6 +270,8 @@ export class Store {
     this.data.workspaces ??= []
     this.data.events ??= []
     this.data.integrations ??= []
+    this.data.inboxStates ??= []
+    this.data.inboxItems ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
     this.data.ui.windows ??= {}
     this.data.ui.projectWindows ??= []
@@ -358,7 +372,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)
@@ -1011,6 +1025,26 @@ export class Store {
     this.data.projects.push(p)
     this.changed()
     return p
+  }
+
+  /** Stores the user's state of an inbox item, replacing the one of its key. */
+  putInboxState(state: InboxState) {
+    upsert(this.data.inboxStates, state)
+    this.changed()
+  }
+
+  removeInboxStates(keys: string[]) {
+    const gone = new Set(keys)
+    const kept = this.data.inboxStates.filter((s) => !gone.has(s.key))
+    if (kept.length === this.data.inboxStates.length) return
+    this.data.inboxStates = kept
+    this.changed()
+  }
+
+  /** Stores an added inbox item, replacing the one of its key. */
+  putInboxItem(item: AddedItem) {
+    upsert(this.data.inboxItems, item)
+    this.changed()
   }
 
   /**

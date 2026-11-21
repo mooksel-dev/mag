@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, inbox, lastTaskSession, nextReviewRound, prHeads, reviewCurrent, reviewDue, reviewOutcome, reviewText, type AgentReview, type AgentSession, type RepoWork, type Task, type TaskWork } from './index.ts'
+import { agentState, projectInbox, lastTaskSession, nextReviewRound, prHeads, reviewCurrent, reviewDue, reviewOutcome, reviewText, type AgentReview, type AgentSession, type RepoWork, type Task, type TaskWork } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -71,24 +71,24 @@ test('reviewText: who reviewed, the verdict and the first finding', () => {
 
 test('inbox: a review that covers the PRs as they are gives its verdict', () => {
   const merge = withStep({ work: work({ prHead: 'a1' }), review: review() })
-  assert.deepEqual(inbox('p', merge, []).map((i) => [i.kind, i.text, !!i.review]), [['ready_to_merge', 'T-1.1: Owner review: can merge', true]])
+  assert.deepEqual(projectInbox('p', merge, []).map((i) => [i.kind, i.text, !!i.review]), [['ready_to_merge', 'T-1.1: Owner review: can merge', true]])
   const look = withStep({ work: work({ prHead: 'a1' }), review: review({ verdict: 'look', findings: [{ text: 'check the migration' }] }) })
-  assert.deepEqual(inbox('p', look, []).map((i) => [i.kind, i.text]), [['review_look', 'T-1.1: Owner review: look: check the migration']])
+  assert.deepEqual(projectInbox('p', look, []).map((i) => [i.kind, i.text]), [['review_look', 'T-1.1: Owner review: look: check the migration']])
   assert.deepEqual(agentState(look[0], [], look), { kind: 'waiting', reason: 'T-1.1: Owner review: look: check the migration' })
 })
 
 test('inbox: pushed since the review, or never reviewed: the plain ready to merge', () => {
   const stale = withStep({ work: work({ prHead: 'b2' }), review: review({ verdict: 'look', findings: [{ text: 'x' }] }) })
   assert.equal(reviewCurrent(stale[1]), false)
-  assert.deepEqual(inbox('p', stale, []).map((i) => [i.kind, i.text, i.review]), [['ready_to_merge', 'T-1.1: PR is ready to merge', undefined]])
+  assert.deepEqual(projectInbox('p', stale, []).map((i) => [i.kind, i.text, i.review]), [['ready_to_merge', 'T-1.1: PR is ready to merge', undefined]])
 })
 
 test('inbox: nothing while the reviewer runs; a failed review asks for a restart', () => {
   const tasks = withStep({ work: work({ prHead: 'a1' }) })
   const dev = session('dev', 'developer', 'idle', 10)
-  assert.deepEqual(inbox('p', tasks, [dev, session('rev', 'reviewer', 'running', 20)]), [])
+  assert.deepEqual(projectInbox('p', tasks, [dev, session('rev', 'reviewer', 'running', 20)]), [])
   assert.deepEqual(agentState(tasks[0], [dev, session('rev', 'reviewer', 'running', 20)], tasks), { kind: 'working', role: 'reviewer', since: 20 })
-  const failed = inbox('p', tasks, [dev, session('rev', 'reviewer', 'error', 20)])
+  const failed = projectInbox('p', tasks, [dev, session('rev', 'reviewer', 'error', 20)])
   assert.deepEqual(failed.map((i) => [i.kind, i.text, i.session?.role]), [['agent_failed', 'Review failed', 'reviewer']])
 })
 

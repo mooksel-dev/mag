@@ -7,7 +7,7 @@ import type { ChangeInventory } from './inventory.ts'
 import type { Diagram } from './diagram.ts'
 import { DEFAULT_PLAYBOOK, type Playbook } from './playbook.ts'
 import { PROJECT_COLORS } from './tokens.ts'
-import { isReview, reviewReadyText, reviewTopicIds, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
+import { isReview, reviewActivityText, reviewReadyText, reviewTopicIds, reviewState, shownResult, type FindingLevel, type PrReview, type ReviewFormat } from './pr-review.ts'
 import type { DirectionDecision, ReviewReport } from './review-report.ts'
 import type { ImportedReview } from './review-bundle.ts'
 import type { SidebarNode } from './sidebar.ts'
@@ -1614,24 +1614,39 @@ export function agentState(task: Task, sessions: SessionLike[], tasks: Task[]): 
 
 /**
  * review_look: the agent review of the step's PRs wants the user to look (its verdict look, or changes past the rounds).
- * review_ready: the agent's review of a teammate's PR is ready.
+ * review_ready: the agent's review of a teammate's PR is ready. review_activity: the teammate's PR under review has
+ * author replies or new commits since the user's last look.
  */
-export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'review_look' | 'ready_to_merge' | 'review_ready' | 'ready_to_start'
+export type InboxKind = 'approval' | 'agent_failed' | 'check_failed' | 'question' | 'review_look' | 'ready_to_merge' | 'review_ready' | 'review_activity' | 'ready_to_start'
 
 export interface InboxItem {
+  /**
+   * Stable while the item waits: `task:<taskId>:<kind>`, `session:<sessionId>:approval:<approvalId>`; a question's ends
+   * with a hash of its text, since another question is another item.
+   */
+  key: string
+  /** The task's project, or the approval's session's. */
+  projectId: string
   /** null for an approval in a project chat. */
   task: Task | null
   kind: InboxKind
   text: string
+  /**
+   * Time of the source's latest activity this item knows, 0 when it has none to tell (snooze until activity and Done
+   * wake on growth): an approval's time, a failed run's last item, an agent review's, a PR's activity.
+   */
+  activityAt: number
   /** Session the item comes from: the approval's session, or the task's groomer/developer/reviewer that ran last. */
   session?: SessionLike
   /** review_look and ready_to_merge: the agent review of the current step, when it covers its PRs as they are. */
   review?: AgentReview
   /** Approval chat item id in `session`. */
   approvalId?: string
+  /** An approval of an outbound write: where it publishes (a publish card). */
+  destination?: Destination
 }
 
-const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'review_ready', 'ready_to_start']
+const INBOX_ORDER: InboxKind[] = ['approval', 'agent_failed', 'check_failed', 'question', 'review_look', 'ready_to_merge', 'review_ready', 'review_activity', 'ready_to_start']
 
 const TASK_AGENTS: AgentRole[] = ['groomer', 'developer', 'reviewer']
 const FAILED: Partial<Record<AgentRole, string>> = { groomer: 'Groomer failed', developer: 'Developer failed', reviewer: 'Review failed' }
@@ -1642,13 +1657,30 @@ export function lastTaskSession<S extends SessionLike>(taskId: string, sessions:
   return sessions.filter((s) => s.taskId === taskId && !!s.role && TASK_AGENTS.includes(s.role)).reduce<S | undefined>((a, s) => (!a || at(s) >= at(a) ? s : a), undefined)
 }
 
+/** 32-bit FNV-1a of `text`, base 36. */
+function textHash(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+  return (h >>> 0).toString(36)
+}
+
+type TaskItem = Omit<InboxItem, 'key' | 'projectId' | 'activityAt'> & { task: Task; activityAt?: number }
+
+/** `item` with its key, project and activity time. */
+function keyed(item: TaskItem): InboxItem {
+  const key = `task:${item.task.id}:${item.kind}${item.kind === 'question' ? `:${textHash(item.text)}` : ''}`
+  return { ...item, key, projectId: item.task.projectId, activityAt: item.activityAt ?? 0 }
+}
+
+const sessionAt = (s: SessionLike | undefined) => (s ? (sessionDigest(s).lastItemAt ?? 0) : 0)
+
 /** One item for a top-level task; its steps' PRs and Start count for it. A finished work waits on nobody. */
-function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): InboxItem | null {
+function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): TaskItem | null {
   if (task.parentId || task.status === 'done' || task.status === 'canceled') return null
   if (isReview(task)) return reviewItem(task, sessions)
   const last = lastTaskSession(task.id, sessions)
   const base = { task, session: last }
-  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: (last.role && FAILED[last.role]) || 'Agent failed' }
+  if (last?.status === 'error') return { ...base, kind: 'agent_failed', text: (last.role && FAILED[last.role]) || 'Agent failed', activityAt: sessionAt(last) }
   const step = isLegacy(task) ? null : currentStep(task.id, tasks)
   const checkError = workCheckError(task.work) ?? workCheckError(step?.work ?? null)
   if (checkError) return { ...base, kind: 'check_failed', text: checkError }
@@ -1659,7 +1691,7 @@ function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): InboxIte
   if (wait && reviewCurrent(wait.step)) {
     const review = wait.step.review!
     const text = `${wait.step.key}: ${reviewText(review)}`
-    return { ...base, kind: review.verdict === 'merge' ? 'ready_to_merge' : 'review_look', text, review }
+    return { ...base, kind: review.verdict === 'merge' ? 'ready_to_merge' : 'review_look', text, review, activityAt: review.at }
   }
   const prs = wait ? wait.prs : openPrs(task)
   const ready = prs.length > 1 ? `${prs.length} PRs are ready to merge` : 'PR is ready to merge'
@@ -1667,33 +1699,59 @@ function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): InboxIte
   return null
 }
 
-/** A review of a teammate's PR in progress, by its state: its question, its verdict once ready, or its topic failed. */
-function reviewItem(task: Task, sessions: SessionLike[]): InboxItem | null {
+/**
+ * A review of a teammate's PR in progress, by its state: its question, the PR's new activity (author replies, new
+ * commits), its verdict once ready, or its topic failed.
+ */
+function reviewItem(task: Task, sessions: SessionLike[]): TaskItem | null {
   const state = reviewState(task, sessions)
   if (state === 'question') return { task, kind: 'question', text: task.needsInput! }
-  if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!) }
-  if (state === 'failed') return { task, kind: 'agent_failed', text: 'Review failed', session: sessions.find((s) => s.id === (shownResult(task.prReview)?.sessionId || task.ownerSessionId)) }
+  const activity = task.prReview!.activity
+  const news = activity?.state === 'open' ? reviewActivityText(activity) : ''
+  if (news && state !== 'reviewing') return { task, kind: 'review_activity', text: `PR activity: ${news}`, activityAt: activity!.at }
+  if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!), activityAt: shownResult(task.prReview)?.at ?? 0 }
+  if (state === 'failed') {
+    const session = sessions.find((s) => s.id === (shownResult(task.prReview)?.sessionId || task.ownerSessionId))
+    return { task, kind: 'agent_failed', text: 'Review failed', session, activityAt: sessionAt(session) }
+  }
   return null
 }
 
-/** One item per pending approval in the project's sessions, task sessions and chats alike. */
-function approvalItems(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
-  return sessions
-    .filter((s) => s.projectId === projectId)
-    .flatMap((s) =>
-      sessionDigest(s).pendingApprovals.map((i): InboxItem => ({ task: tasks.find((t) => t.id === s.taskId) ?? null, kind: 'approval', text: `wants ${approvalName(i)}`, session: s, approvalId: i.id })),
-    )
+/** One item per pending approval in the sessions, task sessions and chats alike. */
+function approvalItems(tasks: Task[], sessions: SessionLike[]): InboxItem[] {
+  return sessions.flatMap((s) =>
+    sessionDigest(s).pendingApprovals.map(
+      (i): InboxItem => ({
+        key: `session:${s.id}:approval:${i.id}`,
+        projectId: s.projectId,
+        task: tasks.find((t) => t.id === s.taskId) ?? null,
+        kind: 'approval',
+        text: `wants ${approvalName(i)}`,
+        activityAt: i.at,
+        session: s,
+        approvalId: i.id,
+        ...(i.destination ? { destination: i.destination } : {}),
+      }),
+    ),
+  )
 }
 
 /**
- * What waits on the user in a project, most urgent kind first: every pending approval, plus at most one item per
- * task. `tasks` are the project's; sessions may span projects and are in creation order.
+ * What waits on the user across all projects, most urgent kind first: every pending approval, plus at most one item
+ * per top-level task. Sessions are in creation order; headers will do (no session items are read).
  */
-export function inbox(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
-  return [
-    ...approvalItems(projectId, tasks, sessions),
-    ...tasks.map((t) => inboxItem(t, tasks, sessions)).filter((i): i is InboxItem => !!i),
-  ].sort((a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind))
+export function inbox(tasks: Task[], sessions: SessionLike[]): InboxItem[] {
+  return [...approvalItems(tasks, sessions), ...tasks.map((t) => inboxItem(t, tasks, sessions)).flatMap((i) => (i ? [keyed(i)] : []))].sort(
+    (a, b) => INBOX_ORDER.indexOf(a.kind) - INBOX_ORDER.indexOf(b.kind),
+  )
+}
+
+/** The inbox of one project: its tasks' items and the approvals in its sessions. */
+export function projectInbox(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
+  return inbox(
+    tasks.filter((t) => t.projectId === projectId),
+    sessions.filter((s) => s.projectId === projectId),
+  )
 }
 
 export type ProjectState = 'waiting' | 'in_review' | 'idle'
@@ -1701,14 +1759,14 @@ export type ProjectState = 'waiting' | 'in_review' | 'idle'
 /** Waiting if something in the project's inbox waits on the user, else in review if a task has an open PR, else idle. */
 export function projectState(projectId: string, tasks: Task[], sessions: SessionLike[]): ProjectState {
   const mine = tasks.filter((t) => t.projectId === projectId)
-  if (inbox(projectId, mine, sessions).length) return 'waiting'
+  if (projectInbox(projectId, mine, sessions).length) return 'waiting'
   if (mine.some((t) => !t.parentId && t.status === 'in_progress' && openPrs(t, mine).length)) return 'in_review'
   return 'idle'
 }
 
 /** Inbox items across all projects: the dock badge. */
 export function waitingTotal(projects: Pick<Project, 'id'>[], tasks: Task[], sessions: SessionLike[]): number {
-  return projects.reduce((n, p) => n + inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).length, 0)
+  return projects.reduce((n, p) => n + projectInbox(p.id, tasks, sessions).length, 0)
 }
 
 /** Agent sessions running now, any role, any project: no limit on how many. */

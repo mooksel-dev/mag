@@ -1,7 +1,8 @@
-import { inbox, type AgentSession, type InboxKind, type Project, type Task } from '@mag/core'
+import type { InboxKind, Project, Task } from '@mag/core'
+import type { InboxEntry } from './core/services/inbox/index.ts'
 
 /** Inbox kinds that get a system notification. Approvals don't: they come up while a chat is being watched. */
-const NOTIFY: InboxKind[] = ['question', 'agent_failed', 'check_failed', 'ready_to_merge', 'ready_to_start']
+const NOTIFY: string[] = ['question', 'agent_failed', 'check_failed', 'ready_to_merge', 'ready_to_start'] satisfies InboxKind[]
 
 /** An inbox item a notification can be shown for. */
 export interface Attention {
@@ -15,15 +16,14 @@ export interface Attention {
   body: string
 }
 
-/** Notifiable inbox items across all projects. */
-export function attentionItems(projects: Project[], tasks: Task[], sessions: AgentSession[]): Attention[] {
-  return projects.flatMap((p) =>
-    inbox(p.id, tasks.filter((t) => t.projectId === p.id), sessions).flatMap((i): Attention[] =>
-      i.task && NOTIFY.includes(i.kind)
-        ? [{ key: `${i.task.id}:${i.kind}:${i.text}`, projectId: p.id, taskId: i.task.id, title: p.name, body: `${i.task.key}: ${i.text}` }]
-        : [],
-    ),
-  )
+/** Notifiable items of the workspace inbox (snoozed and done ones are not in it). */
+export function attentionItems(items: InboxEntry[], projects: Project[], tasks: Task[]): Attention[] {
+  return items.flatMap((i): Attention[] => {
+    const task = i.taskId ? tasks.find((t) => t.id === i.taskId) : undefined
+    const project = projects.find((p) => p.id === i.projectId)
+    if (!task || !project || !NOTIFY.includes(i.kind)) return []
+    return [{ key: `${i.key}:${i.text}`, projectId: project.id, taskId: task.id, title: project.name, body: `${task.key}: ${i.text}` }]
+  })
 }
 
 /** Items not in `seen`; `seen` becomes the current set, so an item that leaves and comes back is new again. */

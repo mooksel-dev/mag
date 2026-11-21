@@ -627,7 +627,7 @@ test('the state windows get has sessions without items; it does not grow with a 
   const store = new Store(join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json'))
   const p = store.createProject('p')
   const s = store.createSession({ projectId: p.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
-  const extra = { claudeBin: null, appVersion: '0', openProjects: [] }
+  const extra = { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }
   const size = () => JSON.stringify(appState(store, extra)).length
   const reply = (at: number): ChatItem => ({ kind: 'assistant', text: 'x'.repeat(1000), at })
   store.pushItem(s.id, reply(1000))
@@ -936,5 +936,23 @@ test('a project moved to another workspace, or given a repo, adds its repos ther
 
 test('the state windows get has the workspaces', () => {
   const store = new Store(beforeWorkspaces())
-  assert.deepEqual(appState(store, { claudeBin: null, appVersion: '0', openProjects: [] }).workspaces, store.workspaces())
+  assert.deepEqual(appState(store, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }).workspaces, store.workspaces())
+})
+
+test('inbox state and added items persist one row per key, on SQLite and on JSON (inbox-what-waits-on-me.1)', () => {
+  for (const backend of ['auto', 'json'] as const) {
+    const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+    const store = new Store(file, backend)
+    const state = { id: 'task:t:question:x', key: 'task:t:question:x', workspaceId: null, snoozedUntil: 5, untilActivity: false, activityAt: 0, doneAt: null }
+    store.putInboxState(state)
+    store.putInboxState({ ...state, snoozedUntil: 9 })
+    store.putInboxState({ ...state, id: 'other', key: 'other' })
+    store.removeInboxStates(['other'])
+    store.putInboxItem({ id: 'r:1', key: 'r:1', workspaceId: 'w', projectId: null, kind: 'draft', text: 'Draft', ref: null, labels: [], dueAt: null, at: 1, resolvedAt: null })
+    store.flush()
+    const again = new Store(file, backend)
+    assert.deepEqual(again.data.inboxStates, [{ ...state, snoozedUntil: 9 }], backend)
+    assert.deepEqual(again.data.inboxItems.map((i) => i.key), ['r:1'], backend)
+    assert.equal('inboxStates' in appState(again, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }), false, 'windows get the inbox, not its rows')
+  }
 })

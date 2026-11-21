@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
+import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, projectInbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
 import { Orchestrator, codexPublishBlock } from './orchestrator.ts'
@@ -1648,7 +1648,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.match(orch.setPrReview(work.id, topic.id, { problem: 'p', approach: 'a', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker', where: 'src/charge.ts:1' }] }), /^Recorded as the review's v1 result[\s\S]*Nothing goes to GitHub/)
   const r = shownResult(store.task(work.id).prReview)!
   assert.deepEqual([r.format, r.verdict, r.head, r.problem], ['v1', 'request_changes', head, 'p'])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
   assert.match(store.data.events.at(-1)!.text, /PR review v1: Request changes · 1 finding/)
   // The v1 topic records findings and a verdict, never a report.
   const v1Tools = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv) } as ToolActions)
@@ -1696,7 +1696,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const v2 = store.task(work.id).prReview!.results.v2!
   assert.deepEqual([v2.verdict, v2.report?.direction?.facts[0].source, v2.findings.map((f) => [f.level, f.summary, f.text])], ['request_changes', 'checked', [['should_fix', 'The fee is a magic number', 'Move the fee to config.'], ['question', 'Why 1?', 'why 1?']]])
   assert.deepEqual([v2.report?.intent, v2.report?.conclusion], [reportArg.intent, reportArg.conclusion])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: your call'])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: your call'])
 
   // The user's call on the direction (review-v2-questions-first-direction.2): the topic records it once they decide.
   const decideTools = createTools(store, { setPrReview: (id, s, rv) => orch.setPrReview(id, s, rv), decideDirection: (id, d) => orch.decideDirection(id, d) } as ToolActions)
@@ -1712,7 +1712,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.equal(store.project(project.id).notes, [notesBefore, line].filter(Boolean).join('\n'))
   const decided = store.task(work.id).prReview!.results.v2!.report!
   assert.deepEqual([decided.decided?.id, decided.draft], [first[0].id, "I'd rather go with config than constant: per tenant.\n\nno constants in billing"])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Prefer config'])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Prefer config'])
   assert.match(store.data.events.at(-1)!.text, /^Direction: Prefer config$/)
   // Decided again (the page's button): it replaces the call in the review, the decisions and the notes; ok drafts nothing.
   orch.decideDirection(work.id, { choice: 'ok' })
@@ -1741,7 +1741,7 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   assert.deepEqual(directionReferences(next, store.project(project.id).directionDecisions).map((r) => [r.claim.source, r.decisions.map((d) => d.choice)]), [['yours', ['discuss']]])
   // A new report of the same PR keeps the user's call and its draft; deciding again still replaces it.
   assert.deepEqual([next.decided?.id, next.draft], [ask.id, 'Why a constant?'])
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Ask the author'])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 2 issues · Direction: Ask the author'])
   orch.decideDirection(work.id, { choice: 'prefer', option: 'config' })
   await own(ctx, 'set_pr_review', { work: work.key, problem: 'p', approach: 'a', report: reportArg })
   const kept = store.task(work.id).prReview!.results.v2!.report!
@@ -1764,14 +1764,14 @@ test("a teammate's PR: its fact is the topic's inventory, without a plan; the ve
   const both = store.task(work.id).prReview!
   assert.deepEqual([both.shown, both.results.v1?.verdict, both.results.v1?.report, both.results.v2?.verdict], ['v2', 'request_changes', undefined, 'request_changes'])
   orch.showReviewResult(work.id, 'v1')
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
   // The direction is v2's: deciding it with v1 shown still goes to results.v2.
   orch.decideDirection(work.id, { choice: 'discuss' })
   assert.deepEqual([store.task(work.id).prReview!.results.v2!.report!.decided?.choice, store.task(work.id).prReview!.results.v1!.report], ['discuss', undefined])
 
   orch.closeReview(work.id)
   assert.equal(store.task(work.id).status, 'done')
-  assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions), [])
+  assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions), [])
 })
 
 test('send with a job: the chat gets a job item, the agent its text; a new topic takes the job as its title (reviews-normalnyi-ux-stan-reviu.1)', async () => {
@@ -1991,12 +1991,12 @@ test('v1 and v2 side by side: both in the review\'s one topic, both results kept
     orch.setPrReview(work.id, t2.id, { problem: 'p2', approach: 'a2', verdict: 'request_changes', findings: [{ text: 'x', level: 'blocker' }] })
     const both = store.task(work.id).prReview!
     assert.deepEqual([both.results.v1?.verdict, both.results.v1?.problem, both.results.v1?.sessionId, both.results.v2?.verdict, both.results.v2?.sessionId], ['approve', 'p1', t1.id, 'request_changes', t2.id])
-    assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
+    assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Request changes · 1 blocker'])
 
     // The switch: v1 is shown, and its topic is the conversation beside it.
     orch.showReviewResult(work.id, 'v1')
     assert.deepEqual([store.task(work.id).prReview!.shown, store.task(work.id).ownerSessionId], ['v1', t1.id])
-    assert.deepEqual(inbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Approve · no findings'])
+    assert.deepEqual(projectInbox(project.id, store.data.tasks, store.data.sessions).map((i) => i.text), ['Review ready: Approve · no findings'])
     // Review again is the shown format's, in its own topic; at the same head it reads the one inventory, never writes it anew.
     const again = await orch.rereview(work.id)
     assert.equal(again.sessionId, t1.id)

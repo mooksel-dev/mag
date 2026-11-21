@@ -6,8 +6,12 @@ import { join } from 'node:path'
 import { Store } from './store.ts'
 import { startScheduler } from './scheduler.ts'
 import type { Orchestrator } from './orchestrator.ts'
+import { projectInbox } from '@mag/core'
 
-/** gh as the scheduler calls it: the PR from `pr`, its checks from `checks` (exit 1 when one failed, as gh does). */
+/**
+ * gh as the scheduler calls it: the PR's state, head, comments, reviews and inline comments (open, h1, none by default),
+ * its checks from `checks` (exit 1 when one failed, as gh does).
+ */
 function fakeGh(dir: string) {
   const bin = join(dir, 'bin')
   mkdirSync(bin, { recursive: true })
@@ -15,9 +19,9 @@ function fakeGh(dir: string) {
   writeFileSync(join(bin, 'gh'), `#!/usr/bin/env node
 const c = JSON.parse(require('node:fs').readFileSync(${JSON.stringify(config)}, 'utf8'))
 const a = process.argv.slice(2)
-if (a[0] === 'pr' && a[1] === 'view') process.stdout.write(JSON.stringify({ state: 'OPEN', isDraft: false, headRefOid: 'h1', comments: [], reviews: [], mergeable: c.mergeable }))
+if (a[0] === 'pr' && a[1] === 'view') process.stdout.write(JSON.stringify({ state: c.state ?? 'OPEN', isDraft: false, headRefOid: c.head ?? 'h1', comments: c.comments ?? [], reviews: c.reviews ?? [], mergeable: c.mergeable }))
 else if (a[0] === 'pr' && a[1] === 'checks') { process.stdout.write(JSON.stringify(c.checks)); if (c.checks.some((x) => x.bucket === 'fail')) process.exit(1) }
-else if (a[0] === 'api') process.stdout.write('[]')
+else if (a[0] === 'api') process.stdout.write(JSON.stringify(c.inline ?? []))
 else process.exit(2)
 `)
   chmodSync(join(bin, 'gh'), 0o755)
@@ -65,6 +69,46 @@ test("scheduler: a step's failed CI, then its conflict, go to fixPr with the det
     gh.set({ mergeable: 'UNKNOWN', checks: [{ name: 'test', bucket: 'pending', link: '' }] })
     await scheduler.pollNow()
     assert.deepEqual(calls, ['review'])
+  } finally {
+    gh.restore()
+  }
+})
+
+test('scheduler: a review work records author replies, new commits and the merge; replies show as review_activity (inbox-what-waits-on-me.1)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-sched-'))
+  const gh = fakeGh(dir)
+  try {
+    const url = 'https://github.com/a/b/pull/7'
+    gh.set({ head: 'h1', comments: [] })
+    const store = new Store(join(dir, 'db.json'))
+    const project = store.createProject('p')
+    const work = store.createTask({ projectId: project.id, title: 'Review', type: 'review', description: '', status: 'in_progress' })
+    const result = { format: 'v1' as const, sessionId: '', problem: '', approach: '', verdict: 'approve' as const, findings: [], head: 'h1', at: 1000 }
+    store.updateTask(work.id, { prReview: { pr: { url, repo: 'a/b', outside: true, number: 7, author: 'olena', base: 'main', head: 'h1' }, results: { v1: result }, shown: 'v1', posted: null } })
+    const orch = { isRunning: () => false, rereview: async () => {}, develop: async () => {} } as unknown as Orchestrator
+    const kinds = () => projectInbox(project.id, store.data.tasks, store.sessionHeaders()).map((i) => [i.kind, i.text])
+    const scheduler = startScheduler(store, orch)
+    await until(() => !!store.task(work.id).prReview!.activity)
+    assert.deepEqual(store.task(work.id).prReview!.activity, { lastSeenAt: 1000, authorReplies: 0, newCommits: false, state: 'open', head: 'h1', at: 0 })
+    assert.deepEqual(kinds(), [['review_ready', 'Review ready: Approve · no findings']])
+
+    gh.set({
+      head: 'h2',
+      comments: [{ author: { login: 'olena' }, body: 'Fixed, see h2', createdAt: new Date(2000).toISOString() }, { author: { login: 'me' }, body: 'ok', createdAt: new Date(2500).toISOString() }, { author: { login: 'olena' }, body: '[mag] bot', createdAt: new Date(2600).toISOString() }],
+      reviews: [{ author: { login: 'olena' }, body: 'Old reply', submittedAt: new Date(500).toISOString() }],
+      inline: [{ user: { login: 'olena' }, body: 'Done here', created_at: new Date(3000).toISOString(), path: 'a.ts', line: 3 }],
+    })
+    await scheduler.pollNow()
+    const seen = store.task(work.id).prReview!.activity!
+    assert.deepEqual([seen.authorReplies, seen.newCommits, seen.state, seen.head], [2, true, 'open', 'h2'])
+    assert.ok(seen.at >= 3000)
+    assert.deepEqual(kinds(), [['review_activity', 'PR activity: 2 author replies · new commits']])
+
+    gh.set({ state: 'MERGED', head: 'h2' })
+    await scheduler.pollNow()
+    assert.equal(store.task(work.id).status, 'done')
+    assert.equal(store.task(work.id).prReview!.activity!.state, 'merged')
+    assert.deepEqual(kinds(), [], 'a merged review waits on nobody')
   } finally {
     gh.restore()
   }

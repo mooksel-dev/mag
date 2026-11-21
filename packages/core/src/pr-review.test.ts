@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, inbox, parsePrUrl, projectReviews, reviewOf, reviewStatus, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
+import { findingCounts, findingPlace, findingsByLevel, githubSlug, reviewPollOutcome, reviewToPost, projectInbox, reviewActivity, parsePrUrl, projectReviews, reviewOf, reviewStatus, reviewOfTopic, reviewReady, reviewState, reviewTopic, workSections, emptyResult, formatOfTopic, migratePrReview, resultOutdated, reviewRunning, reviewTopicIds, shownResult, type AgentSession, type LegacyPrReview, type PrReview, type Task } from './index.ts'
 
 const task = (id: string, patch: Partial<Task> = {}): Task => ({
   id,
@@ -67,14 +67,14 @@ test('findings by level, in level order; a finding without one is should_fix', (
 test('Needs you: a review is ready once its verdict covers the PR head, and not while its topic works', () => {
   const ready = review('r', { prReview: prReview({ verdict: 'request_changes', head: 'abc', at: 2, findings: [{ text: 'x', level: 'blocker' }] }) })
   assert.equal(reviewReady(ready), true)
-  assert.deepEqual(inbox('p', [ready], [topic('idle')]).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
-  assert.deepEqual(inbox('p', [ready], [topic('running')]), [])
+  assert.deepEqual(projectInbox('p', [ready], [topic('idle')]).map((i) => [i.kind, i.text]), [['review_ready', 'Review ready: Request changes · 1 blocker']])
+  assert.deepEqual(projectInbox('p', [ready], [topic('running')]), [])
   // A newer head waits for the next look.
   const stale = review('s', { prReview: prReview({ verdict: 'approve', head: 'old', at: 2 }) })
   assert.equal(reviewReady(stale), false)
-  assert.deepEqual(inbox('p', [stale, review('n')], [topic('idle')]), [])
-  assert.deepEqual(inbox('p', [review('q', { needsInput: 'No access to the repo' })], []).map((i) => i.kind), ['question'])
-  assert.deepEqual(inbox('p', [{ ...ready, status: 'done' }], [topic('idle')]), [])
+  assert.deepEqual(projectInbox('p', [stale, review('n')], [topic('idle')]), [])
+  assert.deepEqual(projectInbox('p', [review('q', { needsInput: 'No access to the repo' })], []).map((i) => i.kind), ['question'])
+  assert.deepEqual(projectInbox('p', [{ ...ready, status: 'done' }], [topic('idle')]), [])
 })
 
 test('findingPlace: a file line or range; anything else names no line (reviews-ahent-reviuit-pr-timeitiv.3)', () => {
@@ -151,8 +151,8 @@ test('reviewStatus: reviewing for how long, and the agent\'s last message of thi
 })
 
 test('Needs you: a review whose topic failed before a verdict on its head is Review failed', () => {
-  assert.deepEqual(inbox('p', [review('r')], [topic('error')]).map((i) => [i.kind, i.text, i.session?.id]), [['agent_failed', 'Review failed', 'topic']])
-  assert.deepEqual(inbox('p', [review('r', { status: 'done' })], [topic('error')]), [])
+  assert.deepEqual(projectInbox('p', [review('r')], [topic('error')]).map((i) => [i.kind, i.text, i.session?.id]), [['agent_failed', 'Review failed', 'topic']])
+  assert.deepEqual(projectInbox('p', [review('r', { status: 'done' })], [topic('error')]), [])
 })
 
 test('reviewTopic: the topic mag created for a review; legacy by its first job; never a topic that asked for it', () => {
@@ -218,4 +218,42 @@ test('formatOfTopic: the topic\'s own format, else the result it runs, the shown
   assert.equal(formatOfTopic({ ...both, results: { v1: emptyResult('v1', 'asker') } }, { id: 'asker' }), 'v1')
   assert.equal(formatOfTopic(both, { id: 'other' }), null)
   assert.equal(formatOfTopic(both, undefined), null)
+})
+
+test('reviewActivity: author replies after the last look, new commits, state; its time grows only with news', () => {
+  const reviewed = prReview({ verdict: 'approve', head: 'abc', at: 10 })
+  const open = { state: 'OPEN' as const, head: 'abc' }
+  const comments = [
+    { author: 'Olena', at: 5 },
+    { author: 'olena', at: 12 },
+    { author: 'someone', at: 13 },
+    { author: 'olena', at: 14 },
+  ]
+  const first = reviewActivity(reviewed, open, comments, 1, 100)
+  assert.deepEqual(first, { lastSeenAt: 10, authorReplies: 2, newCommits: false, state: 'open', head: 'abc', at: 14 })
+  const same = reviewActivity({ ...reviewed, activity: first }, open, comments, 1, 200)
+  assert.deepEqual(same, first, 'nothing new: the same activity')
+  const pushed = reviewActivity({ ...reviewed, activity: first }, { state: 'OPEN', head: 'def' }, comments, 1, 300)
+  assert.deepEqual([pushed.newCommits, pushed.at], [true, 300])
+  const merged = reviewActivity({ ...reviewed, activity: pushed }, { state: 'MERGED', head: 'def' }, comments, 1, 400)
+  assert.deepEqual([merged.state, merged.at], ['merged', 400])
+  const looked = reviewActivity({ ...reviewed, activity: { ...first, lastSeenAt: 13 } }, open, comments, 1, 500)
+  assert.equal(looked.authorReplies, 1, 'a later look counts from there')
+  assert.equal(reviewActivity(prReview(), open, [{ author: 'olena', at: 2 }], 1, 9).authorReplies, 1, 'before any verdict: since the review was created')
+  assert.equal(reviewActivity(prReview(), { state: 'OPEN', head: 'zzz' }, [], 1, 9).at, 9, 'commits seen on the first poll are dated')
+})
+
+test('inbox: a review whose PR has author replies or new commits shows as review_activity', () => {
+  const activity = { lastSeenAt: 2, authorReplies: 2, newCommits: true, state: 'open' as const, head: 'def', at: 30 }
+  const r = review('r', { prReview: { ...prReview({ verdict: 'approve', head: 'abc', at: 2 }), activity } })
+  assert.deepEqual(
+    projectInbox('p', [r], [topic('idle')]).map((i) => [i.key, i.kind, i.text, i.activityAt]),
+    [['task:r:review_activity', 'review_activity', 'PR activity: 2 author replies · new commits', 30]],
+  )
+  assert.deepEqual(projectInbox('p', [r], [topic('running')]), [], 'not while its topic reviews')
+  const quiet = review('r', { prReview: { ...prReview({ verdict: 'approve', head: 'abc', at: 2 }), activity: { ...activity, authorReplies: 0, newCommits: false } } })
+  assert.deepEqual(projectInbox('p', [quiet], [topic('idle')]).map((i) => i.kind), ['review_ready'], 'no news: the verdict waits as before')
+  const asks = { ...r, needsInput: 'Which base?' }
+  assert.deepEqual(projectInbox('p', [asks], [topic('idle')]).map((i) => i.kind), ['question'], 'a question comes first')
+  assert.equal(migratePrReview(r.prReview!).activity, activity, 'kept through the load migration')
 })

@@ -1,6 +1,6 @@
 import { FALLBACK_BASE } from '@mag/core'
 import { rmdir } from 'node:fs'
-import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
+import { ciState, prProblems, currentStep, isLegacy, isReview, prHeads, reviewPollOutcome, prRollup, prsMerged, repoWorkName, reviewActivity, reviewDue, subtasksOf, type AgentSession, type PrState, type RepoWork, type Task, type TaskWork } from '@mag/core'
 import type { Store } from './store'
 import type { Orchestrator } from './orchestrator'
 import { changedRepos, prChecks, prFeedback, prMergeable, prState, removeWorktree, type PrFeedback } from './git.ts'
@@ -135,7 +135,8 @@ export function startScheduler(store: Store, orch: Orchestrator) {
    * A review of a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.3): done once the PR is merged or closed (Decision
    * 12); another look at what changed only when the author marks the draft ready (review-v3-concise-design-first.3),
    * once its topic is free; new commits alone wait for the user's Review again. A review the agent has not finished is
-   * left to it.
+   * left to it. Every poll records the PR's activity (author replies, new commits, merge or close) for the inbox
+   * (inbox-what-waits-on-me.1); when its comments can't be read, the activity stays as it was.
    */
   const pollReview = async (work: Task) => {
     const r = work.prReview!
@@ -146,19 +147,32 @@ export function startScheduler(store: Store, orch: Orchestrator) {
       checkError(work.key, e)
       return
     }
+    let comments: PrFeedback[] | null = []
+    if (pr.state === 'OPEN') {
+      try {
+        comments = await prFeedback(r.pr.url)
+      } catch (e) {
+        log.warn('scheduler', `${work.key}: comments of ${r.pr.url} failed: ${(e as Error).message.split('\n')[0]}`)
+        comments = null
+      }
+    }
     // The user may have closed it, or it may have changed, while GitHub answered.
     const now = store.task(work.id)
     if (now.status !== 'in_progress' || now.prReview?.pr.url !== r.pr.url) return
-    const outcome = reviewPollOutcome(now.prReview!, pr)
+    const activity = comments && reviewActivity(now.prReview, pr, comments, now.createdAt, Date.now())
+    const same = !activity || JSON.stringify(activity) === JSON.stringify(now.prReview.activity ?? null)
+    const review = same ? now.prReview : { ...now.prReview, activity }
+    const outcome = reviewPollOutcome(review, pr)
     if (outcome === 'done') {
       log.info('scheduler', `${work.key} done: its PR was ${pr.state.toLowerCase()}`)
-      store.updateTask(work.id, { status: 'done', needsInput: null })
+      store.updateTask(work.id, { status: 'done', needsInput: null, prReview: review })
       return
     }
     if (outcome === 'draft') {
-      store.updateTask(work.id, { prReview: { ...now.prReview!, pr: { ...now.prReview!.pr, draft: pr.draft } } })
+      store.updateTask(work.id, { prReview: { ...review, pr: { ...review.pr, draft: pr.draft } } })
       return
     }
+    if (!same) store.updateTask(work.id, { prReview: review })
     if (outcome !== 'rereview' || orch.isRunning(now.ownerSessionId ?? '')) return
     log.info('scheduler', `${work.key}: its PR was marked ready (${pr.head!.slice(0, 12)}), looking again`)
     await orch.rereview(work.id).catch((e) => checkError(work.key, e))
