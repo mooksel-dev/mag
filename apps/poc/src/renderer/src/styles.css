@@ -1251,9 +1251,9 @@ button.ghost:hover:not(:disabled) { background: var(--hover); }
 /* Routines (routines-scheduled-drafts-and-a.1): the page with the drawer of a run's log or draft at its right. */
 .routinepage { display: flex; min-width: 0; min-height: 0; }
 .routinepage > .pagewrap { flex: 1; }
-.routinelabels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-weight: 400; }
-.routinedest { display: flex; gap: 8px; }
-.routinedest input { flex: 1; }
+.routineprompt { min-height: 200px; font: inherit; }
+.routinesched { display: flex; gap: 8px; }
+.routinesched input:not([type='time']) { flex: 1; }
 .routineacts { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
 .routineruns { border-collapse: collapse; font-size: 12px; }
 .routineruns td { padding: 4px 12px 4px 0; vertical-align: top; }

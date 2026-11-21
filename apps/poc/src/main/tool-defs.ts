@@ -1005,6 +1005,47 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'save_routine',
+    scope: 'project',
+    description:
+      "Create or edit a routine of the user's in this workspace: a schedule and a prompt, run headless by mag (\"every Thursday at 10, draft the weekly update\"). Each run starts a session on the prompt in the routine's Project (or the workspace); it reads what the CLI can, saves drafts with save_deliverable and adds what needs the user with add_inbox_item; its outcome is one Inbox item. Writes outside mag stay with the user (Publish). Put everything the run must know in the prompt (sources, rules, where the result goes): it starts with nothing else. Answers the next 3 runs.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'A routine to edit (list_routines); omit for a new one. Fields left out keep theirs.' },
+        name: { type: 'string', description: 'Short, e.g. "Weekly update".' },
+        cron: { type: 'string', description: 'When it runs: 5-field cron in local time (minute hour day month weekday), e.g. "0 10 * * thu".' },
+        prompt: { type: 'string', description: 'What a run does, in full, as you would brief an agent that knows nothing else.' },
+        project: { type: 'string', description: "The Project it runs in, by name or id: its repos, notes and label. '' for none (the workspace)." },
+        agent: { type: 'string', enum: ['claude-code', 'codex'], description: 'Who runs it; claude-code when a model or effort is given without it.' },
+        model: { type: 'string', description: 'The model id a run uses, as in the model picker; "default" for the defaults (the drafter role\'s).' },
+        effort: { type: 'string', enum: ['default', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'The effort a run uses.' },
+        enabled: { type: 'boolean', description: 'false pauses it; new ones are on.' },
+      },
+    },
+  },
+  {
+    name: 'list_routines',
+    scope: 'project',
+    description: "The routines of this workspace: id, name, schedule, Project, next run and prompt.",
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_inbox_item',
+    scope: 'project',
+    description:
+      "Put something that needs the user in their Inbox: a decision, a reply they owe, a blocker, a review request. One item per thing; adding the same ref (or title, without one) again brings that item back instead of a second one. A routine's run uses it for what it found.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'One line: what needs the user.' },
+        why: { type: 'string', description: 'One line: why it needs them, and by when if it has a date.' },
+        ref: { type: 'string', description: 'What it is about: a URL, a PR (owner/repo#N), a ticket, a dlv: ref.' },
+      },
+      required: ['title', 'why'],
+    },
+  },
+  {
     name: 'who',
     scope: 'any',
     reviewer: 'also',

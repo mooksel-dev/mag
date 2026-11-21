@@ -271,8 +271,8 @@ export const ROUTINE_TICK_MS = 60_000
 /** Starts each routine due at `now` (routines-scheduled-drafts-and-a.1); one that fails to start is logged, the rest still run. */
 export function routineTick(routines: Pick<Routines, 'due'>, run: (id: string) => Promise<unknown>, now: number) {
   for (const r of routines.due(now)) {
-    log.info('scheduler', `routine ${r.title} is due`)
-    run(r.id).catch((e) => log.warn('scheduler', `routine ${r.title}: the run did not start: ${(e as Error).message}`))
+    log.info('scheduler', `routine ${r.name} is due`)
+    run(r.id).catch((e) => log.warn('scheduler', `routine ${r.name}: the run did not start: ${(e as Error).message}`))
   }
 }
 

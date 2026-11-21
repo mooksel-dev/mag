@@ -151,7 +151,6 @@ const api: MagApi = {
   saveRoutine: (input) => ipcRenderer.invoke('routine:save', input),
   removeRoutine: (id) => ipcRenderer.invoke('routine:remove', id),
   runRoutine: (id) => ipcRenderer.invoke('routine:run', id),
-  revealRoutinePack: (id) => ipcRenderer.invoke('routine:revealPack', id),
   meetingStatus: () => ipcRenderer.invoke('meetings:status'),
   onMeetingStatus: (cb) => {
     const fn = (_: unknown, s: MeetingStatus) => cb(s)

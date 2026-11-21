@@ -139,10 +139,10 @@ test('routineTick: a due slot starts once across ticks and a restart; a start th
     removeRuns: () => {},
   }
   const clock = { t: new Date(2026, 10, 17, 12).getTime() }
-  const open = () => createRoutines({ records, kinds: ['report'], now: () => clock.t })
+  const open = () => createRoutines({ records, now: () => clock.t })
   let routines = open()
-  const a = routines.save({ workspaceId: 'w', title: 'A', schedule: '0 9 * * thu', kind: 'report' })
-  const b = routines.save({ workspaceId: 'w', title: 'B', schedule: '0 9 * * thu', kind: 'report' })
+  const a = routines.save({ workspaceId: 'w', name: 'A', trigger: { kind: 'schedule', cron: '0 9 * * thu' }, prompt: 'Do A' })
+  const b = routines.save({ workspaceId: 'w', name: 'B', trigger: { kind: 'schedule', cron: '0 9 * * thu' }, prompt: 'Do B' })
   const started: string[] = []
   const run = async (id: string) => {
     if (id === a.id) throw new Error('boom')

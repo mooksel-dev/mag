@@ -65,10 +65,12 @@ export function ChoiceChip({ label, title, up, children }: { label: ReactNode; t
  * such row. A provider that may not run `job` (Codex on a review, see agentAllowed) or is not installed shows greyed
  * with why. A provider's tab resets the model and effort; another model keeps the effort if it takes it.
  */
-export function ModelPopover({ agents, choice, fallback, job, onChange }: {
+export function ModelPopover({ agents, choice, fallback, fallbackLabel = 'Use project default', job, onChange }: {
   agents: AgentInfo[]
   choice: ModelChoice | null
   fallback?: ModelChoice
+  /** The name of the default row. */
+  fallbackLabel?: string
   job?: AgentJob
   onChange: (c: ModelChoice | null) => void
 }) {
@@ -87,7 +89,7 @@ export function ModelPopover({ agents, choice, fallback, job, onChange }: {
     <div className="modelpop" role="dialog" aria-label="Agent, model and effort">
       {fallback && (
         <button type="button" className={`mprow${choice ? '' : ' on'}`} onClick={() => onChange(null)}>
-          <span className="mpname">Use project default</span>
+          <span className="mpname">{fallbackLabel}</span>
           <span className="muted">{choiceLabel(agents, fallback)}</span>
         </button>
       )}

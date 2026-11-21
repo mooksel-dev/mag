@@ -3383,3 +3383,24 @@ test("packs: a topic working on a deliverable gets its kind's pack in the next m
   await tick()
   assert.match(runs.at(-1)!.spec.prompt, /## How the user judges this assessment \(its pack\)\n### Rubric\n# Impact rubric[\s\S]*Quote the PR title[\s\S]*judge it by the rubric and rules above/)
 })
+
+test("a routine's run: a drafter session in the routine's project on its model choice; it ends with its last reply (routines-scheduled-drafts-and-a.2)", async () => {
+  const { store, orch, project } = setup()
+  const routine = { id: 'r1', workspaceId: project.workspaceId, name: 'Weekly', trigger: { kind: 'schedule' as const, cron: '0 9 * * thu' }, prompt: 'Draft it', projectId: project.id, choice: { agent: 'claude-code' as const, model: 'claude-sonnet-5-5', effort: 'low' as const }, enabled: true, nextAt: null, createdAt: 0, updatedAt: 0 }
+  const run = { id: 'u1', routineId: 'r1', slot: null, startedAt: 0, endedAt: null, status: 'running' as const, sessionId: null, deliverableRef: null, error: null }
+  const before = runs.length
+  const started = orch.startDrafter(routine, run, 'go')
+  await until(() => runs.length > before)
+  const session = store.session(started.sessionId)
+  assert.deepEqual([session.role, session.projectId, session.routineId, session.choice], ['drafter', project.id, 'r1', routine.choice])
+  const one = runs.at(-1)!
+  assert.deepEqual([one.spec.model, one.spec.effort, one.spec.prompt], ['claude-sonnet-5-5', 'low', 'go'])
+  one.emit({ type: 'message', text: 'Drafted the weekly update.' })
+  one.end()
+  assert.deepEqual(await started.done, { error: null, summary: 'Drafted the weekly update.' })
+
+  // No choice and a project of another workspace: the drafter role's defaults, in the workspace.
+  const plain = orch.startDrafter({ ...routine, id: 'r2', choice: null, projectId: store.createProject('elsewhere', store.createWorkspace('Other').id).id }, { ...run, id: 'u2' }, 'go')
+  const s2 = store.session(plain.sessionId)
+  assert.deepEqual([s2.projectId, s2.choice ?? null], [null, null])
+})
