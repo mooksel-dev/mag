@@ -3,6 +3,7 @@ import { ASKING_MODES, ASKING_ROLES, approvalName, integrationMode, integrationO
 import type { Store } from './store'
 import { blockedPush, projectBases } from './git-push.ts'
 import { classify, isAuto } from './core/lib/destinations/index.ts'
+import { log } from './log.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
@@ -66,6 +67,8 @@ export class Approvals {
   /** Per session: calls (tool and input) the user allowed through publish, each good for one run. */
   private grants = new Map<string, Set<string>>()
   private timings: ApprovalTimings
+  /** A write to a destination ran in a session: the user allowed it, or the project publishes there unasked. */
+  onWriteAllowed: (sessionId: string, destination: Destination) => void = () => {}
 
   constructor(
     private store: Store,
@@ -88,7 +91,12 @@ export class Approvals {
     if (blocked) return deny(blocked)
     const destination = classify(asked.tool, asked.server, args.input)
     // A read (of an integration on reads, or anything not on ask) runs at once; so does a write the project publishes unasked.
-    if (!destination ? !asked.server || asked.reads : isAuto(destination, project.publish)) return allow(args.input)
+    if (!destination) {
+      if (!asked.server || asked.reads) return allow(args.input)
+    } else if (isAuto(destination, project.publish)) {
+      this.writeAllowed(session.id, destination)
+      return allow(args.input)
+    }
 
     // The call a publish payload's Allow granted runs once without a second card.
     if (destination && this.takeGrant(session.id, toolName, args.input)) return allow(args.input)
@@ -176,6 +184,16 @@ export class Approvals {
       text: `${approvalName(item)} ${item.status}`,
     })
     for (const wake of this.waiting.get(item.id) ?? []) wake()
+    if (allow && item.destination) this.writeAllowed(sessionId, item.destination)
+  }
+
+  /** Reports a write that runs without a card (a destination on the auto list) to onWriteAllowed. */
+  writeAllowed(sessionId: string, destination: Destination) {
+    try {
+      this.onWriteAllowed(sessionId, destination)
+    } catch (e) {
+      log.warn('approvals', 'onWriteAllowed failed', e)
+    }
   }
 
   private item(session: AgentSession, id: string | undefined) {

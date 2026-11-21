@@ -4,6 +4,7 @@ import type { AppState } from '../../preload/api'
 import { TaskArtifact, taskArtifactHead } from './ArtifactPane'
 import type { ArtifactTarget } from './artifacts'
 import { CanvasFrame, Chat, SessionModelChip } from './Chat'
+import { DeliverableView } from './DeliverableView'
 import { DiffSetView, setContext } from './DiffSetView'
 import { diagramsOf } from './DiffTab'
 import type { Selection } from './WorkList'
@@ -15,8 +16,8 @@ const mag = window.mag
  * An artifact at the right of a topic's screen (redesign-start-screen-big-composer.3, topics-a-tree-of-agent.3): it
  * opens when you click a canvas in the chat or an artifact in the list, ✕ (or Esc) closes it, ⧉ pops it out. A task's
  * diagram opens with its whole linked set (DiffSetView: levels, trail, links, a fact's files and hunks), as in its own
- * window; any other canvas alone; a work's card, its doc or a review as ArtifactPane draws them. The latest version
- * shows; an artifact deleted meanwhile closes the drawer.
+ * window; any other canvas alone; a work's card, its doc or a review as ArtifactPane draws them; a deliverable with its
+ * versions. The latest version shows; an artifact deleted meanwhile closes the drawer.
  */
 export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSelect }: {
   open: ArtifactTarget
@@ -30,7 +31,8 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
   const task = 'taskId' in open ? state.tasks.find((t) => t.id === open.taskId) : undefined
   const canvas = open.kind === 'canvas' ? state.canvases.find((c) => c.id === open.id) : undefined
   const agent = open.kind === 'agent' ? state.sessions.find((s) => s.id === open.sessionId) : undefined
-  const gone = !task && !canvas && !agent
+  const deliverable = open.kind === 'deliverable' ? (state.deliverables ?? []).find((d) => d.id === open.id) : undefined
+  const gone = !task && !canvas && !agent && !deliverable
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose() }
     window.addEventListener('keydown', onKey)
@@ -40,6 +42,7 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
     if (gone) onClose()
   }, [gone, onClose])
   if (open.kind === 'canvas') return canvas ? <CanvasDrawer canvas={canvas} focus={open.focus} state={state} onClose={onClose} /> : null
+  if (open.kind === 'deliverable') return deliverable ? <DeliverableView key={deliverable.id} deliverable={deliverable} onClose={onClose} /> : null
   if (open.kind === 'agent') return agent ? <AgentDrawer session={agent} state={state} onClose={onClose} onOpenKey={onOpenKey} /> : null
   if (!task || !('taskId' in open)) return null
   const head = taskArtifactHead(open, task)

@@ -24,6 +24,8 @@ import {
   type WorkStage,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
+import type { Deliverable } from '../../main/core/services/deliverables/types.ts'
+import { DELIVERABLE_STATE_LABELS, DELIVERABLE_STATE_TONES } from './deliverableText'
 import { agentName, useAgents } from './Agents'
 import type { AgentLine, ArtifactChip, ArtifactTarget, TopicAgents, TopicArtifacts } from './artifacts'
 import { MoveButton } from './Cards'
@@ -47,13 +49,15 @@ const mag = window.mag
 
 /**
  * The topic's panel (topic-screen-one-new-compact.2, right-panel-only-what-is.1): Agents of the topic or subtopic, those
- * working, waiting on you or failed, the finished ones folded under them; then Documents and diagrams with plain titles, of
+ * working, waiting on you or failed, the finished ones folded under them; then its Deliverables with their state
+ * (deliverables-library-claims-review-and.1); then Documents and diagrams with plain titles, of
  * its unfinished works and what it drew outside any work. A tree's agent opens as its own page, a work's agent in the
  * drawer; a document or diagram in the drawer.
  */
-export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
+export function TopicPanel({ agents, artifacts, deliverables, onOpen, onSelect }: {
   agents: TopicAgents
   artifacts: TopicArtifacts
+  deliverables: Deliverable[]
   onOpen: (target: ArtifactTarget) => void
   onSelect: (s: Selection) => void
 }) {
@@ -74,6 +78,19 @@ export function TopicPanel({ agents, artifacts, onOpen, onSelect }: {
               {showDone && agents.finished.map(line)}
             </>
           )}
+        </section>
+      )}
+      {deliverables.length > 0 && (
+        <section className="artsection" aria-label="Deliverables">
+          <div className="artkind">Deliverables · {deliverables.length}</div>
+          {deliverables.map((d) => (
+            <div key={d.id} className="artrow">
+              <button className="artline2" title={`${d.kind} · ${d.title} · v${d.versions.at(-1)?.n ?? 0}`} onClick={() => onOpen({ kind: 'deliverable', id: d.id })}>
+                <span className="title">{d.title}</span>
+                <Pill tone={DELIVERABLE_STATE_TONES[d.state]}>{DELIVERABLE_STATE_LABELS[d.state]}</Pill>
+              </button>
+            </div>
+          ))}
         </section>
       )}
       {docs.length > 0 && (

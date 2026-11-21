@@ -231,3 +231,20 @@ test("Edit: a write denied with the user's note goes back to be revised, and the
   approvals.decide(session.id, 'r1', false, 'not now')
   assert.deepEqual(JSON.parse(await read), { behavior: 'deny', message: 'User denied: not now' })
 })
+
+test('onWriteAllowed: an allowed write to a destination and an auto one are reported; a deny and a read are not (deliverables-library-claims-review-and.1)', async () => {
+  const { store, project, session, approvals, call } = slackSetup({ claude_ai_Slack: 'reads' })
+  const seen: string[] = []
+  approvals.onWriteAllowed = (sid, d) => void seen.push(`${sid === session.id ? 'topic' : sid} ${d.label}`)
+  const posting = call('mcp__claude_ai_Slack__slack_send_message', { channel_id: 'C0DATAREM', message: 'hi' }, 's1')
+  const denied = call('mcp__claude_ai_Slack__slack_send_message', { channel_id: 'C0OTHER', message: 'no' }, 's2')
+  await sleep(10)
+  approvals.decide(session.id, 's2', false)
+  approvals.decide(session.id, 's1', true)
+  assert.equal(JSON.parse(await posting).behavior, 'allow')
+  assert.equal(JSON.parse(await denied).behavior, 'deny')
+  assert.equal(JSON.parse(await call('mcp__claude_ai_Slack__slack_search_public', { query: 'q' }, 'r1')).behavior, 'allow')
+  store.updateProject(project.id, { publish: { auto: [{ kind: 'slack' }] } })
+  assert.equal(JSON.parse(await call('mcp__claude_ai_Slack__slack_send_message', { channel_id: 'C0AUTOPUB', message: 'm' }, 'a1')).behavior, 'allow')
+  assert.deepEqual(seen, ['topic Slack C0DATAREM', 'topic Slack C0AUTOPUB'])
+})

@@ -1062,3 +1062,23 @@ test('a rule label the user took off a work stays off through PR polls and new t
   store.updateTask(work.id, { work: { dir: '/w', feedbackSeenAt: 2, repos: [...repos, { ...repos[0], repo: '/aura/ftm' }] } })
   assert.equal(runs, 1, 'a new repository is')
 })
+
+test('deliverable records persist as rows of their own and reach the renderer state; a removed one goes (deliverables-library-claims-review-and.1)', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
+  const store = new Store(file)
+  const records = store.deliverableRecords()
+  const d = { id: 'd1', slug: 'weekly', workspaceId: 'w', folder: 'personal', projectId: 'p', topicId: 't', taskId: null, kind: 'report', title: 'Weekly', labels: [], sensitivity: 'work', state: 'draft', finalVersion: null, destination: null, publishedAt: null, versions: [{ n: 1, at: 1, by: 'agent' }], publishing: null, createdAt: 1, updatedAt: 1 } as const
+  records.put({ ...d, labels: [], versions: [...d.versions] })
+  records.put({ ...d, id: 'd2', slug: 'other', labels: [], versions: [] })
+  records.put({ ...d, title: 'Weekly, renamed', labels: [], versions: [...d.versions] })
+  store.flush()
+  const db = new DatabaseSync(join(file, '..', 'mag.sqlite'))
+  assert.deepEqual(db.prepare("SELECT id, project_id AS p FROM entities WHERE kind = 'deliverable' ORDER BY seq").all().map((r) => ({ ...r })), [{ id: 'd1', p: 'p' }, { id: 'd2', p: 'p' }])
+  db.close()
+  const again = new Store(file)
+  assert.deepEqual(again.data.deliverables.map((x) => x.title), ['Weekly, renamed', 'Weekly'])
+  assert.deepEqual(appState(again, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }).deliverables.map((x) => x.id), ['d1', 'd2'])
+  again.deliverableRecords().remove('d2')
+  again.flush()
+  assert.deepEqual(new Store(file).data.deliverables.map((x) => x.id), ['d1'])
+})

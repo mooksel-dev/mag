@@ -1,5 +1,6 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ItemLabel, ItemRef, Label, LabelGroup, LabelGroupInput, LabelInput, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { Deliverable } from '../main/core/services/deliverables/types.ts'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
@@ -23,6 +24,8 @@ export interface AppState {
   integrations: Integration[]
   /** What waits on the user across all projects, without the snoozed and done items (inbox-what-waits-on-me.1). */
   inbox: InboxEntry[]
+  /** Deliverables with their versions; read a version's text with readDeliverable. */
+  deliverables: Deliverable[]
   claudeBin: string | null
   appVersion: string
   /** Projects that have a window open. */
@@ -367,6 +370,14 @@ export interface MagApi {
   chooseMeetingsRoot(): Promise<string | null>
   /** Called when meetings were saved, summarized, renamed, linked or deleted. */
   onMeetingsChanged(cb: () => void): () => void
+  /** A deliverable's version text; without `n`, its final version when final, else the latest. Rejects when its folder is gone. */
+  readDeliverable(id: string, n?: number): Promise<string>
+  /** The user's Mark final of version `n`. */
+  markDeliverableFinal(id: string, n: number): Promise<void>
+  /** The deliverable's current version in Finder. */
+  revealDeliverable(id: string): Promise<void>
+  /** Asks its topic to post the final version; the Publish card's Allow marks it published. */
+  publishDeliverable(id: string): Promise<void>
   /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */
   runCommand(runId: string, sessionId: string, command: string, onOutput: (chunk: string) => void): Promise<{ code: number | null; cwd: string }>
   stopCommand(runId: string): Promise<void>

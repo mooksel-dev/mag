@@ -162,6 +162,10 @@ const api: MagApi = {
   summarizeMeeting: (id) => ipcRenderer.invoke('meetings:summarize', id),
   revealMeeting: (id) => ipcRenderer.invoke('meetings:reveal', id),
   chooseMeetingsRoot: () => ipcRenderer.invoke('meetings:chooseRoot'),
+  readDeliverable: (id, n) => ipcRenderer.invoke('dlv:read', id, n),
+  markDeliverableFinal: (id, n) => ipcRenderer.invoke('dlv:markFinal', id, n),
+  revealDeliverable: (id) => ipcRenderer.invoke('dlv:reveal', id),
+  publishDeliverable: (id) => ipcRenderer.invoke('dlv:publish', id),
   onMeetingsChanged: (cb) => {
     const fn = () => cb()
     ipcRenderer.on('meetings:changed', fn)

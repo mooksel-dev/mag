@@ -22,6 +22,7 @@ import type { AppState } from '../../preload/api'
 import { LabelChips } from './labels/LabelChips'
 import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
 import { topicAgents, topicApprovals, topicArtifacts, type ArtifactTarget } from './artifacts'
+import { topicDeliverables } from './deliverableText'
 import { WorkCards } from './Cards'
 import { ReviewTable } from './ReviewTable'
 import { ApprovalCard, CanvasOpener, Chat, Composer, SessionModelChip } from './Chat'
@@ -88,8 +89,9 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   const rightPane = usePaneWidth('right')
   const artifacts = useMemo(() => topicArtifacts(topic, state, topic ? null : work), [topic, work, state])
   const agents = useMemo(() => topicAgents(topic, state, topic ? null : work), [topic, work, state])
+  const deliverables = useMemo(() => topicDeliverables(topic, state), [topic, state])
   const agentCount = agents.active.length + agents.finished.length
-  const hasPanel = artifacts.count > 0 || agentCount > 0
+  const hasPanel = artifacts.count > 0 || agentCount > 0 || deliverables.length > 0
   // null: the default, shown while an agent works or waits on you; the user's toggle wins.
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null)
   const listShown = panelChoice ?? agents.active.some((a) => a.state !== 'failed')
@@ -193,7 +195,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
           {drawer.open ? (
             <ArtifactDrawer open={drawer.open} state={state} onClose={drawer.close} onGone={gone} onOpenKey={onOpenKey} onSelect={onSelect} />
           ) : listShown && hasPanel && (
-            <TopicPanel agents={agents} artifacts={artifacts} onOpen={drawer.setOpen} onSelect={onSelect} />
+            <TopicPanel agents={agents} artifacts={artifacts} deliverables={deliverables} onOpen={drawer.setOpen} onSelect={onSelect} />
           )}
         </div>
       </section>

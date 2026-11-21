@@ -825,6 +825,56 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'save_deliverable',
+    scope: 'any',
+    description:
+      'Save a non-code result for the user (a report, an assessment, a proposal, a reply, an agenda…) as a deliverable: a new one, or with ref the next version of one. Each version is a markdown file in the workspace folder (~/Documents/mag/<workspace>/deliverables/<slug>/v<N>.md); the user reads the versions and their diff in the topic\'s panel, marks one final and publishes it. A new version of a final one is a draft again. Use it instead of loose files or a canvas for a result the user will keep or send; returns the ref (<workspace>:dlv:<slug>) and the file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'The deliverable to add a version to: <workspace>:dlv:<slug>, or dlv:<slug> in this workspace. Omit for a new one.' },
+        kind: { type: 'string', enum: ['report', 'assessment', 'proposal', 'decision', 'reply', 'ticket', 'agenda', 'other'], description: 'Required for a new one; a version keeps its kind.' },
+        title: { type: 'string', description: 'Required for a new one; given with ref, renames it.' },
+        md: { type: 'string', description: 'The whole version as markdown.' },
+        file: { type: 'string', description: 'Instead of md: an absolute path of a markdown file to take the version from.' },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Labels to find it by, e.g. a team or a series ("weekly-dbo"); replaces the old ones.' },
+        destination: {
+          type: 'object',
+          description: 'Where it will be published, when known.',
+          required: ['kind'],
+          properties: { kind: { type: 'string', enum: ['slack', 'jira', 'confluence', 'github', 'gdocs', 'other'] }, target: { type: 'string', description: 'The channel, issue, page, repo or doc.' } },
+        },
+      },
+    },
+  },
+  {
+    name: 'list_deliverables',
+    scope: 'any',
+    description: "The workspace's deliverables, newest first: ref, kind, title, state, versions and the final one, labels. Read one with read.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['report', 'assessment', 'proposal', 'decision', 'reply', 'ticket', 'agenda', 'other'] },
+        state: { type: 'array', items: { type: 'string', enum: ['draft', 'in_review', 'final', 'published'] } },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Only those with every one of them.' },
+        topic: { type: 'boolean', description: 'true: only those made in this topic.' },
+      },
+    },
+  },
+  {
+    name: 'read',
+    scope: 'any',
+    description: 'The text of a ref mag gave you. A deliverable (<workspace>:dlv:<slug> or dlv:<slug>): its final version when it is final or published, else its latest; version picks one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string' },
+        version: { type: 'number' },
+      },
+      required: ['ref'],
+    },
+  },
+  {
     name: 'read_chat',
     scope: 'any',
     reviewer: 'also',

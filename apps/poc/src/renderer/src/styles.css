@@ -908,6 +908,11 @@ body.resizing iframe { pointer-events: none; }
 /* The topic's panel at the right of its conversation (topic-screen-one-new-compact.2): its agents, then its documents
    and diagrams; one opens in the drawer in their place. */
 .artifacts { flex: none; width: var(--right-w); min-height: 0; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: var(--sp-3); border-left: 1px solid var(--line); background: var(--panel); }
+.dlvbar { flex-wrap: wrap; gap: 6px; }
+.dlvdiff { margin: 0; padding: 8px 0; font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dlvdiff > div { padding: 0 8px; }
+.dlvdiff .add { background: var(--green-bg); color: var(--green-fg); }
+.dlvdiff .del { background: var(--danger-bg); color: var(--danger-fg); text-decoration: line-through; }
 .artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
 .artsection { display: flex; flex-direction: column; gap: 2px; }
 .artrow { display: flex; align-items: center; border-radius: var(--r); }

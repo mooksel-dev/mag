@@ -17,6 +17,8 @@ import type { Approvals, ParkResult } from './approvals.ts'
 import { blockedPush, projectBases } from './git-push.ts'
 import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
 import type { ShellRun } from './core/clients/shell/index.ts'
+import { workspaceFolder, type Deliverables, type Origin } from './core/services/deliverables/index.ts'
+import { deliverableTool } from './deliverable-tools.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -94,6 +96,29 @@ export interface ToolActions {
   failedChecks?(url: string): Promise<string[]>
   /** The user's meetings, workspace-wide (search_meetings, read_meeting); set once they are started. */
   meetings?: Pick<Meetings, 'search' | 'read'>
+  /** save_deliverable, list_deliverables, read; set once started. */
+  deliverables?: Deliverables
+}
+
+/**
+ * Where a run's deliverable is made: its project's workspace, and its topic: the nearest chat up its session tree,
+ * else (a work's agent) its work's owner topic.
+ */
+export function deliverableOrigin(store: Store, project: Project, ctx: ToolContext): Origin {
+  const ws = store.workspace(project.workspaceId)
+  const sessions = store.data.sessions
+  let s = ctx.sessionId ? sessions.find((x) => x.id === ctx.sessionId) : undefined
+  const seen = new Set<string>()
+  while (s && runRole(s) !== 'chat' && s.parentId && !seen.has(s.id)) {
+    seen.add(s.id)
+    const parentId: string = s.parentId
+    s = sessions.find((x) => x.id === parentId)
+  }
+  const task = ctx.taskId ? store.data.tasks.find((t) => t.id === ctx.taskId) : undefined
+  const work = task?.parentId ? store.data.tasks.find((t) => t.id === task.parentId) : task
+  const topicId = s && runRole(s) === 'chat' ? s.id : (work?.ownerSessionId ?? null)
+  // A topic without a project runs in its workspace's scope, whose id is ''.
+  return { workspaceId: ws.id, folder: workspaceFolder(ws.name), projectId: project.id || null, topicId, taskId: work?.id ?? null }
 }
 
 /**
@@ -961,6 +986,11 @@ function sharedTool(
     case 'read_meeting':
       return meetingTool(actions.meetings, name, args)
 
+    case 'save_deliverable':
+    case 'list_deliverables':
+    case 'read':
+      return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
+
     case 'read_chat': {
       const id = String(args.id ?? '').trim()
       const sessions = store.data.sessions.filter((s) => s.projectId === project.id)
@@ -1499,7 +1529,7 @@ export type RunShell = (command: string, cwd: string, onOutput: (chunk: string) 
  * project publishes unasked runs at once. Answers {"pending":true} while the user has not decided: the MCP server
  * repeats the call with the same call_id.
  */
-export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 'grant'>, shell: RunShell): ToolHandler {
+export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 'grant' | 'writeAllowed'>, shell: RunShell): ToolHandler {
   /** A command's run per approval id: a repeated poll after the Allow answers the same run, never a second. */
   const runs = new Map<string, Promise<string>>()
   const execute = (id: string, command: string, cwd: string) => {
@@ -1536,7 +1566,10 @@ export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 
       const cwd = publishCwd(store, ctx, project, args.cwd)
       const input = { command, description: why }
       const known = classify('Bash', undefined, input)
-      if (known && isAuto(known, project.publish)) return execute(id, command, cwd)
+      if (known && isAuto(known, project.publish)) {
+        approvals.writeAllowed(session.id, known)
+        return execute(id, command, cwd)
+      }
       const decision = await approvals.park(ctx, { id, tool: 'Bash', input, destination: known ?? declared(named) })
       if (decision.status === 'allowed') return execute(id, command, cwd)
       return publishAnswer(decision)
@@ -1547,7 +1580,10 @@ export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 
     const input = payload!.input && typeof payload!.input === 'object' ? payload!.input : {}
     const found = integrationOf(toolName, store.data.integrations)
     const known = found ? classify(found.tool, found.integration.name, input) : null
-    if (known && isAuto(known, project.publish)) return `Allowed: this destination publishes without asking. Call ${toolName} now with exactly this input.`
+    if (known && isAuto(known, project.publish)) {
+      approvals.writeAllowed(session.id, known)
+      return `Allowed: this destination publishes without asking. Call ${toolName} now with exactly this input.`
+    }
     const decision = await approvals.park(ctx, { id, tool: found?.tool ?? toolName, ...(found && { server: found.integration.name }), input, destination: known ?? declared(named) })
     if (decision.status !== 'allowed') return publishAnswer(decision)
     approvals.grant(session.id, toolName, input)
