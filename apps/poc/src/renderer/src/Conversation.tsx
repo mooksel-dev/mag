@@ -19,10 +19,10 @@ import {
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
-import { topicAgents, topicArtifacts, type ArtifactTarget } from './artifacts'
+import { topicAgents, topicApprovals, topicArtifacts, type ArtifactTarget } from './artifacts'
 import { WorkCards } from './Cards'
 import { ReviewTable } from './ReviewTable'
-import { CanvasOpener, Chat, Composer, SessionModelChip } from './Chat'
+import { ApprovalCard, CanvasOpener, Chat, Composer, SessionModelChip } from './Chat'
 import { ArtifactDrawer } from './Drawer'
 import { PaneHandle, usePaneWidth } from './PaneHandle'
 import { TicketLinks, AgentDot, useNow } from './Tasks'
@@ -109,8 +109,11 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
   // A review made a moment ago has no PR recorded yet: it joins the table once it has.
   const reviewsHere = topic ? cardsOf.filter((t) => isReview(t) && !!t.prReview) : []
   const worksHere = cardsOf.filter((t) => !reviewsHere.includes(t))
-  const cards = cardsOf.length ? (
+  // What the topic's own agents wait on: their cards are here, where the user talks.
+  const asks = topic ? topicApprovals(topic, state.sessions) : []
+  const cards = cardsOf.length || asks.length ? (
     <>
+      {asks.map(({ session: s, item }) => <ApprovalCard key={item.id} sessionId={s.id} item={item} who={sessionRole(s)} />)}
       {reviewsHere.length > 0 && <ReviewTable reviews={reviewsHere} project={project} state={state} onOpen={(taskId) => drawer.setOpen({ kind: 'review', taskId })} />}
       {worksHere.map((t) => <WorkCards key={t.id} work={t} owner={chat} state={state} onAnswer={focus} label={worksHere.length > 1 || reviewsHere.length > 0} />)}
     </>

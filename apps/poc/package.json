@@ -10,7 +10,7 @@
     "build:audio": "sh native/mag-audio/build.sh",
     "start": "sh native/mag-audio/build.sh && electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "test": "node --experimental-transform-types --no-warnings --test src/main/*.test.ts src/main/core/services/*/*.test.ts src/main/core/clients/*/*.test.ts src/renderer/src/*.test.ts"
+    "test": "node --experimental-transform-types --no-warnings --test src/main/*.test.ts src/main/core/lib/*/*.test.ts src/main/core/services/*/*.test.ts src/main/core/clients/*/*.test.ts src/renderer/src/*.test.ts"
   },
   "dependencies": {
     "@mag/agents": "workspace:*",

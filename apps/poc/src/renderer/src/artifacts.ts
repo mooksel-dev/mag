@@ -253,5 +253,26 @@ export function topicAgents(topic: SessionHeader | null, state: Pick<AppState, '
   }
 }
 
+/**
+ * The pending approvals of the agents a topic (or subtopic) started, outside works, with no subtopic between
+ * (publish-gate-for-every-outbound.1): the user talks only to the topic, so a parked call shows its card there, not only
+ * in the agent's own log. A work's agents' approvals are on its cards (WorkCards).
+ */
+export function topicApprovals(topic: SessionHeader, sessions: SessionHeader[]): { session: SessionHeader; item: SessionHeader['pendingApprovals'][number] }[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]))
+  const askingTopic = (s: SessionHeader) => {
+    const seen = new Set<string>()
+    let up = s.parentId ? byId.get(s.parentId) : undefined
+    while (up && up.id !== topic.id && !isSubtopic(up) && up.parentId && !seen.has(up.id)) {
+      seen.add(up.id)
+      up = byId.get(up.parentId)
+    }
+    return up?.id
+  }
+  return sessionTree(topic.id, sessions)
+    .filter((s) => s.id !== topic.id && !isSubtopic(s) && !s.taskId && askingTopic(s) === topic.id)
+    .flatMap((s) => s.pendingApprovals.map((item) => ({ session: s, item })))
+}
+
 /** The artifact a work opens on from the work list: a review's report, else the work's card. */
 export const workTarget = (work: Task): ArtifactTarget => ({ kind: isReview(work) ? 'review' : 'work', taskId: work.id })

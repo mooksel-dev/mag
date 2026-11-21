@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { ASKING_MODES, approvalName, integrationMode, integrationOf, readsOnly, runRole, type AgentSession, type ChatItem } from '@mag/core'
+import { ASKING_MODES, ASKING_ROLES, approvalName, integrationMode, integrationOf, runRole, type AgentSession, type ChatItem } from '@mag/core'
 import type { Store } from './store'
-import { ASKING_ROLES } from './tool-defs.ts'
 import { blockedPush, projectBases } from './git-push.ts'
+import { classify, isAuto } from './core/lib/destinations/index.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
@@ -31,17 +31,14 @@ const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 const allow = (input: unknown) => JSON.stringify({ behavior: 'allow', updatedInput: input ?? {} })
 
-/** What speaks for the user on GitHub: a PR's review, comment or change, a gh api write. Only these wait for the card. */
-export const publishesToGithub = (command: string): boolean =>
-  /\bgh\b[^|;&]*\bpr\s+(review|comment|close|edit|ready|reopen)\b/.test(command) ||
-  /\bgh\b[^|;&]*\bapi\b[^|;&]*\s(-X|--method|-f|-F|--field|--raw-field|--input)\b/.test(command)
-
 /**
- * Tool calls that wait for the user: ask-mode integration calls, and what a chat, owner or groomer publishes on GitHub
- * for the user (chat-publishes-to-github-prs.2). The permission prompt tool parks each as an approval chat item until
- * the user allows or denies it on its card. Anything else such a session asks for runs at once, as Claude Code would for
- * the user (a push of its branch, a file outside the repo): mag never holds back what the CLI can do. A push to a base
- * branch is denied. Requests long-poll; the MCP server repeats them while pending.
+ * Tool calls that wait for the user: every call of an integration on ask, and every write to a destination
+ * (publish-gate-for-every-outbound.1): an integration's write on reads, and a known CLI write (gh, acli) of a chat,
+ * owner or groomer. A write to a destination on the project's auto list runs at once. The permission prompt tool parks
+ * each as an approval chat item (with its destination) until the user allows or denies it on its card. Anything else
+ * such a session asks for runs at once, as Claude Code would for the user (a read, a push of its branch, a file outside
+ * the repo): mag never holds back what the CLI can do, and nothing waits without a card. A push to a base branch is
+ * denied. Requests long-poll; the MCP server repeats them while pending.
  */
 export class Approvals {
   /** Wake-ups of the polls waiting per approval id. */
@@ -63,17 +60,20 @@ export class Approvals {
     const asked = session && this.asked(session, toolName)
     // Anything else stays denied, as it was before the prompt tool existed.
     if (!session || !asked) return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
-    // Reads of an integration on reads run at once; its writes get the card.
-    if (asked.server && asked.reads && readsOnly(asked.tool)) return allow(args.input)
     // A push whose target the deny rules cannot see (bare `git push` in a checkout on main) never reaches the card.
     const command = toolName === 'Bash' && typeof args.input === 'object' && args.input ? (args.input as { command?: unknown }).command : undefined
-    const blocked = typeof command === 'string' ? blockedPush(command, projectBases(this.store.project(session.projectId), this.store.data.tasks)) : null
+    const project = this.store.project(session.projectId)
+    const blocked = typeof command === 'string' ? blockedPush(command, projectBases(project, this.store.data.tasks)) : null
     if (blocked) return deny(blocked)
-    if (!asked.server && !(typeof command === 'string' && publishesToGithub(command))) return allow(args.input)
+    const destination = classify(asked.tool, asked.server, args.input)
+    // A read (of an integration on reads, or anything not on ask) runs at once; so does a write the project publishes unasked.
+    if (!destination ? !asked.server || asked.reads : isAuto(destination, project.publish)) return allow(args.input)
 
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined
-    const item = this.item(session, useId) ?? this.add(session, { id: useId ?? randomUUID(), tool: asked.tool, ...(asked.server && { server: asked.server }), input: args.input ?? {} })
+    const item =
+      this.item(session, useId) ??
+      this.add(session, { id: useId ?? randomUUID(), tool: asked.tool, ...(asked.server && { server: asked.server }), input: args.input ?? {}, ...(destination && { destination }) })
     clearTimeout(this.expiry.get(item.id))
     if (item.status === 'pending') await this.wait(item.id, ctx.signal)
     if (item.status === 'pending') {
@@ -81,7 +81,8 @@ export class Approvals {
       return JSON.stringify({ pending: true })
     }
     if (item.status === 'allowed') return JSON.stringify({ behavior: 'allow', updatedInput: item.input })
-    return deny(item.status === 'denied' ? 'User denied' : 'The request expired before the user answered')
+    if (item.status === 'denied') return deny(item.note ? `User denied: ${item.note}` : 'User denied')
+    return deny('The request expired before the user answered')
   }
 
   /**
@@ -97,13 +98,15 @@ export class Approvals {
     return toolName && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
   }
 
-  /** The user's answer; wakes the waiting poll and logs it. */
-  decide(sessionId: string, approvalId: string, allow: boolean) {
+  /** The user's answer; wakes the waiting poll and logs it. `note`: the user's words on a deny, which the agent gets. */
+  decide(sessionId: string, approvalId: string, allow: boolean, note?: string) {
     const session = this.store.session(sessionId)
     const item = this.item(session, approvalId)
     if (!item) throw new Error(`No approval ${approvalId}`)
     if (item.status !== 'pending') throw new Error(`Approval is already ${item.status}`)
     item.status = allow ? 'allowed' : 'denied'
+    const said = note?.trim()
+    if (!allow && said) item.note = said
     clearTimeout(this.expiry.get(item.id))
     this.expiry.delete(item.id)
     this.store.itemChanged(sessionId, item)
@@ -122,7 +125,7 @@ export class Approvals {
     return id ? session.items.find((i): i is ApprovalItem => i.kind === 'approval' && i.id === id) : undefined
   }
 
-  private add(session: AgentSession, a: Pick<ApprovalItem, 'id' | 'tool' | 'server' | 'input'>): ApprovalItem {
+  private add(session: AgentSession, a: Pick<ApprovalItem, 'id' | 'tool' | 'server' | 'input' | 'destination'>): ApprovalItem {
     const item: ApprovalItem = { kind: 'approval', ...a, status: 'pending', at: Date.now() }
     this.store.pushItem(session.id, item)
     return item

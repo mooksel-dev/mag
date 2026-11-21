@@ -74,8 +74,10 @@ export interface Project {
   archRun: ArchRun | null
   /** Provider and model per agent role; missing roles use DEFAULT_CHOICE (see resolveChoice). */
   agents: Partial<Record<AgentRole, ModelChoice>>
-  /** Mode per role and integration id; missing = off (see integrationMode). */
+  /** Mode per role and integration id; missing = reads for asking roles, else off (see integrationMode). */
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
+  /** Destinations whose writes publish without the card; missing = every write asks. */
+  publish?: PublishSettings
   /** Hex color from PROJECT_COLORS; missing or null = picked from the id (see projectColor). */
   color?: string | null
   /** The repositories the last Start worked on locally (the Start popup's last choice): its default next time. */
@@ -844,9 +846,16 @@ export interface Integration {
 /** mag's own MCP server; always allowed, never an integration. */
 export const MAG_MCP_ID = 'mag'
 
+/**
+ * The roles the user watches live, which ask on mag's card instead of being denied: project chats and work owners
+ * (chat-publishes-to-github-prs.2), and groomers. Every write they make asks by default (publish-gate-for-every-outbound).
+ */
+export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
+
+/** An integration the role has no mode for is on reads for an asking role (its writes ask), else off. */
 export function integrationMode(project: Pick<Project, 'integrations'>, role: AgentRole, id: string): IntegrationMode {
   const all = project.integrations ?? {}
-  return (all[role] ?? (role === 'reviewer' ? all.developer : undefined))?.[id] ?? 'off'
+  return (all[role] ?? (role === 'reviewer' ? all.developer : undefined))?.[id] ?? (ASKING_ROLES.includes(role) ? 'reads' : 'off')
 }
 
 /** CLI permission rules for the known integrations: server-level `mcp__<id>` per mode. */
@@ -927,9 +936,10 @@ export type ChatItem =
   /**
    * A tool call waiting for (or answered by) the user: an integration's in ask mode (`server` its name), or a Bash call
    * that matched an ask rule (chat-publishes-to-github-prs.2: a GitHub write; no `server`, `input.command` the command).
-   * id = the CLI's tool_use_id.
+   * id = the CLI's tool_use_id. destination: where a write publishes (publish-gate-for-every-outbound.1); missing for
+   * a read of an integration on ask. note: the user's words on a deny, which the agent got.
    */
-  | { kind: 'approval'; id: string; tool: string; server?: string; input: unknown; status: ApprovalStatus; at: number }
+  | { kind: 'approval'; id: string; tool: string; server?: string; input: unknown; status: ApprovalStatus; at: number; destination?: Destination; note?: string }
   /**
    * An agent's request_integration: `integrationId` (Integration.id) is off for `role`; the card's Enable: Ask / Auto
    * sets the project's mode and repeats the turn. `server`: its name as the CLI reported it. status off until enabled.
@@ -938,6 +948,29 @@ export type ChatItem =
 
 /** expired = the run ended before the user answered. */
 export type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'expired'
+
+/** Where an outbound write speaks for the user (publish-gate-for-every-outbound); other = an unknown write. */
+export type DestinationKind = 'slack' | 'jira' | 'confluence' | 'github' | 'gdocs' | 'other'
+
+export const DESTINATION_LABELS: Record<DestinationKind, string> = { slack: 'Slack', jira: 'Jira', confluence: 'Confluence', github: 'GitHub', gdocs: 'Google Docs', other: 'Other write' }
+
+/** A classified write: `target` the channel, issue, space, repo or doc it goes to ('' when the call doesn't name one). */
+export interface Destination {
+  kind: DestinationKind
+  target: string
+  /** One line for the card: "Slack #data-removal", "Jira ABC-12". */
+  label: string
+}
+
+/** A destination that publishes without asking: every target of `kind`, or only `target` (case-insensitive). */
+export interface DestinationPattern {
+  kind: DestinationKind
+  target?: string
+}
+
+export interface PublishSettings {
+  auto: DestinationPattern[]
+}
 
 /** The command of an approval of a Bash call, else null. */
 export function approvalCommand(a: { tool: string; server?: string; input: unknown }): string | null {

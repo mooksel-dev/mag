@@ -245,7 +245,8 @@ export interface MagApi {
   /** Stop one background task (Monitor, background Bash…) of a live session; the agent is not woken. */
   stopBackground(sessionId: string, taskId: string): Promise<void>
   /** Allow or deny a pending tool call (an approval chat item): an integration's, or a GitHub write. */
-  decideApproval(sessionId: string, approvalId: string, allow: boolean): Promise<void>
+  /** `note`: the user's words on a deny, which the agent gets. */
+  decideApproval(sessionId: string, approvalId: string, allow: boolean, note?: string): Promise<void>
   /** An integration card's Enable: Ask / Auto: the project's mode for the card's role; the agent repeats its last step. */
   enableIntegration(sessionId: string, itemId: string, mode: 'ask' | 'reads' | 'auto'): Promise<void>
   /** Open an artifact in its own window, or focus that window if it is already open. */

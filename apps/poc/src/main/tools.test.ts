@@ -711,7 +711,7 @@ test('a project chat gets list_chats, close_chats, delete_chats and restore_chat
 test('request_integration: one card per integration while it is off; an integration that is on or unknown says so (redesign-start-screen-big-composer.4)', async () => {
   const { store, project, call, groomer } = setup()
   store.saveIntegrations([{ id: 'claude_ai_Slack', name: 'claude.ai Slack' }, { id: 'claude_ai_Gmail', name: 'claude.ai Gmail' }])
-  store.updateProject(project.id, { integrations: { groomer: { claude_ai_Gmail: 'ask' } } })
+  store.updateProject(project.id, { integrations: { groomer: { claude_ai_Gmail: 'ask', claude_ai_Slack: 'off' } } })
   assert.match(await call('request_integration', { id: 'claude_ai_Slack', why: 'read the  thread' }), /End your turn now, saying claude\.ai Slack is turned off in mag for the groomer role/)
   await call('request_integration', { id: 'claude_ai_Slack', why: 'again' })
   const cards = store.session(groomer.id).items.filter((i) => i.kind === 'integration')

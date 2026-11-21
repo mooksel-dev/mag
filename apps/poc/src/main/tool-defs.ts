@@ -1120,12 +1120,6 @@ export const TOOL_DEFS = [
 export const APPROVE_TOOL = 'mcp__mag__approve_tool'
 
 /**
- * The roles whose GitHub writes (gh pr comment, git push…) ask on the card instead of being denied
- * (chat-publishes-to-github-prs.2, Decision 4): project chats and work owners, and groomers. The user watches them live.
- */
-export const ASKING_ROLES: readonly AgentRole[] = ['chat', 'groomer']
-
-/**
  * Task tools a project chat also gets for the works it owns (T-55.5): it plans them itself instead of a groomer, and
  * reviews a teammate's PR (reviews-ahent-reviuit-pr-timeitiv.2). In a
  * chat they take work, the key of the work; show_diagram and show_canvas take it optionally (without it, the drawing is the project's).
