@@ -1520,7 +1520,7 @@ export function createPublish(store: Store, approvals: Pick<Approvals, 'park' | 
     const session = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
     if (!session) throw new Error('publish needs a session to show its card in')
     if (runRole(session) === 'reviewer') throw new Error('publish is not available to the reviewer agent')
-    const project = store.project(session.projectId)
+    const project = store.sessionScope(session)
     const why = typeof args.why === 'string' ? args.why.trim() : ''
     const named = typeof args.destination === 'string' ? args.destination.trim() : ''
     if (!named) throw new Error('destination is required: where it goes, e.g. "Slack #general" or "Jira ABC-12"')
