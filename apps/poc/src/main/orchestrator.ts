@@ -679,6 +679,19 @@ export class Orchestrator {
     return child
   }
 
+  /**
+   * A deliverable's verifier (deliverables-library-claims-review-and.2): a read-only reviewer child of its topic,
+   * started on `brief(fresh)`. A fork of the topic unless `fresh` (people-sensitive kinds) or the topic can't be forked
+   * (no Claude Code session yet, or the reviewer role runs on another agent); then a fresh session.
+   */
+  startVerifier(topicId: string, fresh: boolean, brief: (fresh: boolean) => string): { session: AgentSession; fresh: boolean } {
+    const topic = this.treeSession(topicId)
+    const fork = !fresh && topic.agent === 'claude-code' && !!topic.nativeSessionId && this.roleChoice(this.store.sessionScope(topic), 'reviewer').agent === 'claude-code'
+    const session = this.startChild(topic.id, brief(!fork), 'reviewer', fork, 'agent', false)
+    log.info('agent', 'verifier started', { session: session.id, topic: topic.id, fork })
+    return { session, fresh: !fork }
+  }
+
   /** A topic and all its descendants, each parent before its children. */
   treeOf(topicId: string): AgentSession[] {
     return sessionTree(topicId, this.store.data.sessions)

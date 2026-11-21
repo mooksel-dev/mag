@@ -10,6 +10,8 @@ import { Store } from './store.ts'
 import { Orchestrator, codexPublishBlock } from './orchestrator.ts'
 import { mirrorItems } from './item-mirror.test-util.ts'
 import { createTools, type ToolActions } from './tools.ts'
+import { createWorkspaceFiles } from './core/clients/workspace-files/index.ts'
+import { createDeliverables } from './core/services/deliverables/index.ts'
 import type { MessagedRole } from './tool-defs.ts'
 
 /** A Claude Code live process driven by the test: it records what mag does and emits what the CLI would. */
@@ -3232,4 +3234,59 @@ test('a topic without a project (workspaces-and-labels-project-as.2): made in a 
   const spec = specs.at(-1)!
   assert.equal(spec.cwd, dir)
   assert.match(spec.appendSystemPrompt ?? '', /## Project notes\nWorkspace knowledge/)
+})
+
+test('verify_deliverable: a reviewer fork of the topic verifies a report, a fresh one an assessment; only it sets the verdict, and the deliverable goes in review (deliverables-library-claims-review-and.2)', async () => {
+  const s = setup()
+  const { store, orch, project } = s
+  const { topic } = await liveTopic(s)
+  const dlv = createDeliverables({ files: createWorkspaceFiles(() => join(s.dir, 'docs')), records: store.deliverableRecords() })
+  const tools = createTools(store, { deliverables: dlv, startVerifier: (id, fresh, brief) => orch.startVerifier(id, fresh, brief) } as Partial<ToolActions> as ToolActions)
+  const ctx = { projectId: project.id, sessionId: topic.id }
+  const md = 'We merged 34 PRs in Q4.'
+  await tools(ctx, 'save_deliverable', { kind: 'report', title: 'Q4', md })
+  await assert.rejects(tools(ctx, 'verify_deliverable', { ref: 'dlv:q4' }), /set_claims first/)
+  assert.match(await tools(ctx, 'set_claims', { ref: 'dlv:q4', claims: [{ text: 'merged 34 PRs', kind: 'count', refs: ['o/r#1'] }] }), /1 of 1 claims fail mag's check[\s\S]*c1 \[count\] "merged 34 PRs" · refs: o\/r#1 · check: no_query/)
+  assert.match(await tools(ctx, 'set_claims', { ref: 'dlv:q4', claims: [{ text: 'merged 34 PRs', kind: 'count', refs: ['o/r#1'], query: 'gh pr list -s merged' }] }), /all 1 claims pass/)
+
+  assert.match(await tools(ctx, 'verify_deliverable', { ref: 'dlv:q4' }), /started for .*:dlv:q4 v1 \(a fork of its topic\)/)
+  const verifier = orch.treeOf(topic.id).at(-1)!
+  assert.deepEqual([verifier.role, verifier.parentId, verifier.forkOf], ['reviewer', topic.id, 'parent-native'])
+  await tick()
+  // A reviewer runs a process per turn.
+  const run = runs.at(-1)!
+  assert.match(run.spec.prompt, /Verify .*:dlv:q4 v1, a report "Q4"[\s\S]*read\(".*:dlv:q4", version 1\)[\s\S]*check: ok[\s\S]*set_verdict/)
+  assert.doesNotMatch(run.spec.prompt, /We merged 34 PRs in Q4/, 'a fork reads the text itself')
+  assert.deepEqual([run.spec.resumeId, run.spec.forkSession, run.spec.readOnly], ['parent-native', true, true])
+
+  // The topic itself has no set_verdict; another reviewer is not the verifier.
+  await assert.rejects(tools(ctx, 'set_verdict', { ref: 'dlv:q4', version: 1, verdict: 'publish', findings: [] }), /not available to the chat agent/)
+  const stranger = orch.startChild(topic.id, 'Read the auth module', 'reviewer')
+  await assert.rejects(tools({ projectId: project.id, sessionId: stranger.id }, 'set_verdict', { ref: 'dlv:q4', version: 1, verdict: 'publish', findings: [] }), /Only the verifier/)
+  const vctx = { projectId: project.id, sessionId: verifier.id }
+  assert.match(await tools(vctx, 'read', { ref: 'dlv:q4' }), /We merged 34 PRs in Q4\.[\s\S]*## Claims[\s\S]*query: gh pr list -s merged/)
+  assert.match(await tools(vctx, 'set_verdict', { ref: 'dlv:q4', version: 1, verdict: 'changes', findings: [{ claimId: 'c1', text: 'The query counts 31', level: 'blocker' }] }), /Verdict changes .* recorded \(in_review\)/)
+  const q4 = dlv.resolve('dlv:q4', store.data.deliverables[0].workspaceId)
+  assert.deepEqual([q4.state, q4.versions[0].verdict?.verdict, q4.versions[0].verdict?.fresh, q4.versions[0].verdict?.verifierSessionId], ['in_review', 'changes', false, verifier.id])
+
+  // An assessment is about a person: its verifier starts fresh with the text, its claims and their sources only.
+  await tools(ctx, 'save_deliverable', { kind: 'assessment', title: 'Dev A', md: 'Olena led the DBR change.' })
+  await tools(ctx, 'set_claims', { ref: 'dlv:dev-a', claims: [{ text: 'Olena led the DBR change', kind: 'fact', refs: ['https://github.com/o/r/pull/301'] }] })
+  assert.match(await tools(ctx, 'verify_deliverable', { ref: 'dlv:dev-a' }), /a fresh session without the topic's context/)
+  const fresh = orch.treeOf(topic.id).at(-1)!
+  assert.deepEqual([fresh.role, fresh.forkOf], ['reviewer', null])
+  await tick()
+  const freshRun = runs.at(-1)!
+  assert.match(freshRun.spec.prompt, /without the topic's context[\s\S]*## The text \(v1\)\nOlena led the DBR change\.[\s\S]*https:\/\/github\.com\/o\/r\/pull\/301/)
+  assert.deepEqual([freshRun.spec.resumeId, freshRun.spec.forkSession], [undefined, false])
+  await tools({ projectId: project.id, sessionId: fresh.id }, 'set_verdict', { ref: 'dlv:dev-a', version: 1, verdict: 'publish', findings: [] })
+  const devA = store.data.deliverables.find((d) => d.slug === 'dev-a')!
+  assert.deepEqual([devA.state, devA.versions[0].verdict?.fresh], ['in_review', true])
+})
+
+test('startVerifier: a topic without an agent session to fork gets a fresh verifier', () => {
+  const s = setup()
+  const topicId = s.orch.newChat(s.project.id)
+  const started = s.orch.startVerifier(topicId, false, (fresh) => `Verify it${fresh ? ', fresh' : ''}`)
+  assert.deepEqual([started.fresh, started.session.forkOf, started.session.role, started.session.parentId], [true, null, 'reviewer', topicId])
 })

@@ -862,9 +862,86 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'set_claims',
+    scope: 'any',
+    description:
+      "Record the claims of a deliverable's version: every statement a reader would check (a count, a fact about work or a person, an inference, an opinion) with its exact span in the markdown and what backs it. Replaces the version's claims. mag checks them and returns what fails: a claim without refs, a count without its query, a ref that does not resolve, and a claim about a person without a primary source (a PR, a ticket, a message, a transcript time); in an assessment every claim is about a person. Fix the version or the refs and call again; the user sees each claim underlined, red when it fails. Then verify_deliverable.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'The deliverable: <workspace>:dlv:<slug> or dlv:<slug>.' },
+        version: { type: 'number', description: 'Its version; the latest by default.' },
+        claims: {
+          type: 'array',
+          description: '[] when the version states nothing to check.',
+          items: {
+            type: 'object',
+            required: ['text', 'kind', 'refs'],
+            properties: {
+              id: { type: 'string', description: 'Stable id, e.g. c1; by default c<position>.' },
+              text: { type: 'string', description: 'The exact span in the version\'s markdown, as written there.' },
+              kind: { type: 'string', enum: ['count', 'fact', 'inference', 'opinion'] },
+              refs: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'What backs it: URLs (a PR, ticket or Slack message URL counts as primary), owner/repo#N, ABC-12, dlv:<slug>, mtg:<meeting id>@<hh:mm:ss> (a transcript time, primary) or mtg:<id> (its summary), topic:<id>, absolute file paths.',
+              },
+              query: { type: 'string', description: 'For a count: the command or JQL that produced it, so the verifier re-runs it.' },
+              person: { type: 'string', description: 'The person it is about, if any.' },
+            },
+          },
+        },
+      },
+      required: ['ref', 'claims'],
+    },
+  },
+  {
+    name: 'verify_deliverable',
+    scope: 'any',
+    description:
+      "Have a verifier review a deliverable's version before the user marks it final: a read-only session that re-checks every claim against its sources, re-runs the recorded queries and ends with a verdict (publish, changes or look) the user sees on the document. It is a fork of the deliverable's topic, or for people-sensitive ones (an assessment) a fresh session with only the deliverable, its claims and the sources. Record the claims with set_claims first. Returns the verifier's session; it reports back to the topic.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'The deliverable: <workspace>:dlv:<slug> or dlv:<slug>.' },
+        version: { type: 'number', description: 'Its version; the latest by default.' },
+      },
+      required: ['ref'],
+    },
+  },
+  {
+    name: 'set_verdict',
+    scope: 'any',
+    reviewer: 'only',
+    description:
+      "The verifier's verdict on the deliverable version mag asked it to verify: publish (every claim holds), changes (the author fixes the findings first) or look (the user decides; say why in a finding). One finding per problem, tied to its claim when it is about one. The user sees it on the document; the deliverable goes in review.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string' },
+        version: { type: 'number' },
+        verdict: { type: 'string', enum: ['publish', 'changes', 'look'] },
+        findings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['text', 'level'],
+            properties: {
+              claimId: { type: 'string', description: 'The claim it is about, from set_claims.' },
+              text: { type: 'string', description: 'What is wrong and what backs that, in one or two sentences.' },
+              level: { type: 'string', enum: ['blocker', 'should_fix', 'question', 'nit', 'note'] },
+            },
+          },
+        },
+      },
+      required: ['ref', 'version', 'verdict', 'findings'],
+    },
+  },
+  {
     name: 'read',
     scope: 'any',
-    description: 'The text of a ref mag gave you. A deliverable (<workspace>:dlv:<slug> or dlv:<slug>): its final version when it is final or published, else its latest; version picks one.',
+    reviewer: 'also',
+    description: 'The text of a ref mag gave you. A deliverable (<workspace>:dlv:<slug> or dlv:<slug>): its final version when it is final or published, else its latest; version picks one. Its claims follow the text when set_claims recorded them.',
     inputSchema: {
       type: 'object',
       properties: {

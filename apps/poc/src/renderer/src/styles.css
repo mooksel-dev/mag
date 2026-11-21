@@ -913,6 +913,9 @@ body.resizing iframe { pointer-events: none; }
 .dlvdiff > div { padding: 0 8px; }
 .dlvdiff .add { background: var(--green-bg); color: var(--green-fg); }
 .dlvdiff .del { background: var(--danger-bg); color: var(--danger-fg); text-decoration: line-through; }
+.dlvverdict { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.dlvfindings { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.dlvfindings li { display: flex; gap: 8px; align-items: baseline; }
 .artkind { padding: 0 6px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
 .artsection { display: flex; flex-direction: column; gap: 2px; }
 .artrow { display: flex; align-items: center; border-radius: var(--r); }

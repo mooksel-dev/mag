@@ -18,7 +18,7 @@ import { blockedPush, projectBases } from './git-push.ts'
 import { classify, declared, isAuto } from './core/lib/destinations/index.ts'
 import type { ShellRun } from './core/clients/shell/index.ts'
 import { workspaceFolder, type Deliverables, type Origin } from './core/services/deliverables/index.ts'
-import { deliverableTool } from './deliverable-tools.ts'
+import { claimsTool, deliverableTool } from './deliverable-tools.ts'
 import { GROOMER_CONTROL_TOOLS, MESSAGED_ROLES, OWNER_TOOLS, TOOL_DEFS, toolForRole, type MessagedRole } from './tool-defs.ts'
 
 export interface ToolContext {
@@ -50,6 +50,11 @@ export interface ToolActions {
   answerDeveloper(stepId: string, text: string): Promise<void>
   /** start_session (topics-a-tree-of-agent.2): a child of `parentId`, its brief from the parent's agent; started. */
   startChild(parentId: string, brief: string, role: ChildRole | null, fork: boolean, subtopic: boolean): AgentSession
+  /**
+   * verify_deliverable: a read-only verifier under `topicId`, a fork of it unless `fresh` or it can't fork; `brief`
+   * for the way it starts. Returns it and whether it started fresh.
+   */
+  startVerifier(topicId: string, fresh: boolean, brief: (fresh: boolean) => string): { session: AgentSession; fresh: boolean }
   /** The tree tools' target: a session of the caller's topic tree; throws for any other. */
   sessionInTree(callerId: string, targetId: string): AgentSession
   /** stop_session: stops the session's turn, as the user's Stop. */
@@ -990,6 +995,11 @@ function sharedTool(
     case 'list_deliverables':
     case 'read':
       return deliverableTool(actions.deliverables, deliverableOrigin(store, project, ctx), name, args)
+
+    case 'set_claims':
+    case 'verify_deliverable':
+    case 'set_verdict':
+      return claimsTool(actions.deliverables, deliverableOrigin(store, project, ctx), ctx.sessionId, actions.startVerifier, name, args)
 
     case 'read_chat': {
       const id = String(args.id ?? '').trim()

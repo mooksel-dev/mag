@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { Deliverable } from '../../main/core/services/deliverables/types.ts'
+import { FINDING_LEVEL_LABELS } from '@mag/core'
+import type { Claim, Deliverable, VersionVerdict } from '../../main/core/services/deliverables/types.ts'
 import { Markdown } from './Chat'
-import { DELIVERABLE_STATE_LABELS, DELIVERABLE_STATE_TONES, lineDiff } from './deliverableText'
+import { DELIVERABLE_STATE_LABELS, DELIVERABLE_STATE_TONES, VERDICT_LABELS, VERDICT_TONES, lineDiff, markClaims, plainSpan } from './deliverableText'
 import { Icon } from './ui/Icon'
 import { Pill } from './ui/Pill'
 
@@ -22,6 +23,43 @@ function useVersion(id: string, n: number | null, stamp: number) {
   return text
 }
 
+/** The verifier's verdict on a version with its findings, and the claims the text no longer holds (deliverables-library-claims-review-and.2). */
+function VerdictPanel({ verdict, claims, unplaced, verifying }: { verdict: VersionVerdict | null | undefined; claims: Claim[]; unplaced: Claim[]; verifying: boolean }) {
+  const failed = claims.filter((c) => c.check !== 'ok').length
+  if (!verdict && !verifying && !failed && !unplaced.length) return null
+  const claimText = (id: string | null) => {
+    const c = id ? claims.find((x) => x.id === id) : null
+    return c ? `${c.id} "${plainSpan(c.text)}": ` : ''
+  }
+  return (
+    <section className="dlvverdict" aria-label="Verdict">
+      <div className="artline">
+        {verdict ? (
+          <>
+            <Pill tone={VERDICT_TONES[verdict.verdict]}>{VERDICT_LABELS[verdict.verdict]}</Pill>
+            <span className="muted small">{verdict.fresh ? 'Fresh verifier, without the topic' : 'Verifier forked from the topic'} · {new Date(verdict.at).toLocaleString()}</span>
+          </>
+        ) : verifying ? (
+          <span className="muted small">Verifying…</span>
+        ) : null}
+        <div className="grow" />
+        {failed > 0 && <Pill tone="red">{failed} of {claims.length} claims fail mag's check</Pill>}
+      </div>
+      {verdict && verdict.findings.length > 0 && (
+        <ul className="dlvfindings">
+          {verdict.findings.map((f, i) => (
+            <li key={i}>
+              <Pill tone={f.level === 'blocker' ? 'red' : f.level === 'should_fix' ? 'amber' : 'grey'}>{FINDING_LEVEL_LABELS[f.level]}</Pill>
+              <span>{claimText(f.claimId)}{f.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {unplaced.length > 0 && <p className="muted small">Not in this text: {unplaced.map((c) => `${c.id} "${plainSpan(c.text)}"`).join(', ')}</p>}
+    </section>
+  )
+}
+
 /**
  * A deliverable in the topic's drawer (deliverables-library-claims-review-and.1): its versions, the one shown as
  * markdown or as a diff with the one before, Mark final, Show in Finder and Publish (a final one: its topic posts it,
@@ -40,6 +78,9 @@ export function DeliverableView({ deliverable: d, onClose }: { deliverable: Deli
     setBusy(what)
     run().catch((e: Error) => alert(e.message)).finally(() => setBusy(null))
   }
+  const v = d.versions.find((x) => x.n === shown)
+  const claims = v?.claims ?? []
+  const marked = version && 'md' in version ? markClaims(version.md, claims, v?.verdict) : null
   const isFinal = shown !== null && d.finalVersion === shown && (d.state === 'final' || d.state === 'published')
   return (
     <aside className="drawer" aria-label={`Deliverable: ${d.title}`}>
@@ -74,6 +115,7 @@ export function DeliverableView({ deliverable: d, onClose }: { deliverable: Deli
           </button>
         </div>
         {d.state === 'published' && d.publishedAt && <p className="muted small">Published{d.destination ? ` to ${d.destination.label}` : ''} on {new Date(d.publishedAt).toLocaleString()}.</p>}
+        {shown !== null && !diff && <VerdictPanel verdict={v?.verdict} claims={claims} unplaced={marked?.unplaced ?? []} verifying={d.verifying?.n === shown} />}
         {!version ? (
           <p className="muted small">Loading…</p>
         ) : 'error' in version ? (
@@ -87,7 +129,7 @@ export function DeliverableView({ deliverable: d, onClose }: { deliverable: Deli
         ) : diff && prior && 'error' in prior ? (
           <p className="muted">{prior.error}</p>
         ) : (
-          <Markdown className="md docmd" text={version.md} />
+          <Markdown className="md docmd" text={marked?.md ?? version.md} />
         )}
       </div>
     </aside>
