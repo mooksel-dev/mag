@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { taskByKey, type Project } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink } from '../../main/core/services/meetings/types.ts'
+import type { MeetingPerson } from '../../main/core/services/people/types.ts'
 import type { AppState, MeetingStatus } from '../../preload/api'
 import { Markdown } from './Chat'
 import { linkKey, meetingWhen, snippetParts, transcriptLines } from './meetingText'
@@ -110,6 +111,43 @@ function linkLabel(state: AppState, l: MeetingLink): string {
   return `${project} · ${state.sessions.find((s) => s.id === l.topicId)?.title || 'topic'}`
 }
 
+/** Who took part, as the workspace's persons: a person's chip, a suggestion to confirm in People, a name nobody matches. */
+function useMeetingPeople(id: string, workspaceId: string): MeetingPerson[] {
+  const [chips, setChips] = useState<MeetingPerson[]>([])
+  const [version, setVersion] = useState(0)
+  useEffect(() => {
+    const bump = () => setVersion((v) => v + 1)
+    const offMeetings = mag.onMeetingsChanged(bump)
+    const offPeople = mag.onPeopleChanged(bump)
+    return () => (offMeetings(), offPeople())
+  }, [])
+  useEffect(() => {
+    let live = true
+    void mag.meetingPeople(id, workspaceId).then((c) => live && setChips(c), () => live && setChips([]))
+    return () => {
+      live = false
+    }
+  }, [id, workspaceId, version])
+  return chips
+}
+
+function PersonChips({ chips }: { chips: MeetingPerson[] }) {
+  if (!chips.length) return null
+  return (
+    <div className="mtglinks" aria-label="Participants">
+      {chips.filter((c) => !c.notPerson).map((c) =>
+        c.person ? (
+          <Pill key={c.name} tone="acc" icon="users" title={c.name === c.person.name ? c.person.name : `${c.name} = ${c.person.name}`}>{c.person.name}</Pill>
+        ) : c.suggestion ? (
+          <Pill key={c.name} tone="amber" title={`Maybe ${c.suggestion.name}: confirm it in People`}>{c.name}?</Pill>
+        ) : (
+          <Pill key={c.name} title="Not matched to anyone in this workspace">{c.name}</Pill>
+        ),
+      )}
+    </div>
+  )
+}
+
 /** One meeting: summary on top, transcript below; rename, links, Show in Finder, summarize again, delete. */
 export function MeetingView({ id, at, state, project, onClose, onSelect }: {
   id: string
@@ -124,6 +162,7 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
   const [error, setError] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const status: MeetingStatus | null = useMeetingStatus()
+  const chips = useMeetingPeople(id, project.workspaceId)
   useEffect(() => {
     const load = () => void mag.readMeeting(id).then((c) => (setContent(c), setError(null)), (e: Error) => setError(e.message))
     load()
@@ -171,7 +210,7 @@ export function MeetingView({ id, at, state, project, onClose, onSelect }: {
       <section className="page">
         {error && <p className="err">{error}</p>}
         {meta.error && <p className="recnote err">Transcript has gaps: {meta.error}</p>}
-        {!!meta.participants?.length && <p className="muted small">With {meta.participants.join(', ')}</p>}
+        <PersonChips chips={chips} />
         <div className="mtglinks">
           {(meta.links ?? []).map((l) => (
             <Pill key={linkKey(l)}>

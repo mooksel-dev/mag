@@ -1113,7 +1113,7 @@ test('people rows persist on SQLite and stay out of the renderer state (who-is-w
   const { file, store, aura } = withTopics()
   store.updateWorkspace(aura.id, { directories: { slack: true } })
   const none = async () => []
-  const people = createPeople(store.data, { workspace: (id) => store.data.workspaces.find((w) => w.id === id), repos: () => [], jiraKeys: () => [] }, { slackUsers: async () => [{ system: 'slack', handle: 'U1', name: 'Ihor Koval' }], atlassianUsers: none, githubMembers: none, commitEmails: async () => new Map(), githubOwners: none }, () => store.changed())
+  const people = createPeople(store.data, { workspace: (id) => store.data.workspaces.find((w) => w.id === id), repos: () => [], jiraKeys: () => [], projects: () => [], meetings: () => [] }, { directories: { slackUsers: async () => [{ system: 'slack', handle: 'U1', name: 'Ihor Koval' }], atlassianUsers: none, githubMembers: none, commitEmails: async () => new Map(), githubOwners: none }, activity: { prs: none, tickets: none } }, () => store.changed())
   await people.sync(aura.id)
   people.override({ workspaceId: aura.id, system: 'github', handle: 'ikoval', personId: 'ihor-koval' })
   people.notPerson(aura.id, 'ihor-koval')

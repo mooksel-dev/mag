@@ -13,7 +13,7 @@ import { changes as factChanges, draftListing, factDiagrams, factReport, factRoo
 import { branchTarget, factRecord, localGit, reviewChanges, reviewFact, reviewFacts, stepChanges, stepBacking, stepFact, stepSet } from './fact.ts'
 import type { Meetings } from './core/services/meetings/index.ts'
 import type { People } from './core/services/people/index.ts'
-import { peopleTool } from './people-tools.ts'
+import { activityTool, peopleTool } from './people-tools.ts'
 import { meetingTool } from './meeting-tools.ts'
 import type { Search } from './core/services/search/index.ts'
 import { readRef, searchWorkspace } from './search-tools.ts'
@@ -110,8 +110,8 @@ export interface ToolActions {
   search?: Pick<Search, 'query'>
   /** save_deliverable, list_deliverables, read; set once started. */
   deliverables?: Deliverables
-  /** The people of each workspace (who, people); set once started. */
-  people?: Pick<People, 'who' | 'find'>
+  /** The people of each workspace (who, people, where_works, pr_stats); set once started. */
+  people?: Pick<People, 'who' | 'find' | 'activity' | 'prStats'>
   /** get_pack, propose_rule and the verifier's rubric; set once started. */
   packs?: PackPrompts
 }
@@ -1086,6 +1086,10 @@ function sharedTool(
     case 'who':
     case 'people':
       return peopleTool(actions.people, project.workspaceId, name, args)
+
+    case 'where_works':
+    case 'pr_stats':
+      return activityTool(actions.people, project.workspaceId, name, args)
 
     case 'read_chat': {
       const item = findItem(store, project, String(args.id ?? ''))

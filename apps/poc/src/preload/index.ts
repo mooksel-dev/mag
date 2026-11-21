@@ -180,6 +180,7 @@ const api: MagApi = {
   overridePerson: (o) => ipcRenderer.invoke('people:override', o),
   rejectPerson: (ws, system, handle, personId) => ipcRenderer.invoke('people:reject', ws, system, handle, personId),
   notPerson: (ws, personId) => ipcRenderer.invoke('people:notPerson', ws, personId),
+  meetingPeople: (id, ws) => ipcRenderer.invoke('people:meeting', id, ws),
   onPeopleChanged: (cb) => {
     const fn = () => cb()
     ipcRenderer.on('people:changed', fn)

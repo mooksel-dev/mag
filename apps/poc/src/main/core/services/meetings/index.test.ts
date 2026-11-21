@@ -255,3 +255,13 @@ test('bound and filterMeetings: a date alone is the whole local day; a bad date 
   assert.deepEqual(filterMeetings([late, m('2026-01-01T00:00:00Z')], { people: ['андр'] }), [late])
   assert.throws(() => bound('soon', false), /Not a date: soon/)
 })
+
+test('participants: names of meta.json and the summary, each once, "me" left out (who-is-who-people-from.2)', async () => {
+  const f = fakes()
+  const { id } = await f.meetings.start('Sync')
+  await f.meetings.stop()
+  const m = f.disk.get(id)!
+  m.meta = { ...m.meta, participants: ['Olena', 'me', 'Ihor  Koval'] }
+  m.summary = '## Participants\n- olena\n- Ievgen\n- Me\n'
+  assert.deepEqual(f.meetings.participants(id), ['Olena', 'Ihor  Koval', 'Ievgen'])
+})
