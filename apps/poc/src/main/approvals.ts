@@ -83,7 +83,7 @@ export class Approvals {
     if (!session || !asked) return deny(`Permission to use ${toolName || 'this tool'} has not been granted`)
     // A push whose target the deny rules cannot see (bare `git push` in a checkout on main) never reaches the card.
     const command = toolName === 'Bash' && typeof args.input === 'object' && args.input ? (args.input as { command?: unknown }).command : undefined
-    const project = this.store.project(session.projectId)
+    const project = this.store.sessionScope(session)
     const blocked = typeof command === 'string' ? blockedPush(command, projectBases(project, this.store.data.tasks)) : null
     if (blocked) return deny(blocked)
     const destination = classify(asked.tool, asked.server, args.input)
@@ -148,7 +148,7 @@ export class Approvals {
   private asked(session: AgentSession, toolName: string): (Pick<ApprovalItem, 'tool' | 'server'> & { reads?: boolean }) | null {
     const found = integrationOf(toolName, this.store.data.integrations)
     if (found) {
-      const mode = integrationMode(this.store.project(session.projectId), runRole(session), found.integration.id)
+      const mode = integrationMode(this.store.sessionScope(session), runRole(session), found.integration.id)
       return ASKING_MODES.includes(mode) ? { tool: found.tool, server: found.integration.name, reads: mode === 'reads' } : null
     }
     return toolName && ASKING_ROLES.includes(runRole(session)) ? { tool: toolName } : null
@@ -167,7 +167,8 @@ export class Approvals {
     this.expiry.delete(item.id)
     this.store.itemChanged(sessionId, item)
     const task = session.taskId ? this.store.data.tasks.find((t) => t.id === session.taskId) : undefined
-    this.store.logEvent({
+    // A topic without a project has no project log.
+    if (session.projectId) this.store.logEvent({
       projectId: session.projectId,
       taskId: session.taskId,
       taskKey: task?.key ?? null,

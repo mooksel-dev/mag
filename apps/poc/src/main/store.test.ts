@@ -412,7 +412,7 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
   assert.deepEqual(store.data.sessions.filter((s) => s.id !== 'empty' && s.id !== 'talked').map((s) => [s.role, s.taskId, s.agent, s.titleGenerated, s.items.length]), [['chat', null, 'codex', true, 0], ['chat', null, 'codex', true, 0]])
   assert.equal(store.session('talked').items.length, 2, 'its history stays')
   assert.equal('ideas' in store.data, false)
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   store.flush()
   const again = new Store(file, 'json')
   assert.equal('ideas' in JSON.parse(readFileSync(file, 'utf8')), false)
@@ -438,7 +438,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>', placement: { role: 'plan', option: null, stepId: step.id, repo: null, planOf: null } })
   store.flush()
   const saved = structuredClone({ tasks: store.data.tasks, sessions: store.data.sessions, canvases: store.data.canvases })
-  assert.equal(store.data.schemaVersion, 13, 'a new file has had every migration')
+  assert.equal(store.data.schemaVersion, 14, 'a new file has had every migration')
 
   const restart = (patch: (d: Record<string, unknown>) => void) => {
     const d = JSON.parse(readFileSync(file, 'utf8'))
@@ -447,7 +447,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     for (let i = 0; i < 2; i++) {
       const again = new Store(file, 'json')
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
-      assert.equal(again.data.schemaVersion, 13)
+      assert.equal(again.data.schemaVersion, 14)
       assert.equal('stepsMigrated' in again.data, false)
       again.flush()
     }
@@ -480,7 +480,7 @@ test('session-tree migration: branchOf becomes parentId; a branch of a deleted t
   const shape = () => store.data.sessions.map((x) => [x.id, x.parentId ?? null, 'branchOf' in x])
   assert.deepEqual(shape(), [['root', null, false], ['branch', 'root', false], ['orphan', null, false], ['plain', null, false]])
   assert.equal(store.session('branch').forkOf, 'root-native')
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   store.flush()
   assert.deepEqual(new Store(file).data.sessions.map((x) => [x.id, x.parentId ?? null]), [['root', null], ['branch', 'root'], ['orphan', null], ['plain', null]])
 })
@@ -531,7 +531,7 @@ test('review-v2-part-2-v1-2.1 migration: a review keeps its result per format, a
   assert.deepEqual(store.task('v2').prReview, { pr, shown: 'v2', posted: null, results: { v2: { format: 'v2', sessionId: 's2', problem: 'p', approach: 'a', verdict: 'request_changes', findings: [], report, head: 'h', at: 5 } } })
   assert.deepEqual(store.task('v1').prReview, { pr, shown: 'v1', posted: { at: 6, url: 'u' }, results: { v1: { format: 'v1', sessionId: 's1', problem: 'p', approach: 'a', verdict: 'approve', findings: [{ text: 'x', level: 'nit' }], head: 'h', at: 5 } } })
   assert.deepEqual(store.task('new').prReview, { pr, shown: 'v2', posted: null, results: {} })
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   store.flush()
   assert.deepEqual(new Store(file).task('v2').prReview, store.task('v2').prReview)
 })
@@ -564,7 +564,7 @@ test("topic-owners migration: a work without a chat topic is owned by its groome
   assert.deepEqual(topic('groomer'), ['chat', null, 'Groomed', null, 1, 'n'])
   assert.deepEqual(topic('done-g'), ['chat', null, 'Old', 6, 1, 'n'])
   assert.deepEqual([store.session('old-g').role, store.session('dev').role], ['groomer', 'developer'], 'an earlier groomer and the developers stay agents of the work')
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   store.flush()
 })
 
@@ -576,7 +576,7 @@ test('reads-auto migration: an integration on auto goes to reads, the architect 
   }))
   const store = new Store(file)
   assert.deepEqual(store.data.projects[0].integrations, { chat: { slack: 'reads', web: 'off' }, developer: { slack: 'ask', db: 'reads' }, architect: { slack: 'auto' } })
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   store.flush()
 })
 
@@ -592,7 +592,7 @@ test('effort migration: stored choices of projects and sessions get effort null,
   assert.deepEqual(store.data.projects[0].agents, { chat: { agent: 'claude-code', model: 'opus', effort: null }, developer: { agent: 'codex', model: null, effort: null } })
   assert.deepEqual(store.session('own').choice, { agent: 'claude-code', model: 'sonnet', effort: null })
   assert.equal(store.session('none').choice, undefined, 'no choice of its own: still its role default')
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
 })
 
 test('item events: a push appends, an in-place change re-sends its index, a replacement cuts and sends the rest (p0-fast-safe-store-no.1)', () => {
@@ -736,7 +736,7 @@ test('first start imports db.json into mag.sqlite in one go; counts match, the d
   const again = new Store(file)
   assert.deepEqual(again.data, json.data)
   assert.deepEqual(again.sessionHeaders(), json.sessionHeaders())
-  assert.equal(again.data.schemaVersion, 13)
+  assert.equal(again.data.schemaVersion, 14)
 })
 
 test('an import whose counts differ rolls back: no mag.sqlite, the store runs on db.json and logs why', () => {
@@ -835,7 +835,7 @@ test('a restart on SQLite runs no migration again and keeps the step, its sessio
   store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>' })
   store.flush()
   const again = new Store(file)
-  assert.equal(again.data.schemaVersion, 13)
+  assert.equal(again.data.schemaVersion, 14)
   assert.deepEqual([again.session(s.id).status, again.sessionHeaders()[0].pendingApprovals], ['idle', []])
   again.flush()
   const third = new Store(file)
@@ -873,7 +873,7 @@ function beforeWorkspaces() {
 test('workspaces migration: Aura and Personal get their projects and the union of their repos; re-running it changes nothing', () => {
   const file = beforeWorkspaces()
   const store = new Store(file)
-  assert.equal(store.data.schemaVersion, 13)
+  assert.equal(store.data.schemaVersion, 14)
   const ws = store.workspaces()
   assert.deepEqual(ws.map((w) => [w.name, w.repos]), [['Aura', ['/aura/duff-brewery', '/aura/lisa', '/aura/ftm']], ['Personal', ['/mag']]])
   const nameOf = (pid: string) => ws.find((w) => w.id === store.project(pid).workspaceId)?.name
@@ -955,4 +955,87 @@ test('inbox state and added items persist one row per key, on SQLite and on JSON
     assert.deepEqual(again.data.inboxItems.map((i) => i.key), ['r:1'], backend)
     assert.equal('inboxStates' in appState(again, { claudeBin: null, appVersion: '0', openProjects: [], inbox: [] }), false, 'windows get the inbox, not its rows')
   }
+})
+
+// workspaces-and-labels-project-as.2: labels; topics without a project.
+
+/** A store after the workspace migration, with a topic in Data Removal and one session under it. */
+function withTopics() {
+  const file = beforeWorkspaces()
+  const raw = JSON.parse(readFileSync(file, 'utf8'))
+  const session = (id: string, over: object = {}) => ({ id, projectId: 'dr', taskId: null, role: 'chat', agent: 'claude-code', nativeSessionId: null, status: 'idle', items: [], createdAt: 1, ...over })
+  raw.sessions = [session('topic'), session('kid', { parentId: 'topic', role: null })]
+  writeFileSync(file, JSON.stringify(raw))
+  const store = new Store(file)
+  const [aura, personal] = store.workspaces()
+  return { file, store, aura, personal }
+}
+
+test('labels migration: each workspace gets its Project group, each session its project’s workspace; once', () => {
+  const { file, store, aura, personal } = withTopics()
+  assert.deepEqual(store.data.labelGroups.map((g) => [g.workspaceId, g.name, g.system, g.exclusive]), [[aura.id, 'Project', 'project', true], [personal.id, 'Project', 'project', true]])
+  assert.deepEqual(store.data.sessions.map((s) => s.workspaceId), [aura.id, aura.id])
+  assert.deepEqual(store.labels.labels(store.labels.groups(aura.id)[0].id).map((l) => l.name), ['Aura Data Removal', 'Money Problems'])
+  const w = store.createWorkspace('Lab')
+  assert.equal(store.labels.groups(w.id)[0].system, 'project', 'a new workspace gets its Project group')
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.data.labelGroups, store.data.labelGroups)
+})
+
+test('a topic moves into another project, with its tree and canvases, or out to no project; not one that owns a work, nor across workspaces', () => {
+  const { store, aura } = withTopics()
+  const canvas = store.saveCanvas({ projectId: 'dr', taskId: null, sessionId: 'kid', title: 'sketch', kind: 'html', html: '<p/>' })
+  store.labels.setLabel('topic:topic', 'mp', 'user')
+  assert.deepEqual(store.data.sessions.map((s) => s.projectId), ['mp', 'mp'])
+  assert.equal(store.data.canvases[canvas.id].projectId, 'mp')
+  store.labels.removeLabel('topic:topic', 'mp')
+  assert.deepEqual(store.data.sessions.map((s) => [s.projectId, s.workspaceId]), [[null, aura.id], [null, aura.id]])
+  assert.equal(store.data.canvases[canvas.id].projectId, '')
+  assert.throws(() => store.labels.setLabel('topic:topic', 'mag', 'user'), /another workspace/)
+  assert.throws(() => store.moveTopic('kid', 'dr'), /Only a topic/)
+  store.labels.setLabel('topic:topic', 'dr', 'user')
+  store.createTask({ projectId: 'dr', title: 'w', type: 'dev', description: '', ownerSessionId: 'kid' })
+  assert.throws(() => store.labels.setLabel('topic:topic', 'mp', 'user'), /owns w: it stays/)
+  const work = store.data.tasks[0]
+  assert.throws(() => store.labels.setLabel(`work:${work.id}`, 'mp', 'user'), /A work stays in its project/)
+})
+
+test('a topic without a project runs on its workspace: its repos and notes; one in a project on the project’s, the workspace’s where it has none', () => {
+  const { store, aura } = withTopics()
+  store.updateWorkspace(aura.id, { notes: 'aura notes', playbook: { review: 'aura review' } })
+  store.updateProject('dr', { notes: 'dr notes' })
+  const none = store.createSession({ projectId: null, workspaceId: aura.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const scope = store.sessionScope(none)
+  assert.deepEqual([scope.id, scope.repos, scope.notes, scope.playbook?.review], ['', aura.repos, 'aura notes', 'aura review'])
+  const inDr = store.sessionScope(store.session('topic'))
+  assert.deepEqual([inDr.id, inDr.repos, inDr.notes, inDr.playbook?.review], ['dr', ['/aura/duff-brewery', '/aura/lisa'], 'dr notes', 'aura review'])
+  assert.throws(() => store.createSession({ projectId: null, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' }), /needs a workspace/)
+})
+
+test('item labels persist on SQLite; a deleted topic or work drops its labels; a work gets rule labels from its tickets', () => {
+  const { file, store, aura } = withTopics()
+  const area = store.labels.upsertGroup({ workspaceId: aura.id, name: 'Area', exclusive: false })
+  const privacy = store.labels.upsertLabel({ groupId: area.id, name: 'Privacy', rules: [{ kind: 'jiraKey', value: 'PRVP' }] })
+  store.labels.setLabel('topic:topic', privacy.id, 'user')
+  const work = store.createTask({ projectId: 'dr', title: 'w', type: 'dev', description: '', tickets: [{ url: 'https://x.atlassian.net/browse/PRVP-7', key: 'PRVP-7' }] })
+  assert.deepEqual(store.labels.labelsOf(`work:${work.id}`).map((l) => l.name), ['Aura Data Removal', 'Privacy'])
+  assert.equal(store.data.itemLabels.find((r) => r.itemRef === `work:${work.id}`)?.by, 'rule')
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.labels.labelsOf('topic:topic').map((l) => l.name), ['Aura Data Removal', 'Privacy'])
+  again.deleteSession('topic')
+  again.deleteTask(work.id)
+  assert.deepEqual(again.data.itemLabels, [])
+})
+
+test('a project moved to another workspace takes its sessions and its rules; its items lose the old workspace’s labels', () => {
+  const { store, aura, personal } = withTopics()
+  const sys = store.labels.groups(aura.id)[0]
+  store.labels.upsertLabel({ id: 'dr', groupId: sys.id, name: 'Aura Data Removal', rules: [{ kind: 'repo', value: 'duff-brewery' }] })
+  const area = store.labels.upsertGroup({ workspaceId: aura.id, name: 'Area', exclusive: false })
+  store.labels.setLabel('topic:topic', store.labels.upsertLabel({ groupId: area.id, name: 'UI' }).id, 'user')
+  store.updateProject('dr', { workspaceId: personal.id })
+  assert.deepEqual(store.data.sessions.map((s) => s.workspaceId), [personal.id, personal.id])
+  assert.deepEqual(store.labels.labelsOf('topic:topic').map((l) => [l.name, l.rules]), [['Aura Data Removal', [{ kind: 'repo', value: 'duff-brewery' }]]])
 })

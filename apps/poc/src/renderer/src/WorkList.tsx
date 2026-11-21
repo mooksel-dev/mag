@@ -129,6 +129,16 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
   // Counts count each row that matches on its own, a chat's works included: "Waiting on you 2" is two things to act on.
   const counted = countedCards(all)
   const ideas = parkedTopics(project.id, state.sessions)
+  // The workspace's topics without a project (workspaces-and-labels-project-as.2): every project window lists them.
+  const loose = workCards(null, [], state.sessions.filter((s) => s.projectId === null && s.workspaceId === project.workspaceId), now)
+  const looseOpen = loose.filter((c) => !c.closed && rowMatches(c, filter))
+  const closedRows = [...sidebar.closed, ...loose.filter((c) => c.closed)]
+  const [looseFolded, setLooseFolded] = useState(() => localStorage.getItem(`mag.worklist.noproject.${project.workspaceId}`) === 'closed')
+  const toggleLoose = () => {
+    setLooseFolded(!looseFolded)
+    try { localStorage.setItem(`mag.worklist.noproject.${project.workspaceId}`, looseFolded ? 'open' : 'closed') } catch { /* ignore */ }
+  }
+  const newLoose = () => void mag.newChat(null, project.workspaceId).then((id) => onSelect({ kind: 'topic', id }))
   const [showClosed, setShowClosed] = useState(false)
   const [menu, setMenu] = useState<string | null>(null)
   const [drag, setDrag] = useState<string | null>(null)
@@ -188,7 +198,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
    * A row; a topic's with its subtopics under it, nested, behind its ▸/▾ (topic-screen-one-new-compact.2). Its works and
    * agents are on its page. A topic is the current row while one of its works is open; a subtopic moves with its topic.
    */
-  const row = (c: WorkCard, groupId: string | null) => {
+  const row = (c: WorkCard, groupId: string | null, draggable = true) => {
     const ref = cardRef(c)
     const subs = topicKids(c)
     const sel = selected?.kind === 'topic' ? selected.id : null
@@ -205,7 +215,7 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
         menu={menu === ref}
         over={over === ref}
         fold={subs.length || draftOf === c.id ? { open, toggle: () => toggleFold(c.id) } : null}
-        drag={c.closed ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
+        drag={c.closed || !draggable ? {} : { ...source(ref), ...target(ref, { groupId, before: ref }) }}
         onMenu={(o) => setMenu(o ? ref : null)}
         onSelect={onSelect}
         onGone={() => gone(c)}
@@ -293,13 +303,24 @@ export function WorkList({ project, state, selected, home, page, picker, onPicke
             <Icon name="plus" size={14} /> New group
           </button>
         )}
+        {(!hiding || looseOpen.length > 0) && (
+          <div className="wlgroup wlnoproject">
+            <div className="wlgrp">
+              <button className="wlgname" aria-expanded={!looseFolded} onClick={toggleLoose} title="Topics of this workspace without a project; put one into a project with its Project label">
+                <span aria-hidden><Caret open={!looseFolded} /></span> No project <span className="count">{looseOpen.length}</span>
+              </button>
+              <button className="wlgbtn" aria-label="New topic without a project" title="A topic without a project, in this workspace" onClick={newLoose}><Icon name="plus" size={14} /></button>
+            </div>
+            {!looseFolded && looseOpen.map((c) => row(c, null, false))}
+          </div>
+        )}
         {!hiding && <Ideas topics={ideas} projectId={project.id} selectedId={selected?.kind === 'topic' ? selected.id : null} now={now} onSelect={onSelect} />}
-        {sidebar.closed.length > 0 && (
+        {closedRows.length > 0 && (
           <div className="wlclosed">
             <button className="wlfold" aria-expanded={showClosed} onClick={() => setShowClosed((d) => !d)}>
-              <Caret open={showClosed} /> Archive · {sidebar.closed.length}
+              <Caret open={showClosed} /> Archive · {closedRows.length}
             </button>
-            {showClosed && sidebar.closed.map((c) => row(c, null))}
+            {showClosed && closedRows.map((c) => row(c, null))}
           </div>
         )}
       </div>

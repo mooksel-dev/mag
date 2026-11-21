@@ -530,8 +530,8 @@ export class Orchestrator {
   }
 
   /** A role's default, for a run or session that has no choice of its own yet. Read on every run, as choice. */
-  private roleChoice(projectId: string, role: AgentRole): ModelChoice {
-    return resolveChoice(this.store.project(projectId), role)
+  private roleChoice(scope: Pick<Project, 'agents'>, role: AgentRole): ModelChoice {
+    return resolveChoice(scope, role)
   }
 
   /**
@@ -539,7 +539,7 @@ export class Orchestrator {
    * (sessionJob). Read on every run, so a change applies to the next turn.
    */
   private choice(session: AgentSession): ModelChoice {
-    return sessionChoice(this.store.project(session.projectId), session, this.job(session))
+    return sessionChoice(this.store.sessionScope(session), session, this.job(session))
   }
 
   private job(session: AgentSession) {
@@ -580,13 +580,13 @@ export class Orchestrator {
     const mcpConfigPath = this.mcpConfig(`arch-${projectId}`, { MAG_PROJECT_ID: projectId })
     const run = { status: 'running' as const, startedAt: Date.now(), note: 'Reading the code…' }
     this.store.updateProject(projectId, { archRun: run })
-    log.info('agent', 'architect run started', { project: project.name, agent: this.roleChoice(projectId, 'architect').agent })
+    log.info('agent', 'architect run started', { project: project.name, agent: this.roleChoice(project, 'architect').agent })
     const set = (patch: Partial<NonNullable<Project['archRun']>>) =>
       this.store.updateProject(projectId, { archRun: { ...this.store.project(projectId).archRun!, ...patch } })
     let failed = false
-    const c = this.roleChoice(projectId, 'architect')
+    const c = this.roleChoice(project, 'architect')
     const handle = adapters[c.agent].start(
-      this.withIntegrations(projectId, 'architect', c.agent, false, {
+      this.withIntegrations(project, 'architect', c.agent, false, {
         cwd: project.repos[0],
         model: c.model ?? undefined,
         effort: c.effort ?? undefined,
@@ -621,10 +621,17 @@ export class Orchestrator {
     })
   }
 
-  /** Empty project chat; the first send starts the agent. */
-  newChat(projectId: string) {
-    this.store.project(projectId)
-    return this.store.createSession({ projectId, taskId: null, role: 'chat', agent: this.roleChoice(projectId, 'chat').agent, status: 'idle', title: 'New topic' }).id
+  /**
+   * Empty topic of the project, or with `projectId` null of workspace `workspaceId` without a project; the first send
+   * starts the agent. Rules may label it (autoLabel) with the project it is opened from.
+   */
+  newChat(projectId: string | null, workspaceId?: string) {
+    const wid = projectId ? this.store.project(projectId).workspaceId : workspaceId
+    if (!wid) throw new Error('A topic without a project needs a workspace')
+    const scope = projectId ? this.store.project(projectId) : this.store.workspace(wid)
+    const id = this.store.createSession({ projectId, workspaceId: wid, taskId: null, role: 'chat', agent: this.roleChoice(scope, 'chat').agent, status: 'idle', title: 'New topic' }).id
+    this.store.labels.autoLabel(`topic:${id}`, { openedFrom: projectId })
+    return id
   }
 
   /**
@@ -641,7 +648,7 @@ export class Orchestrator {
     if (isSubagent(parent)) throw new Error('A subagent is read-only: it starts no sessions')
     if (role !== null && !CHILD_ROLES.includes(role)) throw new Error(`role must be one of ${CHILD_ROLES.join(', ')}, or none for a general session`)
     const text = brief.trim()
-    const agent = this.roleChoice(parent.projectId, runRole({ role })).agent
+    const agent = this.roleChoice(this.store.sessionScope(parent), runRole({ role })).agent
     if (fork) {
       // Only Claude Code forks a session; Codex's resume would write into the parent's own.
       if (parent.agent !== 'claude-code' || !(point?.of ?? parent.nativeSessionId)) throw new Error('This session has no agent session to fork yet: send it a message first (Claude Code only)')
@@ -651,6 +658,7 @@ export class Orchestrator {
     const baseAt = point?.at ?? lastReplyId(parent.items)
     const child = this.store.createSession({
       projectId: parent.projectId,
+      workspaceId: parent.workspaceId,
       taskId: null,
       role,
       agent,
@@ -836,8 +844,9 @@ export class Orchestrator {
    * Throws when the text is not a link.
    */
   async topicFromTicket(projectId: string, url: string): Promise<string> {
-    const { url: link } = ticketRef(url)
+    const { url: link, key } = ticketRef(url)
     const id = this.newChat(projectId)
+    if (key) this.store.labels.autoLabel(`topic:${id}`, { ticketKeys: [key], openedFrom: projectId })
     await this.send(id, link)
     return id
   }
@@ -1605,9 +1614,9 @@ export class Orchestrator {
     }
     const scratch = await this.ensureScratch(session)
     const position = subtasksOf(task.id, this.store.data.tasks).findIndex((t) => t.id === stepId) + 1
-    const text = reviewPrompt(this.store.project(task.projectId), task, this.store.task(stepId), position, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
+    const text = reviewPrompt(this.store.scopeOf(`work:${stepId}`), task, this.store.task(stepId), position, fresh.work!, now, round, withContext, this.store.data.docs[task.id] ?? '', fact, scratch)
     // A Codex developer's PRs are reviewed on Claude Code (resolveChoice): say so where the review runs.
-    const refused = agentAllowed('reviewer', this.roleChoice(task.projectId, 'developer').agent)
+    const refused = agentAllowed('reviewer', this.roleChoice(this.store.scopeOf(`work:${stepId}`), 'developer').agent)
     if (!refused.ok) this.store.pushItem(session.id, { kind: 'notice', text: `${refused.why} This review runs on Claude Code.`, at: Date.now() })
     this.store.pushItem(session.id, { kind: 'job', title: `Agent review · round ${round}`, text, at: Date.now() })
     return this.run(session, text)
@@ -1668,7 +1677,7 @@ export class Orchestrator {
     const review: AgentReview = { verdict, findings, ...(report ? { report } : {}), round: pending.round, heads: pending.heads, withContext: pending.withContext, at: Date.now() }
     this.store.updateTask(stepId, { review })
     this.store.logEvent({ projectId: step.projectId, taskId: step.parentId, taskKey: step.key, kind: 'review', text: `Agent review: ${verdict}${findings.length ? ` · ${findings.length} finding${findings.length > 1 ? 's' : ''}` : ''}` })
-    return reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) === 'developer'
+    return reviewOutcome(review, playbookOf(this.store.scopeOf(`work:${step.id}`)).reviewRounds) === 'developer'
       ? 'Recorded: the findings go to the developer, and you review again once they push. Stop here.'
       : 'Recorded: the user gets your verdict. Stop here.'
   }
@@ -1692,7 +1701,7 @@ export class Orchestrator {
       }
       return
     }
-    const toDeveloper = reviewOutcome(review, playbookOf(this.store.project(step.projectId)).reviewRounds) === 'developer'
+    const toDeveloper = reviewOutcome(review, playbookOf(this.store.scopeOf(`work:${step.id}`)).reviewRounds) === 'developer'
     const n = review.findings.length
     this.ownerEvent(
       stepId,
@@ -1718,7 +1727,7 @@ export class Orchestrator {
     const project = this.store.project(projectId)
     // The review runs on the asking topic's agent, else the chat's; Codex can't be held to "nothing goes to the PR".
     const asker = by ? this.store.data.sessions.find((s) => s.id === by) : undefined
-    const allowed = agentAllowed('pr-review', (asker ? this.choice(asker) : this.roleChoice(projectId, 'chat')).agent)
+    const allowed = agentAllowed('pr-review', (asker ? this.choice(asker) : this.roleChoice(project, 'chat')).agent)
     if (!allowed.ok) throw new Error(`${allowed.why} Pick Claude Code ${asker?.choice ? "for this topic" : "for Project chat in the project's settings"} to review PRs.`)
     const info = await prInfo(parsePrUrl(url).url)
     if (info.state !== 'OPEN') throw new Error(`${info.repo}#${info.number} is ${info.state.toLowerCase()}: only an open PR is reviewed`)
@@ -2036,7 +2045,7 @@ export class Orchestrator {
     if (!job && session.parkedAt) session.parkedAt = null
     // Only chats of the session's project: their summaries go into its prompt.
     const tasks = this.store.data.tasks.filter((t) => t.projectId === session.projectId)
-    const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId)
+    const sessions = this.store.data.sessions.filter((s) => s.projectId === session.projectId && s.workspaceId === session.workspaceId)
     refs = job ? [] : uniqueRefs(refs).filter((r) => resolveRef(r, tasks, sessions))
     // What the user wrote in a turn stopped before any reply: the CLI dropped it, so it goes first now.
     const unheard = job ? [] : unheardBeforeStop(session.items)
@@ -2091,9 +2100,12 @@ export class Orchestrator {
     if (!item) throw new Error('No such integration card')
     if (mode !== 'ask' && mode !== 'reads' && mode !== 'auto') throw new Error('mode must be ask, reads or auto')
     if (mode !== 'auto' && item.role === 'architect') throw new Error('Only Auto works for the architect: it has no chat to ask in')
-    const project = this.store.project(session.projectId)
-    const integrations = project.integrations ?? {}
-    this.store.updateProject(project.id, { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } })
+    // A topic without a project turns it on in its workspace.
+    const owner = session.projectId ? this.store.project(session.projectId) : this.store.workspace(session.workspaceId)
+    const integrations = owner.integrations ?? {}
+    const patch = { integrations: { ...integrations, [item.role]: { ...integrations[item.role], [item.integrationId]: mode } } }
+    if (session.projectId) this.store.updateProject(owner.id, patch)
+    else this.store.updateWorkspace(owner.id, patch)
     // Every card of this integration and role in the session is answered by it.
     for (const i of session.items) {
       if (i.kind !== 'integration' || i.integrationId !== item.integrationId || i.role !== item.role) continue
@@ -2275,7 +2287,7 @@ export class Orchestrator {
 
   private newSession(taskId: string, role: AgentRole, stepId: string | null = null) {
     const projectId = this.store.task(taskId).projectId
-    return this.store.createSession({ projectId, taskId, stepId, role, agent: this.roleChoice(projectId, role).agent, status: 'running' })
+    return this.store.createSession({ projectId, taskId, stepId, role, agent: this.roleChoice(this.store.scopeOf(`work:${stepId ?? taskId}`), role).agent, status: 'running' })
   }
 
   private mcpConfig(name: string, env: Record<string, string>) {
@@ -2296,7 +2308,7 @@ export class Orchestrator {
   }
 
   private spec(session: AgentSession): Omit<RunSpec, 'prompt'> {
-    const project = this.store.project(session.projectId)
+    const project = this.store.sessionScope(session)
     const [first = homedir(), ...rest] = project.repos
     const arch = project.enforceArchitecture ? `\n\n${ARCH_RULES}` : ''
     if (session.role === 'chat' || !session.taskId) {
@@ -2398,8 +2410,8 @@ export class Orchestrator {
   /** Where a session's scratch worktrees live: one dir per session, so two runs never share one. */
   /** A session's scratch worktrees: in the .mag of the project's first repository. */
   private scratchRoot(session: AgentSession) {
-    const repo = this.store.project(session.projectId).repos[0]
-    return repo ? join(magDir(repo), 'scratch', session.id) : join(this.paths.worktreesDir, session.projectId, 'scratch', session.id)
+    const repo = this.store.sessionScope(session).repos[0]
+    return repo ? join(magDir(repo), 'scratch', session.id) : join(this.paths.worktreesDir, session.projectId ?? session.workspaceId, 'scratch', session.id)
   }
 
   /**
@@ -2479,7 +2491,7 @@ export class Orchestrator {
    * the agent says so and asks for them (offIntegrationsBlock). Codex has no integrations; a chat's or groomer's on Codex
    * writes for the user through publish (codexPublishBlock).
    */
-  private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(projectId: string, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {
+  private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(project: Project, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {
     // Codex has no permission prompt: an asking role's writes go through publish, whose call waits for the user.
     if (agent !== 'claude-code')
       return {
@@ -2488,7 +2500,6 @@ export class Orchestrator {
         env: { ...spec.env, ...APPROVAL_ENV },
       }
     const known = this.store.data.integrations.filter((i) => i.id !== MAG_MCP_ID)
-    const project = this.store.project(projectId)
     const rules = integrationRules(project, role, known)
     const ask = canAsk ? rules.ask : []
     const off = offIntegrationsBlock(project, role, known, canAsk)
@@ -2512,7 +2523,7 @@ export class Orchestrator {
 
   /** One process for this turn; the run ends when it exits. */
   private runOnce(session: AgentSession, prompt: string) {
-    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
+    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId ?? '', MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
 
@@ -2533,7 +2544,7 @@ export class Orchestrator {
 
     const onEvent = this.onEvent(session)
 
-    const spec = this.withIntegrations(session.projectId, runRole(session), session.agent, true, this.spec(session))
+    const spec = this.withIntegrations(this.store.sessionScope(session), runRole(session), session.agent, true, this.spec(session))
     // A forking session's first run (a reviewer's, a branched topic's) forks; later runs resume the fork.
     const fork = !session.nativeSessionId && !!session.forkOf && session.agent === 'claude-code'
     const resumeId = session.nativeSessionId ?? (fork ? session.forkOf! : undefined)
@@ -2759,10 +2770,10 @@ export class Orchestrator {
       session.agent = c.agent
       session.nativeSessionId = null
     }
-    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId, MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
+    const env: Record<string, string> = { MAG_PROJECT_ID: session.projectId ?? '', MAG_SESSION_ID: session.id, MAG_ROLE: runRole(session) }
     if (session.taskId) env.MAG_TASK_ID = session.taskId
     const mcpConfigPath = this.mcpConfig(session.id, env)
-    const spec = this.withIntegrations(session.projectId, runRole(session), session.agent, true, this.spec(session))
+    const spec = this.withIntegrations(this.store.sessionScope(session), runRole(session), session.agent, true, this.spec(session))
     const who = { session: session.id, role: session.role, agent: session.agent, model: c.model, effort: c.effort }
     const openedAt = Date.now()
     // A branched topic's first process forks its parent's session; later ones resume the fork.
@@ -2938,7 +2949,7 @@ export class Orchestrator {
     const { sessions } = this.store.data
     const at = summaryCovers(item, sessions)
     const prompt = summaryPrompt(summarySource(item, sessions, kind === 'task' ? this.store.data.docs[id] : ''))
-    const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.roleChoice(item.projectId, 'chat').agent)
+    const agent = 'items' in item ? item.agent : (sessions.find((s) => s.id === item.ownerSessionId)?.agent ?? this.roleChoice(this.store.scopeOf(`work:${item.id}`), 'chat').agent)
     const adapter = adapters[agent]
     let text = ''
     let failed = false
@@ -2978,7 +2989,7 @@ export class Orchestrator {
 
   /** Task sessions only: project chats stay out of the log. */
   private logSessionEvent(session: AgentSession, kind: 'agent_started' | 'agent_failed', text: string) {
-    if (!session.taskId) return
+    if (!session.taskId || !session.projectId) return
     const task = this.store.data.tasks.find((t) => t.id === session.taskId)
     this.store.logEvent({ projectId: session.projectId, taskId: session.taskId, taskKey: task?.key ?? null, kind, text })
   }

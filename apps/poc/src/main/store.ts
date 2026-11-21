@@ -1,10 +1,11 @@
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { digestOf, type SessionDigest, ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task, type Workspace } from '@mag/core'
+import { workspaceAsProject, projectGroupId, digestOf, type SessionDigest, ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task, type Workspace, type ItemRef, type ItemLabel, type Label, type LabelGroup } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 import { log } from './log.ts'
+import { createLabels, type Labels } from './core/services/labels/index.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
 
@@ -24,6 +25,10 @@ interface Data {
   inboxStates: InboxState[]
   /** Inbox items added by sources without state of their own (see services/inbox); not sent to the renderer. */
   inboxItems: AddedItem[]
+  /** Label groups, labels and the labels of items (workspaces-and-labels-project-as.2); kept by `Store.labels`. */
+  labelGroups: LabelGroup[]
+  labels: Label[]
+  itemLabels: ItemLabel[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
   /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
@@ -180,7 +185,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -247,7 +252,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -260,6 +265,8 @@ export class Store {
   /** The digest stored with each session's row, by session id. */
   private digests = new Map<string, SessionDigest>()
   private itemRows = new Map<string, ItemRows>()
+  /** Label groups, labels and item labels over `data`; settings of an item resolve through it. */
+  labels!: Labels
 
   constructor(
     private file: string,
@@ -268,6 +275,9 @@ export class Store {
     const stored = backend === 'json' ? this.readFile() : this.openDb()
     if (stored) this.data = { ...this.data, ...stored }
     this.data.workspaces ??= []
+    this.data.labelGroups ??= []
+    this.data.labels ??= []
+    this.data.itemLabels ??= []
     this.data.events ??= []
     this.data.integrations ??= []
     this.data.inboxStates ??= []
@@ -317,9 +327,16 @@ export class Store {
     }
     for (const c of Object.values(this.data.canvases)) c.kind ??= 'html'
     for (const s of this.data.sessions) {
-      s.projectId ??= this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
+      if (s.projectId === undefined) s.projectId = this.data.tasks.find((t) => t.id === s.taskId)?.projectId ?? ''
       s.stepId ??= null
     }
+    this.labels = createLabels(this.data, {
+      workspaces: () => this.data.workspaces,
+      projects: () => this.data.projects,
+      item: (ref) => this.itemPlace(ref),
+      setProject: (ref, pid) => this.moveItem(ref, pid),
+      updateProject: (pid, patch) => this.updateProject(pid, patch),
+    }, () => this.changed())
     this.migrate()
   }
 
@@ -372,7 +389,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)
@@ -435,6 +452,7 @@ export class Store {
     () => this.migrateToReadsAuto(),
     () => this.migrateToEffort(),
     () => this.migrateToWorkspaces(WORKSPACE_MAP),
+    () => this.migrateToLabels(),
   ]
 
   /** Runs the migrations this file has not had yet, each once, and records them in schemaVersion. */
@@ -502,6 +520,17 @@ export class Store {
     if (!this.data.workspaces.length) named(map.fallback)
     for (const p of this.data.projects) this.addRepos(p)
     if (JSON.stringify([this.data.workspaces, this.data.projects.map((p) => p.workspaceId)]) !== before) this.changed()
+  }
+
+  /**
+   * Labels (workspaces-and-labels-project-as.2): each workspace gets its Project group, each session the workspace of
+   * its project (else the first one).
+   */
+  private migrateToLabels() {
+    for (const w of this.data.workspaces) this.labels.ensureSystem(w.id)
+    const first = this.data.workspaces[0]?.id ?? ''
+    for (const s of this.data.sessions) s.workspaceId ||= this.data.projects.find((p) => p.id === s.projectId)?.workspaceId ?? first
+    this.changed()
   }
 
   /** A choice gets an effort (model-picker-full-model-list.1): none stored = the provider's default. */
@@ -904,6 +933,67 @@ export class Store {
     return s
   }
 
+  /** Where an item is, for labels: null when there is no such topic or work. */
+  private itemPlace(ref: ItemRef): { workspaceId: string; projectId: string | null; doc?: { text: string; stepKey?: string } } | null {
+    const [kind, iid] = [ref.slice(0, ref.indexOf(':')), ref.slice(ref.indexOf(':') + 1)]
+    if (kind === 'topic') {
+      const s = this.data.sessions.find((x) => x.id === iid)
+      return s ? { workspaceId: s.workspaceId, projectId: s.projectId } : null
+    }
+    const t = this.data.tasks.find((x) => x.id === iid)
+    const p = t && this.data.projects.find((x) => x.id === t.projectId)
+    if (!t || !p) return null
+    return { workspaceId: p.workspaceId, projectId: t.projectId, doc: { text: this.data.docs[t.parentId ?? t.id] ?? '', ...(t.parentId && { stepKey: t.key }) } }
+  }
+
+  /** A topic moves to project `pid` (null: none); a work stays in its project. */
+  private moveItem(ref: ItemRef, pid: string | null) {
+    if (!ref.startsWith('topic:')) throw new Error('A work stays in its project')
+    this.moveTopic(ref.slice('topic:'.length), pid)
+  }
+
+  /**
+   * Moves a topic, with the sessions under it and the canvases drawn in them, to project `pid` of its workspace (null:
+   * no project). Refused for a session under a topic and for a topic that owns a work or a review: they stay with it.
+   */
+  moveTopic(sid: string, pid: string | null) {
+    const s = this.session(sid)
+    if (s.taskId || s.parentId || s.role !== 'chat') throw new Error('Only a topic moves between projects')
+    if (s.projectId === pid) return
+    if (pid !== null && this.project(pid).workspaceId !== s.workspaceId) throw new Error('A topic moves between projects of its workspace')
+    const tree = sessionTree(sid, this.data.sessions)
+    const ids = new Set(tree.map((x) => x.id))
+    const owned = this.data.tasks.filter((t) => !t.parentId && (ids.has(t.ownerSessionId ?? '') || tree.some((x) => x.reviewOf === t.id)))
+    if (owned.length) throw new Error(`The topic owns ${owned.map((t) => t.key).join(', ')}: it stays in their project`)
+    for (const x of tree) x.projectId = pid
+    for (const c of Object.values(this.data.canvases)) if (c.sessionId && ids.has(c.sessionId) && !c.taskId) c.projectId = pid ?? ''
+    this.changed()
+  }
+
+  /**
+   * The project an item's runs read their settings from: its project, or for a topic without one a project made of its
+   * workspace (id ''), with notes, playbook, agents and integrations resolved along its labels (Labels.settings); a
+   * topic without a project gets its workspace's repos.
+   */
+  scopeOf(ref: ItemRef): Project {
+    const place = this.itemPlace(ref)
+    if (!place) throw new Error(`No item ${ref}`)
+    const s = this.labels.settings(ref)
+    const base = place.projectId ? this.project(place.projectId) : this.workspaceProject(place.workspaceId)
+    return { ...base, notes: s.notes, playbook: s.playbook, agents: s.agents, integrations: s.integrations, repos: place.projectId ? base.repos : s.repos }
+  }
+
+  private workspaceProject(wid: string): Project {
+    return workspaceAsProject(this.workspace(wid))
+  }
+
+  /** The settings scope of a session: its work's (a step's own), else its topic's. */
+  sessionScope(session: Pick<AgentSession, 'id' | 'taskId' | 'stepId' | 'projectId' | 'workspaceId'>): Project {
+    if (session.taskId) return this.scopeOf(`work:${session.stepId ?? session.taskId}`)
+    if (!this.data.sessions.some((x) => x.id === session.id)) return session.projectId ? this.project(session.projectId) : this.workspaceProject(session.workspaceId)
+    return this.scopeOf(`topic:${session.id}`)
+  }
+
   /** Canvases for the renderer: without the HTML, with diagram data (it is small). */
   canvasList() {
     return Object.values(this.data.canvases).map(({ html: _, ...meta }) => meta)
@@ -985,6 +1075,8 @@ export class Store {
     const n = this.workspaceName(name)
     const w: Workspace = { id: id(), name: n, profile: '', notes: '', repos: [], playbook: null, agents: {}, integrations: {}, createdAt: Date.now() }
     this.data.workspaces.push(w)
+    // Before labels exist (an early migration), migrateToLabels makes it.
+    this.labels?.ensureSystem(w.id)
     return w
   }
 
@@ -1006,6 +1098,19 @@ export class Store {
     }
     Object.assign(w, next, { id: wid, createdAt: w.createdAt })
     this.changed()
+  }
+
+  /**
+   * A project moved from workspace `from`: its sessions go with it, its Project label's rules to the new Project group;
+   * its items' labels of the old workspace's groups are dropped.
+   */
+  private moveLabels(p: Project, from: string) {
+    for (const s of this.data.sessions) if (s.projectId === p.id) s.workspaceId = p.workspaceId
+    for (const l of this.data.labels) if (l.id === p.id && l.groupId === projectGroupId(from)) l.groupId = projectGroupId(p.workspaceId)
+    const refs = new Set([...this.data.sessions.filter((s) => s.projectId === p.id).map((s) => `topic:${s.id}`), ...this.data.tasks.filter((t) => t.projectId === p.id).map((t) => `work:${t.id}`)])
+    const old = new Set(this.data.labels.filter((l) => this.data.labelGroups.some((g) => g.id === l.groupId && g.workspaceId === from)).map((l) => l.id))
+    this.data.itemLabels = this.data.itemLabels.filter((r) => !(refs.has(r.itemRef) && old.has(r.labelId)))
+    this.labels.ensureSystem(p.workspaceId)
   }
 
   /** The project's repos join its workspace's. */
@@ -1067,7 +1172,9 @@ export class Store {
   updateProject(pid: string, patch: Partial<Project>) {
     if (patch.workspaceId !== undefined) this.workspace(patch.workspaceId)
     const p = this.project(pid)
+    const from = p.workspaceId
     Object.assign(p, patch, { id: pid })
+    if (p.workspaceId !== from) this.moveLabels(p, from)
     this.addRepos(p)
     this.changed()
   }
@@ -1101,6 +1208,7 @@ export class Store {
       updatedAt: now,
     }
     this.data.tasks.push(t)
+    if (!parent) this.autoLabelWork(t.id)
     this.changed()
     return t
   }
@@ -1126,7 +1234,17 @@ export class Store {
     if ('needsInput' in patch && !('needsQuestions' in patch)) patch = { ...patch, needsQuestions: null }
     Object.assign(t, patch, { id: tid, updatedAt: Date.now() })
     for (const e of taskChangeEvents(prev, t)) this.logEvent(e)
+    if (patch.tickets || patch.work) this.autoLabelWork(t.parentId ?? t.id)
     this.changed()
+  }
+
+  /** Rules label a work from its own signals: its tickets' keys, its and its steps' repositories, its project. */
+  private autoLabelWork(tid: string) {
+    const t = this.task(tid)
+    const steps = this.data.tasks.filter((x) => x.parentId === t.id)
+    const repos = [...new Set([t, ...steps].flatMap((x) => (x.work?.repos ?? []).map((r) => r.repo)))]
+    const ticketKeys = (t.tickets ?? []).flatMap((k) => (k.key ? [k.key] : []))
+    this.labels.autoLabel(`work:${t.id}`, { repos, ticketKeys, openedFrom: t.projectId })
   }
 
   /** Appends an item to a session's chat and saves. */
@@ -1184,6 +1302,7 @@ export class Store {
   /** Removes a task with its doc, canvases and sessions; its events stay in the log. */
   deleteTask(tid: string) {
     this.task(tid)
+    this.labels.forget(`work:${tid}`)
     this.data.tasks = this.data.tasks.filter((t) => t.id !== tid)
     this.data.sessions = this.data.sessions.filter((s) => s.taskId !== tid)
     delete this.data.docs[tid]
@@ -1208,15 +1327,19 @@ export class Store {
   /** An empty chat topic of the project, run by the project's chat agent. */
   private newTopic(projectId: string, createdAt: number): AgentSession {
     const topic: AgentSession = {
-      id: id(), projectId, taskId: null, stepId: null, role: 'chat', agent: resolveChoice(this.project(projectId), 'chat').agent,
+      id: id(), workspaceId: this.project(projectId).workspaceId, projectId, taskId: null, stepId: null, role: 'chat', agent: resolveChoice(this.project(projectId), 'chat').agent,
       status: 'idle', title: 'New topic', createdAt, items: [], nativeSessionId: null,
     }
     this.data.sessions.push(topic)
     return topic
   }
 
-  createSession(s: Omit<AgentSession, 'id' | 'createdAt' | 'items' | 'nativeSessionId'>): AgentSession {
-    const full: AgentSession = { ...s, id: id(), createdAt: Date.now(), items: [], nativeSessionId: null }
+  /** A new session; without `workspaceId`, its project's. */
+  createSession(s: Omit<AgentSession, 'id' | 'createdAt' | 'items' | 'nativeSessionId' | 'workspaceId'> & { workspaceId?: string }): AgentSession {
+    const workspaceId = s.workspaceId ?? (s.projectId ? this.project(s.projectId).workspaceId : null)
+    if (!workspaceId) throw new Error('A session without a project needs a workspace')
+    this.workspace(workspaceId)
+    const full: AgentSession = { ...s, workspaceId, id: id(), createdAt: Date.now(), items: [], nativeSessionId: null }
     this.data.sessions.push(full)
     this.changed()
     return full
@@ -1261,6 +1384,7 @@ export class Store {
   deleteSession(sid: string) {
     this.session(sid)
     const gone = new Set(sessionTree(sid, this.data.sessions).map((s) => s.id))
+    for (const g of gone) this.labels.forget(`topic:${g}`)
     this.data.sessions = this.data.sessions.filter((s) => !gone.has(s.id))
     this.changed()
   }

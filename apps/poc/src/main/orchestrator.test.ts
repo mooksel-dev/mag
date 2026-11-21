@@ -3221,3 +3221,15 @@ test('a chat on Codex writes for the user only through publish, whose call may w
     adapters.codex = codex
   }
 })
+
+test('a topic without a project (workspaces-and-labels-project-as.2): made in a workspace, it runs in the workspace’s repos with its notes', async () => {
+  const { store, orch, project, dir } = setup()
+  assert.throws(() => orch.newChat(null), /needs a workspace/)
+  store.updateWorkspace(project.workspaceId, { notes: 'Workspace knowledge' })
+  const id = orch.newChat(null, project.workspaceId)
+  assert.deepEqual([store.session(id).projectId, store.session(id).workspaceId], [null, project.workspaceId])
+  await orch.send(id, 'hi')
+  const spec = specs.at(-1)!
+  assert.equal(spec.cwd, dir)
+  assert.match(spec.appendSystemPrompt ?? '', /## Project notes\nWorkspace knowledge/)
+})

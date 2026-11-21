@@ -1,11 +1,14 @@
 // Contract between the renderer and the main process. Types only.
-import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
+import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ItemLabel, ItemRef, Label, LabelGroup, LabelGroupInput, LabelInput, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
   workspaces: Workspace[]
+  labelGroups: LabelGroup[]
+  labels: Label[]
+  itemLabels: ItemLabel[]
   projects: Project[]
   tasks: Task[]
   /** Without items: a window loads the items of a session it shows (sessionItems) and follows onSessionItem. */
@@ -210,7 +213,16 @@ export interface MagApi {
   /** refs: chats the message references ("@"); the agent gets their summaries with it. */
   send(sessionId: string, text: string, attachments?: Attachment[], refs?: ChatRef[]): Promise<void>
   /** New project chat; returns its session id. */
-  newChat(projectId: string): Promise<string>
+  /** A topic of the project; with projectId null, one without a project in workspace `workspaceId`. */
+  newChat(projectId: string | null, workspaceId?: string): Promise<string>
+  /** Puts a label on an item (by the user); in an exclusive group it replaces the other. A Project label moves a topic. */
+  setLabel(ref: ItemRef, labelId: string): Promise<void>
+  /** Takes a label off; the Project label leaves the topic without a project. */
+  removeLabel(ref: ItemRef, labelId: string): Promise<void>
+  upsertLabelGroup(group: LabelGroupInput): Promise<LabelGroup>
+  deleteLabelGroup(groupId: string): Promise<void>
+  upsertLabel(label: LabelInput): Promise<Label>
+  deleteLabel(labelId: string): Promise<void>
   /**
    * A child session of a topic or of a session under it (topics-a-tree-of-agent.2): `brief` its first message, the
    * user's (empty: it waits for one); `role` a preset or null; `fork` starts it with all of the parent's conversation

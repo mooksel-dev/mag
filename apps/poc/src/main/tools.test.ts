@@ -817,3 +817,17 @@ test('review_pr passes again only when asked (review-v3-concise-design-first.3)'
   await tools({ projectId: project.id, sessionId: topic.id }, 'review_pr', { url: 'https://github.com/acme/api/pull/1', again: true })
   assert.deepEqual(calls, [`review_pr https://github.com/acme/api/pull/1 by ${topic.id}`, `review_pr https://github.com/acme/api/pull/1 by ${topic.id} again`])
 })
+
+test('a topic without a project: tools work in its workspace; what needs a project says how to get one (workspaces-and-labels-project-as.2)', async () => {
+  const { store, project, tools } = setup()
+  const topic = store.createSession({ projectId: null, workspaceId: project.workspaceId, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const call = (name: string, args: Record<string, unknown> = {}) => tools({ sessionId: topic.id }, name, args)
+  assert.deepEqual(JSON.parse(await call('list_tasks')).tasks, [])
+  await assert.rejects(call('create_work', { title: 'x' }), /This topic has no project, and create_work needs one: ask the user to put the topic into a project/)
+  await assert.rejects(call('add_idea', { text: 'x' }), /has no project/)
+  assert.equal(await call('update_notes', { notes: 'for the workspace' }), "The workspace's notes updated.")
+  assert.equal(store.workspace(project.workspaceId).notes, 'for the workspace')
+  assert.equal(store.project(project.id).notes, '')
+  store.moveTopic(topic.id, project.id)
+  assert.match(await call('create_work', { title: 'Now here' }), /Created now-here/)
+})

@@ -252,8 +252,9 @@ export function createTools(store: Store, actions: ToolActions): ToolHandler {
     const def = TOOL_DEFS.find((d) => d.name === name)
     if (def && role && !toolForRole(def, role)) throw new Error(`${name} is not available to the ${role} agent`)
     const ctx = ownerContext(store, callCtx, name, args, role)
-    const projectId = ctx.taskId ? store.task(ctx.taskId).projectId : (ctx.projectId ?? '')
-    const shared = sharedTool(store, actions, store.project(projectId), ctx, name, args)
+    // A topic reads its settings along its labels; one without a project works in its workspace (sessionScope).
+    const scope = ctx.taskId ? store.project(store.task(ctx.taskId).projectId) : caller ? store.sessionScope(caller) : store.project(ctx.projectId ?? '')
+    const shared = sharedTool(store, actions, scope, ctx, name, args)
     if (shared !== undefined) return shared
     if (!ctx.taskId) throw new Error(`${name} needs a task`)
     const task = store.task(ctx.taskId)
@@ -926,6 +927,10 @@ function sharedTool(
     return t
   }
   const keyOf = (id: string) => tasks.find((t) => t.id === id)?.key ?? id
+  /** A topic without a project (project id ''): what needs one says how to get it. */
+  const needProject = () => {
+    if (!project.id) throw new Error(`This topic has no project, and ${name} needs one: ask the user to put the topic into a project (the Project label in its header), then call again.`)
+  }
   const withSubtasks = (t: Task): Task[] => [t, ...subtasksOf(t.id, tasks).flatMap(withSubtasks)]
 
   switch (name) {
@@ -977,6 +982,7 @@ function sharedTool(
       const steps = stepsArg(args.steps)
       const title = String(args.title ?? '').replace(/\s+/g, ' ').trim()
       if (!title) throw new Error('title is required')
+      needProject()
       if (plan && !md.trim()) throw new Error('plan: true needs the full doc')
       if (plan && !steps.length) throw new Error('plan: true needs steps: at least one { title, note?, start_manually? }')
       // The links are checked first: a bad one creates nothing.
@@ -1027,6 +1033,7 @@ function sharedTool(
       if (!session || runRole(session) !== 'chat') throw new Error('review_pr is for a project topic')
       const format = args.format == null || args.format === '' ? undefined : (args.format as ReviewFormat)
       if (format && !REVIEW_FORMATS.includes(format)) throw new Error(`format must be one of ${REVIEW_FORMATS.join(', ')}`)
+      needProject()
       return actions.reviewPr(project.id, String(args.url ?? ''), session.id, format, args.again === true).then((r) => r.job)
     }
 
@@ -1074,6 +1081,7 @@ function sharedTool(
       // A step's developer or reviewer found it in that step; a groomer or an owner topic in its work.
       const stepId = ctx.sessionId ? store.data.sessions.find((s) => s.id === ctx.sessionId)?.stepId : null
       const source = stepId ? store.task(stepId).key : ctx.taskId ? store.task(ctx.taskId).key : null
+      needProject()
       store.parkTopic(project.id, String(args.text ?? ''), source)
       return "Added to the project's ideas as a parked topic; the user decides if it becomes a work. Go on with yours."
     }
@@ -1126,10 +1134,12 @@ function sharedTool(
       return chatsTool(store, actions, project, ctx, name, args)
 
     case 'update_notes':
-      store.updateProject(project.id, { notes: String(args.notes ?? '') })
-      return 'Notes updated.'
+      if (project.id) store.updateProject(project.id, { notes: String(args.notes ?? '') })
+      else store.updateWorkspace(project.workspaceId, { notes: String(args.notes ?? '') })
+      return project.id ? 'Notes updated.' : "The workspace's notes updated."
 
     case 'run_architect':
+      needProject()
       actions.architect(project.id)
       return 'Architect started; the diagram updates when it finishes.'
 
@@ -1137,6 +1147,7 @@ function sharedTool(
       return project.architecture ? JSON.stringify(project.architecture, null, 2) : 'No architecture recorded yet.'
 
     case 'set_architecture':
+      needProject()
       return setArchitecture(store, project, args)
 
     case 'check_architecture': {

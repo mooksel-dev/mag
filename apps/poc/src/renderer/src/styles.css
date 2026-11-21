@@ -1179,3 +1179,14 @@ button.ghost:hover:not(:disabled) { background: var(--hover); }
 .fxmsg b:first-child { margin-top: 0; }
 .fxmsg ul { margin: 2px 0; padding-left: 18px; }
 .fxdoc { max-width: 600px; font-size: 13.5px; line-height: 1.65; padding-bottom: 120px; }
+
+/* Labels (workspaces-and-labels-project-as.2) */
+.labelchips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 0 1 auto; }
+.labelchip.muted { color: var(--muted); }
+.labelpop { left: 0; right: auto; flex-direction: column; gap: 10px; min-width: 220px; max-height: 60vh; overflow: auto; }
+.labelgroup { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; border: none; }
+.labelgroup legend { padding: 0 0 4px; font-weight: 600; font-size: var(--fs-xs); }
+.labelopt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.labeleditor .labelgroup { padding: 8px 0; border-top: 1px solid var(--line); }
+.labelrow { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 8px; }
+.labelrow input[type='color'] { width: 28px; height: 22px; padding: 0; border: none; background: none; }

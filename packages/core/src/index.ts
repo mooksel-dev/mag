@@ -16,6 +16,7 @@ import type { ChatRef } from './work-list.ts'
 import { sessionDigest, type SessionLike } from './session-header.ts'
 
 export * from './arch.ts'
+export * from './labels.ts'
 export * from './canvas.ts'
 export * from './canvases.ts'
 export * from './composer.ts'
@@ -77,6 +78,55 @@ export interface Workspace {
   /** As Project.integrations, for its projects. */
   integrations: Partial<Record<AgentRole, Record<string, IntegrationMode>>>
   createdAt: number
+}
+
+/** An item labels apply to (workspaces-and-labels-project-as.2): a topic (a root session) or a work or step, by id. */
+export type ItemRef = `topic:${string}` | `work:${string}`
+
+/** What a label matches on an item's own signals, never on a person; `value` compares case aside. */
+export interface MatchRule {
+  /** repo: a repository's path or folder name; jiraKey: a ticket key's prefix (PRVP); channel: #data-removal; openedFrom: a project's id or name. */
+  kind: 'repo' | 'jiraKey' | 'channel' | 'openedFrom'
+  value: string
+}
+
+export const MATCH_RULE_KINDS: MatchRule['kind'][] = ['repo', 'jiraKey', 'channel', 'openedFrom']
+
+/** Labels like Linear's: an exclusive group gives an item one label, a multi group several. */
+export interface LabelGroup {
+  id: string
+  workspaceId: string
+  /** Unique in its workspace, case aside. */
+  name: string
+  exclusive: boolean
+  /** project: the workspace's Project group, whose labels are its projects; null: the user's own group. */
+  system: 'project' | null
+  createdAt: number
+}
+
+/** A label of a group. A Project label's id is its project's; its name and color are the project's. */
+export interface Label {
+  id: string
+  groupId: string
+  name: string
+  /** Hex color. */
+  color: string
+  rules: MatchRule[]
+}
+
+/** A new group (no id) or a change to one. */
+export type LabelGroupInput = Pick<LabelGroup, 'workspaceId' | 'name' | 'exclusive'> & { id?: string }
+/** A new label (no id) or a change to one; a missing color or rules stay as they are (a new label: picked, none). */
+export type LabelInput = Pick<Label, 'groupId' | 'name'> & Partial<Pick<Label, 'color' | 'rules'>> & { id?: string }
+
+/** A label on an item; the Project label is the item's projectId instead. One row per item and label. */
+export interface ItemLabel {
+  /** `${itemRef}|${labelId}`: the key that keeps one row per item and label. */
+  id: string
+  itemRef: ItemRef
+  labelId: string
+  /** rule: set by autoLabel, which never replaces a user's label. */
+  by: 'rule' | 'user'
 }
 
 export interface Project {
@@ -1014,7 +1064,10 @@ export function approvalName(a: { tool: string; server?: string; input: unknown 
 
 export interface AgentSession {
   id: string
-  projectId: string
+  /** The workspace the session is in: its project's, or its own for a topic without a project. */
+  workspaceId: string
+  /** The session's Project label (workspaces-and-labels-project-as.2); null: a topic without a project. */
+  projectId: string | null
   /** null for project chats. */
   taskId: string | null
   /** Project chats: the first message until a title is generated after the first turn. */
@@ -1747,7 +1800,7 @@ export function inbox(tasks: Task[], sessions: SessionLike[]): InboxItem[] {
 }
 
 /** The inbox of one project: its tasks' items and the approvals in its sessions. */
-export function projectInbox(projectId: string, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
+export function projectInbox(projectId: string | null, tasks: Task[], sessions: SessionLike[]): InboxItem[] {
   return inbox(
     tasks.filter((t) => t.projectId === projectId),
     sessions.filter((s) => s.projectId === projectId),

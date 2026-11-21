@@ -415,7 +415,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   const lastCanvasAt = new Map<string, number>()
   items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
   // What its messages' canvas links may show: the project's canvases, as in the doc.
-  const shown = useMemo(() => canvases.filter((c) => c.projectId === session.projectId), [canvases, session.projectId])
+  const shown = useMemo(() => canvases.filter((c) => c.projectId === (session.projectId ?? '')), [canvases, session.projectId])
 
   // A turn's model, cost and duration go under its last reply, shown on hover.
   const metaAt = new Map<number, string>()
@@ -512,7 +512,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
         onSend={(text, att, refs) => mag.send(session.id, text, att, refs)}
         onStop={() => mag.stop(session.id)}
         chip={chip}
-        refsFrom={tasks && { projectId: session.projectId, tasks, sessions: sessions.filter((s) => s.projectId === session.projectId), self: self ?? { kind: 'topic', id: session.id } }}
+        refsFrom={tasks && { projectId: session.projectId ?? '', tasks, sessions: sessions.filter((s) => s.projectId === session.projectId && s.workspaceId === session.workspaceId), self: self ?? { kind: 'topic', id: session.id } }}
       />}
     </div>
     </CommandRunner.Provider>
