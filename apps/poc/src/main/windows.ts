@@ -49,10 +49,10 @@ export function createWindows(store: Store) {
     saveOpen()
   })
 
-  const load = (win: BrowserWindow, hash?: string) => {
-    if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL + (hash ? `#${hash}` : ''))
-    else win.loadFile(join(__dirname, '../renderer/index.html'), hash ? { hash } : undefined)
-  }
+  const load = (win: BrowserWindow, hash?: string): Promise<void> =>
+    process.env.ELECTRON_RENDERER_URL
+      ? win.loadURL(process.env.ELECTRON_RENDERER_URL + (hash ? `#${hash}` : ''))
+      : win.loadFile(join(__dirname, '../renderer/index.html'), hash ? { hash } : undefined)
 
   const base: BrowserWindowConstructorOptions = {
     icon: ICON,
@@ -159,7 +159,13 @@ export function createWindows(store: Store) {
     const view = { workspaceId, projectId: null }
     mains.set(win, view)
     win.setTitle(titleOf(view))
-    load(win, viewHash(view))
+    // A new hash alone navigates in the page: the preload, which reads the view once, would keep the old one.
+    const wc = win.webContents
+    const reload = () => wc.reload()
+    wc.once('did-navigate-in-page', reload)
+    wc.once('did-finish-load', () => wc.removeListener('did-navigate-in-page', reload))
+    // The reload aborts this load, which then fails with ERR_FAILED.
+    load(win, viewHash(view)).catch(() => {})
     saveOpen()
     changed()
   }
