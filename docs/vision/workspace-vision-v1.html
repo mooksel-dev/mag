@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mag: від інструмента розробника до робочого простору тімліда</title>
+<style>
+:root{
+  --bg:#0f1014;--panel:#16171d;--panel2:#1c1d25;--line:#2a2b36;--text:#e7e7ee;--mute:#9a9bab;--dim:#6c6d7d;
+  --acc:#8b8cf8;--acc2:#5d5ee0;--ok:#4cc38a;--warn:#e5b454;--bad:#ef6b6b;--blue:#5aa9f0;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-snap-type:y proximity}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,sans-serif}
+a{color:var(--acc)}
+.slide{min-height:100vh;scroll-snap-align:start;padding:72px 7vw 56px;display:flex;flex-direction:column;justify-content:center;border-bottom:1px solid var(--line)}
+.kicker{color:var(--acc);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:12px;margin-bottom:10px}
+h1{font-size:46px;line-height:1.1;margin:0 0 18px;letter-spacing:-.02em}
+h2{font-size:32px;line-height:1.15;margin:0 0 14px;letter-spacing:-.01em}
+h3{font-size:17px;margin:0 0 6px}
+p.lead{font-size:19px;color:var(--mute);max-width:820px;margin:0 0 26px}
+.grid{display:grid;gap:18px}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1000px){.g2,.g3,.g4{grid-template-columns:1fr}h1{font-size:34px}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.card p{margin:4px 0 0;color:var(--mute)}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mute);margin-right:4px}
+.tag.acc{border-color:var(--acc2);color:var(--acc)}.tag.ok{border-color:#2d6e50;color:var(--ok)}.tag.warn{border-color:#7a6430;color:var(--warn)}.tag.bad{border-color:#7a3434;color:var(--bad)}
+.before-after{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.ba-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-weight:600}
+.ba-h.b{color:var(--bad)}.ba-h.a{color:var(--ok)}
+ul.clean{margin:0;padding-left:18px;color:var(--mute)}ul.clean li{margin:4px 0}
+/* app mock */
+.app{display:grid;grid-template-columns:230px 1fr;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-height:420px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.app.three{grid-template-columns:230px 1fr 300px}
+.side{background:#121318;border-right:1px solid var(--line);padding:12px 10px;font-size:13px}
+.side .sec{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:12px 6px 6px}
+.side .it{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;color:var(--mute)}
+.side .it.on{background:var(--panel2);color:var(--text)}
+.side .it .n{margin-left:auto;background:var(--acc2);color:#fff;font-size:10px;border-radius:99px;padding:0 6px}
+.side .it .d{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.side .new{border-top:1px dashed var(--line);margin-top:6px;padding-top:6px}
+.ic{width:16px;text-align:center;opacity:.85}
+.main{padding:16px 18px;font-size:13px;overflow:hidden}
+.right{border-left:1px solid var(--line);padding:14px;font-size:12.5px;background:#14151b}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.top h4{margin:0;font-size:15px}
+.btn{display:inline-block;padding:5px 11px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px}
+.btn.p{background:var(--acc2);border-color:var(--acc2);color:#fff}
+.btn.g{background:transparent}
+.row{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:7px;background:var(--panel2)}
+.row .src{font-size:11px;color:var(--dim);min-width:58px}
+.row .t{flex:1}.row .t b{font-weight:600}.row .t div{color:var(--mute);font-size:12px}
+.row .acts{display:flex;gap:5px}
+.grp{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:12px 2px 6px}
+.doc{background:#121318;border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13px}
+.doc h5{margin:0 0 6px;font-size:14px}
+.claim{border-bottom:1px dotted var(--acc);cursor:help}
+.claim.bad{border-bottom-color:var(--bad)}
+.pill{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--mute)}
+.pub{border:1px solid var(--acc2);border-radius:10px;background:#17182a;padding:12px 14px}
+.slackprev{background:#1a1d21;border:1px solid #2c2f35;border-radius:8px;padding:10px 12px;font-size:13px;margin:8px 0}
+.slackprev .who{font-weight:700}.slackprev .ch{color:var(--dim);font-size:11px}
+.tl{border-left:2px solid var(--line);margin-left:6px;padding-left:12px}
+.tl div{margin:0 0 8px;position:relative;color:var(--mute)}
+.tl div:before{content:"";position:absolute;left:-17px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--acc2)}
+.flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 4px}
+.flow .st{padding:7px 12px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:13px}
+.flow .st.on{border-color:var(--acc2);color:var(--acc)}
+.flow .ar{color:var(--dim)}
+.phase{border-left:3px solid var(--acc2);padding-left:14px}
+.phase .w{color:var(--dim);font-size:12px}
+.note{color:var(--dim);font-size:12.5px;margin-top:12px}
+nav.dots{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:5}
+nav.dots a{width:9px;height:9px;border-radius:50%;background:var(--line);display:block}
+nav.dots a:hover{background:var(--acc)}
+.hint{position:fixed;left:16px;bottom:12px;color:var(--dim);font-size:11px}
+kbd{font:11px ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--mute)}
+code{font:12px ui-monospace,Menlo,monospace;background:var(--panel2);padding:1px 5px;border-radius:4px}
+.big{font-size:40px;font-weight:700;color:var(--acc);line-height:1}
+</style>
+</head>
+<body>
+
+<nav class="dots" id="dots"></nav>
+<div class="hint"><kbd>↑</kbd> <kbd>↓</kbd> або прокрутка</div>
+
+<!-- 1 -->
+<section class="slide" id="s1">
+  <div class="kicker">mag · бачення</div>
+  <h1>Від «агентів, що пишуть код»<br>до робочого простору тімліда</h1>
+  <p class="lead">Сьогодні mag добре веде одну історію: проблема → план → PR → рев'ю → мердж. Але більшість твоєї роботи — це не код: відповіді на запити, звіти, оцінки людей, рішення, 1:1. Ця презентація показує, як mag зміниться, щоб і ця робота мала свій дім, свій цикл перевірки і свою кнопку «готово».</p>
+  <div class="grid g4">
+    <div class="card"><div class="big">48</div><p>works за весь час — <b>усі</b> про код або рев'ю</p></div>
+    <div class="card"><div class="big">~70%</div><p>топіків — нерозробницька робота, яка жила в голих чатах</p></div>
+    <div class="card"><div class="big">5</div><p>HTML-файлів однієї оцінки — і питання «а який фінальний?»</p></div>
+    <div class="card"><div class="big">3×</div><p>«що ти робиш?» — коли агент сам постив на GitHub</p></div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="slide" id="s2">
+  <div class="kicker">Що болить сьогодні</div>
+  <h2>Чотири речі, які ми побачили у твоїх топіках</h2>
+  <div class="grid g2">
+    <div class="card"><h3>📤 Публікація без попередження</h3><p>Агент відповідає в PR, резолвить треди, постить у Slack — інколи без прев'ю. Пост у Slack не відредагуєш, а «покажи перед публікацією» доводиться просити щоразу.</p></div>
+    <div class="card"><h3>📄 Немає «фінальної версії»</h3><p>Звіт чи оцінка — це купа файлів і канвасів. Незрозуміло, що з цього результат, а що чернетка. Результат губиться в чаті.</p></div>
+    <div class="card"><h3>🧠 Правила живуть деінде</h3><p>Як писати ups/downs, як оцінювати інженера — це записано в пам'яті Claude Code іншого проєкту. mag про це не знає, і кожен раз доводиться пояснювати заново.</p></div>
+    <div class="card"><h3>⏰ «Відповім у понеділок» — і ніде не записано</h3><p>Запити зі Slack, ревʼю колег, обіцянки після зустрічей — mag не знає, що чекає саме на тебе, і не нагадає.</p></div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="slide" id="s3">
+  <div class="kicker">Головна ідея</div>
+  <h2>У будь-якої роботи є результат — і він проходить рев'ю, як PR</h2>
+  <p class="lead">Новий тип результату — <b>Deliverable</b>: звіт, оцінка, рішення, відповідь у Slack, тікет, план 1:1. Він живе так само, як код: чернетка, перевірка, твій погляд, публікація.</p>
+  <div class="flow">
+    <span class="st">✍️ Чернетка</span><span class="ar">→</span>
+    <span class="st">🔍 Перевірка агентом</span><span class="ar">→</span>
+    <span class="st on">👀 Твоє рев'ю</span><span class="ar">→</span>
+    <span class="st">✅ Publish / Final</span>
+  </div>
+  <div class="grid g3" style="margin-top:22px">
+    <div class="card"><span class="tag">код</span><h3 style="margin-top:8px">PR → Merge</h3><p>як і зараз, нічого не змінюється</p></div>
+    <div class="card"><span class="tag acc">документ</span><h3 style="margin-top:8px">Чернетка → Final</h3><p>звіт, оцінка, рішення — з версіями і однією фінальною</p></div>
+    <div class="card"><span class="tag acc">повідомлення</span><h3 style="margin-top:8px">Прев'ю → Publish</h3><p>Slack, Jira, коментар у PR — тільки після твого «так»</p></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="slide" id="s4">
+  <div class="kicker">Новий сайдбар</div>
+  <h2>Workspace над проєктами</h2>
+  <p class="lead">Зверху з'являється твій особистий рівень — спільний для всіх проєктів. Проєкти лишаються як є; будь-який з них можна позначити як команду.</p>
+  <div class="app">
+    <div class="side">
+      <div class="sec">Workspace</div>
+      <div class="it on"><span class="ic">📥</span>Inbox<span class="n">7</span></div>
+      <div class="it"><span class="ic">👥</span>People</div>
+      <div class="it"><span class="ic">🎙</span>Meetings</div>
+      <div class="it"><span class="ic">🔁</span>Routines</div>
+      <div class="it"><span class="ic">📚</span>Library</div>
+      <div class="it"><span class="ic">💬</span>Мої топіки</div>
+      <div class="sec">Проєкти · Aura</div>
+      <div class="it"><span class="d" style="background:var(--blue)"></span>Aura Data Removal <span class="tag" style="margin-left:auto">команда</span></div>
+      <div class="it"><span class="d" style="background:var(--warn)"></span>Money Problems <span class="tag" style="margin-left:auto">команда</span></div>
+      <div class="sec">Personal</div>
+      <div class="it"><span class="d"></span>mag</div>
+      <div class="it"><span class="d"></span>synapse</div>
+    </div>
+    <div class="main">
+      <div class="grid g2">
+        <div class="card"><h3>📥 Inbox</h3><p>Усе, що чекає саме на тебе, з усіх проєктів: питання агентів, відповіді в PR, запити зі Slack, чернетки звітів.</p></div>
+        <div class="card"><h3>👥 People</h3><p>Хто є хто: GitHub, Slack, Jira і імена в зустрічах — одна людина. Історія 1:1, відкриті домовленості.</p></div>
+        <div class="card"><h3>🔁 Routines</h3><p>Регулярна робота за розкладом: щотижневий ups/downs, статистика PR, дайджест по командах.</p></div>
+        <div class="card"><h3>📚 Library</h3><p>Фінальні документи і рішення. Одна версія — фінальна, решта в історії.</p></div>
+      </div>
+      <p class="note">«Мої топіки» — розмови без проєкту: оцінка людини, крос-командний звіт, особисте. Не треба більше класти їх «у mag, бо більше нікуди».</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4b -->
+<section class="slide" id="s4b">
+  <div class="kicker">Команди і проєкти</div>
+  <h2>Усе в одному workspace — але видно, що чиє</h2>
+  <p class="lead">Зверху — два контексти, <b>Aura</b> і <b>Personal</b>, які не бачать одне одного. Всередині Aura кожна річ має <b>теги команд</b>. Без тегу — <b>General</b>: крос-командне і твоя власна лідерська робота. Теги ставить mag сам, ти лише виправляєш.</p>
+  <div class="app">
+    <div class="side">
+      <div style="display:flex;gap:4px;background:var(--panel2);border-radius:8px;padding:3px;margin-bottom:6px">
+        <span class="btn p" style="flex:1;text-align:center">Aura</span><span class="btn g" style="flex:1;text-align:center;border:0">Personal</span>
+      </div>
+      <div class="sec">Workspace</div>
+      <div class="it on"><span class="ic">📥</span>Inbox<span class="n">7</span></div>
+      <div class="it"><span class="ic">👥</span>People</div>
+      <div class="it"><span class="ic">🎙</span>Meetings</div>
+      <div class="it"><span class="ic">🔁</span>Routines</div>
+      <div class="it"><span class="ic">📚</span>Library</div>
+      <div class="sec">Команди</div>
+      <div class="it"><span class="d" style="background:var(--blue)"></span>Data Removal</div>
+      <div class="it"><span class="d" style="background:var(--warn)"></span>Money Problems</div>
+      <div class="it"><span class="d" style="background:var(--dim)"></span>General</div>
+    </div>
+    <div class="main">
+      <div class="top"><h4>Inbox</h4>
+        <span style="margin-left:auto;display:flex;gap:4px">
+          <span class="btn p">All</span><span class="btn">General</span>
+          <span class="btn"><span class="d" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--blue)"></span> Data Removal</span>
+          <span class="btn"><span class="d" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn)"></span> Money Problems</span>
+        </span>
+      </div>
+      <div class="row"><span class="src">Slack</span><div class="t"><b>Марко: строки міграції черги</b><div>#data-removal · обіцяв до понеділка</div></div><span class="tag" style="border-color:#2c5a85;color:var(--blue)">Data Removal</span></div>
+      <div class="row"><span class="src">Jira</span><div class="t"><b>FTM: webhook без перевірки підпису Plaid</b><div>з ключа тікета → Money Problems</div></div><span class="tag" style="border-color:#7a6430;color:var(--warn)">Money Problems</span></div>
+      <div class="row"><span class="src">Зустріч</span><div class="t"><b>Lead sync: план на Q1</b><div>учасники з обох команд</div></div><span class="tag" style="border-color:#2c5a85;color:var(--blue)">Data Removal</span><span class="tag" style="border-color:#7a6430;color:var(--warn)">Money Problems</span></div>
+      <div class="row"><span class="src">Routine</span><div class="t"><b>Ups &amp; Downs W47 — секція на кожну команду</b><div>один звіт, дві команди</div></div><span class="tag">General</span></div>
+      <div class="row" style="border-color:var(--acc2)"><span class="src">mag</span><div class="t"><b>Тег поставлено автоматично: Data Removal</b><div>з репо duff-brewery · <a href="#s4b">змінити</a></div></div></div>
+    </div>
+  </div>
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card"><h3>Звідки mag знає команду</h3><p>репо, ключ тікета (PRVP-… → Data Removal), канал у Slack, учасники зустрічі, проєкт, з якого відкрито топік</p></div>
+    <div class="card"><h3>Теги, а не папки</h3><p>зустріч чи звіт про дві команди просто має два теги — нічого не треба розкладати</p></div>
+    <div class="card"><h3>Aura ≠ Personal</h3><p>агенти робочих проєктів не бачать особисте (mag, synapse, твої справи) — і навпаки</p></div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="slide" id="s5">
+  <div class="kicker">Inbox</div>
+  <h2>Один екран: що чекає на тебе</h2>
+  <p class="lead">Inbox не створює топіки сам — це просто список. Відкриваєш пункт — і тоді він стає топіком (або додається до вже існуючого).</p>
+  <div class="app">
+    <div class="side">
+      <div class="sec">Workspace</div>
+      <div class="it on"><span class="ic">📥</span>Inbox<span class="n">7</span></div>
+      <div class="it"><span class="ic">👥</span>People</div>
+      <div class="it"><span class="ic">🎙</span>Meetings</div>
+      <div class="it"><span class="ic">🔁</span>Routines</div>
+      <div class="it"><span class="ic">📚</span>Library</div>
+    </div>
+    <div class="main">
+      <div class="top"><h4>Inbox</h4><span class="pill">усі проєкти</span><span style="margin-left:auto" class="btn g">Snoozed (2)</span></div>
+      <div class="grp">Відповідь за тобою</div>
+      <div class="row"><span class="src">Slack</span><div class="t"><b>Марко питає про строки міграції черги</b><div>#data-removal · агент підготував відповідь · обіцяв до понеділка</div></div><div class="acts"><span class="btn p">Відкрити</span><span class="btn">Snooze</span></div></div>
+      <div class="grp">Чернетки на рев'ю</div>
+      <div class="row"><span class="src">Routine</span><div class="t"><b>Ups &amp; Downs — тиждень 47, дві команди</b><div>зібрано з Jira, GitHub, Slack і четвергової ретро-зустрічі</div></div><div class="acts"><span class="btn p">Переглянути</span></div></div>
+      <div class="row"><span class="src">Зустріч</span><div class="t"><b>DBO sync: 3 рішення, 4 дії</b><div>з транскрипту 20.11 · прийняти / змінити / відкинути</div></div><div class="acts"><span class="btn p">Розібрати</span></div></div>
+      <div class="grp">Змінилось у PR</div>
+      <div class="row"><span class="src">GitHub</span><div class="t"><b>duff-brewery#311 — автор відповів на 2 коментарі</b><div>твоє рев'ю · 1 тред можна закрити</div></div><div class="acts"><span class="btn">Відкрити</span><span class="btn g">Done</span></div></div>
+      <div class="row"><span class="src">mag</span><div class="t"><b>meetings: план готовий до рев'ю</b><div>6 питань із рекомендаціями</div></div><div class="acts"><span class="btn">Відповісти</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide" id="s6">
+  <div class="kicker">Publish</div>
+  <h2>Нічого не йде назовні без твого «так»</h2>
+  <p class="lead">Будь-який запис у Slack, Jira, GitHub чи Google Docs — це картка з тим, <b>як саме</b> воно виглядатиме. Агенту нічого не заборонено: він може все, що може CLI, але натискаєш Publish ти. Для «безпечних» місць (наприклад, чернетковий док) можна увімкнути «публікувати самому».</p>
+  <div class="grid g2">
+    <div class="pub">
+      <div style="display:flex;align-items:center;gap:8px"><b>Publish у Slack</b><span class="tag acc">#data-removal-team</span><span class="tag warn">не редагується після</span></div>
+      <div class="slackprev"><div class="who">Ти <span class="ch">· зараз</span></div>
+        <b>Ups &amp; Downs · W47</b><br><br>
+        <b>⬆️ Ups</b><br>• Riviera перенесено в duff-brewery, Redis прибрано<br>• Черга DBO: спостережуваність по користувачу<br><br>
+        <b>⬇️ Downs</b><br>• Інтеграційні тести ще не в CI
+      </div>
+      <div style="display:flex;gap:6px"><span class="btn p">Publish</span><span class="btn">Редагувати</span><span class="btn g">Скасувати</span></div>
+    </div>
+    <div>
+      <div class="before-after">
+        <div><div class="ba-h b">Було</div><ul class="clean"><li>агент постить сам</li><li>«стоп, нічого не роби!»</li><li>зламане форматування — назавжди</li><li>гейт тільки на gh/git</li></ul></div>
+        <div><div class="ba-h a">Стане</div><ul class="clean"><li>прев'ю, як буде в Slack/Jira</li><li>одна кнопка Publish</li><li>правила місця: «тільки дописувати», «не чіпати старі секції»</li><li>гейт на всі записи, не лише GitHub</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="slide" id="s7">
+  <div class="kicker">Рев'ю документа</div>
+  <h2>Кожне твердження — з джерелом</h2>
+  <p class="lead">Для коду mag порівнює план і факт. Для документа — твердження і докази. Наведи на підкреслене — побачиш, звідки це. Червоне — агент-перевіряльник не знайшов підтвердження.</p>
+  <div class="app three">
+    <div class="side">
+      <div class="sec">Library</div>
+      <div class="it"><span class="ic">📊</span>PR stats · жовтень</div>
+      <div class="it on"><span class="ic">📝</span>Оцінка: внесок Олени</div>
+      <div class="it"><span class="ic">🧭</span>Рішення: email-сервіс</div>
+    </div>
+    <div class="main">
+      <div class="top"><h4>Оцінка: внесок Олени за Q4</h4><span class="tag warn">приватне</span><span class="tag">v3 з 3</span><span style="margin-left:auto" class="btn p">Позначити фінальною</span></div>
+      <div class="doc">
+        <h5>Факти</h5>
+        <p>Олена змерджила <span class="claim" title="gh pr list --author … --state merged --search 'merged:2026-10-01..2026-12-31' → 34">34 PR за квартал</span>, з них <span class="claim" title="PR #301, #304, #311">три великі зміни черги DBR</span>. Середній час до першого рев'ю — <span class="claim bad" title="Немає запиту, яким це пораховано — перевіряльник просить уточнити">1,2 дня</span>.</p>
+        <h5 style="margin-top:10px">Судження</h5>
+        <p>Велика ініціатива з чергою — <i>цінність ще не видно</i>, це не мінус. Self-merge у своїй зоні — норма.</p>
+      </div>
+    </div>
+    <div class="right">
+      <b>Перевірка</b> <span class="tag warn">look</span>
+      <div style="margin-top:8px" class="tl">
+        <div>12 тверджень, 11 з джерелом</div>
+        <div><span style="color:var(--bad)">«1,2 дня» — немає запиту</span></div>
+        <div>та сама рубрика на контрольній людині (на тобі) — для калібрування</div>
+        <div>перевіряв окремий агент, без контексту цього топіку</div>
+      </div>
+      <div style="margin-top:10px"><b>Версії</b><br><span class="pill">v1 чернетка</span> <span class="pill">v2 після твоїх правок</span> <span class="pill" style="border-color:var(--acc2);color:var(--acc)">v3</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="slide" id="s8">
+  <div class="kicker">Routines</div>
+  <h2>Регулярна робота — сама, за розкладом</h2>
+  <p class="lead">Routine = розклад + джерела + твої правила + куди публікувати. Кожен запуск кладе чернетку в Inbox. Ти виправляєш — агент пропонує записати це як правило, щоб наступного разу не повторювати.</p>
+  <div class="app">
+    <div class="side">
+      <div class="sec">Routines</div>
+      <div class="it on"><span class="ic">🔁</span>Ups &amp; Downs</div>
+      <div class="it"><span class="ic">📊</span>PR stats по командах</div>
+      <div class="it"><span class="ic">🧹</span>Що чекає на мене (щоранку)</div>
+    </div>
+    <div class="main">
+      <div class="top"><h4>Ups &amp; Downs</h4><span class="tag ok">щочетверга 15:00</span><span class="tag">2 команди</span><span style="margin-left:auto" class="btn">Запустити зараз</span></div>
+      <div class="grid g2">
+        <div class="card"><h3>Джерела</h3><p>Jira (епіки команди) · GitHub (змерджені PR) · Slack (#team) · ретро-зустріч четверга</p></div>
+        <div class="card"><h3>Куди</h3><p>Google Doc команди (тільки нова секція) → пост у Slack на рівні епіків</p></div>
+      </div>
+      <div class="card" style="margin-top:14px"><h3>Правила <span class="pill">rules.md</span></h3>
+        <ul class="clean"><li>відправлені секції не змінювати ніколи</li><li>не повторювати пункти з минулих тижнів</li><li>у Slack — рівень епіків, без деталей</li><li>порожній рядок перед підзаголовками в Slack</li></ul>
+        <div class="row" style="margin-top:10px;border-color:var(--acc2)"><span class="src">нове</span><div class="t"><b>Агент пропонує правило:</b> «посилання замість сирого тексту»<div>ти виправив це двічі в минулому запуску</div></div><div class="acts"><span class="btn p">Додати</span><span class="btn g">Ні</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="slide" id="s9">
+  <div class="kicker">People</div>
+  <h2>Людина — не нікнейм у GitHub</h2>
+  <p class="lead">mag сам зводить GitHub-логін, Slack, Jira та ім'я в транскрипті в одну людину — ти тільки поправляєш, якщо помилився. Жодних полів і рейтингів. Ці дані приватні: агенти проєктів їх не бачать, поки ти не дозволиш.</p>
+  <div class="app three">
+    <div class="side">
+      <div class="sec">People</div>
+      <div class="it"><span class="ic">🧑</span>Data Removal · 5</div>
+      <div class="it on"><span class="ic">🧑</span>Марко</div>
+      <div class="it"><span class="ic">🧑</span>Олена</div>
+      <div class="it"><span class="ic">🧑</span>Finance Hub · 4</div>
+    </div>
+    <div class="main">
+      <div class="top"><h4>Марко</h4><span class="tag">Data Removal</span><span class="tag">@marko-gh · @marko</span><span style="margin-left:auto" class="btn p">Підготувати 1:1</span></div>
+      <div class="doc">
+        <h5>1:1 · четвер — чернетка порядку денного</h5>
+        <ul class="clean">
+          <li>минулого разу домовились: рев'ю черги до п'ятниці — <span style="color:var(--ok)">зроблено</span> (#311)</li>
+          <li>відкрите: доступ до прод-логів — ще не видали</li>
+          <li>згадувався на DBO sync: блокер з Phalcon API</li>
+          <li>новина: перший інцидент на чергуванні, впорався сам</li>
+        </ul>
+      </div>
+    </div>
+    <div class="right">
+      <b>Історія</b>
+      <div class="tl" style="margin-top:8px">
+        <div>20.11 · DBO sync — 3 згадки</div>
+        <div>18.11 · PR #311 змерджено</div>
+        <div>13.11 · 1:1 — 2 домовленості</div>
+        <div>06.11 · питання в Slack про доступи</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide" id="s10">
+  <div class="kicker">Зустрічі → дії</div>
+  <h2>Після дзвінка — одна картка, не транскрипт</h2>
+  <p class="lead">Meetings вже записує і розшифровує дзвінки локально. Далі: з підсумку mag складає картку з рішеннями, діями і чернетками відповідей. Кожен рядок — прийняти, змінити або відкинути.</p>
+  <div class="card" style="max-width:860px">
+    <div class="top"><h4 style="margin:0">DBO sync · 20.11 · 42 хв</h4><span class="tag">uk/en</span><span class="tag">Aura Data Removal</span></div>
+    <div class="grp">Рішення → Library</div>
+    <div class="row"><div class="t"><b>Черга DBR лишається в duff-brewery, Redis прибираємо</b><div>[00:14:32] у транскрипті</div></div><div class="acts"><span class="btn p">✓</span><span class="btn">✎</span><span class="btn g">✕</span></div></div>
+    <div class="grp">Дії → люди / Jira</div>
+    <div class="row"><div class="t"><b>Марко: інтеграційні тести в CI до 27.11</b><div>створити тікет у PRVP · прев'ю перед Publish</div></div><div class="acts"><span class="btn p">✓</span><span class="btn">✎</span><span class="btn g">✕</span></div></div>
+    <div class="row"><div class="t"><b>Ти: відповісти Олені про доступи</b><div>чернетка відповіді в Slack готова</div></div><div class="acts"><span class="btn p">✓</span><span class="btn">✎</span><span class="btn g">✕</span></div></div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide" id="s11">
+  <div class="kicker">Пошук</div>
+  <h2>«Що ми вирішили з X про Y?» — з будь-якого топіку</h2>
+  <p class="lead">Один пошук по всьому: топіки, документи, рішення, зустрічі, люди. Відповідь завжди з посиланням на джерело. Агенти теж шукають тут — тобі не треба копіювати контекст між проєктами.</p>
+  <div class="card" style="max-width:860px">
+    <div style="display:flex;gap:8px;align-items:center;border:1px solid var(--acc2);border-radius:8px;padding:8px 12px"><span>🔎</span><span>черг redis рішення</span><span class="pill" style="margin-left:auto">усі проєкти</span></div>
+    <div class="row" style="margin-top:10px"><span class="src">Рішення</span><div class="t"><b>Черга DBR без Redis</b><div>DBO sync 20.11 · [00:14:32] · Aura Data Removal</div></div></div>
+    <div class="row"><span class="src">Work</span><div class="t"><b>PRVP-2339: Move Riviera into duff-brewery, drop Redis</b><div>§Decisions · змерджено</div></div></div>
+    <div class="row"><span class="src">Топік</span><div class="t"><b>DBR jobs refactor: thin scheduled queue</b><div>обговорення варіантів · 3 тижні тому</div></div></div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide" id="s12">
+  <div class="kicker">Чого не буде</div>
+  <h2>Свідомо не робимо</h2>
+  <div class="grid g3">
+    <div class="card"><h3>🗂 Клон Notion</h3><p>Жодних баз, полів, тегів руками. Агенти зв'язують, ти лише поправляєш.</p></div>
+    <div class="card"><h3>📋 Свій трекер</h3><p>Jira лишається трекером. mag знає тікети як посилання.</p></div>
+    <div class="card"><h3>🤖 Бот на дзвінках</h3><p>Тільки локальний запис, коли ти сам на дзвінку.</p></div>
+    <div class="card"><h3>⭐ Рейтинги людей</h3><p>Ні оцінок, ні HR-циклів. Оцінка — тільки на запит, з доказами, приватна.</p></div>
+    <div class="card"><h3>📨 Авто-відправка</h3><p>Нічого назовні без Publish, хіба що ти сам дозволив для конкретного місця.</p></div>
+    <div class="card"><h3>💬 Авто-топіки</h3><p>Топіки створюєш тільки ти. Inbox — це список, не нові чати.</p></div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide" id="s13">
+  <div class="kicker">Як це прийде</div>
+  <h2>Поступово, кожен крок — уже корисний</h2>
+  <div class="grid g4" style="margin-top:8px">
+    <div class="phase"><div class="w">Фаза 0</div><h3>Швидший і надійніший mag</h3><p class="note" style="margin-top:4px">Вікна не гальмують на довгих чатах, дані не ламаються при крашах, щоденні бекапи. Для тебе — просто «стало швидше».</p></div>
+    <div class="phase"><div class="w">Фаза 1</div><h3>Inbox · Publish · Library</h3><p class="note" style="margin-top:4px">Топіки без проєкту, один Inbox, прев'ю перед кожною публікацією, фінальні версії документів, правила, що запам'ятовуються.</p></div>
+    <div class="phase"><div class="w">Фаза 2</div><h3>Routines</h3><p class="note" style="margin-top:4px">Ups &amp; Downs і статистика PR за розкладом. Ранковий «що чекає на мене». Нагадування про обіцяні відповіді.</p></div>
+    <div class="phase"><div class="w">Фаза 3–4</div><h3>People · 1:1 · Пошук</h3><p class="note" style="margin-top:4px">Сторінка людини і підготовка 1:1, зустрічі → дії, один пошук по всьому workspace.</p></div>
+  </div>
+  <p class="lead" style="margin-top:34px">Розробка в mag лишається такою ж: works, кроки, PR, рев'ю. Додається все інше, що ти й так робиш щодня.</p>
+</section>
+
+<script>
+const s=[...document.querySelectorAll('.slide')],d=document.getElementById('dots');
+s.forEach(x=>{const a=document.createElement('a');a.href='#'+x.id;a.title=x.querySelector('h1,h2').textContent;d.appendChild(a)});
+document.addEventListener('keydown',e=>{
+  if(!['ArrowDown','ArrowUp','PageDown','PageUp',' '].includes(e.key))return;
+  e.preventDefault();
+  const y=window.scrollY+10;let i=s.findIndex(x=>x.offsetTop>y);if(i<0)i=s.length;
+  const cur=i-1,next=(e.key==='ArrowUp'||e.key==='PageUp')?Math.max(cur-1,0):Math.min(cur+1,s.length-1);
+  s[next].scrollIntoView({behavior:'smooth'});
+});
+</script>
+</body>
+</html>

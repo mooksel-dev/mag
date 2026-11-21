@@ -4,6 +4,12 @@ Task-centric workspace for AI coding agents. The unit of work is a project and i
 Agents (Claude Code now, others later) groom tasks in the background, ask for input when they need it,
 and the project home shows only what is waiting on you.
 
+**Direction.** mag is becoming a workspace for any kind of work, not only code: workspaces, labels with Project as a
+system label, deliverables with a publish gate, Inbox, Routines, Library, People, unified search and a Slack-like shell.
+It is decided in [docs/decisions/0001](docs/decisions/0001-mag-as-a-workspace.md), shown for users in
+[docs/vision](docs/vision/workspace-vision.html), and is being built in phases. This README describes what ships today;
+[CHANGELOG.md](CHANGELOG.md) tracks what changed.
+
 Domain: `mag.moodel.dev`
 
 ## Layout
@@ -125,6 +131,14 @@ chat, or Continue on the work, puts it back in planning (its done steps stay) an
 The MCP server forwards calls to a localhost endpoint in the main process (random port + token).
 
 Data lives in Electron's userData folder (`db.json`, `runs/`).
+
+### Meetings
+
+**Record call** in the sidebar, or ⌥⇧⌘R, records the mic as `me` and the system audio as `others`. A Swift helper does
+the capture through a Core Audio process tap (macOS 14.2+). whisper.cpp transcribes locally, and no audio is kept. On
+stop, Claude writes the summary. Each meeting is a folder in `~/Documents/mag/meetings/YYYY/MM/<id>/`
+(`transcript.md`, `summary.md`, `meta.json`) with a derived full-text index, `.index.sqlite`, next to them. Delete a
+folder to delete a meeting. Every agent can use `search_meetings` and `read_meeting`.
 
 ## Not in the PoC yet
 
