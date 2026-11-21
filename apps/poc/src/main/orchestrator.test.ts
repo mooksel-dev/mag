@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { CODE_CHECKS, integrationMode, normalizeReport, isSubtopic, DEFAULT_PLAYBOOK, DEVELOPER_BAR, PRECEDENCE, directionReferences, emptyResult, findingsFolded, inbox, orientation, repoWorkName, shownResult, type AgentEvent, type AgentSession, type PrReview } from '@mag/core'
 import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag/agents'
 import { Store } from './store.ts'
-import { Orchestrator } from './orchestrator.ts'
+import { Orchestrator, codexPublishBlock } from './orchestrator.ts'
 import { mirrorItems } from './item-mirror.test-util.ts'
 import { createTools, type ToolActions } from './tools.ts'
 import type { MessagedRole } from './tool-defs.ts'
@@ -3181,4 +3181,25 @@ test('rewindSession code is refused without a message to restore to or its id; a
   rewindHold = null
   release()
   assert.deepEqual(await pending, { text: 'Second' })
+})
+
+test('a chat on Codex writes for the user only through publish, whose call may wait for the user; a Claude Code chat does not get the block (publish-gate-for-every-outbound.3)', async () => {
+  const codex = adapters.codex
+  adapters.codex = { ...codex, start: recordRun }
+  try {
+    const { store, orch, project } = setup()
+    store.updateProject(project.id, { agents: { chat: { agent: 'codex', model: null, effort: null } } })
+    const chat = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'codex', status: 'idle' })
+    await orch.send(chat.id, 'post the summary to Slack')
+    const spec = runs.at(-1)!.spec
+    assert.ok(spec.appendSystemPrompt?.includes(codexPublishBlock()))
+    assert.match(spec.appendSystemPrompt ?? '', /goes only through mag's publish tool/)
+    assert.equal(spec.env?.MCP_TOOL_TIMEOUT, String(7 * 24 * 60 * 60 * 1000))
+    runs.at(-1)!.end()
+    const claude = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle', choice: { agent: 'claude-code', model: null, effort: null } })
+    await orch.send(claude.id, 'hi')
+    assert.ok(!specs.at(-1)!.appendSystemPrompt?.includes(codexPublishBlock()))
+  } finally {
+    adapters.codex = codex
+  }
 })

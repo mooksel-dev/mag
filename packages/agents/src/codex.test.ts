@@ -93,6 +93,9 @@ test('buildArgs: system prompt and MCP servers become TOML -c overrides', () => 
   assert.ok(c.includes('mcp_servers.mag.command="/Applications/My App/node"'))
   assert.ok(c.includes('mcp_servers.mag.args=["/x/task \\"mcp\\".js"]'))
   assert.ok(c.includes('mcp_servers.mag.env={"MAG_TASK_ID" = "t 1"}'))
+  assert.ok(!c.some((x) => x.includes('tool_timeout_sec')), "Codex's default without a timeout")
+  const waits = values(buildArgs({ cwd: '/r', prompt: 'p', mcpConfigPath, env: { MCP_TOOL_TIMEOUT: '604800000' } }), '-c')
+  assert.ok(waits.includes('mcp_servers.mag.tool_timeout_sec=604800'), 'a publish waits for the user, not a minute')
 })
 
 test('buildArgs: a read-only run gets the read-only sandbox without network, even with Bash (prompts-use-the-models-to.2)', () => {

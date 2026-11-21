@@ -10,7 +10,7 @@ import type { HunkRef } from '@mag/diff'
 import type { AppState, NewTask, RendererCrash, WindowTarget } from '../preload/api'
 import { Store } from './store'
 import { appState, coalesce } from './state'
-import { createTools, type ToolActions } from './tools'
+import { createPublish, createTools, type ToolActions } from './tools'
 import { startApi } from './api'
 import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
@@ -107,7 +107,8 @@ app.whenReady().then(async () => {
   const actions: ToolActions = { groom: () => {}, architect: () => {}, cancel: async () => {}, completeStep: async () => {}, addRepo: async () => { throw new Error('Not ready') }, setReview: () => { throw new Error('Not ready') }, reopen: () => { throw new Error('Not ready') }, askOwner: () => false, answerDeveloper: async () => { throw new Error('Not ready') }, startChild: () => { throw new Error('Not ready') }, sessionInTree: () => { throw new Error('Not ready') }, stop: async () => {}, reviewPr: async () => { throw new Error('Not ready') }, reviewFact: async () => { throw new Error('Not ready') }, exportReview: async () => { throw new Error('Not ready') }, setPrReview: () => { throw new Error('Not ready') }, decideDirection: () => { throw new Error('Not ready') }, approve: () => { throw new Error('Not ready') }, develop: async () => { throw new Error('Not ready') }, approveAndStart: async () => { throw new Error('Not ready') }, startStep: async () => { throw new Error('Not ready') }, restartReview: async () => { throw new Error('Not ready') }, agentOf: () => null, messageStepAgent: async () => { throw new Error('Not ready') }, send: async () => { throw new Error('Not ready') }, stopAgents: async () => [], closeChat: async () => { throw new Error('Not ready') }, closeWork: () => { throw new Error('Not ready') }, deleteChat: async () => { throw new Error('Not ready') }, deleteWork: async () => { throw new Error('Not ready') }, restore: () => { throw new Error('Not ready') } }
   const tools = createTools(store, actions)
   const approvals = new Approvals(store)
-  const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : tools(ctx, name, args)))
+  const publish = createPublish(store, approvals, runShell)
+  const api = await startApi((ctx, name, args) => (name === 'approve_tool' ? approvals.request(ctx, args) : name === 'publish' ? publish(ctx, name, args) : tools(ctx, name, args)))
   const orch = new Orchestrator(store, api, {
     mcpScript: join(__dirname, 'task-mcp.js'),
     runsDir: join(userData, 'runs'),

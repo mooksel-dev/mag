@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classify, cliWriteRules, isAuto } from './index.ts'
+import { classify, cliWriteRules, declared, isAuto } from './index.ts'
 
 const bash = (command: string) => classify('Bash', undefined, { command })
 
@@ -90,4 +90,16 @@ test('isAuto: a pattern of the kind without a target, or with the target (case a
   assert.equal(isAuto(slack, { auto: [{ kind: 'slack', target: 'general' }] }), false)
   assert.equal(isAuto(slack, { auto: [{ kind: 'jira' }] }), false)
   assert.equal(isAuto({ kind: 'jira', target: '', label: '' }, { auto: [{ kind: 'jira', target: 'ABC' }] }), false, 'no target: only a kind-wide pattern')
+})
+
+test('declared: a destination as the agent names it, by its kind word; anything else is other', () => {
+  assert.deepEqual(declared('Slack #general'), { kind: 'slack', target: '#general', label: 'Slack #general' })
+  assert.deepEqual(declared('slack general'), { kind: 'slack', target: 'general', label: 'Slack #general' })
+  assert.deepEqual(declared('jira: ABC-12'), { kind: 'jira', target: 'ABC-12', label: 'Jira ABC-12' })
+  assert.deepEqual(declared('gh acme/api#4'), { kind: 'github', target: 'acme/api#4', label: 'GitHub acme/api#4' })
+  assert.deepEqual(declared('Google Docs 1AbC'), { kind: 'gdocs', target: '1AbC', label: 'Google Docs 1AbC' })
+  assert.deepEqual(declared('Confluence'), { kind: 'confluence', target: '', label: 'Confluence' })
+  assert.deepEqual(declared('  status page  webhook '), { kind: 'other', target: 'status page webhook', label: 'status page webhook' })
+  assert.deepEqual(declared('slackbot'), { kind: 'other', target: 'slackbot', label: 'slackbot' })
+  assert.deepEqual(declared(''), { kind: 'other', target: '', label: 'Other write' })
 })

@@ -97,8 +97,11 @@ function toml(v: unknown): string {
   return JSON.stringify(String(v ?? ''))
 }
 
-/** `-c mcp_servers.*` overrides from a Claude-style `{mcpServers: {name: {command, args, env}}}` file. */
-function mcpArgs(path: string): string[] {
+/**
+ * `-c mcp_servers.*` overrides from a Claude-style `{mcpServers: {name: {command, args, env}}}` file. `timeoutMs`: how
+ * long a tool call may take (Codex's default is a minute; mag's publish waits for the user).
+ */
+function mcpArgs(path: string, timeoutMs?: number): string[] {
   const { mcpServers = {} } = JSON.parse(readFileSync(path, 'utf8')) as {
     mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>
   }
@@ -108,6 +111,7 @@ function mcpArgs(path: string): string[] {
     args.push('-c', `${key}.command=${toml(s.command)}`)
     if (s.args?.length) args.push('-c', `${key}.args=${toml(s.args)}`)
     if (s.env && Object.keys(s.env).length) args.push('-c', `${key}.env=${toml(s.env)}`)
+    if (timeoutMs) args.push('-c', `${key}.tool_timeout_sec=${Math.ceil(timeoutMs / 1000)}`)
   }
   return args
 }
@@ -136,7 +140,9 @@ export function buildArgs(spec: RunSpec): string[] {
   if (spec.model) common.push('--model', spec.model)
   if (spec.effort) common.push('-c', `model_reasoning_effort=${toml(codexEffort(spec.effort))}`)
   if (spec.appendSystemPrompt) common.push('-c', `developer_instructions=${toml(spec.appendSystemPrompt)}`)
-  if (spec.mcpConfigPath) common.push(...mcpArgs(spec.mcpConfigPath))
+  // The tool timeout Claude Code reads from MCP_TOOL_TIMEOUT holds for Codex's tool calls too.
+  const timeoutMs = Number(spec.env?.MCP_TOOL_TIMEOUT) || undefined
+  if (spec.mcpConfigPath) common.push(...mcpArgs(spec.mcpConfigPath, timeoutMs))
 
   if (spec.resumeId) {
     // `exec resume` has no -C, -s or --add-dir; it runs in the process cwd and takes the rest as config.

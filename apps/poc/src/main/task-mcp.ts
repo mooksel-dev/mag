@@ -1,5 +1,6 @@
 // Minimal stdio MCP server (newline-delimited JSON-RPC). Spawned by the agent CLI,
 // forwards tool calls to the app's local API for one task or project.
+import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import { toolsFor } from './tool-defs'
 
@@ -10,6 +11,8 @@ const PROJECT_ID = process.env.MAG_PROJECT_ID
 const SESSION_ID = process.env.MAG_SESSION_ID
 const ROLE = process.env.MAG_ROLE
 const TOOLS = toolsFor(TASK_ID ? 'task' : 'project', ROLE)
+
+const LONG_POLLED = ['approve_tool', 'publish']
 
 const send = (msg: object) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n')
 
@@ -62,10 +65,11 @@ input.on('line', async (line) => {
       case 'tools/list':
         return send({ id, result: { tools: TOOLS } })
       case 'tools/call': {
-        let result = await callTool(params.name, params.arguments ?? {})
-        // An approval long-polls: ask again until the user answers or the run is stopped.
-        while (params.name === 'approve_tool' && !result.isError && isPending(result.content[0].text))
-          result = await callTool(params.name, params.arguments ?? {})
+        // A publish is found again on every poll of this call by its call_id.
+        const args = params.name === 'publish' ? { ...params.arguments, call_id: randomUUID() } : (params.arguments ?? {})
+        let result = await callTool(params.name, args)
+        // An approval or a publish long-polls: ask again until the user answers or the run is stopped.
+        while (LONG_POLLED.includes(params.name) && !result.isError && isPending(result.content[0].text)) result = await callTool(params.name, args)
         return send({ id, result })
       }
       default:

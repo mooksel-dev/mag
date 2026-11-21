@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, rmdir, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { agentAllowed, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
+import { agentAllowed, ASKING_ROLES, EFFORTS, findModel, sessionChoice, sessionJob, assertNotImported, orientation, CODE_CHECKS, DEVELOPER_BAR, choiceLine, isIssuesReport, deltaErrors, COMPARE_VERSION, decisionNote, decisionsBlock, directionCardText, directionDraft, DIRECTION_CHOICES, reportDecision, type DirectionChoice, type DirectionDecision, reportLine, type ReviewReport, AUTO_CONTINUES, AUTO_FIX_TRIES, autoFixOf, type PrProblem, MAG_MCP_ID, ticketRef, canApprove, canCancel, briefContext, canReopen, cleanTitle, decodeEntities, currentStep, devRunOutcome, integrationRules, offIntegrationsBlock, isLegacy, liveSession, localCheckText, localHolder, localOptions, openLocalChecks, projectRepo, repoDirNames, repoNames, repoWorkName, resolveChoice, stepBranch, stepDir, stepRepos, subtasksOf, titlePrompt, needsSummary, parseSummary, summaryCovers, summaryPrompt, summarySource, summaryStale, referencesBlock, resolveRef, uniqueRefs, type ChatRef, walkArch, nextReviewRound, contextBlocks, docDecisions, docStepAcceptance, playbookOf, reviewDue, reviewOutcome, githubSlug, isReview, parsePrUrl, prRepoName, reviewOf, reviewToPost, reviewTopic, emptyResult, formatOfTopic, unheardBeforeStop, withUnheard, eventsSinceTurn, withEvents, DEFAULT_REVIEW_FORMAT, FALLBACK_BASE, shownResult, REVIEW_FORMATS, type ReviewFormat, type ReviewResult, PR_VERDICT_LABELS, FINDING_LEVEL_LABELS, type PrRef, type PrReview, type PrVerdict, CHILD_ROLES, type ChildRole, isSubagent, isSubtopic, SUBAGENT_TOOLS, canRewindSession, filesRestorePoint, lastReplyId, REWIND_SCOPES, rewindBase, rewindPoint, type RewindMode, type RewindScope, type RewindUndo, rootSession, runRole, sessionTree, type AgentEvent, type AgentInfo, type AgentModel, type AgentReview, type AgentKind, type AgentRole, type AgentSession, type Attachment, type ChatItem, type LocalCheck, type LocalChoice, type ModelChoice, type Project, type RepoWork, type ReviewFinding, type ReviewVerdict, type Task, type TaskWork, type Playbook } from '@mag/core'
 import { adapters, type LiveHandle, type RunHandle, type RunSpec } from '@mag/agents'
 import { ARCH_RULES } from '@mag/arch'
 import type { Store } from './store'
@@ -39,6 +39,17 @@ only when the user asked for it in this conversation: mag shows the user the exa
 their Allow. Say in one line what you are about to post, then run it; start what you post with "${AGENT_MARK}". A push of
 your own branch and gh pr create run at once. Merges and pushes to a base branch stay blocked. The same card holds every
 other write for the user (Slack, Jira, Confluence, Google Docs, through an integration or a CLI such as acli); reads run.`
+
+/**
+ * What a chat or groomer on Codex is told about its writes (publish-gate-for-every-outbound.3): Codex asks the user for
+ * nothing itself, so mag's card comes from the publish tool. It overrides the card lines of GITHUB_WRITES_LINE.
+ */
+export const codexPublishBlock = () => `On Codex, mag sees no command before it runs, so there is no card for what you run yourself. Every write
+that speaks for the user (gh pr comment, review or edit, gh issue or release writes, gh api with a write method, acli
+Jira or Confluence writes, a Slack post, a curl that posts) goes only through mag's publish tool: destination, the
+command, and why. mag shows the user the Publish card, runs the command after their Allow and answers its output; a
+deny answers their note: revise it and call publish again. Reads, a push of your own branch and gh pr create you run
+yourself.`
 
 /** The groomer (T-55.2): mag's frame around the playbook's plan; the diagram grammar lives in show_diagram. */
 const groomerPrompt = (playbook: Playbook) => `You own this work in "mag": you plan it, answer its developers' questions and review each step's PRs first, in a fork
@@ -2442,10 +2453,17 @@ export class Orchestrator {
    * Claude Code runs: integrations the role has on auto are allowed, off ones disallowed, ask ones go through the
    * approve_tool prompt; one the role has no mode for is on reads for an asking role, which has every write ask
    * (integrationMode). Without a chat to ask in (`canAsk` false) ask counts as off. The prompt names the ones off, so
-   * the agent says so and asks for them (offIntegrationsBlock). Codex has no integrations.
+   * the agent says so and asks for them (offIntegrationsBlock). Codex has no integrations; a chat's or groomer's on Codex
+   * writes for the user through publish (codexPublishBlock).
    */
   private withIntegrations<S extends Omit<RunSpec, 'prompt'>>(projectId: string, role: AgentRole, agent: AgentKind, canAsk: boolean, spec: S): S {
-    if (agent !== 'claude-code') return spec
+    // Codex has no permission prompt: an asking role's writes go through publish, whose call waits for the user.
+    if (agent !== 'claude-code')
+      return {
+        ...spec,
+        ...(canAsk && ASKING_ROLES.includes(role) && { appendSystemPrompt: `${spec.appendSystemPrompt ?? ''}${blocks(codexPublishBlock())}` }),
+        env: { ...spec.env, ...APPROVAL_ENV },
+      }
     const known = this.store.data.integrations.filter((i) => i.id !== MAG_MCP_ID)
     const project = this.store.project(projectId)
     const rules = integrationRules(project, role, known)

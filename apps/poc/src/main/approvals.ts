@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ASKING_MODES, ASKING_ROLES, approvalName, integrationMode, integrationOf, runRole, type AgentSession, type ChatItem } from '@mag/core'
+import { ASKING_MODES, ASKING_ROLES, approvalName, integrationMode, integrationOf, runRole, type AgentSession, type ChatItem, type Destination } from '@mag/core'
 import type { Store } from './store'
 import { blockedPush, projectBases } from './git-push.ts'
 import { classify, isAuto } from './core/lib/destinations/index.ts'
@@ -30,7 +30,22 @@ export interface ApprovalTimings {
   graceMs: number
 }
 
+/** What park answers: the user's decision, or pending while the poll ran out first; a deny carries what the agent gets. */
+export type ParkResult = { status: 'pending' | 'allowed' | 'expired' } | { status: 'denied'; message: string }
+
+/** A write parked by the publish tool: the call the card shows, as approve_tool would park it. */
+export interface ParkedWrite {
+  /** Stable across the polls of one call: a repeated poll finds its item. */
+  id: string
+  tool: string
+  server?: string
+  input: unknown
+  destination: Destination
+}
+
 const DEFAULT_TIMINGS: ApprovalTimings = { pollMs: 50_000, graceMs: 15_000 }
+
+const grantKey = (toolName: string, input: unknown) => `${toolName}\n${JSON.stringify(input ?? {})}`
 
 const deny = (message: string) => JSON.stringify({ behavior: 'deny', message })
 const allow = (input: unknown) => JSON.stringify({ behavior: 'allow', updatedInput: input ?? {} })
@@ -48,6 +63,8 @@ export class Approvals {
   /** Wake-ups of the polls waiting per approval id. */
   private waiting = new Map<string, Set<() => void>>()
   private expiry = new Map<string, NodeJS.Timeout>()
+  /** Per session: calls (tool and input) the user allowed through publish, each good for one run. */
+  private grants = new Map<string, Set<string>>()
   private timings: ApprovalTimings
 
   constructor(
@@ -73,20 +90,55 @@ export class Approvals {
     // A read (of an integration on reads, or anything not on ask) runs at once; so does a write the project publishes unasked.
     if (!destination ? !asked.server || asked.reads : isAuto(destination, project.publish)) return allow(args.input)
 
+    // The call a publish payload's Allow granted runs once without a second card.
+    if (destination && this.takeGrant(session.id, toolName, args.input)) return allow(args.input)
+
     // A repeated poll carries the same tool_use_id and finds its item.
     const useId = typeof args.tool_use_id === 'string' && args.tool_use_id ? args.tool_use_id : undefined
     const item =
       this.item(session, useId) ??
       this.add(session, { id: useId ?? randomUUID(), tool: asked.tool, ...(asked.server && { server: asked.server }), input: args.input ?? {}, ...(destination && { destination }) })
-    clearTimeout(this.expiry.get(item.id))
-    if (item.status === 'pending') await this.wait(item.id, ctx.signal)
-    if (item.status === 'pending') {
-      this.expireLater(session.id, item)
-      return JSON.stringify({ pending: true })
-    }
+    await this.settle(session.id, item, ctx.signal)
+    if (item.status === 'pending') return JSON.stringify({ pending: true })
     if (item.status === 'allowed') return JSON.stringify({ behavior: 'allow', updatedInput: item.input })
     if (item.status === 'denied') return deny(deniedMessage(item))
     return deny('The request expired before the user answered')
+  }
+
+  /**
+   * The publish tool's card (publish-gate-for-every-outbound.3): parks `write` on the session as approve_tool parks a
+   * write, with the same card, wait and expiry, and answers the user's decision; pending when the poll ran out first.
+   * A repeated poll with the same id finds its item again.
+   */
+  async park(ctx: ApprovalContext, write: ParkedWrite): Promise<ParkResult> {
+    const session = ctx.sessionId ? this.store.data.sessions.find((s) => s.id === ctx.sessionId) : undefined
+    if (!session) throw new Error('publish needs a session to show its card in')
+    const item = this.item(session, write.id) ?? this.add(session, { id: write.id, tool: write.tool, ...(write.server && { server: write.server }), input: write.input ?? {}, destination: write.destination })
+    await this.settle(session.id, item, ctx.signal)
+    return item.status === 'denied' ? { status: 'denied', message: deniedMessage(item) } : { status: item.status }
+  }
+
+  /** Lets the session's next call of `toolName` with exactly this input run without a card: a publish payload the user allowed. */
+  grant(sessionId: string, toolName: string, input: unknown) {
+    const set = this.grants.get(sessionId) ?? new Set()
+    set.add(grantKey(toolName, input))
+    this.grants.set(sessionId, set)
+  }
+
+  private takeGrant(sessionId: string, toolName: string, input: unknown) {
+    const set = this.grants.get(sessionId)
+    const key = grantKey(toolName, input)
+    if (!set?.has(key)) return false
+    set.delete(key)
+    if (!set.size) this.grants.delete(sessionId)
+    return true
+  }
+
+  /** Waits up to pollMs for the user's decision on a pending item; one still pending expires unless polled again. */
+  private async settle(sessionId: string, item: ApprovalItem, signal?: AbortSignal) {
+    clearTimeout(this.expiry.get(item.id))
+    if (item.status === 'pending') await this.wait(item.id, signal)
+    if (item.status === 'pending') this.expireLater(sessionId, item)
   }
 
   /**
