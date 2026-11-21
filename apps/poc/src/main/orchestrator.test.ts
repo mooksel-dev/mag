@@ -9,9 +9,11 @@ import { adapters, type AgentAdapter, type LiveHandle, type RunSpec } from '@mag
 import { Store } from './store.ts'
 import { Orchestrator, codexPublishBlock } from './orchestrator.ts'
 import { mirrorItems } from './item-mirror.test-util.ts'
-import { createTools, type ToolActions } from './tools.ts'
+import { createTools, deliverableOrigin, type ToolActions } from './tools.ts'
 import { createWorkspaceFiles } from './core/clients/workspace-files/index.ts'
-import { createDeliverables } from './core/services/deliverables/index.ts'
+import { createDeliverables, workspaceFolder } from './core/services/deliverables/index.ts'
+import { createPacks } from './core/services/packs/index.ts'
+import { createPackPrompts } from './pack-tools.ts'
 import type { MessagedRole } from './tool-defs.ts'
 
 /** A Claude Code live process driven by the test: it records what mag does and emits what the CLI would. */
@@ -3343,4 +3345,41 @@ test('startVerifier: a topic without an agent session to fork gets a fresh verif
   const topicId = s.orch.newChat(s.project.id)
   const started = s.orch.startVerifier(topicId, false, (fresh) => `Verify it${fresh ? ', fresh' : ''}`)
   assert.deepEqual([started.fresh, started.session.forkOf, started.session.role, started.session.parentId], [true, null, 'reviewer', topicId])
+})
+
+test("packs: a topic working on a deliverable gets its kind's pack in the next message once, again when it changes; its verifier judges by the rubric (deliverables-library-claims-review-and.3)", async () => {
+  const s = setup()
+  const { store, orch, project } = s
+  const { topic, live } = await liveTopic(s)
+  const root = join(s.dir, 'docs')
+  const files = createWorkspaceFiles(() => root)
+  const dlv = createDeliverables({ files, records: store.deliverableRecords() })
+  const packs = createPacks({ files })
+  const prompts = createPackPrompts({ store, packs, deliverables: () => dlv, originOf: (x) => deliverableOrigin(store, store.sessionScope(x), { sessionId: x.id }) })
+  orch.packs = prompts
+  const actions = { deliverables: dlv, packs: prompts, startVerifier: (id: string, fresh: boolean, brief: (f: boolean) => string) => orch.startVerifier(id, fresh, brief) } as Partial<ToolActions> as ToolActions
+  const tools = createTools(store, actions)
+  const ctx = { projectId: project.id, sessionId: topic.id }
+  const sent = () => live.sent.at(-1)!
+  const turn = async (text: string) => {
+    await orch.send(topic.id, text)
+    live.emit({ type: 'turn.done', ok: true })
+    await tick()
+  }
+
+  await turn('hello')
+  assert.doesNotMatch(sent(), /pack \(mag\)/, 'no deliverable, no pack')
+  await tools(ctx, 'save_deliverable', { kind: 'assessment', title: 'Dev A', md: 'Olena led the DBR change.' })
+  await turn('go on')
+  assert.match(sent(), /^## The assessment pack \(mag\)[\s\S]*### Rubric\n# Impact rubric[\s\S]*Self-merge, big PRs[\s\S]*\n\ngo on$/)
+  await turn('more')
+  assert.equal(sent(), 'more', 'shown once while it stays the same')
+  packs.addRule(workspaceFolder(store.workspace(project.workspaceId).name), null, 'assessment', 'Quote the PR title, not its body')
+  await turn('again')
+  assert.match(sent(), /### Learned rules\n[\s\S]*Quote the PR title, not its body[\s\S]*again$/)
+
+  await tools(ctx, 'set_claims', { ref: 'dlv:dev-a', claims: [{ text: 'Olena led the DBR change', kind: 'fact', refs: ['https://github.com/o/r/pull/301'] }] })
+  await tools(ctx, 'verify_deliverable', { ref: 'dlv:dev-a' })
+  await tick()
+  assert.match(runs.at(-1)!.spec.prompt, /## How the user judges this assessment \(its pack\)\n### Rubric\n# Impact rubric[\s\S]*Quote the PR title[\s\S]*judge it by the rubric and rules above/)
 })

@@ -500,6 +500,9 @@ export class Orchestrator {
   /** Making and removing a session's scratch worktrees, one after another: a closing process's removal goes first. */
   private scratchOps = new Map<string, Promise<unknown>>()
 
+  /** The packs of a topic's deliverable kinds for its next turn (deliverables-library-claims-review-and.3); set once started. */
+  packs?: { blockFor(session: AgentSession): string }
+
   constructor(
     private store: Store,
     private api: LocalApi,
@@ -2077,6 +2080,8 @@ export class Orchestrator {
       ? `${text}\n\nAttached files (open them with Read):\n${attachments.map((a) => `- ${a.path}`).join('\n')}`
       : text
     if (!command) prompt = withEvents(withUnheard(prompt, unheard), events)
+    const pack = command ? '' : this.packBlock(session)
+    if (pack) prompt = `${pack}\n\n${prompt}`
     if (refs.length && !command) {
       this.store.changed()
       this.preparing.add(sessionId)
@@ -2133,6 +2138,16 @@ export class Orchestrator {
     // The end of the killed run may have started another turn on its own; that one has the new rules already.
     if (this.runs.has(sessionId)) return
     await this.send(sessionId, `${item.server} is now on (${mode}) for you in mag; repeat your last step.`, [], `${item.server} is on`)
+  }
+
+  /** The packs a topic works by, when they are new to the session; a pack that fails to read never holds up the message. */
+  private packBlock(session: AgentSession): string {
+    try {
+      return this.packs?.blockFor(session) ?? ''
+    } catch (e) {
+      log.warn('agent', `packs for the prompt failed: ${(e as Error).message}`, { session: session.id })
+      return ''
+    }
   }
 
   /** Stops the current turn. A live process lives on with its background tasks. */

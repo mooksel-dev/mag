@@ -867,7 +867,7 @@ export const TOOL_DEFS = [
     name: 'save_deliverable',
     scope: 'any',
     description:
-      'Save a non-code result for the user (a report, an assessment, a proposal, a reply, an agenda…) as a deliverable: a new one, or with ref the next version of one. Each version is a markdown file in the workspace folder (~/Documents/mag/<workspace>/deliverables/<slug>/v<N>.md); the user reads the versions and their diff in the topic\'s panel, marks one final and publishes it. A new version of a final one is a draft again. Use it instead of loose files or a canvas for a result the user will keep or send; returns the ref (<workspace>:dlv:<slug>) and the file.',
+      'Save a non-code result for the user (a report, an assessment, a proposal, a reply, an agenda…) as a deliverable: a new one, or with ref the next version of one. Each version is a markdown file in the workspace folder (~/Documents/mag/<workspace>/deliverables/<slug>/v<N>.md); the user reads the versions and their diff in the topic\'s panel, marks one final and publishes it. A new version of a final one is a draft again. Use it instead of loose files or a canvas for a result the user will keep or send; follow the pack of its kind (get_pack). Returns the ref (<workspace>:dlv:<slug>) and the file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -974,6 +974,34 @@ export const TOOL_DEFS = [
         },
       },
       required: ['ref', 'version', 'verdict', 'findings'],
+    },
+  },
+  {
+    name: 'get_pack',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "The workflow pack of a deliverable kind: how the user wants one done (prompt), its structure (template), what it is judged by (rubric) and the rules learned from the user's corrections, the project's overrides applied. Read it before the first version of a deliverable; a topic gets the packs of its deliverables' kinds with its next message anyway. The files are in ~/Documents/mag/<workspace>/packs/<kind>/ (a project's in projects/<project>/packs/<kind>/).",
+    inputSchema: {
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['report', 'assessment', 'proposal', 'decision', 'reply', 'ticket', 'agenda', 'other'] } },
+      required: ['kind'],
+    },
+  },
+  {
+    name: 'propose_rule',
+    scope: 'any',
+    description:
+      "When the user corrects how a kind of deliverable is done (\"use links, not raw text\"), propose it as a rule for that kind's pack, so it holds next time without being said again. The user sees a card; Accept appends it to the pack's rules.md, Reject writes nothing. It does not wait: go on, and mag tells you the answer with your next message.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['report', 'assessment', 'proposal', 'decision', 'reply', 'ticket', 'agenda', 'other'] },
+        rule: { type: 'string', description: 'One line, as an instruction to follow, e.g. "Link PRs and tickets instead of pasting their text".' },
+        why: { type: 'string', description: 'What the user said or corrected, in a few words.' },
+        scope: { type: 'string', enum: ['workspace', 'project'], description: "workspace (default): every project of the workspace; project: only this topic's project." },
+      },
+      required: ['kind', 'rule'],
     },
   },
   {

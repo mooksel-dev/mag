@@ -23,6 +23,7 @@ export type CardButton =
   | { kind: 'fact'; label: string; canvasId: string }
   | { kind: 'review_window'; label: string; taskId: string }
   | { kind: 'enable'; label: string; mode: 'ask' | 'reads' | 'auto'; primary?: boolean }
+  | { kind: 'answer'; label: string; accept: boolean; primary?: boolean }
 
 export interface CardModel {
   title: string
@@ -210,6 +211,27 @@ export function integrationCard(item: Pick<IntegrationItem, 'server' | 'role' | 
     note: on
       ? 'The agent repeats its last step with it.'
       : `${canAsk ? 'Reads auto: reads run, posts and changes wait for you. Ask each: every call waits. ' : ''}Auto: all allowed. Saved in Project → Integrations for every ${item.role} run.`,
+  }
+}
+
+export type RuleItem = Extract<ChatItem, { kind: 'rule' }>
+
+/** The card of an agent's propose_rule: the rule for a kind's pack, why, where it goes; Accept or Reject until answered. */
+export function ruleCard(item: Pick<RuleItem, 'pack' | 'rule' | 'why' | 'scope' | 'status' | 'path'>): CardModel {
+  const where = item.scope === 'project' ? "the project's" : "the workspace's"
+  const verdict = { proposed: { label: 'proposed', tone: 'warn' }, accepted: { label: 'accepted', tone: 'good' }, rejected: { label: 'rejected', tone: 'neutral' } } as const
+  return {
+    title: `A rule for the ${item.pack} pack`,
+    tone: item.status === 'proposed' ? 'warn' : verdict[item.status].tone,
+    verdict: verdict[item.status],
+    stats: [],
+    rows: [{ text: item.rule }, ...(item.why ? [{ lead: 'Because', text: item.why }] : [])],
+    details: [],
+    buttons: item.status === 'proposed' ? [{ kind: 'answer', label: 'Accept', accept: true, primary: true }, { kind: 'answer', label: 'Reject', accept: false }] : [],
+    note:
+      item.status === 'accepted' ? `Added to ${item.path ?? `${where} rules.md`}.`
+      : item.status === 'rejected' ? 'Nothing was written.'
+      : `Accept adds it to ${where} rules.md of the ${item.pack} pack; every ${item.pack} follows it from then on.`,
   }
 }
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { emptyResult, normalizeReport, type Diagram, type IssuesReport, type TaskWork } from '@mag/core'
@@ -1053,4 +1053,64 @@ test('a topic without a project saves deliverables in its workspace; they move w
   assert.equal(store.data.deliverables[0].projectId, project.id)
   store.moveTopic(topic.id, null)
   assert.equal(store.data.deliverables[0].projectId, null)
+})
+
+test('get_pack and propose_rule: the pack where the topic is; a card whose Accept appends to the right rules.md and Reject writes nothing (deliverables-library-claims-review-and.3)', async () => {
+  const { store, project, actions, tools } = setup()
+  const { createPacks } = await import('./core/services/packs/index.ts')
+  const { createWorkspaceFiles } = await import('./core/clients/workspace-files/index.ts')
+  const { createDeliverables } = await import('./core/services/deliverables/index.ts')
+  const { createPackPrompts } = await import('./pack-tools.ts')
+  const { deliverableOrigin } = await import('./tools.ts')
+  const root = mkdtempSync(join(tmpdir(), 'mag-packs-tools-'))
+  const files = createWorkspaceFiles(() => root)
+  const topic = store.createSession({ projectId: project.id, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  const inTopic = (name: string, args: Record<string, unknown>) => tools({ projectId: project.id, sessionId: topic.id }, name, args)
+  await assert.rejects(inTopic('get_pack', { kind: 'report' }), /Packs are not ready/)
+  actions.deliverables = createDeliverables({ files, records: store.deliverableRecords() })
+  const prompts = createPackPrompts({ store, packs: createPacks({ files }), deliverables: () => actions.deliverables, originOf: (x) => deliverableOrigin(store, store.sessionScope(x), { sessionId: x.id }) })
+  actions.packs = prompts
+  const ws = store.workspace(project.workspaceId).name.toLowerCase()
+
+  assert.match(await inTopic('get_pack', { kind: 'report' }), /^## The report pack \(mag\)[\s\S]*### Prompt\n# Report[\s\S]*### Template[\s\S]*### Rubric/)
+  assert.match(await inTopic('get_pack', { kind: 'ticket' }), /No ticket pack yet/)
+  await assert.rejects(inTopic('get_pack', { kind: 'memo' }), /kind must be a deliverable kind/)
+  // The topic saw the pack with get_pack: its next turn does not repeat it.
+  await inTopic('save_deliverable', { kind: 'report', title: 'Weekly', md: '# W' })
+  assert.equal(prompts.blockFor(store.session(topic.id)), '')
+
+  await assert.rejects(inTopic('propose_rule', { kind: 'report', rule: ' ' }), /Pass rule/)
+  assert.match(await inTopic('propose_rule', { kind: 'report', rule: 'Use links,  not raw text', why: 'said twice' }), /Accept adds it to the report pack's rules\.md \(the workspace's\)/)
+  await inTopic('propose_rule', { kind: 'report', rule: 'Use links, not raw text', why: 'again' })
+  await inTopic('propose_rule', { kind: 'report', rule: 'Name the sprint', scope: 'project' })
+  await inTopic('propose_rule', { kind: 'report', rule: 'Never this' })
+  const cards = store.session(topic.id).items.filter((i) => i.kind === 'rule')
+  assert.deepEqual(cards.map((c) => [c.rule, c.scope, c.status, c.projectId]), [['Use links, not raw text', 'workspace', 'proposed', null], ['Name the sprint', 'project', 'proposed', project.id], ['Never this', 'workspace', 'proposed', null]], 'one card per waiting rule')
+  const rulesOf = (...p: string[]) => readFileSync(join(root, ws, ...p, 'packs', 'report', 'rules.md'), 'utf8')
+
+  prompts.answerRule(topic.id, cards[0].id, true)
+  prompts.answerRule(topic.id, cards[1].id, true)
+  prompts.answerRule(topic.id, cards[2].id, false)
+  assert.throws(() => prompts.answerRule(topic.id, cards[2].id, true), /rejected already/)
+  assert.match(rulesOf(), /^- Use links, not raw text \(why: said twice\) · \d{4}-\d{2}-\d{2}$/m)
+  assert.doesNotMatch(rulesOf(), /Never this|Name the sprint/)
+  assert.match(rulesOf('projects', 'p'), /^- Name the sprint · /m)
+  assert.equal(cards[0].status, 'accepted')
+  assert.equal(cards[0].path, join(root, ws, 'packs', 'report', 'rules.md'))
+  assert.equal(cards[2].status, 'rejected')
+  // The agent hears the answers with its next message.
+  const notices = store.session(topic.id).items.flatMap((i) => (i.kind === 'notice' && i.forAgent ? [i.agentText] : []))
+  assert.match(notices[0]!, /accepted the rule .* Use links/)
+  assert.match(notices[2]!, /rejected the rule .*nothing was written: Never this/)
+  // The changed pack goes into the topic's next turn, with both scopes' rules.
+  assert.match(prompts.blockFor(store.session(topic.id)), /### Learned rules[\s\S]*Use links[\s\S]*The project's:[\s\S]*Name the sprint/)
+
+  // A topic without a project proposes for its workspace only.
+  const loose = store.createSession({ projectId: null, workspaceId: project.workspaceId, taskId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
+  await assert.rejects(tools({ sessionId: loose.id }, 'propose_rule', { kind: 'reply', rule: 'x', scope: 'project' }), /has no project/)
+  for (const role of ['chat', 'groomer', 'developer']) {
+    const names = toolsFor(role === 'chat' ? 'project' : 'task', role).map((t) => t.name)
+    assert.ok(['get_pack', 'propose_rule'].every((n) => names.includes(n)), role)
+  }
+  assert.ok(toolsFor('project', 'reviewer').some((t) => t.name === 'get_pack'))
 })
