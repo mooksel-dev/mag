@@ -68,6 +68,8 @@ export interface Project {
   playbook?: Partial<Playbook> | null
   /** Enforce the core/{lib,clients,services} layering in grooming, development and checks. */
   enforceArchitecture: boolean
+  /** The user lets the project's topics merge PRs (`gh pr merge`, `--admin` too); off by default, developers never do. */
+  topicsMerge?: boolean
   /** Architecture as an agent described it; rendered in the Architecture tab. */
   architecture: ArchDiagram | null
   /** State of the last architect run. */

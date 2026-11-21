@@ -426,6 +426,10 @@ function Settings({ project, integrations }: { project: Project; integrations: I
         <input type="checkbox" checked={project.enforceArchitecture} onChange={(e) => update({ enforceArchitecture: e.target.checked })} />
         Enforce core architecture (lib / clients / services) for agents
       </label>
+      <label className="check">
+        <input type="checkbox" checked={!!project.topicsMerge} onChange={(e) => update({ topicsMerge: e.target.checked })} />
+        Topics may merge PRs (developers and reviewers never do)
+      </label>
       <AgentSettings project={project} />
       <MeetingsRootSetting />
       <IntegrationSettings project={project} integrations={integrations} />
