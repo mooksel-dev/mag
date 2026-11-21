@@ -1790,7 +1790,8 @@ function inboxItem(task: Task, tasks: Task[], sessions: SessionLike[]): TaskItem
 function reviewItem(task: Task, sessions: SessionLike[]): TaskItem | null {
   const state = reviewState(task, sessions)
   if (state === 'question') return { task, kind: 'question', text: task.needsInput! }
-  const activity = task.prReview!.activity
+  // A review imported or created before its PR was read has no prReview yet.
+  const activity = task.prReview?.activity
   const news = activity?.state === 'open' ? reviewActivityText(activity) : ''
   if (news && state !== 'reviewing') return { task, kind: 'review_activity', text: `PR activity: ${news}`, activityAt: activity!.at }
   if (state === 'ready') return { task, kind: 'review_ready', text: reviewReadyText(task.prReview!), activityAt: shownResult(task.prReview)?.at ?? 0 }
