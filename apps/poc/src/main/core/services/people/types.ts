@@ -102,3 +102,84 @@ export interface OverrideInput {
   /** null: not a person. */
   personId: string | null
 }
+
+/** A Project label as activity reaches it: its repositories (paths) and Jira keys. */
+export interface ProjectScope {
+  id: string
+  name: string
+  repos: string[]
+  jiraKeys: string[]
+}
+
+/** A meeting of the workspace as activity counts it: the Project labels it is linked to, the names said to take part. */
+export interface MeetingFacts {
+  id: string
+  /** ms. */
+  startedAt: number
+  projectIds: string[]
+  names: string[]
+}
+
+/** A person's activity in one Project label over the window. */
+export interface ProjectActivity {
+  labelId: string
+  label: string
+  /** PRs they opened. */
+  prs: number
+  /** Others' PRs they reviewed. */
+  reviews: number
+  /** Work items they are the assignee or reporter of, updated in the window. */
+  tickets: number
+  /** Linked meetings they took part in. */
+  meetings: number
+}
+
+/** Where a person works: derived from activity, never declared. */
+export interface WhereWorks {
+  personId: string
+  days: number
+  /** The window's start (ms). */
+  from: number
+  /** When the PRs and tickets were fetched (ms); they are kept for the day. */
+  fetchedAt: number
+  /** Most active first; labels without activity left out. */
+  projects: ProjectActivity[]
+  /** A source that failed, one line each; its counts are missing. */
+  errors: string[]
+}
+
+/** PRs and reviews of one person (or an unmatched login) in one Project label. */
+export interface PrStatsRow {
+  /** null: a GitHub login without a person. */
+  personId: string | null
+  name: string
+  /** The logins of theirs that count here. */
+  logins: string[]
+  /** null: a repository of no Project label. */
+  labelId: string | null
+  label: string
+  /** PRs opened in the window. */
+  prs: number
+  /** Their PRs merged in the window. */
+  merged: number
+  /** Others' PRs they reviewed in the window, each PR once. */
+  reviews: number
+}
+
+export interface PrStats {
+  from: number
+  to: number
+  /** By label, then most PRs and reviews first. */
+  rows: PrStatsRow[]
+  errors: string[]
+}
+
+/** A name said to take part in a meeting, as one workspace's people resolve it: a chip on the meeting. */
+export interface MeetingPerson {
+  name: string
+  /** The person it is; missing when unknown or not a person. */
+  person?: { id: string; name: string; avatar: string | null }
+  /** The person it may be, unconfirmed: the user confirms it in People. */
+  suggestion?: { id: string; name: string }
+  notPerson?: true
+}

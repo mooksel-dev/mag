@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Workspace, WorkspaceDirectories } from '@mag/core'
+import type { Activity } from '../../clients/activity/index.ts'
 import type { Directories, DirUser } from '../../clients/directories/index.ts'
 import { createPeople, identityId, nameScore, personSlug, type PeopleRows } from './index.ts'
 
@@ -34,7 +35,9 @@ function setup(dirs: WorkspaceDirectories = { slack: true, atlassian: true, gith
     ...over,
   }
   let changes = 0
-  const people = createPeople(rows, { workspace: (id) => (id === ws.id ? ws : undefined), repos: () => ws.repos, jiraKeys: () => ['PRVP'] }, directories, () => changes++, () => 1000)
+  const activity: Activity = { prs: async () => [], tickets: async () => [] }
+  const sources = { workspace: (id: string) => (id === ws.id ? ws : undefined), repos: () => ws.repos, jiraKeys: () => ['PRVP'], projects: () => [], meetings: () => [] }
+  const people = createPeople(rows, sources, { directories, activity }, () => changes++, () => 1000)
   return { rows, people, calls, ws, changes: () => changes }
 }
 

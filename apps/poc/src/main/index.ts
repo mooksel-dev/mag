@@ -16,6 +16,7 @@ import { Orchestrator } from './orchestrator'
 import { Approvals } from './approvals'
 import { startPeopleSync, startScheduler } from './scheduler'
 import { createStorePeople, startPeopleIpc } from './people'
+import { startMeetingPeople } from './meeting-people.ts'
 import { prChecks, prDetails, repoInfo } from './git'
 import { factView, reviewDiff, stepBacking, reviewFactView, reviewHunk, stepHunk } from './fact'
 import { exportReview, importReview } from './core/services/review-export/index.ts'
@@ -472,20 +473,22 @@ app.whenReady().then(async () => {
   actions.search = search
   let meetings: Meetings | undefined
   const feed = createSearchFeed({ search, store, meetings: () => meetings, log: (message, e) => (e ? log.warn('search', message, e) : log.info('search', message)) })
-  actions.meetings = meetings = startMeetings({ search, indexPath, onMeetingsChanged: () => feed.onChanged('meetings') })
+  let onMeetingPeople = () => {}
+  actions.meetings = meetings = startMeetings({ search, indexPath, onMeetingsChanged: () => (feed.onChanged('meetings'), onMeetingPeople()) })
   store.onChange(() => feed.onChanged('store'))
   store.onItem(() => feed.onChanged('store'))
   void feed.indexAll()
   const deliverables = startDeliverables(store, actions.meetings, (sid, text, job) => orch.send(sid, text, [], job))
   actions.deliverables = deliverables
   approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
-  const people = createStorePeople(store, join(userData, 'runs'))
+  const people = createStorePeople(store, join(userData, 'runs'), () => meetings)
   actions.people = people
-  const peopleIpc = startPeopleIpc(people)
+  const peopleIpc = startPeopleIpc(people, store, () => meetings)
   startPeopleSync(store, people, peopleIpc.changed)
   const packs = startPacks(store, deliverables)
   actions.packs = packs
   orch.packs = packs
+  onMeetingPeople = startMeetingPeople(store, people, meetings, peopleIpc.changed)
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

@@ -3,9 +3,13 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow, ipcMain } from 'electron'
+import { createActivity } from './core/clients/activity/index.ts'
 import { createDirectories } from './core/clients/directories/index.ts'
+import type { Meetings } from './core/services/meetings/index.ts'
 import { createPeople, type OverrideInput, type People, type PeopleSystem } from './core/services/people/index.ts'
 import { log } from './log'
+import { meetingPeople } from './meeting-people.ts'
+import { meetingFacts, projectScopes } from './people-sources.ts'
 import type { Store } from './store'
 
 /** The Slack MCP server the CLI reported: tools mcp__<id>__…; null when there is none. */
@@ -21,7 +25,7 @@ export function workspaceJiraKeys(store: Pick<Store, 'data'>, workspaceId: strin
   return [...new Set(keys)]
 }
 
-export function createStorePeople(store: Store, runsDir: string): People {
+export function createStorePeople(store: Store, runsDir: string, meetings: () => Pick<Meetings, 'list' | 'participants'> | undefined): People {
   const cwd = join(runsDir, 'people')
   mkdirSync(cwd, { recursive: true })
   return createPeople(
@@ -30,14 +34,16 @@ export function createStorePeople(store: Store, runsDir: string): People {
       workspace: (id) => store.data.workspaces.find((w) => w.id === id),
       repos: (id) => store.data.workspaces.find((w) => w.id === id)?.repos ?? [],
       jiraKeys: (id) => workspaceJiraKeys(store, id),
+      projects: (id) => projectScopes(store, id),
+      meetings: (id, from, to) => meetingFacts(store, meetings(), id, from, to),
     },
-    createDirectories({ cwd, slackServer: () => slackServer(store) }),
+    { directories: createDirectories({ cwd, slackServer: () => slackServer(store) }), activity: createActivity() },
     () => store.changed(),
   )
 }
 
 /** The People section's calls; `people:changed` tells every window to read its list again. */
-export function startPeopleIpc(people: People) {
+export function startPeopleIpc(people: People, store: Pick<Store, 'data'>, meetings: () => Pick<Meetings, 'read' | 'participants'> | undefined) {
   const changed = () => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send('people:changed')
   }
@@ -62,6 +68,14 @@ export function startPeopleIpc(people: People) {
   })
   handle('people:override', (o: OverrideInput) => (people.override(o), changed()))
   handle('people:reject', (ws: string, system: PeopleSystem, handle: string, personId: string) => (people.reject(ws, system, handle, personId), changed()))
+  handle('people:meeting', (id: string, ws: string) => {
+    const m = meetings()
+    if (!m) throw new Error('Meetings are not ready yet')
+    const had = store.data.identities.length
+    const chips = meetingPeople({ store, people, meetings: m }, id, ws)
+    if (store.data.identities.length !== had) changed()
+    return chips
+  })
   handle('people:notPerson', (ws: string, personId: string) => (people.notPerson(ws, personId), changed()))
   return { changed }
 }

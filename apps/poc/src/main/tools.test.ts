@@ -869,6 +869,8 @@ test('who and people: every role, the caller\'s workspace; read-only answers (wh
   actions.people = {
     who: (ws, h, system) => (asked.push([ws, h, system]), h === 'bezpaluy89' ? { kind: 'person', person: ievgen, source: 'override' } : h === 'bot' ? { kind: 'notPerson' } : h === 'ievgen b' ? { kind: 'unknown', suggestion: ievgen } : { kind: 'unknown' }),
     find: (ws, q) => (asked.push([ws, q]), q === 'Ievgen' ? [ievgen] : []),
+    activity: async () => assert.fail('not called'),
+    prStats: async () => assert.fail('not called'),
   }
   assert.equal(await call('who', { handle: 'bezpaluy89' }), 'bezpaluy89 is Ievgen Bezpaly (id ievgen-bezpaly) · Engineer · handles: slack:U1, github:bezpaluy89 (matched by override)')
   assert.match(await call('who', { handle: 'bot', system: 'github' }), /not a person/)
@@ -883,6 +885,34 @@ test('who and people: every role, the caller\'s workspace; read-only answers (wh
   for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) {
     const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
     assert.ok(names.includes('who') && names.includes('people'), role)
+  }
+})
+
+test('where_works and pr_stats: every role, the caller\'s workspace; dates as whole local days (who-is-who-people-from.2)', async () => {
+  const { actions, call, project } = setup()
+  await assert.rejects(call('where_works', { person: 'x' }), /not ready/)
+  const ievgen = { id: 'ievgen-bezpaly', workspaceId: project.workspaceId, name: 'Ievgen Bezpaly', email: null, title: null, avatar: null, external: false, syncedAt: 1, handles: [] }
+  const ihors = [{ ...ievgen, id: 'ihor-a', name: 'Ihor A' }, { ...ievgen, id: 'ihor-b', name: 'Ihor B' }]
+  const asked: unknown[] = []
+  actions.people = {
+    who: (_, h) => (h === 'bezpaluy89' ? { kind: 'person', person: ievgen, source: 'override' } : { kind: 'unknown' }),
+    find: (_, q) => (q === 'Ihor' ? ihors : q === 'Ievgen' ? [ievgen] : []),
+    activity: async (id, days) => (asked.push(['activity', id, days]), { personId: id, days: days ?? 60, from: Date.UTC(2026, 8, 22), fetchedAt: 0, projects: [{ labelId: 'pa', label: 'Alpha', prs: 2, reviews: 1, tickets: 0, meetings: 1 }], errors: ['Tickets: acli: not logged in'] }),
+    prStats: async (ws, from, to, labels) => (asked.push(['prStats', ws, from, to, labels]), { from, to, rows: labels ? [] : [{ personId: 'ievgen-bezpaly', name: 'Ievgen Bezpaly', logins: ['bezpaluy89', 'ievgen-b'], labelId: 'pa', label: 'Alpha', prs: 2, merged: 1, reviews: 3 }], errors: [] }),
+  }
+  assert.equal(await call('where_works', { person: 'bezpaluy89' }), 'Where Ievgen Bezpaly (id ievgen-bezpaly) works, by activity of the last 60 days (since 2026-09-22):\n- Alpha (label pa): 2 PRs, 1 review, 0 tickets, 1 meeting\n\nNot counted (a source failed): Tickets: acli: not logged in')
+  await call('where_works', { person: 'Ievgen', days: 30 })
+  assert.deepEqual(asked.slice(0, 2), [['activity', 'ievgen-bezpaly', 60], ['activity', 'ievgen-bezpaly', 30]])
+  await assert.rejects(call('where_works', { person: 'Ihor' }), /more than one person; pass an id:\n- Ihor A/)
+  await assert.rejects(call('where_works', { person: 'nobody' }), /not anyone in this workspace/)
+  await assert.rejects(call('where_works', { person: 'bezpaluy89', days: 0 }), /days is a whole number/)
+  assert.match(await call('pr_stats', { from: '2026-11-01', to: '2026-11-07' }), /\| Alpha \| Ievgen Bezpaly \(id ievgen-bezpaly\) \| bezpaluy89, ievgen-b \| 2 \| 1 \| 3 \|/)
+  assert.deepEqual(asked[2], ['prStats', project.workspaceId, new Date(2026, 10, 1).getTime(), new Date(2026, 10, 8).getTime() - 1, undefined])
+  assert.match(await call('pr_stats', { from: '2026-11-01', to: '2026-11-07', labels: ['Beta'] }), /^No PRs or reviews from 2026-11-01 to 2026-11-07 in Beta\./)
+  await assert.rejects(call('pr_stats', { from: '2026-11-01' }), /Pass from and to/)
+  for (const role of ['chat', 'groomer', 'developer', 'reviewer', 'architect']) {
+    const names = toolsFor(role === 'chat' || role === 'architect' ? 'project' : 'task', role).map((t) => t.name)
+    assert.ok(names.includes('where_works') && names.includes('pr_stats'), role)
   }
 })
 

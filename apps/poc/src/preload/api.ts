@@ -1,7 +1,7 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ItemLabel, ItemRef, Label, LabelGroup, LabelGroupInput, LabelInput, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Deliverable } from '../main/core/services/deliverables/types.ts'
-import type { OverrideInput, PeopleList, PeopleSystem, SyncReport } from '../main/core/services/people/types.ts'
+import type { MeetingPerson, OverrideInput, PeopleList, PeopleSystem, SyncReport } from '../main/core/services/people/types.ts'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
@@ -407,6 +407,8 @@ export interface MagApi {
   rejectPerson(workspaceId: string, system: PeopleSystem, handle: string, personId: string): Promise<void>
   /** The user's Not a person on a person: a bot. */
   notPerson(workspaceId: string, personId: string): Promise<void>
+  /** The meeting's participants as persons of `workspaceId` (who-is-who-people-from.2): chips, with suggestions. */
+  meetingPeople(id: string, workspaceId: string): Promise<MeetingPerson[]>
   /** Called when people were synced or corrected. */
   onPeopleChanged(cb: () => void): () => void
   /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */

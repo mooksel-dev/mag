@@ -3,6 +3,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { claudeCode, type AgentAdapter } from '@mag/agents'
+import { githubRepo } from '../../lib/github-remote/index.ts'
+
+export { githubRepo }
 
 /** A user as a directory lists them. */
 export interface DirUser {
@@ -96,12 +99,6 @@ export function parseJiraUsers(json: string): DirUser[] {
     }
   }
   return [...out.values()]
-}
-
-/** owner/name of a GitHub remote URL; null for another host. */
-export function githubRepo(url: string): { owner: string; name: string } | null {
-  const m = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(url.trim())
-  return m ? { owner: m[1], name: m[2] } : null
 }
 
 /** The login of a GitHub noreply address (12345+login@users.noreply.github.com). */

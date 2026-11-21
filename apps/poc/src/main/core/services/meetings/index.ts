@@ -42,6 +42,8 @@ export interface Meetings {
   /** Links the meeting to a topic or a work; a link it has already is kept once. */
   link(id: string, ref: MeetingLink): Meeting
   unlink(id: string, ref: MeetingLink): Meeting
+  /** Who took part, by the names in meta.json and the summary's Participants, each once; "me" (the user) left out. */
+  participants(id: string): string[]
   /** When the meeting's files last changed (ms): the version the search index keeps it at. */
   changedAt(id: string): number
   /** The meeting being recorded now, if any: not indexed until it ends. */
@@ -433,6 +435,16 @@ export function createMeetings(deps: MeetingsDeps): Meetings {
     },
     link: (id, ref) => updateMeta(id, (m) => ({ ...m, links: [...(m.links ?? []).filter((l) => !sameLink(l, ref)), ref] })),
     unlink: (id, ref) => updateMeta(id, (m) => ({ ...m, links: (m.links ?? []).filter((l) => !sameLink(l, ref)) })),
+    participants(id) {
+      const { meta, summary } = deps.files.read(id)
+      const out = new Map<string, string>()
+      for (const raw of [...(meta.participants ?? []), ...participantsOf(summary)]) {
+        const name = raw.trim()
+        const key = name.toLowerCase().replace(/\s+/g, ' ')
+        if (name && key !== 'me' && !out.has(key)) out.set(key, name)
+      }
+      return [...out.values()]
+    },
     changedAt: (id) => deps.files.changedAt(id),
     recordingId: () => rec?.meeting?.id ?? null,
   }

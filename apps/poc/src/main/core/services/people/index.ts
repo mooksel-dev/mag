@@ -1,9 +1,12 @@
 // People (who-is-who-people-from.1): a workspace's persons from its directories (Slack primary; Atlassian and GitHub
 // joined by email or commit email), every handle resolved to a person in one order (the user's override, the identity,
 // email, commit email), a close name only suggested. Nothing is ever written back to a directory.
+// Where they work and PR stats (who-is-who-people-from.2) are counted from PRs, tickets and meetings, never stored.
+import { basename } from 'node:path'
 import type { Workspace } from '@mag/core'
+import type { Activity, Pr, Ticket } from '../../clients/activity/index.ts'
 import type { Directories, DirUser } from '../../clients/directories/index.ts'
-import { PEOPLE_SYSTEMS, type Identity, type IdentityOverride, type IdentitySource, type OverrideInput, type PeopleList, type PeopleSystem, type Person, type PersonView, type Resolution, type Suggestion, type SyncReport } from './types.ts'
+import { PEOPLE_SYSTEMS, type Identity, type MeetingFacts, type PrStats, type PrStatsRow, type ProjectActivity, type ProjectScope, type WhereWorks, type IdentityOverride, type IdentitySource, type OverrideInput, type PeopleList, type PeopleSystem, type Person, type PersonView, type Resolution, type Suggestion, type SyncReport } from './types.ts'
 
 export * from './types.ts'
 
@@ -20,6 +23,15 @@ export interface PeopleSources {
   repos(workspaceId: string): string[]
   /** Jira keys of the workspace's labels, for its Atlassian users; empty: the whole site. */
   jiraKeys(workspaceId: string): string[]
+  /** The workspace's Project labels with their repositories and Jira keys. */
+  projects(workspaceId: string): ProjectScope[]
+  /** The workspace's meetings started in [from, to] (ms). */
+  meetings(workspaceId: string, from: number, to: number): MeetingFacts[]
+}
+
+export interface PeopleClients {
+  directories: Directories
+  activity: Activity
 }
 
 export interface People {
@@ -29,6 +41,12 @@ export interface People {
   resolve(workspaceId: string, system: PeopleSystem, handle: string): Resolution
   /** `handle` of any system (or of `system`), an email or a person id. */
   who(workspaceId: string, handle: string, system?: PeopleSystem): Resolution
+  /** As resolve, and keeps the handle (a name said on a call) so People can suggest or match it. */
+  identify(workspaceId: string, system: PeopleSystem, handle: string): Resolution
+  /** Where the person works: their PRs, reviews, tickets and meetings of the last `days` per Project label; fetched once a day. */
+  activity(personId: string, days?: number): Promise<WhereWorks>
+  /** PRs and reviews in [from, to] (ms) by person and Project label (ids or names; every label and repo when missing), each person's logins folded. */
+  prStats(workspaceId: string, from: number, to: number, labels?: string[]): Promise<PrStats>
   /** The user's correction, kept across syncs. */
   override(o: OverrideInput): void
   /** The user's "no" to suggesting `personId` for the handle. */
@@ -45,6 +63,10 @@ export interface People {
 
 /** A name this close (0..1) to a person's suggests them. */
 export const SUGGEST_SCORE = 0.8
+/** Days of activity "where they work" counts by default. */
+export const ACTIVITY_DAYS = 60
+const DAY = 86_400_000
+const NO_LABEL = 'No project'
 
 export const identityId = (workspaceId: string, system: PeopleSystem, handle: string) => `${workspaceId}|${system}|${handle}`
 
@@ -93,9 +115,23 @@ export function personSlug(name: string, taken: (id: string) => boolean): string
   return id
 }
 
-export function createPeople(rows: PeopleRows, sources: PeopleSources, directories: Directories, changed: () => void, now: () => number = Date.now): People {
+/** Whether ticket `key` (PRVP-12) is of one of `jiraKeys`. */
+const keyOf = (jiraKeys: string[], key: string) => jiraKeys.some((k) => key.toUpperCase().startsWith(`${k.trim().toUpperCase()}-`))
+const failure = (what: string, e: unknown) => `${what}: ${(e as Error).message.split('\n')[0]}`
+
+/** What activity counts from, fetched once a day per workspace and window. */
+interface Facts {
+  fetchedAt: number
+  prs: Pr[]
+  tickets: Ticket[]
+  errors: string[]
+}
+
+export function createPeople(rows: PeopleRows, sources: PeopleSources, clients: PeopleClients, changed: () => void, now: () => number = Date.now): People {
+  const { directories, activity } = clients
   const running = new Map<string, Promise<SyncReport>>()
   const reports = new Map<string, SyncReport>()
+  const facts = new Map<string, Promise<Facts>>()
 
   const personsOf = (ws: string) => rows.persons.filter((p) => p.workspaceId === ws)
   const person = (ws: string, id: string | null | undefined) => (id ? rows.persons.find((p) => p.id === id && p.workspaceId === ws) : undefined)
@@ -274,6 +310,62 @@ export function createPeople(rows: PeopleRows, sources: PeopleSources, directori
     return report
   }
 
+  const pullPrs = async (repos: string[], from: number, to: number, errors: string[]) => {
+    const out: Pr[] = []
+    for (const repo of new Set(repos)) {
+      try {
+        out.push(...(await activity.prs([repo], from, to)))
+      } catch (e) {
+        errors.push(failure(`PRs of ${basename(repo)}`, e))
+      }
+    }
+    return out
+  }
+
+  /** The workspace's PRs and tickets of the last `days`, kept for the local day; a fetch with errors is tried again next time. */
+  const factsOf = (ws: string, days: number): Promise<Facts> => {
+    const at = now()
+    const key = `${ws}|${days}|${new Date(at).toDateString()}`
+    const had = facts.get(key)
+    if (had) return had
+    for (const k of facts.keys()) if (k.startsWith(`${ws}|${days}|`)) facts.delete(k)
+    const p = (async (): Promise<Facts> => {
+      const scopes = sources.projects(ws)
+      const errors: string[] = []
+      const prs = await pullPrs(scopes.flatMap((s) => s.repos), at - days * DAY, at, errors)
+      const keys = [...new Set(scopes.flatMap((s) => s.jiraKeys.map((k) => k.trim().toUpperCase())))].filter((k) => /^[A-Z][A-Z0-9_]+$/.test(k))
+      let tickets: Ticket[] = []
+      if (keys.length) {
+        try {
+          tickets = await activity.tickets(`project in (${keys.join(', ')}) AND updated >= -${days}d`)
+        } catch (e) {
+          errors.push(failure('Tickets', e))
+        }
+      }
+      return { fetchedAt: at, prs, tickets, errors }
+    })()
+    facts.set(key, p)
+    void p.then(
+      (f) => f.errors.length && facts.get(key) === p && facts.delete(key),
+      () => facts.get(key) === p && facts.delete(key),
+    )
+    return p
+  }
+
+  /** The person a handle of `system` resolves to, memoized for one count. */
+  const resolver = (ws: string) => {
+    const memo = new Map<string, Person | null>()
+    return (system: PeopleSystem, handle: string | null): Person | null => {
+      if (!handle) return null
+      const k = `${system}|${handle}`
+      if (!memo.has(k)) {
+        const r = resolveRow(rowFor(ws, system, handle))
+        memo.set(k, r.kind === 'person' ? person(ws, r.person.id) ?? null : null)
+      }
+      return memo.get(k)!
+    }
+  }
+
   const self: People = {
     sync(ws) {
       const had = running.get(ws)
@@ -284,6 +376,108 @@ export function createPeople(rows: PeopleRows, sources: PeopleSources, directori
     },
 
     resolve: (ws, system, handle) => resolveRow(rowFor(ws, system, handle)),
+
+    identify(ws, system, handle) {
+      if (!normalHandle(system, handle)) return { kind: 'unknown' }
+      const row = rowFor(ws, system, handle)
+      if (!identity(row.id)) {
+        rows.identities.push(row)
+        changed()
+      }
+      return resolveRow(row)
+    },
+
+    async activity(personId, days = ACTIVITY_DAYS) {
+      const p = rows.persons.find((x) => x.id === personId)
+      if (!p) throw new Error(`No person ${personId}`)
+      if (!(days > 0)) throw new Error('days is a positive number')
+      const ws = p.workspaceId
+      const f = await factsOf(ws, days)
+      const to = now()
+      const from = to - days * DAY
+      const who = resolver(ws)
+      const me = (system: PeopleSystem, handle: string | null) => who(system, handle)?.id === p.id
+      const meetings = sources.meetings(ws, from, to).filter((m) => m.names.some((n) => me('meeting', n)))
+      const projects: ProjectActivity[] = []
+      for (const scope of sources.projects(ws)) {
+        const repos = new Set(scope.repos)
+        const prs = f.prs.filter((pr) => repos.has(pr.repo))
+        const a: ProjectActivity = {
+          labelId: scope.id,
+          label: scope.name,
+          prs: prs.filter((pr) => me('github', pr.author) && pr.createdAt >= from).length,
+          reviews: prs.filter((pr) => !me('github', pr.author) && pr.reviews.some((r) => r.at >= from && me('github', r.author))).length,
+          tickets: f.tickets.filter((t) => keyOf(scope.jiraKeys, t.key) && (me('atlassian', t.assignee) || me('atlassian', t.reporter))).length,
+          meetings: meetings.filter((m) => m.projectIds.includes(scope.id)).length,
+        }
+        if (a.prs + a.reviews + a.tickets + a.meetings) projects.push(a)
+      }
+      const total = (a: ProjectActivity) => a.prs + a.reviews + a.tickets + a.meetings
+      projects.sort((a, b) => total(b) - total(a) || a.label.localeCompare(b.label))
+      return { personId, days, from, fetchedAt: f.fetchedAt, projects, errors: f.errors }
+    },
+
+    async prStats(ws, from, to, labels) {
+      if (!sources.workspace(ws)) throw new Error(`No workspace ${ws}`)
+      if (!(from <= to)) throw new Error('from is before to')
+      const all = sources.projects(ws)
+      let scopes = all
+      if (labels?.length) {
+        scopes = labels.map((l) => {
+          const s = all.find((x) => x.id === l || x.name.trim().toLowerCase() === l.trim().toLowerCase())
+          if (!s) throw new Error(`No Project label "${l}"; labels: ${all.map((x) => x.name).join(', ') || 'none'}`)
+          return s
+        })
+      }
+      const errors: string[] = []
+      const repos = [...scopes.flatMap((s) => s.repos), ...(labels?.length ? [] : sources.repos(ws))]
+      const prs = await pullPrs(repos, from, to, errors)
+      const who = resolver(ws)
+      /** A login's row owner: its person, or itself when unmatched; null for not a person. */
+      const ownerOf = (login: string): { key: string; person: Person | null } | null => {
+        const p = who('github', login)
+        if (p) return { key: `p:${p.id}`, person: p }
+        return resolveRow(rowFor(ws, 'github', login)).kind === 'notPerson' ? null : { key: `g:${login}`, person: null }
+      }
+      const acc = new Map<string, { row: PrStatsRow; prs: Set<string>; merged: Set<string>; reviews: Set<string>; logins: Set<string> }>()
+      const at = (owner: { key: string; person: Person | null }, login: string, scope: ProjectScope | null) => {
+        const k = `${owner.key}|${scope?.id ?? ''}`
+        let a = acc.get(k)
+        if (!a) {
+          const row: PrStatsRow = { personId: owner.person?.id ?? null, name: owner.person?.name ?? login, logins: [], labelId: scope?.id ?? null, label: scope?.name ?? NO_LABEL, prs: 0, merged: 0, reviews: 0 }
+          acc.set(k, (a = { row, prs: new Set(), merged: new Set(), reviews: new Set(), logins: new Set() }))
+        }
+        a.logins.add(login)
+        return a
+      }
+      for (const pr of prs) {
+        const id = `${pr.repo}#${pr.number}`
+        const inScopes: (ProjectScope | null)[] = scopes.filter((s) => s.repos.includes(pr.repo))
+        if (!inScopes.length) {
+          if (labels?.length) continue
+          inScopes.push(null)
+        }
+        const author = pr.author ? ownerOf(pr.author) : null
+        for (const scope of inScopes) {
+          if (author && pr.author) {
+            const a = at(author, pr.author, scope)
+            if (pr.createdAt >= from && pr.createdAt <= to) a.prs.add(id)
+            if (pr.mergedAt !== null && pr.mergedAt >= from && pr.mergedAt <= to) a.merged.add(id)
+          }
+          for (const r of pr.reviews) {
+            if (r.at < from || r.at > to) continue
+            const reviewer = ownerOf(r.author)
+            if (!reviewer || reviewer.key === author?.key) continue
+            at(reviewer, r.author, scope).reviews.add(id)
+          }
+        }
+      }
+      const rowsOut = [...acc.values()]
+        .map((a) => ({ ...a.row, logins: [...a.logins].sort(), prs: a.prs.size, merged: a.merged.size, reviews: a.reviews.size }))
+        .filter((r) => r.prs + r.merged + r.reviews)
+        .sort((a, b) => (a.labelId === null ? 1 : 0) - (b.labelId === null ? 1 : 0) || a.label.localeCompare(b.label) || b.prs + b.reviews - (a.prs + a.reviews) || a.name.localeCompare(b.name))
+      return { from, to, rows: rowsOut, errors }
+    },
 
     who(ws, handle, system) {
       if (system) return self.resolve(ws, system, handle)

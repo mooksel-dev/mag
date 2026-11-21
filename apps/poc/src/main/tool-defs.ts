@@ -1027,6 +1027,37 @@ export const TOOL_DEFS = [
     inputSchema: { type: 'object', properties: { q: { type: 'string', description: 'A part of a name, email, title or handle, e.g. Ihor.' } }, required: ['q'] },
   },
   {
+    name: 'where_works',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "Where a person of this workspace works, derived from their activity (never declared): per Project label, the PRs they opened, others' PRs they reviewed, Jira work items they are assignee or reporter of, and linked meetings they took part in, over the last days (60 by default). PRs and tickets are fetched once a day. Read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        person: { type: 'string', description: 'A person id, handle, email or name, e.g. bezpaluy89 or Ihor Koval.' },
+        days: { type: 'number', description: 'The window in days, 1 to 365; 60 by default.' },
+      },
+      required: ['person'],
+    },
+  },
+  {
+    name: 'pr_stats',
+    scope: 'any',
+    reviewer: 'also',
+    description:
+      "PRs and reviews of this workspace's repositories by person and Project label: PRs opened and merged, and others' PRs reviewed (each PR once), between two dates. A person's GitHub logins are folded into one row; a login without a person gets its own row; bots are left out. Read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'YYYY-MM-DD (the local day\'s start) or an ISO time.' },
+        to: { type: 'string', description: 'YYYY-MM-DD (the local day\'s end) or an ISO time.' },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Only these Project labels (names or ids); every label and repo by default.' },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
     name: 'read_chat',
     scope: 'any',
     reviewer: 'also',
