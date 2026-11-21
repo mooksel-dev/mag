@@ -257,3 +257,7 @@ test('inbox: every project at once, each item with its project and a stable key'
   assert.notEqual(other.key, items[2].key, 'another question is another item')
   assert.deepEqual(projectInbox('q', tasks, [chat, failed]).map((i) => i.key), ['session:chat:approval:a1', 'task:start:ready_to_start'])
 })
+
+test('inbox: a review without prReview yet (imported, PR not read) waits, no crash', () => {
+  assert.deepEqual(inbox([task('r', 'in_progress', 0, { type: 'review' })], []), [])
+})
