@@ -1680,8 +1680,8 @@ export interface InboxItem {
    * with a hash of its text, since another question is another item.
    */
   key: string
-  /** The task's project, or the approval's session's. */
-  projectId: string
+  /** The task's project, or the approval's session's; null: a topic without a project. */
+  projectId: string | null
   /** null for an approval in a project chat. */
   task: Task | null
   kind: InboxKind

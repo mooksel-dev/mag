@@ -108,7 +108,8 @@ export function createInbox(deps: InboxDeps): Inbox {
     kind: i.kind,
     text: i.text,
     projectId: i.projectId,
-    workspaceId: deps.workspaceOf(i.projectId),
+    // A topic without a project is in its own workspace.
+    workspaceId: i.projectId ? deps.workspaceOf(i.projectId) : (i.session?.workspaceId ?? null),
     taskId: i.task?.id ?? null,
     sessionId: i.session?.id ?? null,
     ...(i.approvalId ? { approvalId: i.approvalId } : {}),
