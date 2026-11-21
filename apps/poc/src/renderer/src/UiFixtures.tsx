@@ -28,6 +28,7 @@ const STATES: { name: string; card: ReactNode }[] = [
   { name: 'A rule broken', card: <PublishCard dest={JIRA} preview={<p>Merged in #301; see https://github.com/…</p>} rules={BROKEN} onPublish={noop} onEdit={noop} onCancel={noop} /> },
   { name: 'Editable after, rule not checked, no Edit', card: <PublishCard dest={DOC} preview={message} rules={UNCHECKED} onPublish={noop} onCancel={noop} /> },
   { name: 'No rules', card: <PublishCard dest={DOC} preview={message} rules={[]} onPublish={noop} onEdit={noop} onCancel={noop} /> },
+  { name: 'Sent back with a note', card: <PublishCard dest={SLACK} preview={message} rules={MET} onPublish={noop} onCancel={noop} outcome="Sent back: a blank line before Downs" /> },
   { name: 'Publishing', card: <PublishCard dest={SLACK} preview={message} rules={MET} onPublish={noop} onEdit={noop} onCancel={noop} publishing /> },
 ]
 

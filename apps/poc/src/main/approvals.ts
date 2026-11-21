@@ -6,6 +6,10 @@ import { classify, isAuto } from './core/lib/destinations/index.ts'
 
 type ApprovalItem = Extract<ChatItem, { kind: 'approval' }>
 
+/** What the agent gets on a deny: a write sent back with the user's note (the Publish card's Edit) is to be revised. */
+const deniedMessage = (item: ApprovalItem) =>
+  !item.note ? 'User denied' : item.destination ? `User sent it back to revise: ${item.note}\nRewrite it and ask again.` : `User denied: ${item.note}`
+
 /** Arguments Claude Code passes to the --permission-prompt-tool. */
 export interface ApprovalArgs {
   tool_name?: unknown
@@ -81,7 +85,7 @@ export class Approvals {
       return JSON.stringify({ pending: true })
     }
     if (item.status === 'allowed') return JSON.stringify({ behavior: 'allow', updatedInput: item.input })
-    if (item.status === 'denied') return deny(item.note ? `User denied: ${item.note}` : 'User denied')
+    if (item.status === 'denied') return deny(deniedMessage(item))
     return deny('The request expired before the user answered')
   }
 
