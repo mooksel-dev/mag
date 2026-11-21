@@ -58,7 +58,7 @@ let runSeq = 0
 
 /**
  * ▶ Run on each shell block under `root` (topic-run-commands): it runs in the user's shell, its output under the block as
- * it comes, ■ stops it, and Send to agent sends the command with its output and exit code to the chat.
+ * it comes, ■ stops it; its agent gets the command, exit code and output when it ends (Orchestrator.commandRan).
  */
 function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (text: string) => Promise<void> }) {
   for (const code of Array.from(root.querySelectorAll<HTMLElement>('pre > code'))) {
@@ -81,7 +81,6 @@ function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (te
       if (id) return void mag.stopCommand(id)
       id = `run-${++runSeq}-${Date.now()}`
       bar.querySelector('.runout')?.remove()
-      bar.querySelector('.runsend')?.remove()
       const out = document.createElement('pre')
       out.className = 'runout'
       bar.append(out)
@@ -93,17 +92,8 @@ function addRunButtons(root: HTMLElement, runner: { sessionId: string; send: (te
       const status = document.createElement('span')
       status.className = `muted small runstatus${result.code === 0 ? '' : ' failed'}`
       status.textContent = 'error' in result ? result.error : result.code === 0 ? 'done' : `exit ${result.code ?? 'stopped'}`
-      const send = document.createElement('button')
-      send.type = 'button'
-      send.className = 'small runsend'
-      send.textContent = 'Send to agent'
-      send.onclick = () => {
-        send.disabled = true
-        const tail = text.length > 20_000 ? `…\n${text.slice(-20_000)}` : text
-        void runner.send(`I ran:\n\`\`\`bash\n${command}\n\`\`\`\n${status.textContent}${'cwd' in result && result.cwd ? ` in ${result.cwd}` : ''}:\n\`\`\`\n${tail.trim() || '(no output)'}\n\`\`\``)
-      }
       bar.querySelector('.runstatus')?.remove()
-      run.after(status, send)
+      run.after(status)
     }
   }
 }

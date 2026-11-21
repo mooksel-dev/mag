@@ -965,7 +965,8 @@ export class Orchestrator {
     this.store.updateTask(stepId, { ownerQuestion: question, ownerQuestionFrom: from, ownerQuestionQueued: false })
     if (this.isRunning(owner.id)) {
       this.store.updateTask(stepId, { ownerQuestionQueued: true })
-      this.ownerEvent(step.id, `${step.key} ${from === 'asks' ? 'asks' : 'needs your decision'}: ${question} (queued until this turn ends)`)
+      // The user's line only: the question itself reaches the owner as a job once the turn ends.
+      this.store.pushItem(owner.id, { kind: 'notice', text: `${step.key} ${from === 'asks' ? 'asks' : 'needs your decision'}: ${question} (queued until this turn ends)`, at: Date.now() })
       log.info('agent', `${step.key}: queued for its owner`, { owner: owner.id })
       return true
     }
@@ -1018,6 +1019,28 @@ export class Orchestrator {
     const t = this.store.task(taskId)
     const owner = this.ownerSession(t.parentId ? this.store.task(t.parentId) : t)
     if (owner) this.store.pushItem(owner.id, { kind: 'notice', text, at: Date.now(), forAgent: true })
+  }
+
+  /**
+   * The user ran a command from the chat (▶ Run): its agent gets the command, exit code and output at once (a turn), or
+   * with its next message when it is in a turn or can't take one.
+   */
+  async commandRan(sessionId: string, command: string, cwd: string, code: number | null, output: string) {
+    const session = this.store.data.sessions.find((s) => s.id === sessionId)
+    if (!session) return
+    const status = code === 0 ? 'done' : code === null ? 'stopped' : `exit ${code}`
+    const tail = output.length > 20_000 ? `…\n${output.slice(-20_000)}` : output
+    const line = command.split('\n')[0].slice(0, 80) + (command.includes('\n') || command.length > 80 ? '…' : '')
+    const title = `You ran \`${line}\`: ${status}`
+    const text = `The user ran a command from this chat, in ${cwd}:\n\`\`\`bash\n${command}\n\`\`\`\n${status}, output:\n\`\`\`\n${tail.trim() || '(no output)'}\n\`\`\``
+    if (!isSubagent(session) && !this.isRunning(sessionId) && !this.preparing.has(sessionId)) {
+      try {
+        return await this.send(sessionId, text, [], title)
+      } catch (e) {
+        log.warn('agent', 'a command\'s output could not start a turn; it goes with the next message', { session: sessionId, error: String(e) })
+      }
+    }
+    this.store.pushItem(sessionId, { kind: 'notice', text: title, at: Date.now(), forAgent: true, agentText: text })
   }
 
   /** The owner's answer to its step developer's question: the developer's session goes on with it. */

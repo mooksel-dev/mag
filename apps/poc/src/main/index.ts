@@ -290,10 +290,16 @@ app.whenReady().then(async () => {
     const session = store.data.sessions.find((s) => s.id === sessionId)
     const cwd = (session && store.data.projects.find((p) => p.id === session.projectId)?.repos[0]) || homedir()
     log.info('ipc', 'user runs a command from a chat', { session: sessionId, cwd })
-    const run = runShell(command, cwd, (chunk) => { if (!e.sender.isDestroyed()) e.sender.send('command:output', runId, chunk) })
+    let output = ''
+    const run = runShell(command, cwd, (chunk) => {
+      output += chunk
+      if (!e.sender.isDestroyed()) e.sender.send('command:output', runId, chunk)
+    })
     commandRuns.set(runId, run)
     try {
-      return { ...(await run.done), cwd }
+      const done = await run.done
+      void orch.commandRan(sessionId, command, cwd, done.code, output)
+      return { ...done, cwd }
     } finally {
       commandRuns.delete(runId)
     }
