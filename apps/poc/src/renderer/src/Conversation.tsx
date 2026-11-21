@@ -15,12 +15,14 @@ import {
   type SessionHeader,
   type Attachment,
   type CanvasRef,
+  type ChatLink,
   type ChatRef,
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
 import { LabelChips } from './labels/LabelChips'
 import { HeadMenu, TopicPanel, WaitingBar, workMenuCard, workSessions } from './ArtifactPane'
+import { openHit } from './jump'
 import { topicAgents, topicApprovals, topicArtifacts, type ArtifactTarget } from './artifacts'
 import { topicDeliverables } from './deliverableText'
 import { WorkCards } from './Cards'
@@ -48,7 +50,7 @@ export function ownerSession(work: Task, sessions: SessionHeader[]): SessionHead
 }
 
 /** What opens a referenced chat: its topic, or its work or review. */
-const refSelection = (ref: ChatRef): Selection => ({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })
+const refSelection = (ref: ChatLink): Selection => ({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })
 
 /** The drawer of a screen: the artifact open in it, and the opener canvas cards in the chat use. */
 function useDrawer(initial: ArtifactTarget | null) {
@@ -168,7 +170,7 @@ export function TopicConversation({ topic, work, initial = null, state, onOpenKe
         <div className={`screenbody${rightPane.width === null ? '' : ' sized'}`} style={rightPane.style}>
           <div className="screenmain">
             {chat && (chat.itemCount || !topic) ? (
-              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => onSelect(refSelection(r))} onOpenTask={onOpenKey} onOpenSession={(id) => onSelect({ kind: 'topic', id })} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
+              <Chat session={chat} name={topic ? undefined : 'owner'} sessions={state.sessions} canvases={state.canvases} tasks={tasks} self={topic ? undefined : { kind: 'task', id: subject!.id }} onOpenRef={(r) => (r.kind === 'hit' ? openHit(r.id, r.title) : onSelect(refSelection(r)))} onOpenTask={onOpenKey} onOpenSession={(id) => onSelect({ kind: 'topic', id })} placeholder={topic ? 'Reply…' : 'Write to the owner: ask, change the plan, give feedback…'} cards={cards} readOnly={!!topic && isSubagent(topic)} />
             ) : topic ? (
               <div className="chatbox">
                 <div className="items">

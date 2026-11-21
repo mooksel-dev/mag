@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createWorkspaceFiles } from '../../clients/workspace-files/index.ts'
-import { createDeliverables, slugOf, type Deliverable, type Origin } from './index.ts'
+import { createDeliverables, refVersion, slugOf, type Deliverable, type Origin } from './index.ts'
 
 const origin: Origin = { workspaceId: 'w1', folder: 'personal', projectId: 'p1', topicId: 't1', taskId: null }
 const slack = { kind: 'slack' as const, target: 'C1', label: 'Slack C1' }
@@ -165,6 +165,9 @@ test('a bare ref resolves in the workspace by id: a renamed workspace keeps its 
   assert.equal(next.n, 2)
   assert.throws(() => dlv.resolve('dlv:weekly', 'w2'), /No deliverable dlv:weekly/)
   assert.equal(dlv.resolve('personal:dlv:weekly').id, next.deliverable.id)
+  assert.equal(dlv.resolve('personal:dlv:weekly@1').id, next.deliverable.id, 'a search hit names its version')
+  assert.equal(refVersion('personal:dlv:weekly@1'), 1)
+  assert.equal(refVersion('dlv:weekly'), undefined)
 })
 
 function withResolver() {

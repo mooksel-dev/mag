@@ -4,9 +4,10 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { IndexRow, MatchRow, MatchWhere } from './types.ts'
+import { MARK_END, MARK_START, type IndexRow, type MatchRow, type MatchWhere } from './types.ts'
 
 export type * from './types.ts'
+export { MARK_END, MARK_START } from './types.ts'
 
 export interface SearchIndex {
   /** Replaces the source's rows and records its version. */
@@ -20,8 +21,6 @@ export interface SearchIndex {
 }
 
 /** Marks around the matched words in a snippet. */
-export const MARK_START = '\u0002'
-export const MARK_END = '\u0003'
 const DEFAULT_LIMIT = 50
 /** A change of the tables: an index of another schema is dropped and built again. */
 const SCHEMA = 1

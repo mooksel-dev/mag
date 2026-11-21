@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DESTINATION_LABELS,
   PLAYBOOK_SECTIONS,
@@ -29,6 +29,8 @@ import { ChoiceChip, ModelPopover, useAgents } from './Agents'
 import { choiceLabel } from './modelChoice'
 import { Architecture } from './Architecture'
 import { workTarget, type ArtifactTarget } from './artifacts'
+import { setHitOpener, setJump } from './jump'
+import { hitTarget } from './searchView'
 import { ownerSession, TopicConversation } from './Conversation'
 import { ErrorBoundary } from './ErrorBoundary'
 import { HomeScreen } from './Home'
@@ -76,6 +78,16 @@ export function App({ view }: { view: WindowView }) {
   const [routineId, setRoutineId] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerMode | null>(null)
   const [searching, setSearching] = useState(false)
+  const openHitRef = useRef<((ref: string, title: string) => string | null) | null>(null)
+  useEffect(() => {
+    const open = (ref: string, title: string) => openHitRef.current?.(ref, title) ?? null
+    setHitOpener(open)
+    const off = mag.onSearchOpen(open)
+    return () => {
+      setHitOpener(null)
+      off()
+    }
+  }, [])
   // The open work or topic, per window.
   const selKey = `mag.selected.${viewKey}`
   const [selected, setSelected] = useState<Selection | null>(() => {
@@ -93,7 +105,7 @@ export function App({ view }: { view: WindowView }) {
   const [theme, setTheme] = useTheme()
   const leftPane = usePaneWidth('left', viewKey)
   const [homeIn, setHomeIn] = useState<HomeIn | null>(null)
-  // What a Library row opens in the topic's drawer; any other selection drops it.
+  // What a Library row or a search hit opens in the topic's drawer; any other selection drops it.
   const [opened, setOpened] = useState<ArtifactTarget | null>(null)
   // Each open remounts the topic's screen, so the drawer shows it even when the topic was open with it closed.
   const [openedN, setOpenedN] = useState(0)
@@ -203,6 +215,35 @@ export function App({ view }: { view: WindowView }) {
     setMeetingId(null)
     setRoutineId(id)
   }
+  // A search hit: its source in this window, or in a window of its workspace; why it can't, else null.
+  const openHit = (ref: string, title: string): string | null => {
+    const t = hitTarget(ref, title, { workspaceId: workspace.id, sessions: state.sessions, tasks: state.tasks, deliverables: state.deliverables ?? [] })
+    if (!t) return 'What this hit points at is gone.'
+    switch (t.kind) {
+      case 'elsewhere':
+        mag.openHit(t.workspaceId, ref, title).catch((e: Error) => alert(e.message))
+        return null
+      case 'topic':
+        select({ kind: 'topic', id: t.id })
+        if (t.item !== undefined) setJump({ kind: 'item', sessionId: t.id, n: t.item })
+        return null
+      case 'work':
+        selectOpening({ kind: 'work', id: t.id }, t.section || t.decisions ? { kind: 'doc', taskId: t.id, section: t.section, decisions: t.decisions } : null)
+        return null
+      case 'meeting':
+        openMeeting(t.id, t.at)
+        return null
+      case 'deliverable':
+        if (!t.topicId || !sessions.some((s) => s.id === t.topicId)) return 'This deliverable has no topic to open it in; ⌘↵ references it.'
+        selectOpening({ kind: 'topic', id: t.topicId }, { kind: 'deliverable', id: t.id, version: t.version })
+        return null
+      case 'person':
+        pickSection('people')
+        setJump({ kind: 'person', workspaceId: workspace.id, name: t.name })
+        return null
+    }
+  }
+  openHitRef.current = openHit
   const newIn = (pid: string, group: HomeGroup | null) => {
     select(null)
     setHomeIn({ projectId: pid, group })
@@ -305,12 +346,8 @@ export function App({ view }: { view: WindowView }) {
           )}
         </ErrorBoundary>
       </div>
-      {searching && project && (
-        <SearchPalette
-          projectId={project.id}
-          onPick={(ref) => select({ kind: ref.kind === 'topic' ? 'topic' : 'work', id: ref.id })}
-          onClose={() => setSearching(false)}
-        />
+      {searching && (
+        <SearchPalette workspace={workspace} state={state} onOpen={(h) => openHit(h.ref, h.title)} onClose={() => setSearching(false)} />
       )}
     </div>
   )

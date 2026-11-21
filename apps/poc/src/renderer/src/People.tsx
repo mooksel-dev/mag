@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { PeopleList, PersonView } from '../../main/core/services/people/types.ts'
 import { filterPeople, handleLabels, syncReportText } from './peopleText'
 import { Caret } from './ui/Icon'
+import { setJump, useJump, type Jump } from './jump'
 
 const mag = window.mag
 
@@ -49,6 +50,14 @@ export function PeopleSection({ workspaceId }: { workspaceId: string }) {
   const [open, setOpen] = useState(() => localStorage.getItem('mag.people.open') !== '0')
   const [q, setQ] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // A person opened from search: the list shows them.
+  const jump = useJump((j): j is Extract<Jump, { kind: 'person' }> => j.kind === 'person' && j.workspaceId === workspaceId)
+  useEffect(() => {
+    if (!jump) return
+    setQ(jump.name)
+    setOpen(true)
+    setJump(null)
+  }, [jump])
   const toggle = () => {
     localStorage.setItem('mag.people.open', open ? '0' : '1')
     setOpen(!open)

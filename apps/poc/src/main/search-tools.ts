@@ -1,11 +1,15 @@
 // search_workspace and read(ref) (unified-search-across-the-workspace.1): every role finds and opens topics, docs,
-// decisions and meetings across the workspace, or across all of them when the user asks.
+// decisions, meetings and persons across the workspace, or across all of them when the user asks; and the ⌘K palette's
+// query (.2).
 import { chatTranscript, itemOffset, type Project } from '@mag/core'
 import { decisionsSection, docSections, parseRef } from './core/lib/search-rows/index.ts'
 import { bound, type Meetings } from './core/services/meetings/index.ts'
-import { MARK_END, MARK_START, type Search, type SearchKind } from './core/services/search/index.ts'
+import { MARK_END, MARK_START, type Hit, type Search, type SearchKind } from './core/services/search/index.ts'
 import { meetingText } from './meeting-tools.ts'
+import type { PaletteQuery, PaletteResult } from '../preload/api.ts'
 import type { Store } from './store.ts'
+
+export type { PaletteQuery, PaletteResult }
 
 /** A page of read, in characters. */
 export const READ_PAGE = 40_000
@@ -83,7 +87,33 @@ export function searchWorkspace(deps: SearchToolDeps, project: Pick<Project, 'wo
   return `${lines.join('\n')}\n\nOpen one with read(ref).`
 }
 
-/** A hit opened: a topic from its message, a work, a doc section, a work's decisions, a meeting from its line. */
+/** Hits of each palette tab; a tab this full shows its count as "50+". */
+export const PALETTE_LIMIT = 50
+
+/** The palette's query (over IPC): one ranking across kinds and one per kind, so each tab has its own count. */
+export function paletteSearch(search: Pick<Search, 'query'>, q: string, o: PaletteQuery): PaletteResult {
+  const opts = {
+    workspaceId: String(o?.workspaceId ?? ''),
+    scope: o?.scope === 'all' ? ('all' as const) : undefined,
+    labels: Array.isArray(o?.labels) ? o.labels.map((g) => (Array.isArray(g) ? g.filter((x) => typeof x === 'string') : [])).filter((g) => g.length) : undefined,
+    people: o?.people === true,
+    limit: PALETTE_LIMIT,
+  }
+  const query = typeof q === 'string' ? q : ''
+  const byKind = Object.fromEntries(SEARCH_KINDS.map((k) => [k, search.query(query, { ...opts, kinds: [k] })])) as Record<SearchKind, Hit[]>
+  return { all: search.query(query, opts), byKind, limit: PALETTE_LIMIT }
+}
+
+/** A person as read shows them: what the directories say and every handle. */
+function personText(store: Store, id: string): string {
+  const p = store.data.persons.find((x) => x.id === id)
+  if (!p) throw new Error(`No person ${id}`)
+  const handles = store.data.identities.filter((i) => i.personId === p.id).map((i) => `- ${i.system}: ${i.handle}${i.name ? ` (${i.name})` : ''}`)
+  const ws = store.data.workspaces.find((w) => w.id === p.workspaceId)?.name ?? p.workspaceId
+  return [`Person ${p.name}${p.external ? ' (external)' : ''} · workspace ${ws}`, p.title && `Title: ${p.title}`, p.email && `Email: ${p.email}`, handles.length ? `Handles:\n${handles.join('\n')}` : 'Handles: none'].filter(Boolean).join('\n')
+}
+
+/** A hit opened: a topic from its message, a work, a doc section, a work's decisions, a meeting from its line, a person. */
 export function readRef(deps: SearchToolDeps, args: Record<string, unknown>): string {
   const raw = text(args.ref)
   const ref = raw ? parseRef(raw) : null
@@ -121,7 +151,10 @@ export function readRef(deps: SearchToolDeps, args: Record<string, unknown>): st
       const line = ref.at ? all.indexOf(`[${ref.at}]`) : -1
       return page(all, args.offset, line < 0 ? 0 : line)
     }
+    case 'person':
+      return page(personText(store, ref.id), args.offset)
     default:
-      throw new Error(`${ref.kind === 'dlv' ? 'Deliverables' : 'People'} are not in the index yet`)
+      // tools.ts sends deliverable refs to the deliverables' read.
+      throw new Error(`Open ${raw} with read: deliverables are read there`)
   }
 }

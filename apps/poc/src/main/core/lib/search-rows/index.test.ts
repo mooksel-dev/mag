@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatItem } from '@mag/core'
-import { decisionLines, decisionsSection, docSections, finalReplies, parseRef, rowsOfDecisions, rowsOfDoc, rowsOfMeeting, rowsOfSession, withWorkspace } from './index.ts'
+import { decisionLines, decisionsSection, docSections, finalReplies, parseRef, rowsOfDecisions, rowsOfDeliverable, rowsOfDoc, rowsOfMeeting, rowsOfPerson, rowsOfSession, withWorkspace } from './index.ts'
 
 test('parseRef: every kind, with or without a workspace; not a ref is null', () => {
   assert.deepEqual(parseRef('w1:topic:ab12#7'), { ws: 'w1', kind: 'topic', id: 'ab12', item: 7 })
@@ -58,4 +58,23 @@ test('rowsOfDoc, rowsOfDecisions, rowsOfMeeting: refs, titles and times', () => 
     ['mtg:m1', 'Реліз переносимо', 0],
     ['mtg:m1@00:01:02', 'me: Привіт', 62_000],
   ])
+})
+
+test('parseRef of a deliverable names its version; withWorkspace keeps a ref that names its place', () => {
+  assert.deepEqual(parseRef('aura:dlv:weekly@3'), { ws: 'aura', kind: 'dlv', id: 'weekly', version: 3 })
+  assert.deepEqual(parseRef('dlv:weekly'), { ws: undefined, kind: 'dlv', id: 'weekly' })
+  assert.deepEqual(parseRef('w1:person:olena-k'), { ws: 'w1', kind: 'person', id: 'olena-k' })
+  assert.equal(withWorkspace('w1', 'aura:dlv:weekly@3'), 'aura:dlv:weekly@3')
+  assert.equal(withWorkspace('w1', 'person:olena-k'), 'w1:person:olena-k')
+})
+
+test('rowsOfDeliverable: per version a title row with its kind and labels, then its sections; rowsOfPerson: one row with every handle', () => {
+  const rows = rowsOfDeliverable({ ref: 'aura:dlv:weekly', title: 'Weekly', kind: 'report', labels: ['Privacy'], versions: [{ n: 2, at: 9, text: 'Intro\n\n# Risks\nDBR stalls' }] })
+  assert.deepEqual(rows.map((r) => [r.ref, r.kind, r.title, r.text, r.at]), [
+    ['aura:dlv:weekly@2', 'deliverable', 'Weekly · v2', 'Weekly · report · Privacy', 9],
+    ['aura:dlv:weekly@2', 'deliverable', 'Weekly · v2', 'Intro', 9],
+    ['aura:dlv:weekly@2', 'deliverable', 'Weekly · v2 › Risks', '# Risks\nDBR stalls', 9],
+  ])
+  const [p] = rowsOfPerson({ id: 'olena-k', name: 'Olena K', email: 'olena.mail', title: null, handles: [{ system: 'slack', handle: 'U1', name: 'olena.k' }, { system: 'github', handle: 'olenak', name: 'Olena K' }], syncedAt: 5 })
+  assert.deepEqual(p, { ref: 'person:olena-k', kind: 'person', title: 'Olena K', text: 'Olena K\nolena.mail\nslack U1 (olena.k)\ngithub olenak', at: 5 })
 })

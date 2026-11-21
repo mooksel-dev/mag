@@ -21,7 +21,8 @@ export type ParsedRef =
   | { ws?: string; kind: 'doc'; id: string; section?: string }
   | { ws?: string; kind: 'dec'; id: string; line?: number }
   | { ws?: string; kind: 'mtg'; id: string; at?: string }
-  | { ws?: string; kind: 'dlv' | 'person'; id: string }
+  | { ws?: string; kind: 'dlv'; id: string; version?: number }
+  | { ws?: string; kind: 'person'; id: string }
 
 const REF = /^(?:([^:\s]+):)?(topic|work|doc|dec|mtg|dlv|person):(.+)$/
 
@@ -53,13 +54,17 @@ export function parseRef(ref: string): ParsedRef | null {
       const [id, at] = cut('@')
       return { ws, kind, id: id!, ...(at && { at }) }
     }
+    case 'dlv': {
+      const [id, n] = cut('@')
+      return { ws, kind, id: id!, ...(n !== undefined && /^\d+$/.test(n) && { version: Number(n) }) }
+    }
     default:
       return { ws, kind, id: rest }
   }
 }
 
-/** A row's ref with its workspace: `<ws>:<ref>`; a workspace-wide row (ws '') keeps its own. */
-export const withWorkspace = (ws: string, ref: string) => (ws ? `${ws}:${ref}` : ref)
+/** A row's ref with its workspace: `<ws>:<ref>`; a workspace-wide row (ws '') and one that names its place (a deliverable's folder) keep their own. */
+export const withWorkspace = (ws: string, ref: string) => (ws && !parseRef(ref)?.ws ? `${ws}:${ref}` : ref)
 
 /** Indexes of the final assistant reply of each turn: the last reply before the next user message or job. */
 export function finalReplies(items: ChatItem[]): Set<number> {
@@ -191,6 +196,42 @@ export function rowsOfMeeting(m: MeetingSource): SearchRow[] {
     if (x) rows.push({ ref: `mtg:${m.id}@${x[1]}:${x[2]}:${x[3]}`, kind: 'meeting', title: m.title, text: x[4], at: start + (Number(x[1]) * 3600 + Number(x[2]) * 60 + Number(x[3])) * 1000 })
   }
   return rows
+}
+
+/** What the index keeps of a deliverable: its own ref (`<folder>:dlv:<slug>`) and the text of the versions indexed. */
+export interface DeliverableSource {
+  ref: string
+  title: string
+  kind: string
+  /** As the author named them. */
+  labels: string[]
+  versions: { n: number; at: number; text: string }[]
+}
+
+/** A deliverable's rows: per version, its title line, then its text per section; each opens that version (`@<n>`). */
+export function rowsOfDeliverable(d: DeliverableSource): SearchRow[] {
+  return d.versions.flatMap((v) => {
+    const ref = `${d.ref}@${v.n}`
+    const title = `${d.title} · v${v.n}`
+    const head: SearchRow = { ref, kind: 'deliverable', title, text: [d.title, d.kind, ...d.labels].join(' · '), at: v.at }
+    return [head, ...docSections(v.text).map((s) => ({ ref, kind: 'deliverable' as const, title: s.heading ? `${title} › ${s.heading}` : title, text: s.text, at: v.at }))]
+  })
+}
+
+/** What the index keeps of a person: what the directories say, and their handles. */
+export interface PersonSource {
+  id: string
+  name: string
+  email: string | null
+  title: string | null
+  handles: { system: string; handle: string; name?: string }[]
+  syncedAt: number
+}
+
+/** A person's row: name, title, email and every handle. */
+export function rowsOfPerson(p: PersonSource): SearchRow[] {
+  const handles = p.handles.map((h) => `${h.system} ${h.handle}${h.name && h.name !== p.name ? ` (${h.name})` : ''}`)
+  return [{ ref: `person:${p.id}`, kind: 'person', title: p.name, text: [p.name, p.title, p.email, ...handles].filter(Boolean).join('\n'), at: p.syncedAt }]
 }
 
 /** FNV-1a of a text: a cheap version of a source. */

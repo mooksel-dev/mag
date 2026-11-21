@@ -12,7 +12,8 @@ import { canvasHref, mdSegments, parseCanvasHref } from './markdown'
 import { DiagramView, type DiagramItem } from './diagrams/DiagramView'
 import { foldEvents, type EventItem } from './conversationCards'
 import { IntegrationCard, RuleCard } from './Cards'
-import { SearchPalette } from './SearchPalette'
+import { ChatPicker } from './ChatPicker'
+import { setJump, useJump, type Jump } from './jump'
 import { RichInput, type KeyHandler, type RichInputHandle } from './RichInput'
 import { useSessionItems } from './useSessionItems'
 import { Caret, Icon, iconSvg, type IconName } from './ui/Icon'
@@ -410,7 +411,17 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
     ]
   }
   const end = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement>(null)
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [items.length, busy])
+  // A search hit opened at a message: it scrolls there (after the scroll to the end) once the items are in.
+  const jump = useJump((j): j is Extract<Jump, { kind: 'item' }> => j.kind === 'item' && j.sessionId === session.id)
+  useEffect(() => {
+    if (!jump || items.length <= jump.n) return
+    const el = box.current?.querySelector<HTMLElement>(`[data-n="${jump.n}"]`)
+    el?.scrollIntoView({ block: 'center' })
+    el?.classList.add('jumped')
+    setJump(null)
+  }, [jump, items.length])
   // Only the last mention of a canvas renders it; earlier ones point forward.
   const lastCanvasAt = new Map<string, number>()
   items.forEach((i, n) => i.kind === 'canvas' && lastCanvasAt.set(i.canvas.id, n))
@@ -440,7 +451,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
   return (
     <CommandRunner.Provider value={runner}>
     <div className="chatbox">
-      <div className="items">
+      <div className="items" ref={box}>
         {lines.map((line, k) => {
           if (line.kind === 'events') return <EventLine key={line.n} label={line.label} mark={line.mark} items={line.items.map((x) => x.item)} />
           const { n, item: i } = line
@@ -450,7 +461,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
           switch (i.kind) {
             case 'user':
               return (
-                <div key={n} className="umsg">
+                <div key={n} className="umsg" data-n={n}>
                   <div className="msg user">
                     {i.text && <div className="plain">{i.text}</div>}
                     {i.attachments && <Attachments items={i.attachments} />}
@@ -463,7 +474,7 @@ export function Chat({ session, sessions, canvases, onOpenTask, placeholder, chi
             case 'assistant': {
               const meta = metaAt.get(n)
               return (
-                <AgentReply key={n} name={who} first={first}>
+                <AgentReply key={n} n={n} name={who} first={first}>
                   {interim.has(n) ? (
                     <InterimReply text={i.text} canvases={shown} onOpenTask={onOpenTask} />
                   ) : (
@@ -579,9 +590,9 @@ function RewindChoice({ mode, codeOff, busy, onPick, onCancel }: { mode: 'rewind
 }
 
 /** An agent's reply: a small avatar and name over the first of a run of replies, the next ones aligned under it. */
-function AgentReply({ name, first, children }: { name: string; first: boolean; children: ReactNode }) {
+function AgentReply({ name, first, n, children }: { name: string; first: boolean; n: number; children: ReactNode }) {
   return (
-    <div className={`agentmsg${first ? '' : ' cont'}`}>
+    <div className={`agentmsg${first ? '' : ' cont'}`} data-n={n}>
       <span className="av" aria-hidden>{first ? name[0]?.toUpperCase() : ''}</span>
       <div className="agb">
         {first && <div className="agn">{name}</div>}
@@ -781,18 +792,19 @@ function Attachments({ items, onRemove }: { items: Attachment[]; onRemove?: (a: 
 }
 
 /**
- * Referenced chats as chips: the title, an Archived mark; a click opens the chat (`onOpen`), × removes it (`onRemove`).
- * A ref to a deleted chat shows as one.
+ * Referenced chats and search hits as chips: the title, an Archived mark; a click opens it (`onOpen`), × removes it
+ * (`onRemove`). A ref to a deleted chat shows as one.
  */
 function RefChips({ refs, tasks, sessions, onOpen, onRemove }: { refs: ChatRef[]; tasks: Task[]; sessions: SessionHeader[]; onOpen?: (ref: ChatRef) => void; onRemove?: (ref: ChatRef) => void }) {
   return (
     <div className="refchips">
       {refs.map((r) => {
         const t = resolveRef(r, tasks, sessions)
-        const label = t ? `${t.key ? `${t.key} · ` : ''}${t.title}` : 'Deleted chat'
+        const hit = r.kind === 'hit'
+        const label = hit ? r.title : t ? `${t.key ? `${t.key} · ` : ''}${t.title}` : 'Deleted chat'
         return (
-          <span key={`${r.kind}:${r.id}`} className={`refchip${t ? '' : ' gone'}`}>
-            <button type="button" className="link" disabled={!t || !onOpen} title={t ? `Open ${label}` : undefined} onClick={() => onOpen?.(r)}>
+          <span key={`${r.kind}:${r.id}`} className={`refchip${t || hit ? '' : ' gone'}`}>
+            <button type="button" className="link" disabled={!(t || hit) || !onOpen} title={hit ? `Open ${r.id}` : t ? `Open ${label}` : undefined} onClick={() => onOpen?.(r)}>
               @ {label}{t?.archived && <span className="sparch">Archived</span>}
             </button>
             {onRemove && <button type="button" className="x" aria-label={`Remove ${label}`} onClick={() => onRemove(r)}><Icon name="x" size={12} /></button>}
@@ -852,7 +864,7 @@ export function Composer({
   /** Files dropped or picked go here first; true = taken (Home: a review's .zip imports), else they are attached. */
   onFiles?: (files: File[]) => boolean
   autoFocus?: boolean
-  /** The project's chats to reference: "@" or the @ button pick one (SearchPalette) as a chip; `self` is this chat. */
+  /** The project's chats to reference: "@" or the @ button pick one (ChatPicker) as a chip; `self` is this chat. */
   refsFrom?: { projectId: string; tasks: Task[]; sessions: SessionHeader[]; self?: ChatRef }
 }) {
   /** The message as markdown, what is sent; `plain` its text, what a /command is read from. */
@@ -1028,7 +1040,7 @@ export function Composer({
       </div>
       {/* Out of the form: the palette's rows are buttons. */}
       {picking && refsFrom && createPortal(
-        <SearchPalette projectId={refsFrom.projectId} placeholder="Reference a chat or a work, archive included" onPick={pickRef} onClose={() => { setPicking(null); ta.current?.focus() }} />,
+        <ChatPicker projectId={refsFrom.projectId} placeholder="Reference a chat or a work, archive included" onPick={pickRef} onClose={() => { setPicking(null); ta.current?.focus() }} />,
         document.body,
       )}
     </form>

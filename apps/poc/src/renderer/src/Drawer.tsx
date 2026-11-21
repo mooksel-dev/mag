@@ -42,7 +42,7 @@ export function ArtifactDrawer({ open, state, onClose, onGone, onOpenKey, onSele
     if (gone) onClose()
   }, [gone, onClose])
   if (open.kind === 'canvas') return canvas ? <CanvasDrawer canvas={canvas} focus={open.focus} state={state} onClose={onClose} /> : null
-  if (open.kind === 'deliverable') return deliverable ? <DeliverableView key={deliverable.id} deliverable={deliverable} onClose={onClose} /> : null
+  if (open.kind === 'deliverable') return deliverable ? <DeliverableView key={`${deliverable.id}@${open.version ?? ''}`} deliverable={deliverable} version={open.version} onClose={onClose} /> : null
   if (open.kind === 'agent') return agent ? <AgentDrawer session={agent} state={state} onClose={onClose} onOpenKey={onOpenKey} /> : null
   if (!task || !('taskId' in open)) return null
   const head = taskArtifactHead(open, task)

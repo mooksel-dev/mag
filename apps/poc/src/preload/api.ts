@@ -5,6 +5,7 @@ import type { MeetingPerson, OverrideInput, PeopleList, PeopleSystem, SyncReport
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
 import type { InboxEntry } from '../main/core/services/inbox/index.ts'
 import type { Routine, RoutineInput, RoutineRun } from '../main/core/services/routines/types.ts'
+import type { Hit, SearchKind } from '../main/core/services/search/types.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -218,6 +219,12 @@ export interface MagApi {
   onSessionItem(cb: (e: SessionItemEvent) => void): () => void
   /** searchAll over the project's chats and works, run where the messages are. */
   search(projectId: string, query: string): Promise<SearchHit[]>
+  /** The ⌘K palette over the search index (unified-search-across-the-workspace.2). */
+  searchWorkspace(query: string, opts: PaletteQuery): Promise<PaletteResult>
+  /** A hit of another workspace: a window of that workspace opens it. */
+  openHit(workspaceId: string, ref: string, title: string): Promise<void>
+  /** This window: open a hit (another window's palette sent it here). */
+  onSearchOpen(cb: (ref: string, title: string) => void): () => void
   pickDir(): Promise<string | null>
   createProject(name: string): Promise<Project>
   updateProject(id: string, patch: Partial<Project>): Promise<void>
@@ -468,4 +475,20 @@ export interface MagApi {
   /** ▶ Run of a command block: runs it in the user's shell in the project's first repository; `onOutput` streams. */
   runCommand(runId: string, sessionId: string, command: string, onOutput: (chunk: string) => void): Promise<{ code: number | null; cwd: string }>
   stopCommand(runId: string): Promise<void>
+}
+
+/** What the palette asks: the window's workspace, or every one; label ids, every group matched; person rows too. */
+export interface PaletteQuery {
+  workspaceId: string
+  scope?: 'all'
+  labels?: string[][]
+  people?: boolean
+}
+
+/** The palette's hits: the best across kinds, and the best of each kind (its tab). */
+export interface PaletteResult {
+  all: Hit[]
+  byKind: Record<SearchKind, Hit[]>
+  /** Most hits of each; a tab this full may have more. */
+  limit: number
 }

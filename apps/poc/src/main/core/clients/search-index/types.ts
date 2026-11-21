@@ -1,6 +1,10 @@
 // Types of the search index, for callers that run without Node (the renderer).
 export type Sensitivity = 'work' | 'people' | 'personal'
 
+/** Around the matched words of a snippet. */
+export const MARK_START = '\u0002'
+export const MARK_END = '\u0003'
+
 /** One row of the index: a message, a doc section, a decision, a meeting line… of one indexed source. */
 export interface IndexRow {
   /** Opens the row, with its workspace: see parseRef. */
