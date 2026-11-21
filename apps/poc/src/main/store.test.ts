@@ -6,6 +6,9 @@ import { join } from 'node:path'
 import type { ChatItem, SessionItemEvent } from '@mag/core'
 import { appState } from './state.ts'
 import { mirrorItems } from './item-mirror.test-util.ts'
+import { DatabaseSync } from 'node:sqlite'
+import { backupName as dbBackupName } from './core/clients/workspace-db/index.ts'
+import { logTail } from './log.ts'
 import { Store, backupDaily, backupName, writeAtomic } from './store.ts'
 
 test('window bounds persist per kind without notifying listeners', () => {
@@ -397,7 +400,7 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
       { id: 'i5', projectId: 'gone', text: 'Of a deleted project', createdAt: 14 },
     ],
   }))
-  const store = new Store(file)
+  const store = new Store(file, 'json')
   const shape = () => store.data.sessions.map((s) => [s.id === 'empty' || s.id === 'talked' ? s.id : 'new', s.title, s.brief, s.source ?? null, s.parkedAt ?? null, s.closedAt ?? null])
   const expected = [
     ['empty', 'Dark mode everywhere', 'Dark mode everywhere', null, 11, null],
@@ -411,14 +414,14 @@ test('parked-topics migration: an idea without a topic or with an empty one is a
   assert.equal('ideas' in store.data, false)
   assert.equal(store.data.schemaVersion, 12)
   store.flush()
-  const again = new Store(file)
+  const again = new Store(file, 'json')
   assert.equal('ideas' in JSON.parse(readFileSync(file, 'utf8')), false)
   assert.deepEqual(again.data.sessions, store.data.sessions, 'once')
 })
 
 test('a restart keeps a step in progress: its work, PR, sessions and diagrams stay; migrations run once', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mag-store-')), 'db.json')
-  const store = new Store(file)
+  const store = new Store(file, 'json')
   const p = store.createProject('p')
   const topic = store.createSession({ projectId: p.id, taskId: null, stepId: null, role: 'chat', agent: 'claude-code', status: 'idle' })
   const task = store.createTask({ projectId: p.id, title: 'Fix restart', type: 'dev', description: '', ownerSessionId: topic.id })
@@ -442,7 +445,7 @@ test('a restart keeps a step in progress: its work, PR, sessions and diagrams st
     patch(d)
     writeFileSync(file, JSON.stringify(d))
     for (let i = 0; i < 2; i++) {
-      const again = new Store(file)
+      const again = new Store(file, 'json')
       assert.deepEqual({ tasks: again.data.tasks, sessions: again.data.sessions, canvases: again.data.canvases }, saved)
       assert.equal(again.data.schemaVersion, 12)
       assert.equal('stepsMigrated' in again.data, false)
@@ -643,7 +646,7 @@ test('the state windows get has sessions without items; it does not grow with a 
 test('flush writes through a temp file; a failed write leaves db.json whole and no temp file (p0-fast-safe-store-no.1)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mag-store-'))
   const file = join(dir, 'db.json')
-  const store = new Store(file)
+  const store = new Store(file, 'json')
   store.createProject('p')
   store.flush()
   const saved = readFileSync(file, 'utf8')
@@ -670,8 +673,183 @@ test('a day’s first write backs up db.json as it was, one per day, the newest 
   assert.deepEqual(kept, [3, 4, 5, 6, 7, 8, 9].map((d) => `db-2026-11-0${d}.json`))
   assert.equal(readFileSync(join(dir, 'backups', 'db-2026-11-09.json'), 'utf8'), '{"day": 9}', 'the file as it was before the day’s first write')
 
-  const store = new Store(file)
+  const store = new Store(file, 'json')
   store.createProject('p')
   store.flush()
   assert.ok(existsSync(join(dir, 'backups', backupName(new Date()))), 'flush backs up')
+})
+
+// p0-fast-safe-store-no.2: the store on SQLite.
+
+const workspaceFixture = () => readFileSync(new URL('./fixtures/db-workspace.json', import.meta.url), 'utf8')
+
+/** A dir with the fixture as db.json, and a JSON copy of it to compare with. */
+function withFixture(patch: (d: Record<string, any>) => void = () => {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'mag-sqlite-'))
+  const d = JSON.parse(workspaceFixture())
+  patch(d)
+  const text = JSON.stringify(d)
+  writeFileSync(join(dir, 'db.json'), text)
+  const copy = join(mkdtempSync(join(tmpdir(), 'mag-sqlite-json-')), 'db.json')
+  writeFileSync(copy, text)
+  return { dir, file: join(dir, 'db.json'), text, onJson: () => new Store(copy, 'json') }
+}
+
+/** A second connection to the store's db, as a test sees it. */
+const peek = (dir: string) => new DatabaseSync(join(dir, 'mag.sqlite'))
+
+/** Logs every write to the entities and items tables into `writes`. */
+function logWrites(dir: string) {
+  const db = peek(dir)
+  db.exec(`CREATE TABLE writes (what TEXT);
+    CREATE TRIGGER e_ins AFTER INSERT ON entities BEGIN INSERT INTO writes VALUES (NEW.kind || ':' || NEW.id); END;
+    CREATE TRIGGER e_upd AFTER UPDATE ON entities BEGIN INSERT INTO writes VALUES (NEW.kind || ':' || NEW.id); END;
+    CREATE TRIGGER e_del AFTER DELETE ON entities BEGIN INSERT INTO writes VALUES ('-' || OLD.kind || ':' || OLD.id); END;
+    CREATE TRIGGER i_ins AFTER INSERT ON items BEGIN INSERT INTO writes VALUES ('item:' || NEW.session_id || ':' || NEW.n); END;
+    CREATE TRIGGER i_upd AFTER UPDATE ON items BEGIN INSERT INTO writes VALUES ('item:' || NEW.session_id || ':' || NEW.n); END;
+    CREATE TRIGGER i_del AFTER DELETE ON items BEGIN INSERT INTO writes VALUES ('-item:' || OLD.session_id || ':' || OLD.n); END;`)
+  return () => {
+    const got = (db.prepare('SELECT what FROM writes').all() as { what: string }[]).map((r) => r.what)
+    db.exec('DELETE FROM writes')
+    return got
+  }
+}
+
+test('first start imports db.json into mag.sqlite in one go; counts match, the data is as on JSON, db.json is kept', () => {
+  const { dir, file, text, onJson } = withFixture()
+  const store = new Store(file)
+  assert.equal(existsSync(file), false)
+  assert.equal(readFileSync(join(dir, 'db.pre-sqlite.json'), 'utf8'), text)
+  const db = peek(dir)
+  const kinds = Object.fromEntries((db.prepare('SELECT kind, count(*) AS c FROM entities GROUP BY kind').all() as { kind: string; c: number }[]).map((r) => [r.kind, r.c]))
+  assert.deepEqual(kinds, { project: 2, task: 3, session: 3, doc: 1, canvas: 2, event: 2, integration: 1, ui: 1, meta: 1 })
+  const items = Object.fromEntries((db.prepare('SELECT session_id AS s, count(*) AS c FROM items GROUP BY session_id').all() as { s: string; c: number }[]).map((r) => [r.s, r.c]))
+  assert.deepEqual(items, { topic: 3, dev: 2 })
+
+  const json = onJson()
+  assert.deepEqual(store.data, json.data, 'what the app reads is the same on both')
+  assert.deepEqual(store.sessionHeaders(), json.sessionHeaders())
+  assert.deepEqual(store.session('dev').items[1], { kind: 'approval', id: 'a1', tool: 'Bash', input: { command: 'ls' }, status: 'expired', at: 21 }, 'a restart expires pending approvals')
+
+  // Started again: read from mag.sqlite, the same.
+  store.flush()
+  const again = new Store(file)
+  assert.deepEqual(again.data, json.data)
+  assert.deepEqual(again.sessionHeaders(), json.sessionHeaders())
+  assert.equal(again.data.schemaVersion, 12)
+})
+
+test('an import whose counts differ rolls back: no mag.sqlite, the store runs on db.json and logs why', () => {
+  const { dir, file, text } = withFixture((d) => d.tasks.push({ ...d.tasks[0], title: 'the same id again' }))
+  const store = new Store(file)
+  assert.equal(existsSync(join(dir, 'mag.sqlite')), false)
+  assert.equal(existsSync(join(dir, 'db.pre-sqlite.json')), false)
+  assert.equal(readFileSync(file, 'utf8'), text)
+  assert.equal(store.data.tasks.length, 4)
+  store.updateProject('p1', { name: 'renamed' })
+  store.flush()
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).projects[0].name, 'renamed', 'saves go to db.json')
+  assert.ok(logTail().some((l) => /db.json not imported into SQLite, running on JSON: import counts differ: kind task: 4 in the source, 3 stored/.test(l)), 'logged why')
+})
+
+test('items load per session when read; the state reads the digest stored with the session', () => {
+  const { dir, file, onJson } = withFixture()
+  new Store(file).flush()
+  const store = new Store(file)
+  // Written behind the store's back: seen only once the store loads the session's items.
+  peek(dir).prepare('INSERT INTO items (session_id, n, json) VALUES (?, ?, ?)').run('topic', 3, JSON.stringify({ kind: 'notice', text: 'late', at: 13 }))
+  const header = store.sessionHeaders().find((s) => s.id === 'topic')!
+  assert.deepEqual([header.itemCount, header.costUsd, header.lastReply?.text], [3, 0.25, 'yes'])
+  assert.deepEqual(header, onJson().sessionHeaders().find((s) => s.id === 'topic'))
+  assert.deepEqual(store.items('topic').map((i) => i.kind), ['user', 'assistant', 'result', 'notice'])
+  assert.equal(store.sessionHeaders().find((s) => s.id === 'topic')!.itemCount, 4)
+})
+
+test('flush writes only the rows that changed, in one transaction', () => {
+  const { dir, file } = withFixture()
+  const store = new Store(file)
+  // Saves the restart's expiry of the pending approval.
+  store.changed()
+  store.flush()
+  const writes = logWrites(dir)
+  const again = new Store(file)
+
+  again.updateTask('w2', { title: 'Other, renamed' })
+  again.flush()
+  assert.deepEqual(writes(), ['task:w2'], 'one changed task writes one row')
+
+  again.pushItem('topic', { kind: 'user', text: 'and backups?', at: 30 })
+  again.flush()
+  assert.deepEqual(writes().sort(), ['item:topic:3', 'session:topic'], 'a new item is one row; its session gets the new digest')
+
+  const [first, second] = again.items('topic')
+  if (second.kind === 'assistant') second.text = 'yes, with VACUUM INTO'
+  again.itemChanged('topic', second)
+  again.flush()
+  assert.deepEqual(writes().sort(), ['item:topic:1', 'session:topic'], 'an item changed in place; the digest has it as the last reply')
+
+  again.setItems('topic', [first, { kind: 'notice', text: 'rewound', at: 31 }])
+  again.flush()
+  assert.deepEqual(writes().sort(), ['-item:topic:2', '-item:topic:3', 'item:topic:1', 'session:topic'], 'a rewind cuts and writes what follows the shared prefix')
+
+  again.deleteSession('empty')
+  again.flush()
+  assert.deepEqual(writes(), ['-session:empty'])
+
+  again.flush()
+  assert.deepEqual(writes(), [], 'nothing pending, nothing written')
+  const reread = new Store(file)
+  assert.deepEqual(reread.items('topic'), again.items('topic'))
+  assert.equal(reread.task('w2').title, 'Other, renamed')
+  assert.equal(reread.data.sessions.some((s) => s.id === 'empty'), false)
+})
+
+test('a failure mid-flush writes nothing; the next flush writes it all', () => {
+  const { dir, file } = withFixture()
+  const store = new Store(file)
+  store.flush()
+  const db = peek(dir)
+  db.exec(`CREATE TRIGGER boom BEFORE INSERT ON entities WHEN NEW.kind = 'task' BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+  store.updateProject('p1', { name: 'renamed' })
+  const task = store.createTask({ projectId: 'p1', title: 'New', type: 'dev', description: '' })
+  store.pushItem('topic', { kind: 'user', text: 'more', at: 40 })
+  assert.throws(() => store.flush(), /disk full/)
+  const name = () => (JSON.parse((db.prepare("SELECT json FROM entities WHERE kind = 'project' AND id = 'p1'").get() as { json: string }).json) as { name: string }).name
+  assert.equal(name(), 'mag', 'the project written before the failing task is rolled back')
+  assert.equal(new Store(file).items('topic').length, 3)
+
+  db.exec('DROP TRIGGER boom')
+  store.updateTask(task.id, { title: 'New, again' })
+  store.flush()
+  const after = new Store(file)
+  assert.deepEqual([name(), after.task(task.id).title, after.items('topic').length], ['renamed', 'New, again', 4])
+})
+
+test('a restart on SQLite runs no migration again and keeps the step, its sessions and diagrams', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'mag-sqlite-')), 'db.json')
+  const store = new Store(file)
+  const p = store.createProject('p')
+  const task = store.createTask({ projectId: p.id, title: 'w', type: 'dev', description: '' })
+  const s = store.createSession({ projectId: p.id, taskId: task.id, role: 'developer', agent: 'claude-code', status: 'running' })
+  store.pushItem(s.id, { kind: 'approval', id: 'a1', tool: 'Bash', input: {}, status: 'pending', at: 1 })
+  store.saveCanvas({ projectId: p.id, taskId: task.id, sessionId: null, title: 'plan', kind: 'html', html: '<p/>' })
+  store.flush()
+  const again = new Store(file)
+  assert.equal(again.data.schemaVersion, 12)
+  assert.deepEqual([again.session(s.id).status, again.sessionHeaders()[0].pendingApprovals], ['idle', []])
+  again.flush()
+  const third = new Store(file)
+  assert.deepEqual([third.data.tasks, third.data.canvases], [store.data.tasks, store.data.canvases])
+  assert.deepEqual(third.items(s.id), [{ kind: 'approval', id: 'a1', tool: 'Bash', input: {}, status: 'expired', at: 1 }], 'the expiry was saved')
+})
+
+test('a day’s first flush backs up mag.sqlite with VACUUM INTO; db.json gets no JSON backups', () => {
+  const { dir, file } = withFixture()
+  const store = new Store(file)
+  store.updateProject('p1', { name: 'renamed' })
+  store.flush()
+  const backups = readdirSync(join(dir, 'backups'))
+  assert.deepEqual(backups, [dbBackupName(new Date())])
+  const copy = new DatabaseSync(join(dir, 'backups', backups[0]))
+  assert.equal((copy.prepare("SELECT count(*) AS c FROM entities WHERE kind = 'task'").get() as { c: number }).c, 3)
 })

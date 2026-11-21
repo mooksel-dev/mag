@@ -1,0 +1,244 @@
+{
+  "projects": [
+    {
+      "id": "p1",
+      "name": "mag",
+      "repos": [
+        "/src/mag"
+      ],
+      "notes": "n",
+      "enforceArchitecture": true,
+      "architecture": null,
+      "archRun": null,
+      "agents": {},
+      "integrations": {},
+      "sidebar": [],
+      "createdAt": 1
+    },
+    {
+      "id": "p2",
+      "name": "other",
+      "repos": [],
+      "notes": "n",
+      "enforceArchitecture": true,
+      "architecture": null,
+      "archRun": null,
+      "agents": {},
+      "integrations": {},
+      "sidebar": [],
+      "createdAt": 1
+    }
+  ],
+  "tasks": [
+    {
+      "projectId": "p1",
+      "type": "dev",
+      "description": "",
+      "needsInput": null,
+      "work": null,
+      "closedAt": null,
+      "nextSubNo": 2,
+      "createdAt": 2,
+      "updatedAt": 3,
+      "id": "w1",
+      "key": "fast-store",
+      "parentId": null,
+      "title": "Fast store",
+      "status": "in_progress",
+      "rank": 0,
+      "ownerSessionId": "topic"
+    },
+    {
+      "projectId": "p1",
+      "type": "dev",
+      "description": "",
+      "needsInput": null,
+      "work": null,
+      "closedAt": null,
+      "nextSubNo": 1,
+      "createdAt": 2,
+      "updatedAt": 3,
+      "id": "w1s1",
+      "key": "fast-store.1",
+      "parentId": "w1",
+      "title": "SQLite",
+      "status": "todo",
+      "rank": 1,
+      "startManually": true
+    },
+    {
+      "projectId": "p2",
+      "type": "dev",
+      "description": "",
+      "needsInput": null,
+      "work": null,
+      "closedAt": null,
+      "nextSubNo": 1,
+      "createdAt": 2,
+      "updatedAt": 3,
+      "id": "w2",
+      "key": "other",
+      "parentId": null,
+      "title": "Other",
+      "status": "planning",
+      "rank": 0
+    }
+  ],
+  "sessions": [
+    {
+      "id": "topic",
+      "projectId": "p1",
+      "taskId": null,
+      "stepId": null,
+      "role": "chat",
+      "agent": "claude-code",
+      "status": "idle",
+      "title": "topic",
+      "createdAt": 4,
+      "nativeSessionId": "n-topic",
+      "items": [
+        {
+          "kind": "user",
+          "text": "store on sqlite?",
+          "at": 10
+        },
+        {
+          "kind": "assistant",
+          "text": "yes",
+          "at": 11
+        },
+        {
+          "kind": "result",
+          "ok": true,
+          "costUsd": 0.25,
+          "at": 12
+        }
+      ]
+    },
+    {
+      "id": "dev",
+      "projectId": "p1",
+      "taskId": "w1",
+      "stepId": "w1s1",
+      "role": "developer",
+      "agent": "claude-code",
+      "status": "idle",
+      "title": "dev",
+      "createdAt": 4,
+      "nativeSessionId": "n-dev",
+      "items": [
+        {
+          "kind": "user",
+          "text": "go",
+          "at": 20
+        },
+        {
+          "kind": "approval",
+          "id": "a1",
+          "tool": "Bash",
+          "input": {
+            "command": "ls"
+          },
+          "status": "pending",
+          "at": 21
+        }
+      ]
+    },
+    {
+      "id": "empty",
+      "projectId": "p2",
+      "taskId": null,
+      "stepId": null,
+      "role": "chat",
+      "agent": "claude-code",
+      "status": "idle",
+      "title": "empty",
+      "createdAt": 4,
+      "nativeSessionId": "n-empty",
+      "items": []
+    }
+  ],
+  "docs": {
+    "w1": "# Problem\nslow"
+  },
+  "canvases": {
+    "10522501": {
+      "id": "10522501",
+      "projectId": "p1",
+      "taskId": "w1",
+      "sessionId": null,
+      "title": "10522501",
+      "kind": "html",
+      "html": "<p>10522501</p>",
+      "version": 1,
+      "updatedAt": 5
+    },
+    "c-plan": {
+      "id": "c-plan",
+      "projectId": "p1",
+      "taskId": "w1",
+      "sessionId": null,
+      "title": "c-plan",
+      "kind": "diagram",
+      "version": 1,
+      "updatedAt": 5,
+      "diagram": {
+        "type": "component",
+        "summary": "s",
+        "modules": []
+      }
+    }
+  },
+  "events": [
+    {
+      "id": "e1",
+      "projectId": "p1",
+      "taskId": "w1",
+      "taskKey": "fast-store",
+      "kind": "status",
+      "text": "In progress",
+      "at": 6
+    },
+    {
+      "id": "e2",
+      "projectId": "p2",
+      "taskId": null,
+      "taskKey": null,
+      "kind": "architecture",
+      "text": "x",
+      "at": 7
+    }
+  ],
+  "integrations": [
+    {
+      "id": "slack",
+      "name": "Slack"
+    }
+  ],
+  "ui": {
+    "windows": {
+      "canvas": {
+        "x": 1,
+        "y": 2,
+        "width": 800,
+        "height": 600
+      }
+    },
+    "projectWindows": [
+      {
+        "projectId": "p1",
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 900,
+          "height": 700
+        }
+      }
+    ],
+    "recent": [
+      "p1",
+      "p2"
+    ]
+  },
+  "schemaVersion": 12
+}

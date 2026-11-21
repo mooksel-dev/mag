@@ -1,10 +1,11 @@
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
+import { digestOf, type SessionDigest, ideaText, ideaTitle, isLegacy, resolveChoice, sessionTree, migratePrReview, type LegacyPrReview, setOf, rewriteKeys, subtaskKey, subtasksOf, taskChangeEvents, workKey, type AgentSession, type ArchDiagram, type ArchNode, type Canvas, type CanvasPlacement, type ChangeInventory, type ChatItem, type ChatSummary, type Diagram, type Integration, type SessionHeader, type SessionItemEvent, sessionHeader, type NewEvent, type Project, type ProjectEvent, type Task } from '@mag/core'
 import type { NewTask, WindowKind } from '../preload/api'
 import type { Bounds } from './bounds'
 import { log } from './log.ts'
+import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 
 interface Data {
   projects: Project[]
@@ -154,15 +155,94 @@ export function backupDaily(file: string, now = new Date()): string | null {
   return dest
 }
 
-/** PoC persistence: one JSON file, rewritten on change. */
+/** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
+const LIST_KINDS = { projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration' } as const
+const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
+type ListKey = keyof typeof LIST_KINDS
+type MapKey = keyof typeof MAP_KINDS
+const isListKey = (k: string): k is ListKey => k in LIST_KINDS
+const isMapKey = (k: string): k is MapKey => k in MAP_KINDS
+
+/** Fields of `data` stored as `meta` rows: the ones that are neither lists, maps nor ui. */
+const metaKeys = (data: object) => Object.entries(data).filter(([k, v]) => v !== undefined && !isListKey(k) && !isMapKey(k) && k !== 'ui').map(([k]) => k)
+
+/** A session's fields without its items; reads no items. */
+function sessionFields(s: AgentSession): Omit<AgentSession, 'items'> {
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(s)) if (k !== 'items') out[k] = (s as unknown as Record<string, unknown>)[k]
+  return out as Omit<AgentSession, 'items'>
+}
+
+/** `data` as entity rows; a session without its items, with `digest` of them as `itemsDigest`. */
+function entityRows(data: Partial<LegacyData>, digest: (s: AgentSession) => SessionDigest): EntityRow[] {
+  const rows: EntityRow[] = []
+  const projectOfTask = new Map((data.tasks ?? []).map((t) => [t.id, t.projectId]))
+  for (const key of Object.keys(LIST_KINDS) as ListKey[]) {
+    const kind = LIST_KINDS[key]
+    for (const x of (data[key] ?? []) as { id: string; projectId?: string }[]) {
+      const json = kind === 'session' ? JSON.stringify({ ...sessionFields(x as AgentSession), itemsDigest: digest(x as AgentSession) }) : JSON.stringify(x)
+      rows.push({ kind, id: x.id, projectId: kind === 'project' ? x.id : (x.projectId ?? null), json })
+    }
+  }
+  for (const [id, text] of Object.entries(data.docs ?? {})) rows.push({ kind: 'doc', id, projectId: projectOfTask.get(id) ?? null, json: JSON.stringify(text) })
+  for (const [id, c] of Object.entries(data.canvases ?? {})) rows.push({ kind: 'canvas', id, projectId: c.projectId ?? null, json: JSON.stringify(c) })
+  if (data.ui) rows.push({ kind: 'ui', id: 'ui', projectId: null, json: JSON.stringify(data.ui) })
+  for (const k of metaKeys(data)) rows.push({ kind: 'meta', id: k, projectId: null, json: JSON.stringify((data as Record<string, unknown>)[k]) })
+  return rows
+}
+
+/** What a db.json holds, counted from the file's data: elements per entity kind and items per session. */
+function fileCounts(data: Partial<LegacyData>): Counts {
+  const entities: Record<string, number> = {}
+  for (const key of Object.keys(LIST_KINDS) as ListKey[]) entities[LIST_KINDS[key]] = data[key]?.length ?? 0
+  for (const key of Object.keys(MAP_KINDS) as MapKey[]) entities[MAP_KINDS[key]] = Object.keys(data[key] ?? {}).length
+  entities.ui = data.ui ? 1 : 0
+  entities.meta = metaKeys(data).length
+  const items: Record<string, number> = {}
+  for (const s of data.sessions ?? []) items[s.id] = (items[s.id] ?? 0) + (s.items?.length ?? 0)
+  return { entities, items }
+}
+
+function importData(data: Partial<LegacyData>): ImportData {
+  const items: Record<string, string[]> = {}
+  for (const s of data.sessions ?? []) items[s.id] = [...(items[s.id] ?? []), ...(s.items ?? []).map((i) => JSON.stringify(i))]
+  return { entities: entityRows(data, (s) => digestOf(s.items ?? [])), items }
+}
+
+const rowKey = (kind: string, id: string) => `${kind}\u0000${id}`
+
+/** A loaded session's item rows: `stored` rows in the db, the first `clean` of them as in memory except `dirty` ones. */
+interface ItemRows {
+  stored: number
+  clean: number
+  dirty: Set<number>
+}
+
+/**
+ * Persistence: SQLite in mag.sqlite next to `file` (db.json), imported from it on the first start; on JSON in `file`
+ * when that import fails, or with backend 'json'.
+ */
 export class Store {
   data: Data = { projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
+  /** Null when on JSON. */
+  private db: WorkspaceDb | null = null
+  /** Each entity's JSON as last written, by rowKey. */
+  private written = new Map<string, string>()
+  /** Sessions whose items are not loaded yet. */
+  private unloaded = new Set<string>()
+  /** The digest stored with each session's row, by session id. */
+  private digests = new Map<string, SessionDigest>()
+  private itemRows = new Map<string, ItemRows>()
 
-  constructor(private file: string) {
-    if (existsSync(file)) this.data = { ...this.data, ...JSON.parse(readFileSync(file, 'utf8')) }
+  constructor(
+    private file: string,
+    backend: 'auto' | 'json' = 'auto',
+  ) {
+    const stored = backend === 'json' ? this.readFile() : this.openDb()
+    if (stored) this.data = { ...this.data, ...stored }
     this.data.events ??= []
     this.data.integrations ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
@@ -175,7 +255,14 @@ export class Store {
       if (s.background?.length) s.items.push({ kind: 'notice', text: 'Background tasks ended with the process', at: Date.now() })
       delete s.background
       delete s.live
-      for (const i of s.items) if (i.kind === 'approval' && i.status === 'pending') i.status = 'expired'
+      // Only sessions with a pending approval have their items loaded for it.
+      const digest = this.digests.get(s.id)
+      if (this.unloaded.has(s.id) && digest && !digest.pendingApprovals.length) continue
+      s.items.forEach((i, n) => {
+        if (i.kind !== 'approval' || i.status !== 'pending') return
+        i.status = 'expired'
+        this.itemRowsOf(s.id).dirty.add(n)
+      })
     }
     // Defaults for data written by older PoC versions.
     for (const p of this.data.projects) {
@@ -207,6 +294,103 @@ export class Store {
       s.stepId ??= null
     }
     this.migrate()
+  }
+
+  private readFile(): Partial<LegacyData> | null {
+    return existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : null
+  }
+
+  /**
+   * Opens mag.sqlite next to the file. The first start imports the file in one transaction and keeps it as
+   * db.pre-sqlite.json; a failed import leaves no db and returns the file's data, so the store runs on JSON.
+   */
+  private openDb(): Partial<LegacyData> | null {
+    const dir = dirname(this.file)
+    const path = join(dir, 'mag.sqlite')
+    const kept = join(dir, 'db.pre-sqlite.json')
+    const db = openWorkspaceDb(path)
+    if (!db.ready()) {
+      let json: Partial<LegacyData> | null = null
+      try {
+        json = this.readFile()
+        if (json) db.importAll(importData(json), fileCounts(json))
+        else db.init()
+      } catch (e) {
+        db.close()
+        removeDb(path)
+        if (!json) throw e
+        log.error('store', `db.json not imported into SQLite, running on JSON: ${e instanceof Error ? e.message : e}`)
+        return json
+      }
+      if (json) {
+        log.info('store', `db.json imported into ${path}, kept as ${kept}`)
+        this.keepFile(kept)
+      }
+    } else if (existsSync(this.file)) {
+      if (existsSync(kept)) log.warn('store', `${this.file} ignored: ${path} holds the workspace`)
+      // An import whose rename did not happen.
+      else this.keepFile(kept)
+    }
+    this.db = db
+    return this.fromRows(db.load())
+  }
+
+  private keepFile(dest: string) {
+    try {
+      renameSync(this.file, dest)
+    } catch (e) {
+      log.error('store', `could not keep ${this.file} as ${dest}`, e)
+    }
+  }
+
+  private fromRows(rows: EntityRow[]): Partial<LegacyData> {
+    const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { projects: [], tasks: [], sessions: [], events: [], integrations: [], docs: {}, canvases: {} }
+    for (const r of rows) {
+      this.written.set(rowKey(r.kind, r.id), r.json)
+      const value = JSON.parse(r.json)
+      if (r.kind === 'session') {
+        const { itemsDigest, ...session } = value as AgentSession & { itemsDigest?: SessionDigest }
+        if (itemsDigest) this.digests.set(session.id, itemsDigest)
+        this.lazyItems(session)
+        data.sessions.push(session)
+      } else if (lists[r.kind]) (data[lists[r.kind]] as unknown[]).push(value)
+      else if (r.kind === 'doc') data.docs[r.id] = value
+      else if (r.kind === 'canvas') data.canvases[r.id] = value
+      else if (r.kind === 'ui') data.ui = value
+      else if (r.kind === 'meta') data[r.id] = value
+    }
+    return data as Partial<LegacyData>
+  }
+
+  /** `s.items` loads the session's items from the db when first read; setting them rewrites all of its rows. */
+  private lazyItems(s: AgentSession) {
+    const sid = s.id
+    let items: ChatItem[] | null = null
+    this.unloaded.add(sid)
+    const load = () => {
+      if (items) return items
+      items = this.db!.items(sid).map((json) => JSON.parse(json) as ChatItem)
+      this.unloaded.delete(sid)
+      this.itemRows.set(sid, { stored: items.length, clean: items.length, dirty: new Set() })
+      return items
+    }
+    Object.defineProperty(s, 'items', {
+      enumerable: true,
+      configurable: true,
+      get: load,
+      set: (next: ChatItem[]) => {
+        load()
+        items = next
+        this.itemRowsOf(sid).clean = 0
+      },
+    })
+  }
+
+  private itemRowsOf(sid: string): ItemRows {
+    let rows = this.itemRows.get(sid)
+    if (!rows) this.itemRows.set(sid, (rows = { stored: 0, clean: 0, dirty: new Set() }))
+    return rows
   }
 
   /** Format migrations in the order they were added; a new one goes last. */
@@ -542,7 +726,12 @@ export class Store {
 
   /** Sessions as windows get them: without items (see SessionHeader). */
   sessionHeaders(): SessionHeader[] {
-    return this.data.sessions.map(sessionHeader)
+    return this.data.sessions.map((s) => {
+      const digest = this.digests.get(s.id)
+      if (!this.unloaded.has(s.id) || !digest) return sessionHeader(s)
+      const { rewound, ...rest } = sessionFields(s)
+      return { ...rest, ...digest, rewound: !!rewound }
+    })
   }
 
   /** A session's items from index `from`. */
@@ -562,13 +751,58 @@ export class Store {
     this.saveTimer = null
     mkdirSync(dirname(this.file), { recursive: true })
     try {
-      const backup = backupDaily(this.file)
+      const backup = this.db ? this.db.backup(join(dirname(this.file), 'backups')) : backupDaily(this.file)
       if (backup) log.info('store', `backup: ${backup}`)
     } catch (e) {
       // A backup that fails must not stop the save.
       log.error('store', 'backup failed', e)
     }
-    writeAtomic(this.file, JSON.stringify(this.data, null, 2))
+    if (this.db) this.writeRows(this.db)
+    else writeAtomic(this.file, JSON.stringify(this.data, null, 2))
+  }
+
+  /**
+   * Writes the entities whose JSON changed since last written, removes the ones gone, and writes the loaded sessions'
+   * changed and new items, in one transaction. A failure writes nothing, and the next flush writes it all again.
+   */
+  private writeRows(db: WorkspaceDb) {
+    const itemsChanged = (s: AgentSession) => {
+      const r = this.itemRows.get(s.id)
+      return !r || r.dirty.size > 0 || r.clean !== s.items.length || r.stored !== s.items.length
+    }
+    const digest = (s: AgentSession) => {
+      const stored = this.digests.get(s.id)
+      if (stored && (this.unloaded.has(s.id) || !itemsChanged(s))) return stored
+      const fresh = digestOf(s.items)
+      this.digests.set(s.id, fresh)
+      return fresh
+    }
+    const rows = entityRows(this.data, digest)
+    const keys = new Set(rows.map((r) => rowKey(r.kind, r.id)))
+    const put = rows.filter((r) => this.written.get(rowKey(r.kind, r.id)) !== r.json)
+    const gone = [...this.written.keys()].filter((k) => !keys.has(k))
+    const sessions = this.data.sessions.filter((s) => !this.unloaded.has(s.id) && itemsChanged(s))
+    db.transaction(() => {
+      for (const k of gone) db.remove(...(k.split('\u0000') as [string, string]))
+      for (const r of put) db.put(r)
+      for (const s of sessions) {
+        const { items } = s
+        const r = this.itemRowsOf(s.id)
+        if (r.stored > items.length) db.cutItems(s.id, items.length)
+        for (const n of r.dirty) if (n < Math.min(r.clean, items.length)) db.putItem(s.id, n, JSON.stringify(items[n]))
+        for (let n = r.clean; n < items.length; n++) db.putItem(s.id, n, JSON.stringify(items[n]))
+      }
+    })
+    for (const k of gone) {
+      this.written.delete(k)
+      const [kind, id] = k.split('\u0000')
+      if (kind !== 'session') continue
+      this.itemRows.delete(id)
+      this.digests.delete(id)
+      this.unloaded.delete(id)
+    }
+    for (const r of put) this.written.set(rowKey(r.kind, r.id), r.json)
+    for (const s of sessions) this.itemRows.set(s.id, { stored: s.items.length, clean: s.items.length, dirty: new Set() })
   }
 
   /** Last bounds of a pop-out window of this kind. */
@@ -780,7 +1014,10 @@ export class Store {
   /** `item`, one of the session's, was changed in place; saves. One no longer there (cut by a rewind) only saves. */
   itemChanged(sid: string, item: ChatItem) {
     const n = this.session(sid).items.indexOf(item)
-    if (n >= 0) this.emitItem({ sid, n, item })
+    if (n >= 0) {
+      this.itemRowsOf(sid).dirty.add(n)
+      this.emitItem({ sid, n, item })
+    }
     this.changed()
   }
 
@@ -790,7 +1027,10 @@ export class Store {
     let same = 0
     while (same < items.length && same < s.items.length && items[same] === s.items[same]) same++
     if (same < s.items.length) this.emitItem({ sid, truncate: same })
+    const rows = this.itemRowsOf(sid)
+    const clean = Math.min(rows.clean, same)
     s.items = items
+    rows.clean = clean
     for (let n = same; n < items.length; n++) this.emitItem({ sid, n, item: items[n] })
     this.changed()
   }
