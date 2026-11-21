@@ -468,7 +468,7 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
     >
       {fold && <button className="wlcaret" aria-expanded={fold.open} aria-label={`${fold.open ? 'Fold' : 'Unfold'} the subtopics of ${c.title}`} onClick={fold.toggle}>{fold.open ? '▾' : '▸'}</button>}
       <button className="wlmain" title={[state, c.move.text, time].filter(Boolean).join(' · ')} aria-current={on ? 'true' : undefined} onClick={() => onSelect(cardSelection(c))}>
-        <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} aria-hidden />
+        <span className={`sessdot ${c.closed ? 'grey' : c.dot}`} title={state} aria-hidden />
         <span className="title">{c.title}</span>
         {you ? <span className="wlbadge amber">you</span> : <span className="wltime">{time}</span>}
         {status && <span className={`wlmove ${tone}`}>{c.move.text}</span>}
@@ -480,7 +480,7 @@ function Row({ card: c, now, on, menu, over, fold, drag, onMenu, onSelect, onGon
 }
 
 /** What a row's dot means, in its tooltip. */
-const DOT_LABELS: Record<WorkCard['dot'], string> = { blue: 'an agent is working', amber: 'waits on you', green: 'done, ready for you', grey: 'finished', red: 'failed' }
+const DOT_LABELS: Record<WorkCard['dot'], string> = { green: 'an agent is working', amber: 'waits on you', grey: 'idle', red: 'an agent failed' }
 
 /** What the row menu needs of a row: a work's or a review's task, or a discussion's session. */
 export type MenuCard = Pick<WorkCard, 'kind' | 'title' | 'task' | 'session' | 'closed' | 'sessions'>

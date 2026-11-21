@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  reviewStageText,
   acceptRecommendations,
   byActivity,
+  cleanTitle,
+  decodeEntities,
   cardFilter,
   cardMove,
   cardMatches,
@@ -69,19 +70,19 @@ const WORK_CASES: [string, Task[], AgentSession[], string][] = [
   ['plan ready', [task('w', { needsInput: 'Plan ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
   ['plan with steps, nothing asked', [task('w'), step('w.1', 'w')], [], 'waiting:w:amber you: Approve & Start'],
   ['ready', [task('w', { status: 'ready' }), step('w.1', 'w')], [], 'waiting:w:amber you: Start'],
-  ['groomer planning', [task('w')], [session('g', { taskId: 'w', role: 'groomer', status: 'running', runStartedAt: NOW - 3 * MIN })], 'working:w:blue agent: groomer · 3 min'],
-  ['owner topic planning', [task('w', { ownerSessionId: 'o' })], [session('o', { status: 'running', runStartedAt: NOW - 5 * MIN })], 'working:w:blue agent: owner · 5 min'],
-  ['building', building('w'), [session('d', { taskId: 'w', role: 'developer', stepId: 'w.1', status: 'running', runStartedAt: NOW - 12 * MIN, items: [{ kind: 'tool', id: 't', name: 'Bash', summary: 'pnpm test', at: NOW - MIN }] })], 'working:w:blue agent: developer · 12 min · Bash pnpm test'],
-  ['PR open, CI pending', building('w', withPr(85, { ci: 'pending' })), [], 'working:w:green other: CI · PR #85'],
+  ['groomer planning', [task('w')], [session('g', { taskId: 'w', role: 'groomer', status: 'running', runStartedAt: NOW - 3 * MIN })], 'working:w:green agent: groomer · 3 min'],
+  ['owner topic planning', [task('w', { ownerSessionId: 'o' })], [session('o', { status: 'running', runStartedAt: NOW - 5 * MIN })], 'working:w:green agent: owner · 5 min'],
+  ['building', building('w'), [session('d', { taskId: 'w', role: 'developer', stepId: 'w.1', status: 'running', runStartedAt: NOW - 12 * MIN, items: [{ kind: 'tool', id: 't', name: 'Bash', summary: 'pnpm test', at: NOW - MIN }] })], 'working:w:green agent: developer · 12 min · Bash pnpm test'],
+  ['PR open, CI pending', building('w', withPr(85, { ci: 'pending' })), [], 'working:w:grey other: CI · PR #85'],
   ['PR check failed', building('w', withPr(85, { checkError: 'gh: not logged in' })), [], 'waiting:w:amber you: PR check failed: gh: not logged in'],
   ['agent review: look', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('look', 2) }), [], 'waiting:w:amber you: Look at PR #85'],
   ['ready to merge', building('w', { ...withPr(85, { ci: 'pass' }), review: agentReview('merge', 0) }), [], 'waiting:w:amber you: Merge PR #85'],
   ['ready to merge, no review yet', building('w', withPr(85, { ci: 'pass' })), [], 'waiting:w:amber you: Merge PR #85'],
   ['step waits for Start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1, startManually: true })], [], 'waiting:w:amber you: Start step 2'],
-  ['next step about to start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1 })], [], 'working:w:green other: Starting step 2'],
-  ['step waits for another', building('w', { status: 'todo', waitingFor: { key: 'x.1', repo: '/r' } }), [], 'working:w:green other: Waits for x.1'],
+  ['next step about to start', [task('w', { status: 'in_progress' }), step('w.1', 'w', { status: 'done' }), step('w.2', 'w', { rank: 1 })], [], 'working:w:grey other: Starting step 2'],
+  ['step waits for another', building('w', { status: 'todo', waitingFor: { key: 'x.1', repo: '/r' } }), [], 'working:w:grey other: Waits for x.1'],
   ["developer's question", building('w', { ownerQuestion: 'Which table?' }, { needsInput: 'The developer asks' }), [], "waiting:w:amber you: Answer the developer's question"],
-  ['agent failed', building('w'), [session('d', { taskId: 'w', role: 'developer', status: 'error' })], 'waiting:w:amber you: Restart the developer'],
+  ['agent failed', building('w'), [session('d', { taskId: 'w', role: 'developer', status: 'error' })], 'waiting:w:red you: Restart the developer'],
   ['developer stopped', building('w'), [session('d', { taskId: 'w', role: 'developer' })], 'waiting:w:amber you: The developer stopped: look at the work'],
   ['done in 7 days', [task('w', { status: 'done', updatedAt: NOW - 2 * DAY })], [], 'done:w:grey other: Done'],
 ]
@@ -119,8 +120,8 @@ test('workCards: a chat is the row of the works it owns; its turn counts as each
   const tasks = [task('w', { ownerSessionId: 'owner' }), task('finished', { status: 'done', ownerSessionId: 'old', updatedAt: NOW })]
   const sessions = [session('owner', { status: 'running', runStartedAt: NOW - 1000 }), session('old', { title: 'Old talk', titleGenerated: true })]
   const got = cards(tasks, sessions)
-  assert.deepEqual(got.map(line), ['working:owner:blue agent: agent · 1 min', 'done:old:grey other: Done'])
-  assert.deepEqual(got.map((c) => (c.children ?? []).map(line)), [['working:w:blue agent: owner · 1 min'], ['done:finished:grey other: Done']])
+  assert.deepEqual(got.map(line), ['working:owner:green agent: agent · 1 min', 'done:old:grey other: Done'])
+  assert.deepEqual(got.map((c) => (c.children ?? []).map(line)), [['working:w:green agent: owner · 1 min'], ['done:finished:grey other: Done']])
   assert.deepEqual(got.map((c) => [c.kind, c.title, c.closed]), [['topic', 'New topic', false], ['topic', 'Old talk', false]])
 })
 
@@ -129,7 +130,7 @@ const kids = (c: WorkCard) => (c.children ?? []).map((k) => k.id)
 
 test('workCards: a chat with 0, 1 and 2 works; the children newest created first', () => {
   const c = session('c', { title: 'Chat', titleGenerated: true })
-  assert.deepEqual([line(chat([], [c])), chat([], [c]).children], ['topics:c:green other: Discussion · no work yet', undefined])
+  assert.deepEqual([line(chat([], [c])), chat([], [c]).children], ['topics:c:grey other: Discussion · no work yet', undefined])
   const one = [task('a', { ownerSessionId: 'c', status: 'ready', createdAt: 1 }), step('a.1', 'a')]
   assert.deepEqual([line(chat(one, [c])), kids(chat(one, [c]))], ['waiting:c:amber you: Start via a', ['a']])
   const two = [...one, task('b', { ownerSessionId: 'c', status: 'in_progress', createdAt: 2 }), step('b.1', 'b', { status: 'in_progress' })]
@@ -145,16 +146,16 @@ test("workCards: a chat's group is the most urgent of its own and its children's
   const approval = { kind: 'approval' as const, id: 'a1', tool: 'x', server: 'jira', input: {}, status: 'pending' as const, at: NOW }
   const building2 = (id: string, created: number) => [task(id, { ownerSessionId: 'c', status: 'in_progress', createdAt: created }), step(`${id}.1`, id, { status: 'in_progress', ...withPr(1, { ci: 'pending' }) })]
   // A child working (CI): working, grey; its stage and key.
-  assert.equal(line(chat(building2('w', 1), [c])), 'working:c:green other: Merge · w')
+  assert.equal(line(chat(building2('w', 1), [c])), 'working:c:grey other: Merge · w')
   // A child's agent running: working, green.
   const dev = session('d', { taskId: 'x', role: 'developer', status: 'running', runStartedAt: NOW - MIN })
-  assert.equal(line(chat([task('x', { ownerSessionId: 'c', status: 'in_progress' }), step('x.1', 'x', { status: 'in_progress' })], [c, dev])), 'working:c:blue agent: Build · x')
+  assert.equal(line(chat([task('x', { ownerSessionId: 'c', status: 'in_progress' }), step('x.1', 'x', { status: 'in_progress' })], [c, dev])), 'working:c:green agent: Build · x')
   // A waiting child wins over a working one.
   const mixed = [...building2('w', 2), task('q', { ownerSessionId: 'c', needsInput: 'Pick', createdAt: 1 })]
   assert.equal(line(chat(mixed, [c])), 'waiting:c:amber you: Your call: Pick via q')
   // The chat's own approval or run comes first in its move line.
   assert.equal(line(chat(mixed, [session('c', { items: [approval] })])), 'waiting:c:amber you: Allow jira · x')
-  assert.equal(line(chat(building2('w', 1), [session('c', { status: 'running', runStartedAt: NOW - 2 * MIN })])), 'working:c:blue agent: agent · 2 min')
+  assert.equal(line(chat(building2('w', 1), [session('c', { status: 'running', runStartedAt: NOW - 2 * MIN })])), 'working:c:green agent: agent · 2 min')
   // Its own approval makes it waiting even when its children only work; the child keeps its own move.
   const asks = chat(building2('w', 1), [session('c', { items: [approval] })])
   assert.deepEqual([asks.group, asks.children![0].move.text], ['waiting', 'CI · PR #1'])
@@ -229,7 +230,7 @@ test('workCards: topics: approval waits on you; a running topic is working; a pl
     session('runs', { status: 'running', runStartedAt: NOW - 2 * MIN, title: 'how do we price the pro plan for teams', items: [{ kind: 'user', text: 'how do we price the pro plan for teams', at: NOW - 2 * MIN }] }),
   ]
   const got = cards([], sessions)
-  assert.deepEqual(got.map(line), ['waiting:asks:amber you: Allow jira · create_issue', 'topics:plain:green other: Discussion · no work yet', 'working:runs:blue agent: agent · 2 min'])
+  assert.deepEqual(got.map(line), ['waiting:asks:amber you: Allow jira · create_issue', 'topics:plain:grey other: Discussion · no work yet', 'working:runs:green agent: agent · 2 min'])
   assert.deepEqual(got.map((c) => [c.kind, c.title, c.stage, c.progress]), [['topic', 'Jira sync', null, null], ['topic', 'Pricing', null, null], ['topic', 'New topic', null, null]])
   assert.deepEqual(got[1].last, { text: 'agent: Depends.', at: NOW - MIN })
   assert.deepEqual(got[2].last, { text: 'you: how do we price the pro plan for teams', at: NOW - 2 * MIN })
@@ -245,16 +246,22 @@ test('workCards: the sessions under a topic are its tree, not rows; they count a
     session('g1', { ...t('Read logs'), role: 'reviewer', parentId: 'k1' }),
   ]
   const got = cards([], sessions)
-  assert.deepEqual(got.map(line), ['working:c:blue agent: Run the app · agent · 3 min'])
+  assert.deepEqual(got.map(line), ['working:c:green agent: Run the app · agent · 3 min'])
   const tree = got[0].sessions!
   const shape = (nodes: typeof tree): unknown[] => nodes.map((n) => [n.session.id, n.role, n.state, n.dot, shape(n.children)])
-  assert.deepEqual(shape(tree), [['k1', 'general', 'running', 'blue', [['g1', 'reviewer', 'idle', 'green', []]]], ['k2', 'topic', 'idle', 'green', []]])
+  assert.deepEqual(shape(tree), [['k1', 'general', 'running', 'green', [['g1', 'reviewer', 'idle', 'grey', []]]], ['k2', 'topic', 'idle', 'grey', []]])
   assert.equal(got[0].at, NOW - MIN, 'its activity includes its sessions')
 
   // An approval anywhere in the tree waits on the user on the topic's row.
   const asking = sessions.map((x) => (x.id === 'g1' ? { ...x, items: [approval] } : x))
   assert.deepEqual(cards([], asking).map(line), ['waiting:c:amber you: Allow Bash: git push origin x'])
   assert.equal(cards([], asking)[0].sessions![0].children[0].state, 'waiting')
+
+  // The topic's dot is its agents' state: one failed and nothing runs is red; the topic's own error too.
+  const failedAgent = cards([], sessions.map((x) => (x.id === 'k1' ? { ...x, status: 'error' as const } : x)))[0]
+  assert.deepEqual([failedAgent.dot, failedAgent.own?.dot], ['red', 'grey'])
+  const failedTopic = cards([], [session('c', { ...t('Auth'), status: 'error' })])[0]
+  assert.deepEqual([failedTopic.dot, failedTopic.own?.dot], ['red', 'red'])
 
   // A work a session under the topic owns is the topic's child.
   const work = task('w1', { ownerSessionId: 'g1', status: 'planning' })
@@ -312,9 +319,9 @@ test('workCards: a closed topic is closed however long ago; running or asking, i
   assert.deepEqual(got.map(line), [
     'done:closed:grey other: Closed',
     'done:old:grey other: Closed',
-    'working:runs:blue agent: agent · 1 min',
+    'working:runs:green agent: agent · 1 min',
     'waiting:asks:amber you: Allow jira · x',
-    'topics:open:green other: Discussion · no work yet',
+    'topics:open:grey other: Discussion · no work yet',
   ])
 })
 
@@ -369,7 +376,7 @@ test("workCards: a pending approval in the owner topic waits on the chat's row, 
   const sessions = [session('owner', { items: [approval] })]
   const two = [task('old', { ownerSessionId: 'owner', status: 'ready', createdAt: 1 }), step('old.1', 'old'), task('new', { ownerSessionId: 'owner', status: 'in_progress', createdAt: 2 }), step('new.1', 'new', { status: 'in_progress', ...withPr(1, { ci: 'pending' }) })]
   const [c] = cards(two, sessions)
-  assert.deepEqual([line(c), ...c.children!.map(line)], ['waiting:owner:amber you: Allow jira · x', 'working:new:green other: CI · PR #1', 'waiting:old:amber you: Start'])
+  assert.deepEqual([line(c), ...c.children!.map(line)], ['waiting:owner:amber you: Allow jira · x', 'working:new:grey other: CI · PR #1', 'waiting:old:amber you: Start'])
 })
 
 const report = (patch: Partial<ReviewReport> = {}): ReviewReport => ({
@@ -394,14 +401,14 @@ const ready = { verdict: 'comment' as const, head: 'h2', at: NOW - 30 * MIN }
 const rt = (patch: Partial<AgentSession> = {}) => session('rt', { reviewOf: 'rv', ...patch })
 /** A review in each state: name, the review, its topic, its stage and its row line. Shared with the header's card. */
 const REVIEW_CASES = (): [string, Task, AgentSession, string | null, string][] => [
-  ['running', reviewTask(), rt({ status: 'running', runStartedAt: NOW - 4 * MIN }), 'Running', 'working:rv:blue agent: agent · 4 min'],
+  ['running', reviewTask(), rt({ status: 'running', runStartedAt: NOW - 4 * MIN }), 'Running', 'working:rv:green agent: agent · 4 min'],
   ['question', reviewTask({ needsInput: 'Which ticket?' }), rt(), null, "waiting:rv:amber you: Answer the agent's question"],
   ['direction open', reviewTask({}, { ...ready, report: report() }), rt(), 'Report ready', 'waiting:rv:amber you: Your call on direction (2 options)'],
   ['decided, not posted', reviewTask({}, { ...ready, report: report({ decided: { id: 'd', reviewId: 'rv', pr: '', decision: '', choice: 'ok', at: NOW } }) }), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
   ['v1 ready', reviewTask({}, ready), rt(), 'Report ready', 'waiting:rv:amber you: Publish the review'],
-  ['posted', reviewTask({}, { ...ready, posted: { at: NOW - 2 * 60 * MIN, url: 'u' } }), rt(), 'Waiting for author', 'working:rv:green other: PR author · 2 h'],
-  ['failed, no verdict', reviewTask(), rt({ status: 'error' }), null, 'waiting:rv:amber you: Review again'],
-  ['not started, no verdict', reviewTask(), rt(), null, 'working:rv:green other: Waits for the agent'],
+  ['posted', reviewTask({}, { ...ready, posted: { at: NOW - 2 * 60 * MIN, url: 'u' } }), rt(), 'Waiting for author', 'working:rv:grey other: PR author · 2 h'],
+  ['failed, no verdict', reviewTask(), rt({ status: 'error' }), null, 'waiting:rv:red you: Review again'],
+  ['not started, no verdict', reviewTask(), rt(), null, 'working:rv:grey other: Waits for the agent'],
   ['outdated', reviewTask({}, { ...ready, head: 'h1' }), rt(), 'Report ready', 'waiting:rv:amber you: Review the new commits'],
   ['closed', reviewTask({ status: 'done', updatedAt: NOW }), rt(), 'Done', 'done:rv:grey other: Closed'],
 ]
@@ -420,7 +427,7 @@ test('workCards: a review with both formats: the run of either is the agent work
   const t = reviewTask({}, { ...ready, report: report() })
   t.prReview!.results.v1 = { ...emptyResult('v1', 'rt1'), ...ready }
   const c = card([t], [session('rt', { reviewOf: 'rv' }), session('rt1', { reviewOf: 'rv', status: 'running', runStartedAt: NOW - 2 * MIN })])
-  assert.deepEqual([c.stage, c.progress, line(c)], ['Running', 'PR #12 · @ann · v2', 'working:rv:blue agent: agent · 2 min'])
+  assert.deepEqual([c.stage, c.progress, line(c)], ['Running', 'PR #12 · @ann · v2', 'working:rv:green agent: agent · 2 min'])
 })
 
 test('workCards: question stage of a review is its report state, not Running, once a verdict exists', () => {
@@ -474,7 +481,7 @@ test('workCards: a review a topic asked for is no row: the topic carries its sta
   assert.deepEqual(got[0].children!.map((k) => [k.id, k.kind, k.title]), [['rv', 'review', 'Charge cards']])
   assert.equal(workCard(waiting, [waiting], [topicC()], NOW)!.id, 'rv')
   const running = cards([asked('c')], [topicC({ status: 'running', runStartedAt: NOW - 4 * MIN })])
-  assert.deepEqual(running.map(line), ['working:c:blue agent: agent · 4 min'])
+  assert.deepEqual(running.map(line), ['working:c:green agent: agent · 4 min'])
 })
 
 test('workCards: a review a subtopic asked for belongs to the topic at the top of its tree', () => {
@@ -492,12 +499,12 @@ test('workCards: what a review waits for stays on the topic while another sessio
 })
 
 test('workCards: a review with no stage yet reads by its move on the topic', () => {
-  assert.deepEqual(cards([asked('c')], [topicC()]).map(line), ['working:c:green other: Waits for the agent · rv'])
+  assert.deepEqual(cards([asked('c')], [topicC()]).map(line), ['working:c:grey other: Waits for the agent · rv'])
 })
 
 test('workCards: a finished review does not finish the topic that asked for it', () => {
   const got = cards([asked('c', { status: 'done', updatedAt: NOW })], [topicC()])
-  assert.deepEqual([line(got[0]), got[0].closed], ['topics:c:green other: Discussion · no work yet', false])
+  assert.deepEqual([line(got[0]), got[0].closed], ['topics:c:grey other: Discussion · no work yet', false])
 })
 
 test('Reviews filter: a topic with a review it asked for shows and counts once; a closed one no longer does', () => {
@@ -595,15 +602,12 @@ test('workCards: a subagent read from a session\'s stream is a child labelled su
   ]
   const got = cards([], sessions)
   assert.deepEqual(got[0].sessions!.map((n) => [n.session.id, n.role, n.state]), [['s1', 'subagent', 'running']])
-  assert.equal(got[0].dot, 'blue')
+  assert.equal(got[0].dot, 'green')
 })
 
-test('a review\'s status in words for its panel, not steps (review-v3-concise-design-first.1)', () => {
-  assert.deepEqual((['Running', 'Report ready', 'Waiting for author', 'Done'] as const).map(reviewStageText), [
-    'The agent is reviewing',
-    'Report ready · yours to publish',
-    'Report ready · waiting for the author',
-    'Closed',
-  ])
-  assert.equal(reviewStageText(null), null)
+test('a topic\'s title: the generated one with pasted HTML entities decoded, else New topic (header and sidebar alike)', () => {
+  assert.equal(shortTitle(session('t', { title: 'Review &amp;lt;PR&amp;gt; &lt;112&gt; &quot;a&quot; &#39;b&#39;', titleGenerated: true })), 'Review <PR> <112> "a" \'b\'')
+  assert.equal(shortTitle(session('t', { title: 'Hey Pls review this PR: &lt;&lt;<https:/', titleGenerated: false })), 'New topic')
+  assert.equal(decodeEntities('a &unknown; &#0; b'), 'a &unknown; &#0; b', 'what is not an entity stays')
+  assert.equal(cleanTitle('Review of PR &lt;112&gt;'), 'Review of PR <112>')
 })

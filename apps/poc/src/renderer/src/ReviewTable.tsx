@@ -8,15 +8,18 @@ import {
   pickedByDefault,
   prRepoName,
   reviewRunning,
+  reviewStatus,
   shortTitle,
   shownResult,
   type FindingLevel,
   type PrVerdict,
   type Project,
   type ReviewFinding,
+  type ReviewStatus,
   type Task,
 } from '@mag/core'
 import type { AppState } from '../../preload/api'
+import { useNow } from './Tasks'
 
 const mag = window.mag
 
@@ -36,6 +39,7 @@ export function ReviewTable({ reviews, project, state, onOpen }: {
 }) {
   // Folded: the agent's reply and the drawer already tell the review; a row unfolds to pick findings to publish.
   const [open, setOpen] = useState<string | null>(null)
+  const now = useNow(15_000)
   const waiting = reviews.filter((t) => shownResult(t.prReview)?.verdict && !t.prReview?.posted).length
   return (
     <div className="reviewtable" aria-label="Reviews">
@@ -44,16 +48,17 @@ export function ReviewTable({ reviews, project, state, onOpen }: {
         {waiting > 0 && <span className="pill amber">{waiting} wait on you</span>}
       </div>
       {reviews.filter((t) => t.prReview).map((t) => (
-        <ReviewRow key={t.id} work={t} project={project} running={reviewRunning(t, state.sessions)} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onOpen={() => onOpen(t.id)} />
+        <ReviewRow key={t.id} work={t} project={project} running={reviewRunning(t, state.sessions)} status={reviewStatus(t, state.sessions, now)} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onOpen={() => onOpen(t.id)} />
       ))}
     </div>
   )
 }
 
-function ReviewRow({ work, project, running, open, onToggle, onOpen }: {
+function ReviewRow({ work, project, running, status, open, onToggle, onOpen }: {
   work: Task
   project: Project | undefined
   running: boolean
+  status: ReviewStatus
   open: boolean
   onToggle: () => void
   onOpen: () => void
@@ -72,23 +77,25 @@ function ReviewRow({ work, project, running, open, onToggle, onOpen }: {
         <span className="rtcaret" aria-hidden>{open ? '▾' : '▸'}</span>
         <code>{name}</code>
         <span className="rttitle">{title}</span>
-        <span className="muted small rtcounts">{running ? 'reviewing…' : counts || (r?.verdict ? 'no findings' : 'not reviewed yet')}</span>
+        <span className="muted small rtcounts">{status.state === 'ready' ? counts || 'no findings' : status.text}</span>
         {r?.verdict ? <span className={`pill ${VERDICT_TAGS[r.verdict]}`}>{PR_VERDICT_LABELS[r.verdict]}</span> : <span />}
         {review.posted ? <span className="pill green" title="Published to the PR">posted</span> : <span />}
       </button>
       <button className="small rtopen" onClick={onOpen} title="The whole review: problem, direction, diagrams">Open</button>
-      {open && r && <Findings work={work} findings={findings} verdict={r.verdict} at={r.at} running={running} name={name} />}
+      {open && r && <Findings work={work} findings={findings} verdict={r.verdict} at={r.at} running={running} name={name} status={status.text} />}
     </div>
   )
 }
 
-function Findings({ work, findings, verdict, at, running, name }: {
+function Findings({ work, findings, verdict, at, running, name, status }: {
   work: Task
   findings: ReviewFinding[]
   verdict: PrVerdict | null
   at: number | null
   running: boolean
   name: string
+  /** What an empty list says before a verdict: the review's status. */
+  status: string
 }) {
   const initial = () => new Set(findings.flatMap((f, i) => (pickedByDefault(f) ? [i] : [])))
   const [picks, setPicks] = useState<Set<number>>(initial)
@@ -97,7 +104,7 @@ function Findings({ work, findings, verdict, at, running, name }: {
   const [all_, setShowAll] = useState(false)
   // A new run of the review: its findings, its defaults.
   useEffect(() => setPicks(initial()), [at]) // eslint-disable-line react-hooks/exhaustive-deps
-  if (!findings.length) return <p className="muted small rtempty">{verdict ? 'No findings.' : 'Not reviewed yet.'}</p>
+  if (!findings.length) return <p className="muted small rtempty">{verdict ? 'No findings.' : status}</p>
   const all = picks.size === findings.length
   const toggle = (i: number) => setPicks((p) => { const n = new Set(p); if (!n.delete(i)) n.add(i); return n })
   // In level order, as they are published.

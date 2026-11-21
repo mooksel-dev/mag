@@ -218,9 +218,9 @@ function TopicBrief({ topic, onOpenKey }: { topic: AgentSession; onOpenKey: (key
   )
 }
 
-/** The topic's title; a click renames it, Enter saves, Esc cancels. */
+/** The topic's title as the sidebar shows it (shortTitle); a click renames it, Enter saves, Esc cancels. */
 function TopicTitle({ topic }: { topic: AgentSession }) {
-  const title = topic.title ?? 'Topic'
+  const title = shortTitle(topic)
   const [draft, setDraft] = useState<string | null>(null)
   const cancelled = useRef(false)
   if (draft === null) return <button className="topictitle" title="Rename" onClick={() => { cancelled.current = false; setDraft(title) }}>{title}</button>

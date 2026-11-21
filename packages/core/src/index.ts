@@ -1188,9 +1188,27 @@ export function titlePrompt(firstMessage: string, reply: string): string {
   return `Name this conversation in 3-6 words, in the user's language. Reply with the title only: no quotes, no trailing period.\n\n<conversation>\n${excerpt}\n</conversation>`
 }
 
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+/** Text with HTML entities decoded, nested ones too ("&amp;lt;" is "<"): pasted text often carries them. */
+export function decodeEntities(text: string): string {
+  const once = (t: string) =>
+    t.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+      const n = e[0] === '#' ? (e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : NaN
+      if (!Number.isNaN(n)) return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m
+      return ENTITIES[e.toLowerCase()] ?? m
+    })
+  for (let i = 0; i < 3; i++) {
+    const next = once(text)
+    if (next === text) break
+    text = next
+  }
+  return text
+}
+
 /** The title from a title run's reply, or null if it doesn't look like one. */
 export function cleanTitle(raw: string): string | null {
-  const line = raw.trim().split('\n')[0] ?? ''
+  const line = decodeEntities(raw).trim().split('\n')[0] ?? ''
   const title = line
     .replace(/^(title|назва)\s*:\s*/i, '')
     .replace(/^[\s"'«»“”*#`]+|[\s"'«»“”*`.]+$/g, '')
