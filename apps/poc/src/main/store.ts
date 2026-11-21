@@ -8,6 +8,7 @@ import { log } from './log.ts'
 import { createLabels, type Labels } from './core/services/labels/index.ts'
 import { openWorkspaceDb, removeDb, type Counts, type EntityRow, type ImportData, type WorkspaceDb } from './core/clients/workspace-db/index.ts'
 import type { AddedItem, InboxState } from './core/services/inbox/index.ts'
+import type { Deliverable, DeliverableRecords } from './core/services/deliverables/types.ts'
 
 interface Data {
   workspaces: Workspace[]
@@ -29,6 +30,8 @@ interface Data {
   labelGroups: LabelGroup[]
   labels: Label[]
   itemLabels: ItemLabel[]
+  /** Non-code results; their versions' text is in the workspace folder (deliverables-library-claims-review-and.1). */
+  deliverables: Deliverable[]
   /** Window layout; not app state, so not sent to the renderer. */
   ui: UiState
   /** How many of the store's migrations (see Store.migrations) have run; each runs once. */
@@ -185,7 +188,7 @@ export function backupDaily(file: string, now = new Date()): string | null {
 }
 
 /** Data's lists and maps stored one row per element, by entity kind; `ui` is one row, any other field a `meta` row. */
-const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label' } as const
+const LIST_KINDS = { workspaces: 'workspace', projects: 'project', tasks: 'task', sessions: 'session', events: 'event', integrations: 'integration', inboxStates: 'inbox_state', inboxItems: 'inbox_item', labelGroups: 'label_group', labels: 'label', itemLabels: 'item_label', deliverables: 'deliverable' } as const
 const MAP_KINDS = { docs: 'doc', canvases: 'canvas' } as const
 type ListKey = keyof typeof LIST_KINDS
 type MapKey = keyof typeof MAP_KINDS
@@ -252,7 +255,7 @@ interface ItemRows {
  * when that import fails, or with backend 'json'.
  */
 export class Store {
-  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], ui: { windows: {}, projectWindows: [], recent: [] } }
+  data: Data = { workspaces: [], projects: [], tasks: [], sessions: [], docs: {}, canvases: {}, events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], ui: { windows: {}, projectWindows: [], recent: [] } }
   private listeners: (() => void)[] = []
   private itemListeners: ((e: SessionItemEvent) => void)[] = []
   private saveTimer: NodeJS.Timeout | null = null
@@ -282,6 +285,7 @@ export class Store {
     this.data.integrations ??= []
     this.data.inboxStates ??= []
     this.data.inboxItems ??= []
+    this.data.deliverables ??= []
     this.data.ui ??= { windows: {}, projectWindows: [], recent: [] }
     this.data.ui.windows ??= {}
     this.data.ui.projectWindows ??= []
@@ -389,7 +393,7 @@ export class Store {
 
   private fromRows(rows: EntityRow[]): Partial<LegacyData> {
     const lists: Record<string, ListKey> = Object.fromEntries(Object.entries(LIST_KINDS).map(([k, kind]) => [kind, k as ListKey]))
-    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], docs: {}, canvases: {} }
+    const data: Record<string, unknown> & Pick<Data, ListKey | MapKey> = { workspaces: [], projects: [], tasks: [], sessions: [], events: [], integrations: [], inboxStates: [], inboxItems: [], labelGroups: [], labels: [], itemLabels: [], deliverables: [], docs: {}, canvases: {} }
     for (const r of rows) {
       this.written.set(rowKey(r.kind, r.id), r.json)
       const value = JSON.parse(r.json)
@@ -967,6 +971,7 @@ export class Store {
     if (owned.length) throw new Error(`The topic owns ${owned.map((t) => t.key).join(', ')}: it stays in their project`)
     for (const x of tree) x.projectId = pid
     for (const c of Object.values(this.data.canvases)) if (c.sessionId && ids.has(c.sessionId) && !c.taskId) c.projectId = pid ?? ''
+    for (const d of this.data.deliverables) if (d.topicId && ids.has(d.topicId)) d.projectId = pid
     this.changed()
   }
 
@@ -1031,6 +1036,24 @@ export class Store {
     this.data.canvases[canvasId] = canvas
     this.changed()
     return canvas
+  }
+
+  /** The deliverables service's records, kept with the rest of the workspace. */
+  deliverableRecords(): DeliverableRecords {
+    return {
+      all: () => this.data.deliverables,
+      put: (d) => {
+        const i = this.data.deliverables.findIndex((x) => x.id === d.id)
+        if (i < 0) this.data.deliverables.push(d)
+        else this.data.deliverables[i] = d
+        this.changed()
+      },
+      remove: (id) => {
+        const before = this.data.deliverables.length
+        this.data.deliverables = this.data.deliverables.filter((x) => x.id !== id)
+        if (this.data.deliverables.length !== before) this.changed()
+      },
+    }
   }
 
   /** Removes a canvas for good; a link to it in a chat or a doc shows as its title (right-panel-only-what-is.1). */

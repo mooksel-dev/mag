@@ -33,6 +33,7 @@ export type ArtifactTarget =
   | { kind: 'canvas'; id: string; focus?: string }
   | { kind: 'work' | 'doc' | 'review'; taskId: string }
   | { kind: 'agent'; sessionId: string }
+  | { kind: 'deliverable'; id: string }
 
 /** One line of Documents and diagrams. */
 export interface ArtifactChip {

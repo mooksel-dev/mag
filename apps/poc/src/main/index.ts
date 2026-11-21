@@ -25,6 +25,7 @@ import { storeInbox } from './inbox'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 import { startMeetings } from './meetings'
+import { startDeliverables } from './deliverables'
 import { runShell, type ShellRun } from './core/clients/shell/index.ts'
 import { homedir } from 'node:os'
 
@@ -455,6 +456,9 @@ app.whenReady().then(async () => {
   startAppMenu(store, windows, openLogs)
   startAttention(store, windows, inbox)
   actions.meetings = startMeetings()
+  const deliverables = startDeliverables(store, (sid, text, job) => orch.send(sid, text, [], job))
+  actions.deliverables = deliverables
+  approvals.onWriteAllowed = (sid, destination) => void deliverables.writeAllowed(sid, destination)
 
   windows.restore()
   // The dock icon brings Welcome back when no project is open, even while pop-outs are.

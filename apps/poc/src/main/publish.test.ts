@@ -126,3 +126,21 @@ test("publish: a payload's Allow lets exactly that call of the agent's own tool 
   assert.deepEqual(JSON.parse(await approvals.request(ctx, { ...own, tool_use_id: 't2' })), { pending: true }, 'the grant is good for one run')
   assert.equal(cards().length, 2)
 })
+
+test('publish: every write that runs reports onWriteAllowed with its destination: auto, Allow; not a deny (deliverables-library-claims-review-and.1)', async () => {
+  const { store, project, approvals, session, call } = setup()
+  const seen: string[] = []
+  approvals.onWriteAllowed = (sid, d) => void seen.push(`${sid === session.id ? 'topic' : sid} ${d.label}`)
+  const allowed = call({ destination: 'GitHub', command: COMMENT })
+  await new Promise((r) => setTimeout(r, 5))
+  approvals.decide(session.id, 'c1', true)
+  await allowed
+  const denied = call({ destination: 'GitHub', command: COMMENT, call_id: 'c2' })
+  await new Promise((r) => setTimeout(r, 5))
+  approvals.decide(session.id, 'c2', false)
+  await assert.rejects(denied)
+  store.updateProject(project.id, { publish: { auto: [{ kind: 'github' }, { kind: 'slack' }] } })
+  await call({ destination: 'GitHub', command: COMMENT, call_id: 'c3' })
+  await call({ destination: 'Slack', payload: { tool: 'mcp__claude_ai_Slack__slack_send_message', input: { channel_id: 'C0DATAREM', message: 'hi' } }, call_id: 'c4' })
+  assert.deepEqual(seen, ['topic GitHub acme/api#4', 'topic GitHub acme/api#4', 'topic Slack C0DATAREM'])
+})
