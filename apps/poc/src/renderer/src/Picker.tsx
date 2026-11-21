@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { inbox, projectColor, projectState, type Project } from '@mag/core'
+import { projectInbox, projectColor, projectState, type Project } from '@mag/core'
 import type { AppState, PickerMode } from '../../preload/api'
 import { Logo } from './Logo'
 import { useTheme } from './useTheme'
@@ -13,7 +13,7 @@ export function ProjectSquare({ project }: { project: Project }) {
 
 function stateText(project: Project, state: AppState): string {
   const s = projectState(project.id, state.tasks, state.sessions)
-  if (s === 'waiting') return `${inbox(project.id, state.tasks.filter((t) => t.projectId === project.id), state.sessions).length} waiting on you`
+  if (s === 'waiting') return `${projectInbox(project.id, state.tasks.filter((t) => t.projectId === project.id), state.sessions).length} waiting on you`
   return s === 'in_review' ? 'in review' : 'idle'
 }
 

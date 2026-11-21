@@ -21,6 +21,7 @@ import { exportReview, importReview } from './core/services/review-export/index.
 import { ICON, createWindows } from './windows'
 import { startAppMenu } from './menu'
 import { startAttention } from './attention'
+import { storeInbox } from './inbox'
 import { initLog, log, logTail, pruneLogs } from './log'
 import { Crashes } from './crash'
 import { startMeetings } from './meetings'
@@ -99,6 +100,7 @@ app.whenReady().then(async () => {
   app.dock?.setIcon(ICON)
   const userData = app.getPath('userData')
   const store = new Store(join(userData, 'db.json'))
+  const inbox = storeInbox(store)
   const windows = createWindows(store)
   // Pop-outs save their bounds as they close on quit, after the save timer could fire.
   app.on('will-quit', () => store.flush())
@@ -200,7 +202,7 @@ app.whenReady().then(async () => {
   const scheduler = startScheduler(store, orch)
   const claudeBin = await claudeCode.detect()
 
-  const snapshot = (): AppState => appState(store, { claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects() })
+  const snapshot = (): AppState => appState(store, { claudeBin, appVersion: app.getVersion(), openProjects: windows.openProjects(), inbox: inbox.items() })
   // Streamed items go as events; the state (no items) at most once per macrotask.
   const broadcast = coalesce(() => windows.broadcast(snapshot()))
   store.onChange(broadcast)
@@ -209,6 +211,8 @@ app.whenReady().then(async () => {
   app.on('browser-window-focus', () => void scheduler.pollNow())
 
   handle('state:get', () => snapshot())
+  handle('inbox:snooze', (_, key: string, until: number | 'activity') => inbox.snooze(key, until))
+  handle('inbox:done', (_, key: string) => inbox.done(key))
   handle('session:items', (_, sid: string, from?: number) => store.items(sid, from))
   handle('search:all', (_, projectId: string, query: string) => searchAll(query, projectTasks(projectId), store.data.sessions.filter((s) => s.projectId === projectId)))
   handle('dialog:pickDir', async () => {
@@ -435,7 +439,7 @@ app.whenReady().then(async () => {
   const openLogs = () => shell.openPath(logsDir)
   handle('logs:open', () => openLogs())
   startAppMenu(store, windows, openLogs)
-  startAttention(store, windows)
+  startAttention(store, windows, inbox)
   actions.meetings = startMeetings()
 
   windows.restore()

@@ -136,6 +136,8 @@ const api: MagApi = {
   lastCrash: () => ipcRenderer.invoke('crash:last'),
   dismissCrash: () => ipcRenderer.invoke('crash:dismiss'),
   openLogs: () => ipcRenderer.invoke('logs:open'),
+  snoozeInbox: (key, until) => ipcRenderer.invoke('inbox:snooze', key, until),
+  doneInbox: (key) => ipcRenderer.invoke('inbox:done', key),
   meetingStatus: () => ipcRenderer.invoke('meetings:status'),
   onMeetingStatus: (cb) => {
     const fn = (_: unknown, s: MeetingStatus) => cb(s)

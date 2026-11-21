@@ -93,6 +93,61 @@ export interface PrReview {
   shown: ReviewFormat
   /** Published to GitHub by the user's button. */
   posted: { at: number; url: string } | null
+  /** What the PR poll saw since the user's last look (inbox-what-waits-on-me.1); missing before its first poll. */
+  activity?: ReviewActivity | null
+}
+
+/** A teammate's PR as the review poll last saw it, counted from the user's last look. */
+export interface ReviewActivity {
+  /** The user's last look: the shown result's time, or a later one recorded by a view. Replies are counted after it. */
+  lastSeenAt: number
+  /** Comments and reviews of the PR's author after lastSeenAt. */
+  authorReplies: number
+  /** The PR's head differs from the one the shown result reviewed. */
+  newCommits: boolean
+  state: 'open' | 'merged' | 'closed'
+  /** The PR's head when last polled. */
+  head: string | null
+  /** Time of the newest activity seen: an author reply, a push or a merge/close; 0 for none. */
+  at: number
+}
+
+/** A comment or review on a PR: its author's login and time. */
+export interface PrComment {
+  author: string
+  at: number
+}
+
+/**
+ * The activity of a review's PR after a poll: author replies after the user's last look (the shown result's time, or a
+ * later lastSeenAt), whether the head moved past the reviewed one, and its state. `at` grows on a new reply, a new
+ * head or a state change, and holds otherwise; `now` dates those the poll can't date (a push, a merge).
+ */
+export function reviewActivity(
+  review: PrReview,
+  live: { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: string | null },
+  comments: PrComment[],
+  createdAt: number,
+  now: number,
+): ReviewActivity {
+  const prev = review.activity
+  const shown = shownResult(review)
+  const lastSeenAt = Math.max(prev?.lastSeenAt ?? 0, shown?.at ?? createdAt)
+  const author = review.pr.author.toLowerCase()
+  const replies = comments.filter((c) => c.author.toLowerCase() === author && c.at > lastSeenAt)
+  const state = live.state === 'MERGED' ? 'merged' : live.state === 'CLOSED' ? 'closed' : 'open'
+  const reviewed = shown?.head ?? review.pr.head
+  const head = live.head ?? prev?.head ?? null
+  const newCommits = !!head && !!reviewed && head !== reviewed
+  const moved = prev ? head !== prev.head || state !== prev.state : newCommits || state !== 'open'
+  const at = Math.max(prev?.at ?? 0, ...replies.map((c) => c.at), moved ? now : 0)
+  return { lastSeenAt, authorReplies: replies.length, newCommits, state, head, at }
+}
+
+/** "2 author replies · new commits"; empty without either. */
+export function reviewActivityText(a: ReviewActivity): string {
+  const parts = [a.authorReplies ? `${a.authorReplies} author ${a.authorReplies > 1 ? 'replies' : 'reply'}` : '', a.newCommits ? 'new commits' : ''].filter(Boolean)
+  return parts.join(' · ')
 }
 
 /** A result of `format` before its run has recorded anything. */
@@ -122,7 +177,7 @@ export interface LegacyPrReview {
  * review's owner topic, which ran it. A review in today's form stays as it is.
  */
 export function migratePrReview(raw: PrReview | LegacyPrReview, sessionId?: string | null): PrReview {
-  if ('results' in raw && raw.results) return { pr: raw.pr, results: raw.results, shown: raw.shown === 'v1' ? 'v1' : 'v2', posted: raw.posted ?? null }
+  if ('results' in raw && raw.results) return { pr: raw.pr, results: raw.results, shown: raw.shown === 'v1' ? 'v1' : 'v2', posted: raw.posted ?? null, ...(raw.activity ? { activity: raw.activity } : {}) }
   const old = raw as LegacyPrReview
   const format: ReviewFormat = old.report ? 'v2' : 'v1'
   const reviewed = !!(old.verdict || old.report || old.head)

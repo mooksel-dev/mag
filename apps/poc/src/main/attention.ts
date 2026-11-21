@@ -1,6 +1,6 @@
 import { Menu, Notification, app } from 'electron'
-import { waitingTotal } from '@mag/core'
 import type { Store } from './store'
+import type { Inbox } from './core/services/inbox/index.ts'
 import type { Windows } from './windows'
 import { attentionItems, newAttention } from './attention-items'
 import { rebuildOnChange, recentProjects } from './menu'
@@ -9,26 +9,29 @@ import { rebuildOnChange, recentProjects } from './menu'
 const THROTTLE_MS = 250
 
 /**
- * What waits on the user while their project's window is closed or in the background: the dock badge (inbox items
- * across all projects), a system notification per new inbox item, and the dock menu with recent projects.
+ * What waits on the user while their project's window is closed or in the background: the dock badge (the workspace
+ * inbox), a system notification per new inbox item, and the dock menu with recent projects.
  */
-export function startAttention(store: Store, windows: Windows) {
-  const waitingIn = (projectId: string) => waitingTotal([{ id: projectId }], store.data.tasks, store.data.sessions)
+export function startAttention(store: Store, windows: Windows, inbox: Inbox) {
+  /** Inbox items per project of the recent ones. */
+  const recentWaiting = () => {
+    const items = inbox.items()
+    return recentProjects(store).map((p) => ({ p, n: items.filter((i) => i.projectId === p.id).length }))
+  }
 
   // Items already waiting on start are not news.
   const seen = new Set<string>()
-  newAttention(seen, attentionItems(store.data.projects, store.data.tasks, store.data.sessions))
+  newAttention(seen, attentionItems(inbox.items(), store.data.projects, store.data.tasks))
   // Electron drops click handlers of notifications that are garbage-collected.
   const shown = new Set<Notification>()
 
   let badge: string | null = null
   const check = () => {
-    const { projects, tasks, sessions } = store.data
-    const total = waitingTotal(projects, tasks, sessions)
-    const next = total ? String(total) : ''
+    const items = inbox.items()
+    const next = items.length ? String(items.length) : ''
     if (next !== badge) app.dock?.setBadge((badge = next))
     if (!Notification.isSupported()) return
-    for (const item of newAttention(seen, attentionItems(projects, tasks, sessions))) {
+    for (const item of newAttention(seen, attentionItems(items, store.data.projects, store.data.tasks))) {
       if (windows.focusedProject() === item.projectId) continue
       const n = new Notification({ title: item.title, body: item.body })
       shown.add(n)
@@ -57,12 +60,9 @@ export function startAttention(store: Store, windows: Windows) {
   const dock = app.dock
   rebuildOnChange(
     store,
-    () => recentProjects(store).map((p) => `${p.id}:${p.name}:${waitingIn(p.id)}`).join('|'),
+    () => recentWaiting().map(({ p, n }) => `${p.id}:${p.name}:${n}`).join('|'),
     () => {
-      const recent = recentProjects(store).map((p) => {
-        const n = waitingIn(p.id)
-        return { label: n ? `${p.name} (${n} waiting)` : p.name, click: () => void windows.openProject(p.id) }
-      })
+      const recent = recentWaiting().map(({ p, n }) => ({ label: n ? `${p.name} (${n} waiting)` : p.name, click: () => void windows.openProject(p.id) }))
       dock.setMenu(
         Menu.buildFromTemplate([
           ...recent,

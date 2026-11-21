@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentState, canApprove, canReopen, currentStep, inbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { agentState, canApprove, canReopen, currentStep, projectInbox, isLegacy, localCheckText, localHolder, localOptions, openLocalChecks, openPrs, projectRepo, projectState, repoNames, stepBranch, stepDir, stepRepoNames, stepRepos, stepRollup, taskChangeEvents, taskPrs, taskRepos, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, patch: Partial<Task> = {}): Task => ({
   id,
@@ -78,21 +78,21 @@ test('agentState / inbox: the current step waits for merge or for Start', () => 
   const T = task('T', 'in_progress')
   const merging = [T, step('a', 'done', 1), step('b', 'in_progress', 2, { work: work({ prUrl: 'u', prState: 'open' }) })]
   assert.deepEqual(agentState(T, [], merging), { kind: 'waiting', reason: 'T.2: PR waits for merge' })
-  assert.deepEqual(inbox('p', merging, []).map((i) => [i.task?.id, i.kind, i.text]), [['T', 'ready_to_merge', 'T.2: PR is ready to merge']])
+  assert.deepEqual(projectInbox('p', merging, []).map((i) => [i.task?.id, i.kind, i.text]), [['T', 'ready_to_merge', 'T.2: PR is ready to merge']])
   assert.equal(projectState('p', merging, [{ id: 's', projectId: 'p', taskId: 'T', role: 'developer', agent: 'claude-code', nativeSessionId: null, status: 'running', items: [], createdAt: 0 }]), 'in_review')
 
   const starting = [T, step('a', 'done', 1), step('b', 'todo', 2, { startManually: true })]
   assert.deepEqual(agentState(T, [], starting), { kind: 'waiting', reason: 'T.2 waits for Start' })
-  assert.deepEqual(inbox('p', starting, []).map((i) => i.kind), ['ready_to_start'])
+  assert.deepEqual(projectInbox('p', starting, []).map((i) => i.kind), ['ready_to_start'])
 
   const auto = [T, step('a', 'done', 1), step('b', 'todo', 2)]
   assert.equal(agentState(T, [], auto), null, 'the next step starts on its own')
-  assert.deepEqual(inbox('p', auto, []), [])
+  assert.deepEqual(projectInbox('p', auto, []), [])
 })
 
 test('inbox: a step PR check failure shows on its task once', () => {
   const tasks = [task('T', 'in_progress'), step('a', 'in_progress', 1, { work: work({ prUrl: 'u', prState: 'open', checkError: 'gh failed' }) })]
-  assert.deepEqual(inbox('p', tasks, []).map((i) => [i.task?.id, i.kind]), [['T', 'check_failed']])
+  assert.deepEqual(projectInbox('p', tasks, []).map((i) => [i.task?.id, i.kind]), [['T', 'check_failed']])
 })
 
 test('taskChangeEvents: a step merged is logged, other step status changes are not', () => {

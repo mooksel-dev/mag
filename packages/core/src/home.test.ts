@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { approvalCommand, approvalName, workSections, briefContext, ideaText, ideaTitle, parkedTopics, agentState, inbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
+import { approvalCommand, approvalName, workSections, briefContext, ideaText, ideaTitle, parkedTopics, agentState, inbox, projectInbox, runningAgents, taskChangeEvents, type AgentSession, type RepoWork, type Task, type WorkState, type SubtaskStatus, type TaskWork } from './index.ts'
 
 const task = (id: string, status: WorkState | SubtaskStatus, rank = 0, patch: Partial<Task> = {}): Task => ({
   id,
@@ -97,7 +97,7 @@ test('inbox: one item per task, by priority', () => {
   ]
   const sessions = [session('failed', 'developer', 'error'), session('question', 'groomer', 'idle'), session('working', 'developer', 'running')]
   assert.deepEqual(
-    inbox('p', tasks, sessions).map((i) => [i.task?.id, i.kind, i.text]),
+    projectInbox('p', tasks, sessions).map((i) => [i.task?.id, i.kind, i.text]),
     [
       ['failed', 'agent_failed', 'Developer failed'],
       ['check', 'check_failed', 'gh down'],
@@ -113,22 +113,22 @@ test('inbox: a finished work and its steps wait on nobody', () => {
     task('donestep', 'in_progress', 0, { parentId: 'done', work: work({ prUrl: 'u2', prState: 'open' }) }),
     task('gone', 'canceled'),
   ]
-  assert.deepEqual(inbox('p', tasks, [session('done', 'developer', 'error'), session('gone', 'groomer', 'error')]), [])
+  assert.deepEqual(projectInbox('p', tasks, [session('done', 'developer', 'error'), session('gone', 'groomer', 'error')]), [])
 })
 
 test('inbox: ready to merge counts the PRs still open', () => {
   const two = task('t', 'in_progress', 0, { work: work({ prUrl: 'u1', prState: 'open' }, { prUrl: 'u2', prState: 'open' }) })
-  assert.equal(inbox('p', [two], [])[0]?.text, '2 PRs are ready to merge')
+  assert.equal(projectInbox('p', [two], [])[0]?.text, '2 PRs are ready to merge')
   const one = task('t', 'in_progress', 0, { work: work({ prUrl: 'u1', prState: 'merged' }, { prUrl: 'u2', prState: 'open' }) })
-  assert.equal(inbox('p', [one], [])[0]?.text, 'PR is ready to merge')
+  assert.equal(projectInbox('p', [one], [])[0]?.text, 'PR is ready to merge')
 })
 
 test('inbox: agent_failed only from the task agent that ran last', () => {
   const t = task('t', 'planning')
-  assert.deepEqual(inbox('p', [t], [session('t', 'groomer', 'error'), session('t', 'groomer', 'idle')]), [])
-  assert.equal(inbox('p', [t], [session('t', 'groomer', 'idle'), session('t', 'groomer', 'error')])[0]?.kind, 'agent_failed')
-  assert.deepEqual(inbox('p', [t], [session('t', 'reviewer', 'error')]).map((i) => i.text), ['Review failed'], 'the agent review of a step (T-55.1)')
-  assert.deepEqual(inbox('p', [t], [session('t', 'chat', 'error')]), [], 'other roles do not count')
+  assert.deepEqual(projectInbox('p', [t], [session('t', 'groomer', 'error'), session('t', 'groomer', 'idle')]), [])
+  assert.equal(projectInbox('p', [t], [session('t', 'groomer', 'idle'), session('t', 'groomer', 'error')])[0]?.kind, 'agent_failed')
+  assert.deepEqual(projectInbox('p', [t], [session('t', 'reviewer', 'error')]).map((i) => i.text), ['Review failed'], 'the agent review of a step (T-55.1)')
+  assert.deepEqual(projectInbox('p', [t], [session('t', 'chat', 'error')]), [], 'other roles do not count')
 })
 
 test('inbox: pending approvals from task sessions and chats come first, one per item', () => {
@@ -138,7 +138,7 @@ test('inbox: pending approvals from task sessions and chats come first, one per 
   const chat = { ...session('', 'chat', 'running'), id: 'chat', taskId: null, items: [approval('a3', 'pending'), approval('a4', 'expired')] }
   const other = { ...session('', 'chat', 'running'), id: 'other', projectId: 'q', taskId: null, items: [approval('a5', 'pending')] }
   const t = task('t', 'in_progress', 0, { needsInput: 'q' })
-  const items = inbox('p', [t], [dev, chat, other])
+  const items = projectInbox('p', [t], [dev, chat, other])
   assert.deepEqual(
     items.map((i) => [i.kind, i.task?.id ?? null, i.session?.id, i.approvalId ?? null, i.text]),
     [
@@ -228,4 +228,32 @@ test('ideaTitle: the first non-empty line, cut', () => {
   assert.equal(long.length, 100)
   assert.ok(long.endsWith('…'))
   assert.equal(ideaTitle('y'.repeat(100)), 'y'.repeat(100))
+})
+
+test('inbox: every project at once, each item with its project and a stable key', () => {
+  const approval = { kind: 'approval', id: 'a1', tool: 'send', server: 'Slack', input: {}, status: 'pending', at: 7, destination: { kind: 'slack', target: '#x', label: 'Slack #x' } } as const
+  const chat = { ...session('', 'chat', 'idle'), id: 'chat', projectId: 'q', taskId: null, items: [approval] }
+  const failed = { ...session('f', 'developer', 'error'), items: [{ kind: 'error', text: 'boom', at: 9 }] as AgentSession['items'] }
+  const tasks = [
+    task('ask', 'planning', 0, { needsInput: 'which db?' }),
+    task('start', 'in_progress', 0, { projectId: 'q' }),
+    task('start.1', 'todo', 0, { parentId: 'start', projectId: 'q', startManually: true }),
+    task('f', 'in_progress'),
+  ]
+  const items = inbox(tasks, [chat, failed])
+  assert.deepEqual(
+    items.map((i) => [i.key, i.projectId, i.kind, i.activityAt]),
+    [
+      ['session:chat:approval:a1', 'q', 'approval', 7],
+      ['task:f:agent_failed', 'p', 'agent_failed', 9],
+      [items[2].key, 'p', 'question', 0],
+      ['task:start:ready_to_start', 'q', 'ready_to_start', 0],
+    ],
+  )
+  assert.match(items[2].key, /^task:ask:question:[0-9a-z]+$/)
+  assert.deepEqual(items[0].destination, approval.destination, 'a publish card says where it goes')
+  assert.equal(inbox(tasks, [chat, failed])[2].key, items[2].key, 'the same question keeps its key')
+  const other = inbox([{ ...tasks[0], needsInput: 'which queue?' }], [])[0]
+  assert.notEqual(other.key, items[2].key, 'another question is another item')
+  assert.deepEqual(projectInbox('q', tasks, [chat, failed]).map((i) => i.key), ['session:chat:approval:a1', 'task:start:ready_to_start'])
 })

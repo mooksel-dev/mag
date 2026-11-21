@@ -1,6 +1,7 @@
 // Contract between the renderer and the main process. Types only.
 import type { AgentInfo, AgentSession, ChatItem, ModelChoice, SearchHit, SessionHeader, SessionItemEvent, Attachment, Canvas, ChatRef, ChildRole, RewindMode, RewindScope, ComponentDiagram, DirectionChoice, Integration, LocalChoice, PrVerdict, Project, ProjectEvent, Workspace, ReviewFormat, ReviewPage, SubtaskStatus, Task, TaskType, TicketRef, WorkState } from '@mag/core'
 import type { Meeting, MeetingContent, MeetingHit, MeetingLink, Recording, SearchFilters } from '../main/core/services/meetings/types.ts'
+import type { InboxEntry } from '../main/core/services/inbox/index.ts'
 import type { Addition, CompareItem, FileChange, HunkBlock, HunkRef, InventoryCheck, PlanDeviation, PlanOverlay } from '@mag/diff/types'
 
 export interface AppState {
@@ -17,6 +18,8 @@ export interface AppState {
   events: ProjectEvent[]
   /** MCP servers agents reported (claude.ai connectors and others); modes are per project in Project.integrations. */
   integrations: Integration[]
+  /** What waits on the user across all projects, without the snoozed and done items (inbox-what-waits-on-me.1). */
+  inbox: InboxEntry[]
   claudeBin: string | null
   appVersion: string
   /** Projects that have a window open. */
@@ -324,6 +327,10 @@ export interface MagApi {
   lastCrash(): Promise<CrashReport | null>
   dismissCrash(): Promise<void>
   openLogs(): Promise<void>
+  /** Hides an inbox item until `until` (ms) or new activity of its source; 'activity': until new activity only. */
+  snoozeInbox(key: string, until: number | 'activity'): Promise<void>
+  /** Hides an inbox item until its source has new activity. */
+  doneInbox(key: string): Promise<void>
   meetingStatus(): Promise<MeetingStatus>
   onMeetingStatus(cb: (s: MeetingStatus) => void): () => void
   /** Starts recording the call; the first time macOS asks for the microphone and system audio. */

@@ -3,7 +3,7 @@ import {
   acceptRecommendations,
   currentStep,
   docStepPlan,
-  inbox,
+  projectInbox,
   isLegacy,
   isReview,
   openLocalChecks,
@@ -49,7 +49,7 @@ export function WorkCards({ work, owner, state, onAnswer, label = false }: {
   const tasks = state.tasks.filter((t) => t.projectId === work.projectId)
   const project = state.projects.find((p) => p.id === work.projectId)
   // Approvals have cards of their own; the one other item of the work is what waits on the user.
-  const item = inbox(work.projectId, tasks, state.sessions).find((i) => i.task?.id === work.id && i.kind !== 'approval')
+  const item = projectInbox(work.projectId, tasks, state.sessions).find((i) => i.task?.id === work.id && i.kind !== 'approval')
   const step = isLegacy(work) ? null : currentStep(work.id, tasks)
   const ownerBusy = owner?.status === 'running'
   // The owner's own approvals are in its chat; those of the work's other agents only here.
